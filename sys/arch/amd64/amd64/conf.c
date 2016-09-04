@@ -112,6 +112,11 @@ int	nblkdev = nitems(bdevsw);
 	(dev_type_stop((*))) enodev, 0, seltrue, \
 	(dev_type_mmap((*))) enodev }
 
+/* open, close, ioctl */
+#define cdev_chromeec_init(c,n) { \
+	dev_init(c,n,open), dev_init(c,n,close), \
+	(dev_type_read((*))) enodev, (dev_type_write((*))) enodev, \
+	dev_init(c,n,ioctl) }
 
 #define	mmread	mmrw
 #define	mmwrite	mmrw
@@ -184,6 +189,7 @@ cdev_decl(pci);
 #include "pvbus.h"
 #include "ipmi.h"
 #include "switch.h"
+#include "chromeec.h"
 
 struct cdevsw	cdevsw[] =
 {
@@ -297,6 +303,8 @@ struct cdevsw	cdevsw[] =
 	cdev_pvbus_init(NPVBUS,pvbus),	/* 95: pvbus(4) control interface */
 	cdev_ipmi_init(NIPMI,ipmi),	/* 96: ipmi */
 	cdev_switch_init(NSWITCH,switch), /* 97: switch(4) control interface */
+	cdev_chromeec_init(NCHROMEEC,	/* 98: chromeec */
+	    chromeec),
 };
 int	nchrdev = nitems(cdevsw);
 

@@ -52,6 +52,7 @@
 #include "vmm.h"
 #include "pvbus.h"
 #include "efifb.h"
+#include "chromeec.h"
 
 #include <machine/cpuvar.h>
 #include <machine/i82093var.h>
@@ -72,6 +73,10 @@
 
 #if NEFIFB > 0
 #include <machine/efifbvar.h>
+#endif
+
+#if NCHROMEEC > 0
+#include <machine/chromeecvar.h>
 #endif
 
 int	mainbus_match(struct device *, void *, void *);
@@ -104,6 +109,9 @@ union mainbus_attach_args {
 #endif
 #if NEFIFB > 0
 	struct efifb_attach_args mba_eaa;
+#endif
+#if NCHROMEEC > 0
+	struct chromeec_attach_args mba_checaa;
 #endif
 };
 
@@ -253,6 +261,13 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 #if NEFIFB > 0
 	if (bios_efiinfo != NULL || efifb_cb_found()) {
 		mba.mba_eaa.eaa_name = "efifb";
+		config_found(self, &mba, mainbus_print);
+	}
+#endif
+
+#if NCHROMEEC > 0
+	{
+		mba.mba_checaa.checaa_name = "chromeec";
 		config_found(self, &mba, mainbus_print);
 	}
 #endif

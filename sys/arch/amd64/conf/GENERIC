@@ -81,6 +81,8 @@ xnf*	at xen?			# Xen Netfront
 hyperv0	at pvbus?		# Hyper-V guest
 hvn*	at hyperv?		# Hyper-V NetVSC
 
+chromeec*	at mainbus?	# Chrome EC
+
 option		PCIVERBOSE
 option		USBVERBOSE
 
