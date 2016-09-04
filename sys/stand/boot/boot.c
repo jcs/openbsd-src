@@ -32,6 +32,7 @@
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <libsa.h>
+#include <lib/libsa/colorchar.h>
 #include <lib/libsa/loadfile.h>
 #include <lib/libkern/funcs.h>
 #include <lib/libsa/arc4.h>
@@ -62,14 +63,29 @@ void
 boot(dev_t bootdev)
 {
 	int fd, isupgrade = 0;
-	int try = 0, st;
+	int i, try = 0, st;
 	uint64_t marks[MARK_MAX];
 
 	machdep();
 
 	snprintf(prog_ident, sizeof(prog_ident),
 	    ">> OpenBSD/" MACHINE " %s %s", progname, version);
-	printf("%s\n", prog_ident);
+
+	printf(">> ");
+	colorchar('O', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('p', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('e', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('n', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('B', COLOR_DEFAULT_BG, COLOR_RED);
+	colorchar('S', COLOR_DEFAULT_BG, COLOR_RED);
+	colorchar('D', COLOR_DEFAULT_BG, COLOR_RED);
+
+	colorchar('/', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
+
+	for (i = 0; i < strlen(MACHINE); i++)
+		colorchar(MACHINE[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
+
+	printf(" %s %s\n", progname, version);
 
 	devboot(bootdev, cmd.bootdev);
 	strlcpy(cmd.image, kernelfile, sizeof(cmd.image));
