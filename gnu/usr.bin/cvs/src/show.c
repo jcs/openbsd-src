@@ -39,7 +39,7 @@ show(int argc, char **argv)
 
 	if (commitid->previous == NULL && !commitid->genesis)
 		error(1, 0, "commitid has no previous but is not genesis: %s",
-		    commitid);
+		    commitid->commitid);
 
 	if (commitid->genesis) {
 		cvs_output("Genesis: ", 0);
@@ -67,8 +67,6 @@ show(int argc, char **argv)
 		Node *revhead, *rev, *p;
 		RCSNode *rcsfile;
     		char *repo = Name_Repository(NULL, NULL);
-		struct revlist *revlist;
-		struct option_revlist *r;
 		RCSVers *ver;
 		char *thisver, *prevver;
 		char *diffargs[] = { "diff", "-uNp", "-r", "-r", "" };
