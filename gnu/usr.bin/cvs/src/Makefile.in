@@ -120,6 +120,7 @@ cvs_SOURCES = \
 	classify.c \
 	client.c \
 	commit.c \
+	commitid.c \
 	create_adm.c \
 	cvsrc.c diff.c \
 	edit.c \
@@ -155,6 +156,7 @@ cvs_SOURCES = \
 	run.c \
 	scramble.c \
 	server.c \
+	show.c \
 	status.c \
 	subr.c \
 	tag.c \
@@ -165,6 +167,7 @@ cvs_SOURCES = \
 	zlib.c \
 	buffer.h \
 	client.h \
+	commitid.h \
 	cvs.h \
 	edit.h \
 	error.h \
@@ -214,8 +217,8 @@ PROGRAMS = $(bin_PROGRAMS)
 am_cvs_OBJECTS = add.$(OBJEXT) admin.$(OBJEXT) annotate.$(OBJEXT) \
 	buffer.$(OBJEXT) checkin.$(OBJEXT) checkout.$(OBJEXT) \
 	classify.$(OBJEXT) client.$(OBJEXT) commit.$(OBJEXT) \
-	create_adm.$(OBJEXT) cvsrc.$(OBJEXT) diff.$(OBJEXT) \
-	edit.$(OBJEXT) entries.$(OBJEXT) error.$(OBJEXT) \
+	commitid.$(OBJEXT) create_adm.$(OBJEXT) cvsrc.$(OBJEXT) \
+	diff.$(OBJEXT) edit.$(OBJEXT) entries.$(OBJEXT) error.$(OBJEXT) \
 	expand_path.$(OBJEXT) fileattr.$(OBJEXT) filesubr.$(OBJEXT) \
 	find_names.$(OBJEXT) hardlink.$(OBJEXT) hash.$(OBJEXT) \
 	history.$(OBJEXT) ignore.$(OBJEXT) import.$(OBJEXT) \
@@ -225,8 +228,8 @@ am_cvs_OBJECTS = add.$(OBJEXT) admin.$(OBJEXT) annotate.$(OBJEXT) \
 	patch.$(OBJEXT) rcs.$(OBJEXT) rcscmds.$(OBJEXT) \
 	recurse.$(OBJEXT) release.$(OBJEXT) remove.$(OBJEXT) \
 	repos.$(OBJEXT) root.$(OBJEXT) run.$(OBJEXT) scramble.$(OBJEXT) \
-	server.$(OBJEXT) status.$(OBJEXT) subr.$(OBJEXT) tag.$(OBJEXT) \
-	update.$(OBJEXT) vers_ts.$(OBJEXT) watch.$(OBJEXT) \
+	server.$(OBJEXT) show.$(OBJEXT) status.$(OBJEXT) subr.$(OBJEXT) \
+	tag.$(OBJEXT) update.$(OBJEXT) vers_ts.$(OBJEXT) watch.$(OBJEXT) \
 	wrapper.$(OBJEXT) zlib.$(OBJEXT)
 cvs_OBJECTS = $(am_cvs_OBJECTS)
 cvs_DEPENDENCIES = ../diff/libdiff.a ../lib/libcvs.a @ZLIB_DEPEND@ \
@@ -251,7 +254,8 @@ depcomp = $(SHELL) $(top_srcdir)/depcomp
 @AMDEP_TRUE@	$(DEPDIR)/annotate.Po $(DEPDIR)/buffer.Po \
 @AMDEP_TRUE@	$(DEPDIR)/checkin.Po $(DEPDIR)/checkout.Po \
 @AMDEP_TRUE@	$(DEPDIR)/classify.Po $(DEPDIR)/client.Po \
-@AMDEP_TRUE@	$(DEPDIR)/commit.Po $(DEPDIR)/create_adm.Po \
+@AMDEP_TRUE@	$(DEPDIR)/commit.Po $(DEPDIR)/commitid.Po \
+@AMDEP_TRUE@	$(DEPDIR)/create_adm.Po \
 @AMDEP_TRUE@	$(DEPDIR)/cvsrc.Po $(DEPDIR)/diff.Po \
 @AMDEP_TRUE@	$(DEPDIR)/edit.Po $(DEPDIR)/entries.Po \
 @AMDEP_TRUE@	$(DEPDIR)/error.Po $(DEPDIR)/expand_path.Po \
@@ -269,7 +273,7 @@ depcomp = $(SHELL) $(top_srcdir)/depcomp
 @AMDEP_TRUE@	$(DEPDIR)/release.Po $(DEPDIR)/remove.Po \
 @AMDEP_TRUE@	$(DEPDIR)/repos.Po $(DEPDIR)/root.Po \
 @AMDEP_TRUE@	$(DEPDIR)/run.Po $(DEPDIR)/scramble.Po \
-@AMDEP_TRUE@	$(DEPDIR)/server.Po $(DEPDIR)/status.Po \
+@AMDEP_TRUE@	$(DEPDIR)/server.Po $(DEPDIR)/show.Po $(DEPDIR)/status.Po \
 @AMDEP_TRUE@	$(DEPDIR)/subr.Po $(DEPDIR)/tag.Po \
 @AMDEP_TRUE@	$(DEPDIR)/update.Po $(DEPDIR)/vers_ts.Po \
 @AMDEP_TRUE@	$(DEPDIR)/watch.Po $(DEPDIR)/wrapper.Po \
@@ -415,6 +419,7 @@ distclean-tags:
 @_am_include@ @_am_quote@$(DEPDIR)/classify.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/client.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/commit.Po@_am_quote@
+@_am_include@ @_am_quote@$(DEPDIR)/commitid.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/create_adm.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/cvsrc.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/diff.Po@_am_quote@
@@ -451,6 +456,7 @@ distclean-tags:
 @_am_include@ @_am_quote@$(DEPDIR)/run.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/scramble.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/server.Po@_am_quote@
+@_am_include@ @_am_quote@$(DEPDIR)/show.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/status.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/subr.Po@_am_quote@
 @_am_include@ @_am_quote@$(DEPDIR)/tag.Po@_am_quote@

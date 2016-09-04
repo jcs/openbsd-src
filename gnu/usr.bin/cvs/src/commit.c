@@ -653,6 +653,21 @@ commit (argc, argv)
     }
 
     /*
+     * If we have a commitids file, fetch the last id
+     */
+    if (commitids_logging())
+    {
+        CommitId *id;
+
+	if (!commitid_find(NULL, id, NULL) || id == NULL)
+	    error (1, 0, "failed fetching last commitid");
+
+	printf("commit id %s\n", id->commitid);
+
+	//exit(1);
+    }
+
+    /*
      * Run the recursion processor to commit the files
      */
     write_dirnonbranch = 0;

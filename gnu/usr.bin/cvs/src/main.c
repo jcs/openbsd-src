@@ -25,7 +25,7 @@ char *program_name;
 char *program_path;
 char *command_name;
 
-char *global_session_id; /* Random session ID */
+char *global_session_id; /* commitid */
 
 /* I'd dynamically allocate this, but it seems like gethostname
    requires a fixed size array.  If I'm remembering the RFCs right,
@@ -141,6 +141,7 @@ static const struct cmd
 #ifdef SERVER_SUPPORT
     { "server",   NULL,       NULL,        server,    CVS_CMD_MODIFIES_REPOSITORY | CVS_CMD_USES_WORK_DIR },
 #endif
+    { "show",     "sh",       NULL,        show,      CVS_CMD_USES_WORK_DIR },
     { "status",   "st",       "stat",      cvsstatus, CVS_CMD_USES_WORK_DIR },
     { "tag",      "ta",       "freeze",    cvstag,    CVS_CMD_MODIFIES_REPOSITORY | CVS_CMD_USES_WORK_DIR },
     { "unedit",   NULL,       NULL,        unedit,    CVS_CMD_MODIFIES_REPOSITORY | CVS_CMD_USES_WORK_DIR },
@@ -232,6 +233,7 @@ static const char *const cmd_usage[] =
 #ifdef SERVER_SUPPORT
     "        server       Server mode\n",
 #endif
+    "        show         Display changeset by commitid\n",
     "        status       Display status information on checked out files\n",
     "        tag          Add a symbolic tag to checked out version of files\n",
     "        unedit       Undo an edit command\n",
@@ -645,28 +647,6 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
     argv += optind;
     if (argc < 1)
 	usage (usg);
-
-    /* Generate the cvs global session ID */
-
-    {
-	int i = 0;
-	u_int32_t c;
-	global_session_id = xmalloc(17);
-
-	while (i <= 16) {
-	    c = arc4random_uniform(75) + 48;
-	    if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) ||
-	        (c >= 97 && c <= 122)) {
-		global_session_id[i] = c;
-		i++;
-	    }
-	}
-	global_session_id[16] = '\0';
-    }
-
-    if (trace)
-	fprintf (stderr, "main: Session ID is %s", global_session_id);
-
 
     /* Look up the command name. */
 

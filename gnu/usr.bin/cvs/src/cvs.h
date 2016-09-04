@@ -191,6 +191,7 @@ extern int errno;
 #define CVSROOTADM_WRITERS	"writers"
 #define CVSROOTADM_PASSWD	"passwd"
 #define CVSROOTADM_CONFIG	"config"
+#define CVSROOTADM_COMMITIDS	"commitids"
 
 #define CVSNULLREPOS		"Emptydir"	/* an empty directory */
 
@@ -898,6 +899,8 @@ extern void tag_check_valid PROTO ((char *, int, char **, int, int, char *));
 extern void tag_check_valid_join PROTO ((char *, int, char **, int, int,
 					 char *));
 
+extern int show PROTO((int argc, char **argv));
+
 #include "server.h"
 
 /* From server.c and documented there.  */
@@ -908,4 +911,12 @@ extern void cvs_flusherr PROTO ((void));
 extern void cvs_flushout PROTO ((void));
 extern void cvs_output_tagged PROTO ((char *, char *));
 
+
 extern char *global_session_id;
+
+#include "commitid.h"
+
+extern void commitid_generate PROTO ((uint8_t *));
+extern void commitids_filename PROTO ((char **));
+extern int commitids_logging PROTO ((void));
+extern int commitid_find PROTO ((char *, CommitId *, CommitId *));

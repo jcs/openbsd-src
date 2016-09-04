@@ -36,6 +36,7 @@ cvs_SOURCES = \
 	classify.c \
 	client.c \
 	commit.c \
+	commitid.c \
 	create_adm.c \
 	cvsrc.c diff.c \
 	edit.c \
@@ -71,6 +72,7 @@ cvs_SOURCES = \
 	run.c \
 	scramble.c \
 	server.c \
+	show.c \
 	status.c \
 	subr.c \
 	tag.c \
@@ -81,6 +83,7 @@ cvs_SOURCES = \
 	zlib.c \
 	buffer.h \
 	client.h \
+	commitid.h \
 	cvs.h \
 	edit.h \
 	error.h \

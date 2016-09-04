@@ -891,6 +891,9 @@ init (argc, argv)
     /* Make Emptydir so it's there if we need it */
     mkdir_if_needed (CVSNULLREPOS);
 
+    /* create genesis commitid for CVSROOT */
+    commitid_generate(NULL);
+
     /* 80 is long enough for all the administrative file names, plus
        "/" and so on.  */
     info = xmalloc (strlen (adm) + 80);
@@ -972,6 +975,38 @@ init (argc, argv)
 	    error (1, errno, "cannot close %s", info);
  
         /* Make the new val-tags file world-writeable, since every CVS
+           user will need to be able to write to it.  We use chmod()
+           because xchmod() is too shy. */
+        chmod (info, 0666);
+    }
+
+    /* Write out initial commitids-CVSROOT file.  The user can remove the file
+       to disable forward-hashing. */
+    /* TODO: move this to a db file? */
+    strcpy (info, adm);
+    strcat (info, "/");
+    strcat (info, CVSROOTADM_COMMITIDS);
+    strcat (info, "-" CVSROOTADM);
+    if (!isfile (info))
+    {
+	FILE *fp;
+
+	fp = open_file (info, "w");
+	fprintf(fp, "%s", global_session_id);
+
+	for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
+	{
+		if (fileptr->contents == NULL)
+	    	    continue;
+
+		fprintf(fp, "\t%s", fileptr->filename);
+	}
+	fprintf(fp, "\n");
+
+	if (fclose (fp) < 0)
+	    error (1, errno, "cannot close %s", info);
+
+        /* Make the new commitids file world-writeable, since every CVS
            user will need to be able to write to it.  We use chmod()
            because xchmod() is too shy. */
         chmod (info, 0666);
