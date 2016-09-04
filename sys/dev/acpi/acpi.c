@@ -2433,9 +2433,12 @@ acpi_sleep_state(struct acpi_softc *sc, int state)
 
 	/* Sleep */
 	sc->sc_state = state;
+	printf("acpi: sleeping\n");
 	error = acpi_sleep_cpu(sc, state);
 	sc->sc_state = ACPI_STATE_S0;
 	/* Resume */
+
+	printf("acpi: resumed\n");
 
 #ifdef HIBERNATE
 	if (state == ACPI_STATE_S4) {
