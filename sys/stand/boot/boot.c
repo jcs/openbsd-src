@@ -32,6 +32,7 @@
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <libsa.h>
+#include <lib/libsa/colorchar.h>
 #include <lib/libsa/loadfile.h>
 #include <lib/libkern/funcs.h>
 
@@ -60,14 +61,39 @@ void
 boot(dev_t bootdev)
 {
 	int fd;
-	int try = 0, st;
+	int i, try = 0, st;
 	u_long marks[MARK_MAX];
 
 	machdep();
 
 	snprintf(prog_ident, sizeof(prog_ident),
 	    ">> OpenBSD/" MACHINE " %s %s", progname, version);
-	printf("%s\n", prog_ident);
+
+	colorchar('>', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
+	colorchar('>', COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
+	colorchar(' ', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
+
+	colorchar('O', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
+	colorchar('p', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
+	colorchar('e', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
+	colorchar('n', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
+	colorchar('B', COLOR_DEFAULT_BG, COLOR_BLUE);
+	colorchar('S', COLOR_DEFAULT_BG, COLOR_BLUE);
+	colorchar('D', COLOR_DEFAULT_BG, COLOR_BLUE);
+	colorchar('/', COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
+
+	for (i = 0; i < strlen(MACHINE); i++)
+		colorchar(MACHINE[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
+
+	colorchar(' ', 0, 7);
+	for (i = 0; i < strlen(progname); i++)
+		colorchar(progname[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
+
+	colorchar(' ', 0, 7);
+	for (i = 0; i < strlen(version); i++)
+		colorchar(version[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
+
+	colorchar('\n', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
 
 	devboot(bootdev, cmd.bootdev);
 	strlcpy(cmd.image, kernelfile, sizeof(cmd.image));
