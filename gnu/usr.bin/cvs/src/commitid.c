@@ -64,7 +64,7 @@ commitid_parse(char *id)
 	char fmt[20];
 	int res;
 
-	if (strlen(id) != COMMITID_LENGTH)
+	if (!strlen(id))
 		return NULL;
 
 	/* %04u%64s%07lu */
@@ -78,6 +78,7 @@ commitid_parse(char *id)
 		return NULL;
 	}
 
+	/* eventually be able to parse old versions */
 	if (version != COMMITID_VERSION)
 		return NULL;
 
@@ -87,12 +88,17 @@ commitid_parse(char *id)
 	out->hash = xstrdup(hash);
 	out->changeset = changeset;
 
+	out->genesis = (out->changeset == 0);
+
 	return out;
 }
 
 void
 commitid_free(CommitId *id)
 {
+	if (id == NULL)
+		return;
+
 	if (id->commitid != NULL)
 		free(id->commitid);
 	if (id->hash != NULL)
@@ -107,16 +113,24 @@ CommitId *
 commitid_find(char *findid)
 {
 	FILE *fp;
-	CommitId *tmpid, *retid = NULL, *previd = NULL;
+	CommitId *tmpid = NULL, *retid = NULL, *previd = NULL;
 	char *line = NULL, *tab = NULL, *files;
 	ssize_t len;
 	size_t ps = 0;
 	int res = 0;
+	int genesis = 0;
 
 	fp = commitid_logfile();
 
 	if (findid != NULL && !strlen(findid))
 		findid = NULL;
+
+	/*
+	 * TODO: if we're asking for latest (findid == NULL), seek to the end
+	 * of the file and walk backwards
+	 *
+	 * TODO: if findid looks like a number, assume it's a changeset id
+	 */
 
 	while ((len = getline(&line, &ps, fp)) != -1) {
 		if (line[len - 1] == '\n') {
@@ -124,14 +138,21 @@ commitid_find(char *findid)
 			len--;
 		}
 
-		if ((tab = strstr(line, "\t")) == NULL)
-			continue;
+		if ((tab = strstr(line, "\t")) == NULL) {
+			if (genesis)
+				error(1, 0, "non-genesis commit with no "
+				    "files: %s", line);
+			else
+				genesis = 1;
 
-		files = malloc(strlen(tab) + 1);
-		strlcpy(files, tab + 1, strlen(tab) + 1);
+			files = xstrdup("");
+		} else {
+			files = malloc(strlen(tab) + 1);
+			strlcpy(files, tab + 1, strlen(tab) + 1);
 
-		tab[0] = '\0';
-		len = strlen(line);
+			tab[0] = '\0';
+			len = strlen(line);
+		}
 
 		if ((tmpid = commitid_parse(line)) == NULL)
 			error(1, 0, "failed parsing commandid line %s", line);
@@ -139,37 +160,32 @@ commitid_find(char *findid)
 		if (findid == NULL)
 			/* want latest commitid */
 			res = 1;
-		else {
+		else if (strncmp(findid, tmpid->commitid,
+		    strlen(findid)) == 0) {
 			/*
 			 * need to go hunting - match on first part of commitid
 			 * chars, allowing for shortened unless it matches more
 			 * than one
 			 */
-			if (strncmp(findid, tmpid->commitid,
-			    strlen(findid)) == 0) {
-				if (res) {
-					res = 0;
-					if (retid)
-						commitid_free(retid);
-					error(0, 0, "commitid \"%s\" is "
-					    "ambiguous", findid);
-					break;
+			if (res) {
+				res = 0;
+				if (retid) {
+					commitid_free(retid);
+					retid = NULL;
 				}
-
-				res = 1;
-
-				if (strlen(findid) == COMMITID_LENGTH)
-					/* no possible duplicates */
-					break;
+				error(0, 0, "commitid \"%s\" is ambiguous",
+				    findid);
+				break;
 			}
+
+			res = 1;
 		}
 
 		if (res && tmpid) {
 			char *file;
 
-			if (retid)
-				commitid_free(retid);
 			retid = tmpid;
+			tmpid = NULL;
 
 			if (previd)
 				retid->previous = xstrdup(previd->commitid);
@@ -189,13 +205,27 @@ commitid_find(char *findid)
 				f->data = NULL;
 				addnode(retid->files, f);
 			}
-		}
-		else if (!res)
+
+			if (findid != NULL &&
+			    strlen(findid) == COMMITID_LENGTH)
+				/* no possible duplicates, finish early */
+				break;
+
+			if (previd)
+				commitid_free(previd);
+
+			previd = retid;
+		} else {
+			if (previd)
+				commitid_free(previd);
+
 			previd = tmpid;
+			tmpid = NULL;
+		}
 	}
 	fclose(fp);
 
-	if (previd)
+	if (previd != retid)
 		commitid_free(previd);
 
 	return retid;

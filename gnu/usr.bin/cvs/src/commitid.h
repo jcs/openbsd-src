@@ -17,6 +17,8 @@ struct commitid {
 
 	char *previous;
 
+	int genesis;
+
 	SHA2_CTX sha_ctx;
 };
 

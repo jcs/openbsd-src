@@ -37,15 +37,25 @@ show(int argc, char **argv)
 	if ((commitid = commitid_find(tcommitid)) == NULL)
 		error(1, 0, "commitid not found: %s", tcommitid);
 
-	if (commitid->previous != NULL) {
+	if (commitid->previous == NULL && !commitid->genesis)
+		error(1, 0, "commitid has no previous but is not genesis: %s",
+		    commitid);
+
+	if (commitid->genesis) {
+		cvs_output("Genesis: ", 0);
+		cvs_output(commitid->commitid, 0);
+		cvs_output("\n", 1);
+
+		return 0;
+	} else {
 		cvs_output("Previous: ", 0);
 		cvs_output(commitid->previous, 0);
 		cvs_output("\n", 1);
-	}
 
-	cvs_output("Commitid: ", 0);
-	cvs_output(commitid->commitid, 0);
-	cvs_output("\n", 1);
+		cvs_output("Commitid: ", 0);
+		cvs_output(commitid->commitid, 0);
+		cvs_output("\n", 1);
+	}
 
 	/*
 	 * walk changeset file list, find the commitid revision in each file
