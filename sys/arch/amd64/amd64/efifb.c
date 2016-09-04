@@ -378,6 +378,9 @@ efifb_is_console(struct pci_attach_args *pa)
 	bus_size_t size;
 	int reg;
 
+	if (efifb_cb_found())
+		return 1;
+
 	for (reg = PCI_MAPREG_START; reg < PCI_MAPREG_END; reg += 4) {
 		if (!pci_mapreg_probe(pc, tag, reg, &type))
 			continue;
