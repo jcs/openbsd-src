@@ -1,0 +1,2 @@
+sys/arch/*/compile/*
+**/obj
