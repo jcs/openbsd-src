@@ -582,6 +582,16 @@ efi_cons_getshifts(dev_t dev)
 	return (0);
 }
 
+#ifdef HAVE_COLORCHAR
+void
+colorchar(int c, int bg, int fg)
+{
+	conout->SetAttribute(conout, EFI_TEXT_ATTR(fg, bg));
+	efi_cons_putc(0, c);
+	conout->SetAttribute(conout, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
+}
+#endif
+
 int com_addr = -1;
 int com_speed = -1;
 

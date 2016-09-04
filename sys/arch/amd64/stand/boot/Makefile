@@ -31,6 +31,7 @@ SRCS+=	bioscons.c biosdev.c diskprobe.c memprobe.c time.c
 .if ${SOFTRAID:L} == "yes"
 SRCS+=	softraid_amd64.c
 .endif
+SRCS+=	colorchar.c
 
 .PATH:	${S}/lib/libsa
 SRCS+=	alloc.c ctime.c exit.c getchar.c hexdump.c \
@@ -78,6 +79,7 @@ NOPROG=
 .if ${SOFTRAID:L} == "yes"
 CPPFLAGS+=-DSOFTRAID
 .endif
+CPPFLAGS+=-DHAVE_COLORCHAR
 CPPFLAGS+=-DBOOTMAGIC=$(BOOTMAGIC) ${DEBUGFLAGS} -DLINKADDR=${LINKADDR}
 CPPFLAGS+=-DSLOW -DSMALL -DNO_GZIP -DDYNAMIC_CRC_TABLE -DBUILDFIXED
 CPPFLAGS+=-DHIBERNATE

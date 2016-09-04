@@ -201,6 +201,7 @@ int	ioctl(int, u_long, char *);
 
 void	putchar(int);
 int	getchar(void);
+void	colorchar(int, int, int);
 
 #ifdef __INTERNAL_LIBSA_CREAD
 int	oopen(const char *, int);
