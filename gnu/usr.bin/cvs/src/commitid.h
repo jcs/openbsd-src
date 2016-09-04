@@ -7,8 +7,10 @@ struct commitid {
 	char *commitid;
 	int version;
 	char *hash;
-	uint32_t changeset;
+	unsigned long changeset;
 	List *files;
+
+	char *parent;
 };
 
 typedef struct commitid CommitId;

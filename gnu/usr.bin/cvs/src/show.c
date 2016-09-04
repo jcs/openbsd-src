@@ -12,7 +12,7 @@ int
 show(int argc, char **argv)
 {
 	char *tcommitid = NULL;
-	CommitId *commitid = NULL, *parentid = NULL;
+	CommitId *commitid;
 	Node *head, *fn;
 	int didlog = 0;
 
@@ -34,12 +34,12 @@ show(int argc, char **argv)
 	}
 #endif
 
-	if (!commitid_find(tcommitid, commitid, parentid) || commitid == NULL)
+	if ((commitid = commitid_find(tcommitid)) == NULL)
 		error(1, 0, "commitid not found: %s", tcommitid);
 
-	if (parentid != NULL) {
+	if (commitid->parent != NULL) {
 		cvs_output("Parent:  ", 0);
-		cvs_output(parentid->commitid, 0);
+		cvs_output(commitid->parent, 0);
 		cvs_output("\n", 1);
 	}
 
@@ -87,7 +87,7 @@ show(int argc, char **argv)
 		if (!didlog) {
 			int year, mon, mday, hour, min, sec;
 			char buf[1024];
-			char **line;
+			char *line;
 
 			cvs_output("Author:   ", 0);
 			cvs_output(ver->author, 0);
@@ -111,12 +111,12 @@ show(int argc, char **argv)
 			cvs_output(buf, 0);
 			cvs_output("\n\n", 2);
 
-			while ((*line = strsep(&p->data, "\n")) != NULL) {
+			while ((line = strsep(&p->data, "\n")) != NULL) {
 				if (*line == '\0')
 					break;
 
 				cvs_output("    ", 4);
-				cvs_output(*line, 0);
+				cvs_output(line, 0);
 				cvs_output("\n", 1);
 			}
 

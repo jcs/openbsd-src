@@ -4,16 +4,19 @@
 #include <sha2.h>
 #include <assert.h>
 
-void
-commitids_filename(char **fn)
+char *
+commitids_filename(void)
 {
 	char *repo = Short_Repository(Name_Repository(NULL, NULL));
+	char *fn;
 
-	*fn = xmalloc(strlen(current_parsed_root->directory) +
+	fn = xmalloc(strlen(current_parsed_root->directory) +
 	    sizeof(CVSROOTADM) + sizeof(CVSROOTADM_COMMITIDS) + 1 +
 	    strlen(repo) + 1);
-	sprintf(*fn, "%s/%s/%s-%s", current_parsed_root->directory, CVSROOTADM,
+	sprintf(fn, "%s/%s/%s-%s", current_parsed_root->directory, CVSROOTADM,
 	    CVSROOTADM_COMMITIDS, repo);
+
+	return fn;
 }
 
 int
@@ -22,7 +25,7 @@ commitids_logging(void)
 	char *fn;
 	int res;
 
-	commitids_filename(&fn);
+	fn = commitids_filename();
 
 	res = isfile(fn) && isreadable(fn);
 
@@ -36,14 +39,11 @@ commitid_logfile(void)
 	char *fn;
 	FILE *fp;
 	struct stat st;
-	ssize_t len;
-	size_t ps = 0;
-	int res = 0;
 
 	if (!commitids_logging())
 		return NULL;
 
-	commitids_filename(&fn);
+	fn = commitids_filename();
 
 	if ((fp = fopen(fn, "r")) < 0)
 		error(1, errno, "can't read %s", fn);
@@ -55,50 +55,60 @@ commitid_logfile(void)
 	return fp;
 }
 
-int
-commitid_parse(char *id, CommitId *out)
+CommitId *
+commitid_parse(char *id)
 {
+	CommitId *out;
+	unsigned int version;
+	char hash[SHA256_DIGEST_LENGTH * 2];
+	unsigned long changeset = 0;
+	char fmt[13];
 	int res;
 
-	unsigned int version;
-	char hash[SHA256_DIGEST_LENGTH];
-	unsigned long changeset = 0;
-	char fmt[14];
-
 	if (strlen(id) != COMMITID_LENGTH)
-		return 0;
+		return NULL;
 
-	/* %1u%64s%07lld */
-	res = snprintf(fmt, sizeof(fmt), "%%1u%%%ds%%0%dlld",
+	/* %1u%64s%07lu */
+	snprintf(fmt, 13, "%%1u%%%ds%%0%dlu",
 	    (SHA256_DIGEST_LENGTH * 2), COMMITID_CHANGESET_LENGTH);
-	printf("res of snprintf is %d\n", res);
-	printf("%s (%d)\n", fmt, strlen(fmt));
 
 	res = sscanf(id, fmt, &version, &hash, &changeset);
 	if (res != 3) {
-		error(0, 0, "malformed commitid %s (%s) %d %s %lu (%d)", id, fmt, version,
-		hash, changeset, res);
-		return 0;
+		error(0, 0, "malformed commitid %s", id);
+		return NULL;
 	}
 
 	if (version != COMMITID_VERSION)
-		return 0;
+		return NULL;
 
 	out = xmalloc(sizeof(CommitId));
+	out->commitid = xstrdup(id);
 	out->version = version;
 	out->hash = xstrdup(hash);
 	out->changeset = changeset;
 
-	return 1;
+	return out;
 }
 
-int
-commitid_find(char *findid, CommitId *fullid, CommitId *parentid)
+void
+commitid_free(CommitId *id)
+{
+	if (id->commitid != NULL)
+		free(id->commitid);
+	if (id->hash != NULL)
+		free(id->hash);
+	if (id->files != NULL)
+		dellist(&id->files);
+
+	free(id);
+}
+
+CommitId *
+commitid_find(char *findid)
 {
 	FILE *fp;
-	List *lfiles;
-	CommitId *tmpid = NULL, *previd = NULL;
-	char *line = NULL, *tab = NULL, *files = NULL;
+	CommitId *tmpid, *retid = NULL, *previd = NULL;
+	char *line = NULL, *tab = NULL, *files;
 	ssize_t len;
 	size_t ps = 0;
 	int res = 0;
@@ -111,7 +121,7 @@ commitid_find(char *findid, CommitId *fullid, CommitId *parentid)
 	while ((len = getline(&line, &ps, fp)) != -1) {
 		if (line[len - 1] == '\n') {
 			line[len - 1] = '\0';
-			--len;
+			len--;
 		}
 
 		if ((tab = strstr(line, "\t")) == NULL)
@@ -123,7 +133,7 @@ commitid_find(char *findid, CommitId *fullid, CommitId *parentid)
 		tab[0] = '\0';
 		len = strlen(line);
 
-		if (!commitid_parse(line, tmpid))
+		if ((tmpid = commitid_parse(line)) == NULL)
 			error(1, 0, "failed parsing commandid line %s", line);
 
 		if (findid == NULL)
@@ -139,7 +149,8 @@ commitid_find(char *findid, CommitId *fullid, CommitId *parentid)
 			    strlen(findid)) == 0) {
 				if (res) {
 					res = 0;
-					fullid = NULL;
+					if (retid)
+						commitid_free(retid);
 					error(0, 0, "commitid \"%s\" is "
 					    "ambiguous", findid);
 					break;
@@ -154,35 +165,40 @@ commitid_find(char *findid, CommitId *fullid, CommitId *parentid)
 		}
 
 		if (res && tmpid) {
-			fullid = tmpid;
+			char *file;
+
+			if (retid)
+				commitid_free(retid);
+			retid = tmpid;
+
 			if (previd)
-				parentid = previd;
+				retid->parent = xstrdup(previd->commitid);
+			else
+				retid->parent = NULL;
+
+			retid->files = getlist();
+
+			while ((file = strsep(&files, "\t")) != NULL) {
+				Node *f;
+
+				if (*file == '\0')
+					break;
+
+				f = getnode();
+				f->key = xstrdup(file);
+				f->data = NULL;
+				addnode(retid->files, f);
+			}
 		}
 		else if (!res)
 			previd = tmpid;
 	}
-
 	fclose(fp);
 
-#if 0
-	if (fullid) {
-		char **file;
+	if (previd)
+		commitid_free(previd);
 
-		while ((file = strsep(&files, "\t")) != NULL) {
-			Node *f;
-
-			if (*file == '\0')
-				break;
-
-			f = getnode();
-			f->key = xstrdup(file);
-			f->data = NULL;
-			addnode(*lfiles, f);
-		}
-	}
-#endif
-
-	return res;
+	return retid;
 }
 
 void

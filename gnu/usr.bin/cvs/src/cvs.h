@@ -917,6 +917,6 @@ extern char *global_session_id;
 #include "commitid.h"
 
 extern void commitid_generate PROTO ((uint8_t *));
-extern void commitids_filename PROTO ((char **));
+extern char *commitids_filename PROTO ((void));
 extern int commitids_logging PROTO ((void));
-extern int commitid_find PROTO ((char *, CommitId *, CommitId *));
+extern CommitId *commitid_find PROTO ((char *));

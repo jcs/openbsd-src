@@ -659,7 +659,7 @@ commit (argc, argv)
     {
         CommitId *id;
 
-	if (!commitid_find(NULL, id, NULL) || id == NULL)
+	if ((id = commitid_find(NULL)) == NULL)
 	    error (1, 0, "failed fetching last commitid");
 
 	printf("commit id %s\n", id->commitid);
