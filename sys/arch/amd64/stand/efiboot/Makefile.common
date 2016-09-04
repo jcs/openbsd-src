@@ -21,6 +21,7 @@ COPTS+=		-DSOFTRAID
 COPTS+=		-DIDLE_POWEROFF
 .endif
 COPTS+=		-D_STANDALONE -nostdinc -fno-builtin
+COPTS+=		-DHAVE_COLORCHAR
 
 AFLAGS+=	-pipe -fPIC
 
