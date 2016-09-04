@@ -607,6 +607,7 @@ cdev_decl(amdmsr);
 cdev_decl(fuse);
 cdev_decl(pvbus);
 cdev_decl(ipmi);
+cdev_decl(chromeec);
 
 #endif
 
