@@ -20,6 +20,7 @@
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/malloc.h>
+#include <sys/kernel.h>
 
 #include <machine/bus.h>
 #include <machine/apmvar.h>
@@ -35,7 +36,7 @@ int  acpiac_match(struct device *, void *, void *);
 void acpiac_attach(struct device *, struct device *, void *);
 int  acpiac_notify(struct aml_node *, int, void *);
 
-void acpiac_refresh(void *);
+void acpiac_refresh(void *, int);
 int acpiac_getsta(struct acpiac_softc *);
 
 struct cfattach acpiac_ca = {
@@ -90,7 +91,7 @@ acpiac_attach(struct device *parent, struct device *self, void *aux)
 }
 
 void
-acpiac_refresh(void *arg)
+acpiac_refresh(void *arg, int arg1)
 {
 	struct acpiac_softc *sc = arg;
 
@@ -136,8 +137,15 @@ acpiac_notify(struct aml_node *node, int notify_type, void *arg)
 		 */
 		/* FALLTHROUGH */
 	case 0x80:
-		acpiac_refresh(sc);
+		acpiac_refresh(sc, 0);
 		dnprintf(10, "A/C status: %d\n", sc->sc_ac_stat);
+
+		/*
+		 * In case the EC update comes after the Notify, update again
+		 * in a little bit.
+		 */
+		tsleep(&sc, PWAIT, "acpiac", (1000 * hz) / 1000); /* 1 sec */
+		acpi_addtask(sc->sc_acpi, acpiac_refresh, sc, 0);
 		break;
 	}
 	return (0);
