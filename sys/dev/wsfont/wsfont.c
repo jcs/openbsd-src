@@ -92,6 +92,10 @@
 #define HAVE_FONT 1
 #endif
 
+#ifdef FONT_COMIC_NEUE12x22
+#define HAVE_FONT 1
+#endif
+
 /*
  * Make sure we always have at least one font.
  * Unless otherwise configured, all platforms provide both a 8x16 font and a
@@ -103,7 +107,9 @@
 #define HAVE_FONT 1
 
 #define	FONT_BOLD8x16_ISO1
-#if defined(__alpha__) || defined(__luna88k__) || defined(__macppc__) || \
+#if defined(__amd64__) && !defined(SMALL_KERNEL)
+#define	FONT_COMIC_NEUE12x22
+#elif defined(__alpha__) || defined(__luna88k__) || defined(__macppc__) || \
     defined(__sgi__) || defined(__sparc64__) || \
     !defined(SMALL_KERNEL)
 #define	FONT_GALLANT12x22
@@ -117,6 +123,10 @@
 
 #ifdef FONT_GALLANT12x22
 #include <dev/wsfont/gallant12x22.h>
+#endif
+
+#ifdef FONT_COMIC_NEUE12x22
+#include <dev/wsfont/comic_neue_12x22.h>
 #endif
 
 struct font {
@@ -162,6 +172,9 @@ static struct font builtin_fonts[] = {
 #endif
 #ifdef FONT_OMRON12x20
 	BUILTIN_FONT(omron12x20, 10),
+#endif
+#ifdef FONT_COMIC_NEUE12x22
+	BUILTIN_FONT(comic_neue_12x22, 12),
 #endif
 #undef BUILTIN_FONT
 };

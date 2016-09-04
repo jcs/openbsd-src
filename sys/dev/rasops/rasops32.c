@@ -102,16 +102,57 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 		fr = (u_char *)ri->ri_font->data + uc * ri->ri_fontscale;
 		fs = ri->ri_font->stride;
 
-		while (height--) {
-			dp = rp;
-			fb = fr[3] | (fr[2] << 8) | (fr[1] << 16) |
-			    (fr[0] << 24);
-			fr += fs;
-			DELTA(rp, ri->ri_stride, int32_t *);
+		if (ri->ri_font->stride == width) {
+			/* alpha map */
+			int r, g, b, aval;
+			int r1, g1, b1, r0, g0, b0;
 
-			for (cnt = width; cnt; cnt--) {
-				*dp++ = clr[(fb >> 31) & 1];
-				fb <<= 1;
+			r0 = (clr[0] >> 16) & 0xff;
+			r1 = (clr[1] >> 16) & 0xff;
+			g0 = (clr[0] >> 8) & 0xff;
+			g1 = (clr[1] >> 8) & 0xff;
+			b0 =  clr[0] & 0xff;
+			b1 =  clr[1] & 0xff;
+
+			while (height--) {
+				dp = rp;
+				fr += fs;
+				DELTA(rp, ri->ri_stride, int32_t *);
+
+				for (cnt = width; cnt; cnt--) {
+					aval = *fr;
+					if (aval == 0) {
+						*dp++ = clr[0];
+					} else if (aval == 255) {
+						*dp++ = clr[1];
+					} else {
+						r = aval * r1 +
+						    (255 - aval) * r0;
+						g = aval * g1 +
+						    (255 - aval) * g0;
+						b = aval * b1 +
+						    (255 - aval) * b0;
+						*dp++ = (r & 0xff00) << 8 |
+						      (g & 0xff00) |
+						      (b & 0xff00) >> 8;
+					}
+					fr++;
+				}
+				fr -= width;
+			}
+		} else {
+			/* mono font */
+			while (height--) {
+				dp = rp;
+				fb = fr[3] | (fr[2] << 8) | (fr[1] << 16) |
+				    (fr[0] << 24);
+				fr += fs;
+				DELTA(rp, ri->ri_stride, int32_t *);
+
+				for (cnt = width; cnt; cnt--) {
+					*dp++ = clr[(fb >> 31) & 1];
+					fb <<= 1;
+				}
 			}
 		}
 	}
