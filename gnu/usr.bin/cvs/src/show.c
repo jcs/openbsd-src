@@ -37,9 +37,9 @@ show(int argc, char **argv)
 	if ((commitid = commitid_find(tcommitid)) == NULL)
 		error(1, 0, "commitid not found: %s", tcommitid);
 
-	if (commitid->parent != NULL) {
-		cvs_output("Parent:  ", 0);
-		cvs_output(commitid->parent, 0);
+	if (commitid->previous != NULL) {
+		cvs_output("Previous: ", 0);
+		cvs_output(commitid->previous, 0);
 		cvs_output("\n", 1);
 	}
 

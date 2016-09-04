@@ -852,6 +852,8 @@ init (argc, argv)
     char *info_v;
     /* Exit status.  */
     int err;
+    CommitId *genesis, *rootcommit;
+    char *genline;
 
     const struct admin_file *fileptr;
 
@@ -891,13 +893,26 @@ init (argc, argv)
     /* Make Emptydir so it's there if we need it */
     mkdir_if_needed (CVSNULLREPOS);
 
-    /* create genesis commitid for CVSROOT */
-    commitid_generate(NULL);
-
     /* 80 is long enough for all the administrative file names, plus
        "/" and so on.  */
     info = xmalloc (strlen (adm) + 80);
     info_v = xmalloc (strlen (adm) + 80);
+
+    /* create random genesis hash on which to start our initial CVSROOT admin
+     * file commits */
+    genesis = commitid_gen_start(0);
+    commitid_gen_add_rand(genesis, 100);
+    commitid_gen_final(genesis);
+
+    genline = xmalloc(10 + strlen(genesis->commitid));
+    snprintf(genline, 10 + strlen(genesis->commitid), "Parent: %s\n",
+        genesis->commitid);
+    printf("%s", genline);
+
+    /* run through the file list once to write the contents of our files to
+     * hash, then we'll write out rcs versions once we have the commitid */
+    rootcommit = commitid_gen_start(1);
+    commitid_gen_add_buf(rootcommit, genline, strlen(genline));
     for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
     {
 	if (fileptr->contents == NULL)
@@ -913,8 +928,6 @@ init (argc, argv)
 	    ;
 	else
 	{
-	    int retcode;
-
 	    if (!isfile (info))
 	    {
 		FILE *fp;
@@ -927,6 +940,29 @@ init (argc, argv)
 		if (fclose (fp) < 0)
 		    error (1, errno, "cannot close %s", info);
 	    }
+	}
+
+	commitid_gen_add_file(rootcommit, info);
+    }
+
+    commitid_gen_final(rootcommit);
+
+    global_session_id = rootcommit->commitid;
+
+    for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
+    {
+	if (fileptr->contents == NULL)
+	    continue;
+	strcpy (info, adm);
+	strcat (info, "/");
+	strcat (info, fileptr->filename);
+	strcpy (info_v, info);
+	strcat (info_v, RCSEXT);
+
+	if (!isfile (info_v))
+	{
+	    int retcode;
+
 	    /* The message used to say " of " and fileptr->filename after
 	       "initial checkin" but I fail to see the point as we know what
 	       file it is from the name.  */
@@ -982,7 +1018,6 @@ init (argc, argv)
 
     /* Write out initial commitids-CVSROOT file.  The user can remove the file
        to disable forward-hashing. */
-    /* TODO: move this to a db file? */
     strcpy (info, adm);
     strcat (info, "/");
     strcat (info, CVSROOTADM_COMMITIDS);
@@ -992,8 +1027,9 @@ init (argc, argv)
 	FILE *fp;
 
 	fp = open_file (info, "w");
-	fprintf(fp, "%s", global_session_id);
+	fprintf(fp, "%s\n", genesis->commitid);
 
+	fprintf(fp, "%s", global_session_id);
 	for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
 	{
 		if (fileptr->contents == NULL)
@@ -1014,6 +1050,9 @@ init (argc, argv)
 
     free (info);
     free (info_v);
+
+    commitid_free(rootcommit);
+    commitid_free(genesis);
 
     mkmodules (adm);
 

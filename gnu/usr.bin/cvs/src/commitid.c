@@ -1,7 +1,6 @@
 #include "cvs.h"
 
 #include <sys/types.h>
-#include <sha2.h>
 #include <assert.h>
 
 char *
@@ -60,17 +59,18 @@ commitid_parse(char *id)
 {
 	CommitId *out;
 	unsigned int version;
-	char hash[SHA256_DIGEST_LENGTH * 2];
+	char hash[COMMITID_HASH_LENGTH];
 	unsigned long changeset = 0;
-	char fmt[13];
+	char fmt[20];
 	int res;
 
 	if (strlen(id) != COMMITID_LENGTH)
 		return NULL;
 
-	/* %1u%64s%07lu */
-	snprintf(fmt, 13, "%%1u%%%ds%%0%dlu",
-	    (SHA256_DIGEST_LENGTH * 2), COMMITID_CHANGESET_LENGTH);
+	/* %04u%64s%07lu */
+	snprintf(fmt, sizeof(fmt), "%%0%du%%%ds%%0%dlu",
+	    COMMITID_VERSION_LENGTH, COMMITID_HASH_LENGTH,
+	    COMMITID_CHANGESET_LENGTH);
 
 	res = sscanf(id, fmt, &version, &hash, &changeset);
 	if (res != 3) {
@@ -172,9 +172,9 @@ commitid_find(char *findid)
 			retid = tmpid;
 
 			if (previd)
-				retid->parent = xstrdup(previd->commitid);
+				retid->previous = xstrdup(previd->commitid);
 			else
-				retid->parent = NULL;
+				retid->previous = NULL;
 
 			retid->files = getlist();
 
@@ -201,6 +201,7 @@ commitid_find(char *findid)
 	return retid;
 }
 
+#if 0
 void
 commitid_generate(uint8_t *hash)
 {
@@ -246,4 +247,92 @@ commitid_generate(uint8_t *hash)
 	    global_session_id, changeset);
 
 	assert(strlen(global_session_id) == COMMITID_LENGTH);
+}
+#endif
+
+CommitId *
+commitid_gen_start(unsigned long changeset)
+{
+	CommitId *out;
+
+	out = xmalloc(sizeof(CommitId));
+	out->version = COMMITID_VERSION;
+	out->hash = xmalloc((SHA256_DIGEST_LENGTH * 2) + 1);
+	out->changeset = changeset;
+	out->commitid = xmalloc(COMMITID_LENGTH + 1);
+
+	SHA256Init(&out->sha_ctx);
+
+	return out;
+}
+
+int
+commitid_gen_add_file(CommitId *id, char *filename)
+{
+	FILE *fp;
+	size_t line_len = 8192;
+	char *line = xmalloc(line_len);
+	int nread;
+
+	/* XXX: this needs to do a diff of the new file, not the raw file */
+
+	fp = open_file(filename, "r");
+
+	while ((nread = fread(line, 1, line_len, fp)) > 0)
+		SHA256Update(&id->sha_ctx, line, nread);
+
+	if (ferror(fp))
+	    error(1, errno, "cannot read %s", filename);
+
+	fclose(fp);
+
+	return 1;
+}
+
+int
+commitid_gen_add_buf(CommitId *id, uint8_t *buf, size_t len)
+{
+	SHA256Update(&id->sha_ctx, buf, len);
+
+	return 1;
+}
+
+int
+commitid_gen_add_rand(CommitId *id, size_t len)
+{
+    char *rbuf = xmalloc(100);
+    arc4random_buf(rbuf, 100);
+    commitid_gen_add_buf(id, rbuf, 100);
+    free(rbuf);
+
+    return 1;
+}
+
+int
+commitid_gen_final(CommitId *id)
+{
+	uint8_t *thash = xmalloc((SHA256_DIGEST_LENGTH * 2) + 1);
+	char fmt[20];
+	int i;
+
+	SHA256Final(thash, &id->sha_ctx);
+
+	/* digest to hex */
+	for (i = 0; i < SHA256_DIGEST_LENGTH; i++)
+		snprintf(id->hash, ((i * 2) + 2 + 1), "%s%02x", id->hash,
+		    thash[i]);
+
+	free(thash);
+
+	/* %04u%64s%07lu */
+	snprintf(fmt, sizeof(fmt), "%%0%du%%%ds%%0%dlu",
+	    COMMITID_VERSION_LENGTH, COMMITID_HASH_LENGTH,
+	    COMMITID_CHANGESET_LENGTH);
+
+	snprintf(id->commitid, COMMITID_LENGTH + 1, fmt, id->version,
+	    id->hash, id->changeset);
+
+	assert(strlen(id->commitid) == COMMITID_LENGTH);
+
+	return 1;
 }
