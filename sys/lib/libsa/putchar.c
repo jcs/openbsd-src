@@ -66,3 +66,11 @@ putchar(int c)
 		break;
 	}
 }
+
+#ifndef HAVE_COLORCHAR
+void
+colorchar(int c, int bg, int fg)
+{
+	putchar(c);
+}
+#endif
