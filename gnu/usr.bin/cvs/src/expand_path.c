@@ -287,7 +287,12 @@ expand_variable (name, file, line)
     else if (strcmp (name, "USER") == 0)
 	return getcaller ();
     else if (strcmp (name, "SESSIONID") == 0 || strcmp (name, "COMMITID") == 0)
-	return global_session_id;
+    {
+        if (global_commitid != NULL && global_commitid->commitid != NULL)
+	    return global_commitid->commitid;
+	else
+	    return NULL;
+    }
     else if (isalpha ((unsigned char) name[0]))
     {
 	/* These names are reserved for future versions of CVS,

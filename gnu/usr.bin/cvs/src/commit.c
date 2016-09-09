@@ -329,6 +329,7 @@ commit (argc, argv)
     int c;
     int err = 0;
     int local = 0;
+    char *repo;
 
     if (argc == -1)
 	usage (commit_usage);
@@ -641,6 +642,21 @@ commit (argc, argv)
 #endif
 
     /*
+     * If we have a commitids file, fetch the last id and setup a new one
+     */
+    repo = commitid_repo_base();
+    if (commitid_logging(repo))
+    {
+        CommitId *id;
+
+	if ((id = commitid_find(repo, NULL)) == NULL)
+	    error (1, 0, "failed fetching last commitid");
+
+	global_commitid = commitid_gen_start(repo, id->changeset + 1);
+	global_commitid->previous = xstrdup(id->commitid);
+    }
+
+    /*
      * Run the recursion processor to verify the files are all up-to-date
      */
     err = start_recursion (check_fileproc, check_filesdoneproc,
@@ -653,21 +669,6 @@ commit (argc, argv)
     }
 
     /*
-     * If we have a commitids file, fetch the last id
-     */
-    if (commitids_logging(NULL))
-    {
-        CommitId *id;
-
-	if ((id = commitid_find(NULL, NULL)) == NULL)
-	    error (1, 0, "failed fetching last commitid");
-
-	printf("commit id %s\n", id->commitid);
-
-	//exit(1);
-    }
-
-    /*
      * Run the recursion processor to commit the files
      */
     write_dirnonbranch = 0;
@@ -676,6 +677,18 @@ commit (argc, argv)
 			       commit_direntproc, commit_dirleaveproc, NULL,
 			       argc, argv, local, W_LOCAL, aflag, 0,
 			       (char *) NULL, 1);
+
+    {
+	Node *head, *fn;
+	int didlog = 0;
+
+	printf("file change log:\n");
+
+	head = global_commitid->files->list;
+	for (fn = head->next; fn != head; fn = fn->next) {
+		printf("file %s = %s\n", fn->key, fn->data);
+	}
+    }
 
     /*
      * Unlock all the dirs and clean up

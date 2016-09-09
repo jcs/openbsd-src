@@ -913,17 +913,18 @@ extern void cvs_flushout PROTO ((void));
 extern void cvs_output_tagged PROTO ((char *, char *));
 
 
-extern char *global_session_id;
-
 #include "commitid.h"
 
+extern struct commitid *global_commitid;
+
 extern CommitId *commitid_gen_start PROTO ((char *, unsigned long));
-extern int commitid_gen_add_diff PROTO ((CommitId *, char *, char *, char *));
 extern int commitid_gen_add_buf PROTO ((CommitId *, uint8_t *, size_t));
+extern void commitid_gen_add_diff PROTO ((CommitId *, char *, char *, char *));
 extern int commitid_gen_add_rand PROTO((CommitId *, size_t));
 extern void commitid_gen_add_show PROTO((CommitId *));
 extern int commitid_gen_final PROTO ((CommitId *));
 
-extern char *commitids_filename PROTO ((char *));
-extern int commitids_logging PROTO ((char *));
+extern char *commitid_repo_base PROTO ((void));
+extern char *commitid_filename PROTO ((char *));
+extern int commitid_logging PROTO ((char *));
 extern CommitId *commitid_find PROTO ((char *, char *));

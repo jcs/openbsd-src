@@ -120,6 +120,10 @@ Checkin (type, finfo, rcs, rev, tag, options, message)
 	    history_write (type, NULL, vers->vn_rcs,
 			   finfo->file, finfo->repository);
 
+	    if (global_commitid != NULL)
+	        commitid_gen_add_diff(global_commitid, finfo->fullname,
+	    	    oldrev, vers->vn_rcs);
+
 	    if (tocvsPath)
 		if (unlink_file_dir (tocvsPath) < 0)
 		    error (0, errno, "cannot remove %s", tocvsPath);

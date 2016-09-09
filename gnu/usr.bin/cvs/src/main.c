@@ -25,7 +25,7 @@ char *program_name;
 char *program_path;
 char *command_name;
 
-char *global_session_id; /* commitid */
+struct commitid *global_commitid = NULL;
 
 /* I'd dynamically allocate this, but it seems like gethostname
    requires a fixed size array.  If I'm remembering the RFCs right,

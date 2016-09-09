@@ -566,8 +566,6 @@ write_lock (lock)
 			(long) getpid());
     }
 
-    printf("//write_lock: %s\n", writelock);
-
     /* make sure the lock dir is ours (not necessarily unique to us!) */
     status = set_lock (lock, 0);
     if (status == L_OK)

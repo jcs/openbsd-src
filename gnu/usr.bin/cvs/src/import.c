@@ -1198,8 +1198,9 @@ add_rcs_file (message, rcs, user, add_vhead, key_opt,
 	if (fprintf (fprcs, "next     ;\012") < 0)
 	    goto write_error;
 
-	if (global_session_id != NULL) {
-	    if (fprintf (fprcs, "commitid        %s;\012", global_session_id) < 0)
+	if (global_commitid != NULL && global_commitid->commitid != NULL) {
+	    if (fprintf (fprcs, "commitid        %s;\012",
+	        global_commitid->commitid) < 0)
 	        goto write_error;
 	}
 
@@ -1258,9 +1259,12 @@ userfile);
 		fprintf (fprcs, "date     %s;  author %s;  state Exp;\012",
 			 altdate1, author) < 0 ||
 		fprintf (fprcs, "branches ;\012") < 0 ||
-		fprintf (fprcs, "next     ;\012") < 0 ||
-		fprintf (fprcs, "commitid        %s;\012", global_session_id) < 0
+		fprintf (fprcs, "next     ;\012") < 0
 		)
+		goto write_error;
+	
+	    if (global_commitid != NULL && global_commitid->commitid != NULL
+	    && fprintf (fprcs, "commitid        %s;\012", global_commitid->commitid) < 0)
 		goto write_error;
 
 #ifdef PRESERVE_PERMISSIONS_SUPPORT

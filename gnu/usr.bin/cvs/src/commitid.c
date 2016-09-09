@@ -4,7 +4,27 @@
 #include <assert.h>
 
 char *
-commitids_filename(char *repo)
+commitid_repo_base(void)
+{
+	char *repo = Short_Repository(Name_Repository(NULL, NULL));
+	char *slash;
+
+	slash = strchr(repo, '/');
+	if (slash)
+		*slash = '\0';
+
+	/*
+	 * this could happen if someone committed to two root-level dirs at
+	 * once, which we don't want anyway.
+	 */
+	if (repo[0] == '\0')
+		error(1, 0, "invalid repo base");
+
+	return repo;
+}
+
+char *
+commitid_filename(char *repo)
 {
 	char *fn;
 
@@ -21,12 +41,12 @@ commitids_filename(char *repo)
 }
 
 int
-commitids_logging(char *repo)
+commitid_logging(char *repo)
 {
 	char *fn;
 	int res;
 
-	fn = commitids_filename(repo);
+	fn = commitid_filename(repo);
 
 	res = isfile(fn) && isreadable(fn);
 
@@ -41,10 +61,10 @@ commitid_logfile(char *repo)
 	FILE *fp;
 	struct stat st;
 
-	if (!commitids_logging(repo))
+	if (!commitid_logging(repo))
 		return NULL;
 
-	fn = commitids_filename(repo);
+	fn = commitid_filename(repo);
 
 	if ((fp = fopen(fn, "r")) < 0)
 		error(1, errno, "can't read %s", fn);
@@ -90,6 +110,7 @@ commitid_parse(char *repo, char *id)
 	out->hash = xstrdup(hash);
 	out->changeset = changeset;
 	out->repo = xstrdup(repo);
+	out->files = getlist();
 
 	out->genesis = (out->changeset == 0);
 
@@ -212,8 +233,6 @@ commitid_find(char *repo, char *findid)
 			else
 				retid->previous = NULL;
 
-			retid->files = getlist();
-
 			while ((file = strsep(&files, "\t")) != NULL) {
 				Node *f;
 				char r1[15], r2[15];
@@ -278,6 +297,7 @@ commitid_gen_start(char *repo, unsigned long changeset)
 	out->hash = xmalloc((SHA256_DIGEST_LENGTH * 2) + 1);
 	out->changeset = changeset;
 	out->commitid = xmalloc(COMMITID_LENGTH + 1);
+	out->files = getlist();
 
 	SHA256Init(&out->sha_ctx);
 
@@ -299,11 +319,11 @@ _commitid_gen_add_output_hash(const char *str, size_t len)
 }
 
 void
-commitid_gen_add_show(CommitId *commitid)
+commitid_gen_add_show(CommitId *id)
 {
-	_cur_capture_commitid = commitid;
+	_cur_capture_commitid = id;
 	cvs_output_capture = _commitid_gen_add_output_hash;
-	show_commitid(commitid);
+	show_commitid(id);
 	_cur_capture_commitid = NULL;
 }
 
@@ -313,6 +333,23 @@ commitid_gen_add_buf(CommitId *id, uint8_t *buf, size_t len)
 	SHA256Update(&id->sha_ctx, buf, len);
 
 	return 1;
+}
+
+void
+commitid_gen_add_diff(CommitId *id, char *filename, char *r1, char *r2)
+{
+	char *revs = xmalloc(32);
+	Node *f;
+
+	if (findnode(id->files, filename))
+		error(1, 0, "file %s already exists in file list\n",
+		    filename);
+
+	f = getnode();
+	f->key = xstrdup(filename);
+	snprintf(revs, 32, "%s:%s", r1, r2);
+	f->data = revs;
+	addnode(id->files, f);
 }
 
 int

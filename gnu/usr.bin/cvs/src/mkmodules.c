@@ -952,12 +952,10 @@ init (argc, argv)
 				    NULL, NULL, 0, NULL,
 
 				    NULL, 0, NULL);
-	    if (retcode == 0) {
-	    	Node *f = getnode();
-		f->key = xstrdup(fileptr->filename);
-		f->data = xstrdup("1.1.1.1:1.1");
-		addnode(rootcommit->files, f);
-	    } else
+	    if (retcode == 0)
+		commitid_gen_add_diff(rootcommit, fileptr->filename, "1.1.1.1",
+			"1.1");
+	    else
 		/* add_rcs_file already printed an error message.  */
 		err = 1;
 	}

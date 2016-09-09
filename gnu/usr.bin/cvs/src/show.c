@@ -11,7 +11,7 @@ static const char *const show_usage[] = {
 int
 show(int argc, char **argv)
 {
-	char *tcommitid = NULL, *repo;
+	char *tcommitid, *repo;
 	CommitId *commitid;
 
 	if (argc == 2) {
@@ -36,8 +36,7 @@ show(int argc, char **argv)
 	}
 #endif
 
-	repo = Short_Repository(Name_Repository(NULL, NULL));
-
+	repo = commitid_repo_base();
 	if ((commitid = commitid_find(repo, tcommitid)) == NULL)
 		error(1, 0, "commitid not found: %s", tcommitid);
 
@@ -56,6 +55,8 @@ show(int argc, char **argv)
 	cvs_output("Commitid: ", 0);
 	cvs_output(commitid->commitid, 0);
 	cvs_output("\n", 1);
+
+	free(repo);
 
 	return show_commitid(commitid, 0);
 }
