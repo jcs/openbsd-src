@@ -655,11 +655,11 @@ commit (argc, argv)
     /*
      * If we have a commitids file, fetch the last id
      */
-    if (commitids_logging())
+    if (commitids_logging(NULL))
     {
         CommitId *id;
 
-	if ((id = commitid_find(NULL)) == NULL)
+	if ((id = commitid_find(NULL, NULL)) == NULL)
 	    error (1, 0, "failed fetching last commitid");
 
 	printf("commit id %s\n", id->commitid);

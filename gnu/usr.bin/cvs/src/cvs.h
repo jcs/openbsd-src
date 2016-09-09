@@ -191,7 +191,7 @@ extern int errno;
 #define CVSROOTADM_WRITERS	"writers"
 #define CVSROOTADM_PASSWD	"passwd"
 #define CVSROOTADM_CONFIG	"config"
-#define CVSROOTADM_COMMITIDS	"commitids"
+#define CVSROOTADM_COMMITIDS	"commitids-"
 
 #define CVSNULLREPOS		"Emptydir"	/* an empty directory */
 
@@ -904,6 +904,7 @@ extern int show PROTO((int argc, char **argv));
 #include "server.h"
 
 /* From server.c and documented there.  */
+void (*cvs_output_capture) PROTO ((const char *, size_t));
 extern void cvs_output PROTO ((const char *, size_t));
 extern void cvs_output_binary PROTO ((char *, size_t));
 extern void cvs_outerr PROTO ((const char *, size_t));
@@ -916,12 +917,13 @@ extern char *global_session_id;
 
 #include "commitid.h"
 
-extern CommitId *commitid_gen_start PROTO ((unsigned long));
-extern int commitid_gen_add_file PROTO ((CommitId *, char *));
+extern CommitId *commitid_gen_start PROTO ((char *, unsigned long));
+extern int commitid_gen_add_diff PROTO ((CommitId *, char *, char *, char *));
 extern int commitid_gen_add_buf PROTO ((CommitId *, uint8_t *, size_t));
 extern int commitid_gen_add_rand PROTO((CommitId *, size_t));
+extern void commitid_gen_add_show PROTO((CommitId *));
 extern int commitid_gen_final PROTO ((CommitId *));
 
-extern char *commitids_filename PROTO ((void));
-extern int commitids_logging PROTO ((void));
-extern CommitId *commitid_find PROTO ((char *));
+extern char *commitids_filename PROTO ((char *));
+extern int commitids_logging PROTO ((char *));
+extern CommitId *commitid_find PROTO ((char *, char *));

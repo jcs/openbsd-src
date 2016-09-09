@@ -6491,6 +6491,12 @@ cvs_output (str, len)
 {
     if (len == 0)
 	len = strlen (str);
+
+    if (cvs_output_capture) {
+	(cvs_output_capture)(str, len);
+	return;
+    }
+
 #ifdef SERVER_SUPPORT
     if (error_use_protocol)
     {

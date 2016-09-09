@@ -853,6 +853,7 @@ init (argc, argv)
     /* Exit status.  */
     int err;
     CommitId *genesis, *rootcommit;
+    Node *head, *fn;
     char *genline;
 
     const struct admin_file *fileptr;
@@ -900,19 +901,17 @@ init (argc, argv)
 
     /* create random genesis hash on which to start our initial CVSROOT admin
      * file commits */
-    genesis = commitid_gen_start(0);
+    /* TODO: support taking this hash from a command arg to 'cvs init' */
+    genesis = commitid_gen_start(CVSROOTADM, 0);
     commitid_gen_add_rand(genesis, 100);
     commitid_gen_final(genesis);
 
-    genline = xmalloc(10 + strlen(genesis->commitid));
-    snprintf(genline, 10 + strlen(genesis->commitid), "Parent: %s\n",
-        genesis->commitid);
-    printf("%s", genline);
+    /* create a new commitid that we'll later write back to the rcs files once
+     * we know the hash output */
+    rootcommit = commitid_gen_start(CVSROOTADM, 1);
+    rootcommit->files = getlist();
+    rootcommit->previous = xstrdup(genesis->commitid);
 
-    /* run through the file list once to write the contents of our files to
-     * hash, then we'll write out rcs versions once we have the commitid */
-    rootcommit = commitid_gen_start(1);
-    commitid_gen_add_buf(rootcommit, genline, strlen(genline));
     for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
     {
 	if (fileptr->contents == NULL)
@@ -928,6 +927,8 @@ init (argc, argv)
 	    ;
 	else
 	{
+	    int retcode;
+
 	    if (!isfile (info))
 	    {
 		FILE *fp;
@@ -940,28 +941,6 @@ init (argc, argv)
 		if (fclose (fp) < 0)
 		    error (1, errno, "cannot close %s", info);
 	    }
-	}
-
-	commitid_gen_add_file(rootcommit, info);
-    }
-
-    commitid_gen_final(rootcommit);
-
-    global_session_id = rootcommit->commitid;
-
-    for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
-    {
-	if (fileptr->contents == NULL)
-	    continue;
-	strcpy (info, adm);
-	strcat (info, "/");
-	strcat (info, fileptr->filename);
-	strcpy (info_v, info);
-	strcat (info_v, RCSEXT);
-
-	if (!isfile (info_v))
-	{
-	    int retcode;
 
 	    /* The message used to say " of " and fileptr->filename after
 	       "initial checkin" but I fail to see the point as we know what
@@ -973,10 +952,66 @@ init (argc, argv)
 				    NULL, NULL, 0, NULL,
 
 				    NULL, 0, NULL);
-	    if (retcode != 0)
+	    if (retcode == 0) {
+	    	Node *f = getnode();
+		f->key = xstrdup(fileptr->filename);
+		f->data = xstrdup("1.1.1.1:1.1");
+		addnode(rootcommit->files, f);
+	    } else
 		/* add_rcs_file already printed an error message.  */
 		err = 1;
 	}
+    }
+
+    /* now add hash of our 'show' output */
+    commitid_gen_add_show(rootcommit);
+    commitid_gen_final(rootcommit);
+
+    fprintf(stderr, "new final commitid is %s\n", rootcommit->commitid);
+
+    /* now that we have a final commitid, add it back to each file in this
+     * commit */
+    head = rootcommit->files->list;
+    for (fn = head->next; fn != head; fn = fn->next)
+    {
+	RCSNode *rcs;
+	RCSVers *delta;
+	Node *n;
+	char *rev;
+
+	strcpy (info_v, adm);
+	strcat (info_v, "/");
+	strcat (info_v, fn->key);
+	strcat (info_v, RCSEXT);
+	if (!isfile (info_v))
+	    continue;
+
+	rcs = RCS_parse (fn->key, adm);
+	if (rcs == NULL)
+	    error(1, 0, "can't find newly-added file %s in %s", fn->key, adm);
+
+	RCS_fully_parse (rcs);
+
+	rev = RCS_gettag (rcs, "1.1", 1, NULL);
+	if (rev == NULL)
+	    error (1, 0, "%s: no initial revision", rcs->path);
+
+	n = findnode (rcs->versions, rev);
+	delta = (RCSVers *) n->data;
+
+	if (delta->other_delta == NULL)
+    	    delta->other_delta = getlist();
+
+	n = getnode();
+	n->type = RCSFIELD;
+	n->key = xstrdup ("commitid");
+	n->data = xstrdup(rootcommit->commitid);
+	addnode (delta->other_delta, n);
+
+	RCS_rewrite (rcs, NULL, NULL);
+
+	free (rev);
+	free (n);
     }
 
     /* Turn on history logging by default.  The user can remove the file
@@ -1021,7 +1056,7 @@ init (argc, argv)
     strcpy (info, adm);
     strcat (info, "/");
     strcat (info, CVSROOTADM_COMMITIDS);
-    strcat (info, "-" CVSROOTADM);
+    strcat (info, CVSROOTADM);
     if (!isfile (info))
     {
 	FILE *fp;
@@ -1029,13 +1064,13 @@ init (argc, argv)
 	fp = open_file (info, "w");
 	fprintf(fp, "%s\n", genesis->commitid);
 
-	fprintf(fp, "%s", global_session_id);
+	fprintf(fp, "%s", rootcommit->commitid);
 	for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
 	{
 		if (fileptr->contents == NULL)
 	    	    continue;
 
-		fprintf(fp, "\t%s", fileptr->filename);
+		fprintf(fp, "\t1.1.1.1:1.1:%s", fileptr->filename);
 	}
 	fprintf(fp, "\n");
 

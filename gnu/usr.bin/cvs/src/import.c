@@ -1198,8 +1198,10 @@ add_rcs_file (message, rcs, user, add_vhead, key_opt,
 	if (fprintf (fprcs, "next     ;\012") < 0)
 	    goto write_error;
 
-	if (fprintf (fprcs, "commitid        %s;\012", global_session_id) < 0)
-	    goto write_error;
+	if (global_session_id != NULL) {
+	    if (fprintf (fprcs, "commitid        %s;\012", global_session_id) < 0)
+	        goto write_error;
+	}
 
 #ifdef PRESERVE_PERMISSIONS_SUPPORT
 	/* Store initial permissions if necessary. */

@@ -233,7 +233,7 @@ static const char *const cmd_usage[] =
 #ifdef SERVER_SUPPORT
     "        server       Server mode\n",
 #endif
-    "        show         Display changeset by commitid\n",
+    "        show         Display changeset by commitid or changeset\n",
     "        status       Display status information on checked out files\n",
     "        tag          Add a symbolic tag to checked out version of files\n",
     "        unedit       Undo an edit command\n",

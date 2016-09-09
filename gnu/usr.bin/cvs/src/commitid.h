@@ -9,13 +9,16 @@
 					    COMMITID_CHANGESET_LENGTH)
 
 struct commitid {
+	char *repo;
+	char *previous;
+
 	char *commitid;
 	int version;
 	char *hash;
 	unsigned long changeset;
-	List *files;
 
-	char *previous;
+	/* hash of files changed, key=filename, val=r1:r2 */
+	List *files;
 
 	int genesis;
 

@@ -11,10 +11,8 @@ static const char *const show_usage[] = {
 int
 show(int argc, char **argv)
 {
-	char *tcommitid = NULL;
+	char *tcommitid = NULL, *repo;
 	CommitId *commitid;
-	Node *head, *fn;
-	int didlog = 0;
 
 	if (argc == 2) {
 		if (strcmp(argv[1], "genesis") == 0)
@@ -38,7 +36,9 @@ show(int argc, char **argv)
 	}
 #endif
 
-	if ((commitid = commitid_find(tcommitid)) == NULL)
+	repo = Short_Repository(Name_Repository(NULL, NULL));
+
+	if ((commitid = commitid_find(repo, tcommitid)) == NULL)
 		error(1, 0, "commitid not found: %s", tcommitid);
 
 	if (commitid->previous == NULL && !commitid->genesis)
@@ -51,15 +51,24 @@ show(int argc, char **argv)
 		cvs_output("\n", 1);
 
 		return 0;
-	} else {
-		cvs_output("Previous: ", 0);
-		cvs_output(commitid->previous, 0);
-		cvs_output("\n", 1);
-
-		cvs_output("Commitid: ", 0);
-		cvs_output(commitid->commitid, 0);
-		cvs_output("\n", 1);
 	}
+
+	cvs_output("Commitid: ", 0);
+	cvs_output(commitid->commitid, 0);
+	cvs_output("\n", 1);
+
+	return show_commitid(commitid, 0);
+}
+
+int
+show_commitid(CommitId *commitid)
+{
+	Node *head, *fn;
+	int didlog = 0;
+
+	cvs_output("Previous: ", 0);
+	cvs_output(commitid->previous, 0);
+	cvs_output("\n", 1);
 
 	/*
 	 * walk changeset file list, find the commitid revision in each file
@@ -70,32 +79,11 @@ show(int argc, char **argv)
 	for (fn = head->next; fn != head; fn = fn->next) {
 		Node *revhead, *rev, *p;
 		RCSNode *rcsfile;
-    		char *repo = Name_Repository(NULL, NULL);
 		RCSVers *ver;
 		char *thisver, *prevver;
-		char *diffargs[] = { "diff", "-uNp", "-r", "-r", "" };
+		char *diffargs[] = { "rdiff", "-u", "-r", "-r", "" };
 
-		rcsfile = RCS_parse(fn->key, repo);
-		if (rcsfile == NULL)
-			error(1, 0, "can't find file %s in %s", fn->key, repo);
-
-		RCS_fully_parse(rcsfile);
-
-		revhead = rcsfile->versions->list;
-		rev = revhead->next;
-		ver = (RCSVers *)rev->data;
-
-		if (rev == revhead)
-			error(1, 0, "%s: no previous version to %s",
-			    fn->key, ver->version);
-
-		p = findnode(ver->other_delta, "commitid");
-		if (p == NULL || !p->data)
-			continue;
-
-		if (strcmp(commitid->commitid, p->data) != 0)
-			continue;
-
+#if 0
 		if (!didlog) {
 			int year, mon, mday, hour, min, sec;
 			char buf[1024];
@@ -143,13 +131,20 @@ show(int argc, char **argv)
 		 */
 		thisver = xstrdup(ver->version);
 
-		rev = rev->next;
+		rev = rev->nnnn;
 		if (rev == revhead)
 			/* end of the line, generated from nothing */
 			prevver = xstrdup("0");
 		else {
 			ver = (RCSVers *)rev->data;
 			prevver = xstrdup(ver->version);
+		}
+#endif
+
+		thisver = xstrdup(fn->data);
+		if ((prevver = strsep(&thisver, ":")) == NULL) {
+			free(thisver);
+			error(1, 0, "can't find versions in %s\n", fn->data);
 		}
 
 		diffargs[2] = xmalloc(2 + strlen(prevver));
@@ -158,15 +153,16 @@ show(int argc, char **argv)
 		diffargs[3] = xmalloc(2 + strlen(thisver));
 		sprintf(diffargs[3], "-r%s", thisver);
 
-		diffargs[4] = xstrdup(fn->key);
+		diffargs[4] = xmalloc(strlen(commitid->repo) + 1 +
+		    strlen(fn->key));
+		sprintf(diffargs[4], "%s/%s", commitid->repo, fn->key);
 
-		diff(sizeof(diffargs) / sizeof(diffargs[0]), diffargs);
+		patch(sizeof(diffargs) / sizeof(diffargs[0]), diffargs);
 
 		free(diffargs[4]);
 		free(diffargs[3]);
 		free(diffargs[2]);
 		free(prevver);
-		free(thisver);
 	}
 
 	return 0;

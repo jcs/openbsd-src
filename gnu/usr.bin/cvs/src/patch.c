@@ -69,6 +69,23 @@ patch (argc, argv)
     int err = 0;
     DBM *db;
 
+    /* reinit */
+    force_tag_match = 1;
+    patch_short = 0;
+    toptwo_diffs = 0;
+    local = 0;
+    options = NULL;
+    rev1 = NULL;
+    rev1_validated = 0;
+    rev2 = NULL;
+    rev2_validated = 0;
+    date1 = NULL;
+    date2 = NULL;
+    tmpfile1 = NULL;
+    tmpfile2 = NULL;
+    tmpfile3 = NULL;
+    unidiff = 0;
+
     if (argc == -1)
 	usage (patch_usage);
 
