@@ -32,6 +32,7 @@ Checkin (type, finfo, rcs, rev, tag, options, message)
     Vers_TS *vers;
     int set_time;
     char *tocvsPath = NULL;
+    char *oldrev;
 
     /* Hmm.  This message goes to stdout and the "foo,v  <--  foo"
        message from "ci" goes to stderr.  This doesn't make a whole
@@ -56,7 +57,7 @@ Checkin (type, finfo, rcs, rev, tag, options, message)
     if (finfo->rcs == NULL)
 	finfo->rcs = RCS_parse (finfo->file, finfo->repository);
 
-    switch (RCS_checkin (finfo->rcs, NULL, message, rev, RCS_FLAGS_KEEPFILE))
+    switch (RCS_checkin (finfo->rcs, NULL, message, &oldrev, rev, RCS_FLAGS_KEEPFILE))
     {
 	case 0:			/* everything normal */
 

@@ -726,7 +726,7 @@ add_rev (message, rcs, vfile, vers)
     tocvsPath = wrap_tocvs_process_file (vfile);
 
     status = RCS_checkin (rcs, tocvsPath == NULL ? vfile : tocvsPath,
-			  message, vbranch,
+			  message, NULL, vbranch,
 			  (RCS_FLAGS_QUIET | RCS_FLAGS_KEEPFILE
 			   | (use_file_modtime ? RCS_FLAGS_MODTIME : 0)));
     ierrno = errno;

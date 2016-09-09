@@ -4828,10 +4828,11 @@ RCS_addbranch (rcs, branch)
    or zero for success.  */
 
 int
-RCS_checkin (rcs, workfile, message, rev, flags)
+RCS_checkin (rcs, workfile, message, oldrev, rev, flags)
     RCSNode *rcs;
     char *workfile;
     char *message;
+    char **oldrev;
     char *rev;
     int flags;
 {
@@ -5080,6 +5081,10 @@ workfile);
 
 	if (!checkin_quiet)
 	    cvs_output ("done\n", 5);
+
+	if (oldrev != NULL)
+	    /* XXX: is this always right? */
+	    *oldrev = xstrdup("1.1.1.1");
 
 	status = 0;
 	goto checkin_done;
@@ -5423,6 +5428,9 @@ workfile);
 	cvs_output (commitpt->version, 0);
 	cvs_output ("\n", 1);
     }
+
+    if (oldrev != NULL)
+    	*oldrev = xstrdup(commitpt->version);
 
     RCS_rewrite (rcs, dtext, commitpt->version);
 
