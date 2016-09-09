@@ -16,8 +16,12 @@ show(int argc, char **argv)
 	Node *head, *fn;
 	int didlog = 0;
 
-	if (argc == 2)
-		tcommitid = xstrdup(argv[1]);
+	if (argc == 2) {
+		if (strcmp(argv[1], "genesis") == 0)
+			tcommitid = xstrdup("0");
+		else
+			tcommitid = xstrdup(argv[1]);
+	}
 	else if (argc < 1 || argc > 2)
 		usage (show_usage);
 

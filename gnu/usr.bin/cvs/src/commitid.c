@@ -114,22 +114,34 @@ commitid_find(char *findid)
 {
 	FILE *fp;
 	CommitId *tmpid = NULL, *retid = NULL, *previd = NULL;
-	char *line = NULL, *tab = NULL, *files;
+	char *line = NULL, *tab = NULL, *files, *ep;
+	const char *errstr;
 	ssize_t len;
 	size_t ps = 0;
-	int res = 0;
-	int genesis = 0;
+	long long findcs = -1;
+	int res = 0, genesis = 0, isint = 0, x;
 
 	fp = commitid_logfile();
 
 	if (findid != NULL && !strlen(findid))
 		findid = NULL;
 
+	if (findid != NULL && strlen(findid)) {
+		isint = 1;
+		for (x = 0; x < strlen(findid); x++)
+			if (!isdigit(findid[x]))
+				isint = 0;
+
+		if (isint) {
+			findcs = strtoul(findid, &ep, 10);
+			if (findid == ep || *ep != '\0')
+				findcs = -1;
+		}
+	}
+
 	/*
 	 * TODO: if we're asking for latest (findid == NULL), seek to the end
 	 * of the file and walk backwards
-	 *
-	 * TODO: if findid looks like a number, assume it's a changeset id
 	 */
 
 	while ((len = getline(&line, &ps, fp)) != -1) {
@@ -157,11 +169,14 @@ commitid_find(char *findid)
 		if ((tmpid = commitid_parse(line)) == NULL)
 			error(1, 0, "failed parsing commandid line %s", line);
 
-		if (findid == NULL)
-			/* want latest commitid */
+		if (findcs >= 0) {
+			/* match on changeset id */
+			if (tmpid->changeset == findcs)
+				res = 1;
+		} else if (findid == NULL)
+			/* keep matching to find latest commitid */
 			res = 1;
-		else if (strncmp(findid, tmpid->commitid,
-		    strlen(findid)) == 0) {
+		else if (strncmp(findid, tmpid->commitid, strlen(findid)) == 0) {
 			/*
 			 * need to go hunting - match on first part of commitid
 			 * chars, allowing for shortened unless it matches more
@@ -206,8 +221,9 @@ commitid_find(char *findid)
 				addnode(retid->files, f);
 			}
 
-			if (findid != NULL &&
-			    strlen(findid) == COMMITID_LENGTH)
+			if (findcs >= 0 ||
+			    (findid != NULL &&
+			    strlen(findid) == COMMITID_LENGTH))
 				/* no possible duplicates, finish early */
 				break;
 
