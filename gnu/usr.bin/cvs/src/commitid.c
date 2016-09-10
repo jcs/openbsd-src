@@ -237,8 +237,8 @@ commitid_find(char *repo, char *findid)
 				Node *f;
 				char r1[15], r2[15];
 				char *fname;
-				char *revs = xmalloc(32);
 				int ret;
+				CommitIdFile *cif;
 
 				if (*file == '\0')
 					break;
@@ -246,12 +246,14 @@ commitid_find(char *repo, char *findid)
 				fname = xmalloc(strlen(file));
 				if (sscanf(file, "%[^:]:%[^:]:%s", &r1, &r2,
 				    fname) != 3)
-					error(1, 0, "failed parsing %s", file);
-				snprintf(revs, 32, "%s:%s", r1, r2);
+					error(1, 0, "failed parsing commitid "
+					    "file spec %s", file);
 
 				f = getnode();
 				f->key = xstrdup(fname);
-				f->data = revs;
+				f->data = xmalloc(sizeof(CommitIdFile));
+				((CommitIdFile *)(f->data))->revision = xstrdup(r2);
+				((CommitIdFile *)(f->data))->prev_revision = xstrdup(r1);
 				addnode(retid->files, f);
 
 				free(fname);
@@ -336,10 +338,11 @@ commitid_gen_add_buf(CommitId *id, uint8_t *buf, size_t len)
 }
 
 void
-commitid_gen_add_diff(CommitId *id, char *filename, char *r1, char *r2)
+commitid_gen_add_diff(CommitId *id, char *filename, char *rcsfile, char *r1,
+    char *r2)
 {
-	char *revs = xmalloc(32);
 	Node *f;
+	CommitIdFile *cif;
 
 	if (findnode(id->files, filename))
 		error(1, 0, "file %s already exists in file list\n",
@@ -347,8 +350,11 @@ commitid_gen_add_diff(CommitId *id, char *filename, char *r1, char *r2)
 
 	f = getnode();
 	f->key = xstrdup(filename);
-	snprintf(revs, 32, "%s:%s", r1, r2);
-	f->data = revs;
+	f->data = xmalloc(sizeof(CommitIdFile));
+	cif = (CommitIdFile *)f->data;
+	cif->rcsfile = xstrdup(rcsfile);
+	cif->revision = xstrdup(r2);
+	cif->prev_revision = xstrdup(r1);
 	addnode(id->files, f);
 }
 
@@ -392,4 +398,81 @@ commitid_gen_final(CommitId *id)
 	assert(strlen(id->commitid) == COMMITID_LENGTH);
 
 	return 1;
+}
+
+void
+commitid_store(CommitId *id)
+{
+	FILE *fp;
+	Node *head, *fn, *n;
+	RCSNode *rcs;
+	RCSVers *delta;
+	char *rev;
+
+	head = id->files->list;
+	for (fn = head->next; fn != head; fn = fn->next) {
+		char *trcs, *tdir;
+
+		if (((CommitIdFile *)fn->data)->rcsfile == NULL)
+			error(1, 0, "can't store commitid for file %s "
+			    "without rcsfile", fn->key);
+
+		trcs = xstrdup(((CommitIdFile *)fn->data)->rcsfile);
+		tdir = strrchr(trcs, '/');
+		if (tdir != NULL)
+			*tdir = '\0';
+
+		rcs = RCS_parse(fn->key, trcs);
+		if (rcs == NULL)
+			error(1, 0, "can't find RCS file %s in %s", fn->key,
+			    trcs);
+
+		RCS_fully_parse(rcs);
+
+		rev = RCS_gettag(rcs, ((CommitIdFile *)fn->data)->revision, 1,
+		    NULL);
+		if (rev == NULL)
+			error (1, 0, "%s: no revision %s", rcs->path,
+			    ((CommitIdFile *)fn->data)->revision);
+
+		printf("adding commitid %s to rev %s of %s\n",
+			id->commitid, rev,
+			((CommitIdFile *)fn->data)->rcsfile);
+
+		n = findnode(rcs->versions, rev);
+		delta = (RCSVers *) n->data;
+
+		if (delta->other_delta == NULL)
+		    delta->other_delta = getlist();
+
+		if (n = findnode (delta->other_delta, "commitid"))
+			n->data = xstrdup(id->commitid);
+		else {
+			n = getnode();
+			n->type = RCSFIELD;
+			n->key = xstrdup("commitid");
+			n->data = xstrdup(id->commitid);
+			addnode(delta->other_delta, n);
+		}
+
+		RCS_rewrite(rcs, NULL, NULL);
+
+		free(rev);
+		free(n);
+	}
+
+	/* all written, append to repo-specific log */
+
+	fp = open_file(commitid_filename(id->repo), "a");
+	fprintf(fp, "%s", id->commitid);
+
+	head = id->files->list;
+	for (fn = head->next; fn != head; fn = fn->next) {
+		CommitIdFile *cif = (CommitIdFile *)fn->data;
+		fprintf(fp, "\t%s:%s:%s", cif->prev_revision,
+		    cif->revision, fn->key);
+	}
+
+	fprintf(fp, "\n");
+	fclose (fp);
 }

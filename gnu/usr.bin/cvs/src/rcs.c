@@ -4917,15 +4917,6 @@ RCS_checkin (rcs, workfile, message, oldrev, rev, flags)
 
     delta->other_delta = getlist();
 
-    /* save the commit ID */
-    if (global_commitid != NULL && global_commitid->commitid != NULL) {
-	np = getnode();
-	np->type = RCSFIELD;
-	np->key = xstrdup ("commitid");
-	np->data = xstrdup(global_commitid->commitid);
-	addnode (delta->other_delta, np);
-    }
-
 #ifdef PRESERVE_PERMISSIONS_SUPPORT
     /* If permissions should be preserved on this project, then
        save the permission info. */

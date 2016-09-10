@@ -678,23 +678,23 @@ commit (argc, argv)
 			       argc, argv, local, W_LOCAL, aflag, 0,
 			       (char *) NULL, 1);
 
-    {
-	Node *head, *fn;
-	int didlog = 0;
-
-	printf("file change log:\n");
-
-	head = global_commitid->files->list;
-	for (fn = head->next; fn != head; fn = fn->next) {
-		printf("file %s = %s\n", fn->key, fn->data);
-	}
-    }
-
     /*
      * Unlock all the dirs and clean up
      */
     Lock_Cleanup ();
     dellist (&mulist);
+
+    /* XXX: it would be nice to keep the lock until we're done with our show
+     * command, but we end up locking against ourself */
+    {
+	Node *head, *fn;
+	int didlog = 0;
+
+	/* now add hash of our 'show' output */
+	commitid_gen_add_show(global_commitid);
+ 	commitid_gen_final(global_commitid);
+ 	commitid_store(global_commitid);
+    }
 
 #ifdef SERVER_SUPPORT
     if (server_active)

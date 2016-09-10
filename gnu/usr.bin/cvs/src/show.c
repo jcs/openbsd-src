@@ -81,7 +81,6 @@ show_commitid(CommitId *commitid)
 		Node *revhead, *rev, *p;
 		RCSNode *rcsfile;
 		RCSVers *ver;
-		char *thisver, *prevver;
 		char *diffargs[] = { "rdiff", "-u", "-r", "-r", "" };
 
 #if 0
@@ -142,17 +141,13 @@ show_commitid(CommitId *commitid)
 		}
 #endif
 
-		thisver = xstrdup(fn->data);
-		if ((prevver = strsep(&thisver, ":")) == NULL) {
-			free(thisver);
-			error(1, 0, "can't find versions in %s\n", fn->data);
-		}
+		diffargs[2] = xmalloc(20);
+		snprintf(diffargs[2], 20, "-r%s",
+		    ((CommitIdFile *)(fn->data))->prev_revision);
 
-		diffargs[2] = xmalloc(2 + strlen(prevver));
-		sprintf(diffargs[2], "-r%s", prevver);
-
-		diffargs[3] = xmalloc(2 + strlen(thisver));
-		sprintf(diffargs[3], "-r%s", thisver);
+		diffargs[3] = xmalloc(20);
+		snprintf(diffargs[3], 20, "-r%s",
+		    ((CommitIdFile *)(fn->data))->revision);
 
 		diffargs[4] = xmalloc(strlen(commitid->repo) + 1 +
 		    strlen(fn->key));
@@ -163,7 +158,6 @@ show_commitid(CommitId *commitid)
 		free(diffargs[4]);
 		free(diffargs[3]);
 		free(diffargs[2]);
-		free(prevver);
 	}
 
 	return 0;

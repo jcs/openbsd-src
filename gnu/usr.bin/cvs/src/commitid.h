@@ -24,5 +24,12 @@ struct commitid {
 
 	SHA2_CTX sha_ctx;
 };
-
 typedef struct commitid CommitId;
+
+struct commitid_file {
+	char *rcsfile;
+
+	char *prev_revision;
+	char *revision;
+};
+typedef struct commitid_file CommitIdFile;
