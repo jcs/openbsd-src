@@ -40,6 +40,8 @@ static char *tmpfile1 = NULL;
 static char *tmpfile2 = NULL;
 static char *tmpfile3 = NULL;
 static int unidiff = 0;
+static int protos = 0;
+static int nodates = 0;
 
 static const char *const patch_usage[] =
 {
@@ -85,12 +87,14 @@ patch (argc, argv)
     tmpfile2 = NULL;
     tmpfile3 = NULL;
     unidiff = 0;
+    protos = 0;
+    nodates = 0;
 
     if (argc == -1)
 	usage (patch_usage);
 
     optind = 0;
-    while ((c = getopt (argc, argv, "+V:k:cuftsQqlRD:r:")) != -1)
+    while ((c = getopt (argc, argv, "+V:k:cuftsQqlRD:r:pZ")) != -1)
     {
 	switch (c)
 	{
@@ -176,6 +180,12 @@ patch (argc, argv)
 	    case 'c':			/* Context diff */
 		unidiff = 0;
 		break;
+	    case 'p':
+		protos = 1;
+		break;
+	    case 'Z':
+	    	nodates = 1;
+		break;
 	    case '?':
 	    default:
 		usage (patch_usage);
@@ -224,6 +234,10 @@ patch (argc, argv)
 	    send_arg("-s");
 	if (unidiff)
 	    send_arg("-u");
+	if (protos)
+	    send_arg("-p");
+	if (nodates)
+	    send_arg("-Z");
 
 	if (rev1)
 	    option_with_arg ("-r", rev1);
@@ -407,6 +421,8 @@ patch_fileproc (callerdat, finfo)
     char *cp1, *cp2;
     FILE *fp;
     int line_length;
+    char *diffopts;
+    size_t dolen;
 
     line1 = NULL;
     line1_chars_allocated = 0;
@@ -600,7 +616,20 @@ patch_fileproc (callerdat, finfo)
 	    (void) utime (tmpfile2, &t);
     }
 
-    switch (diff_exec (tmpfile1, tmpfile2, NULL, NULL, unidiff ? "-u" : "-c", tmpfile3))
+    dolen = 3;
+    diffopts = xmalloc(dolen);
+    if (unidiff)
+    	snprintf(diffopts, dolen, "-u");
+    else
+    	snprintf(diffopts, dolen, "-c");
+
+    if (protos) {
+	dolen += 2;
+	diffopts = realloc(diffopts, dolen);
+	strlcat(diffopts, "p", dolen);
+    }
+
+    switch (diff_exec (tmpfile1, tmpfile2, NULL, NULL, diffopts, tmpfile3))
     {
 	case -1:			/* fork/wait failure */
 	    error (1, errno, "fork for diff failed on %s", rcs);
@@ -694,35 +723,40 @@ failed to read diff file header %s for %s: end of file", tmpfile3, rcs);
 	    /* Note that the string "diff" is specified by POSIX (for -c)
 	       and is part of the diff output format, not the name of a
 	       program.  */
+	    cvs_output ("diff ", 0);
+	    cvs_output (diffopts, 0);
+	    cvs_output (" ", 1);
+	    cvs_output (file1, 0);
+	    cvs_output (" ", 1);
+	    cvs_output (file2, 0);
+	    cvs_output ("\n", 1);
+
 	    if (unidiff)
 	    {
-		cvs_output ("diff -u ", 0);
-		cvs_output (file1, 0);
-		cvs_output (" ", 1);
-		cvs_output (file2, 0);
-		cvs_output ("\n", 1);
-
 		cvs_output ("--- ", 0);
 		cvs_output (file1, 0);
-		cvs_output (cp1, 0);
+		if (nodates)
+		    cvs_output ("\n", 1);
+		else
+		    cvs_output (cp1, 0);
 		cvs_output ("+++ ", 0);
 	    }
 	    else
 	    {
-		cvs_output ("diff -c ", 0);
-		cvs_output (file1, 0);
-		cvs_output (" ", 1);
-		cvs_output (file2, 0);
-		cvs_output ("\n", 1);
-
 		cvs_output ("*** ", 0);
 		cvs_output (file1, 0);
-		cvs_output (cp1, 0);
+		if (nodates)
+		    cvs_output ("\n", 1);
+		else
+		    cvs_output (cp1, 0);
 		cvs_output ("--- ", 0);
 	    }
 
 	    cvs_output (finfo->fullname, 0);
-	    cvs_output (cp2, 0);
+	    if (nodates)
+		cvs_output ("\n", 1);
+	    else
+		cvs_output (cp2, 0);
 
 	    /* spew the rest of the diff out */
 	    while ((line_length
