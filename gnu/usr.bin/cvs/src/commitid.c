@@ -24,34 +24,27 @@ commitid_repo_base(void)
 }
 
 char *
-commitid_filename(char *repo)
+commitid_filename(char *repo, int genesis)
 {
 	char *fn;
 
-	if (repo == NULL)
+	if (!genesis && (repo == NULL || repo[0] == '\0'))
 		error(1, 0, "invalid repo");
 
-	fn = xmalloc(strlen(current_parsed_root->directory) +
-	    sizeof(CVSROOTADM) + sizeof(CVSROOTADM_COMMITIDS) + 1 +
-	    strlen(repo) + 1);
-	sprintf(fn, "%s/%s/%s%s", current_parsed_root->directory, CVSROOTADM,
-	    CVSROOTADM_COMMITIDS, repo);
+	if (genesis) {
+		fn = xmalloc(strlen(current_parsed_root->directory) +
+		    sizeof(CVSROOTADM) + sizeof(CVSROOTADM_COMMITID_0) + 1);
+		sprintf(fn, "%s/%s/%s", current_parsed_root->directory,
+		    CVSROOTADM, CVSROOTADM_COMMITID_0);
+	} else {
+		fn = xmalloc(strlen(current_parsed_root->directory) +
+		    sizeof(CVSROOTADM) + sizeof(CVSROOTADM_COMMITIDS) + 1 +
+		    strlen(repo) + 1);
+		sprintf(fn, "%s/%s/%s-%s", current_parsed_root->directory,
+		    CVSROOTADM, CVSROOTADM_COMMITIDS, repo);
+	}
 
 	return fn;
-}
-
-int
-commitid_logging(char *repo)
-{
-	char *fn;
-	int res;
-
-	fn = commitid_filename(repo);
-
-	res = isfile(fn) && isreadable(fn);
-
-	free(fn);
-	return res;
 }
 
 FILE *
@@ -59,17 +52,11 @@ commitid_logfile(char *repo)
 {
 	char *fn;
 	FILE *fp;
-	struct stat st;
 
-	if (!commitid_logging(repo))
+	fn = commitid_filename(repo, 0);
+
+	if ((fp = fopen(fn, "r")) == NULL)
 		return NULL;
-
-	fn = commitid_filename(repo);
-
-	if ((fp = fopen(fn, "r")) < 0)
-		error(1, errno, "can't read %s", fn);
-	if (stat(fn, &st) < 0)
-		error(1, errno, "can't stat %s", fn);
 
 	free(fn);
 
@@ -111,10 +98,41 @@ commitid_parse(char *repo, char *id)
 	out->changeset = changeset;
 	out->repo = xstrdup(repo);
 	out->files = getlist();
-
-	out->genesis = (out->changeset == 0);
+	out->genesis = 0;
 
 	return out;
+}
+
+CommitId *
+commitid_genesis(void)
+{
+	char *fn;
+	FILE *fp;
+	ssize_t len, ps = 0;
+	char *line = NULL;
+	CommitId *genesis;
+
+	fn = commitid_filename(NULL, 1);
+	if ((fp = fopen(fn, "r")) < 0)
+		return NULL;
+
+	if (!(len = getline(&line, &ps, fp))) {
+		fclose(fp);
+		return NULL;
+	}
+
+	if (line[len - 1] == '\n') {
+		line[len - 1] = '\0';
+		len--;
+	}
+
+	genesis = commitid_parse(NULL, line);
+	if (genesis == NULL)
+		error(1, 0, "failed parsing genesis line %s", line);
+
+	genesis->genesis = 1;
+
+	return genesis;
 }
 
 void
@@ -145,12 +163,18 @@ commitid_find(char *repo, char *findid)
 	ssize_t len;
 	size_t ps = 0;
 	long long findcs = -1;
-	int res = 0, genesis = 0, isint = 0, x;
-
-	fp = commitid_logfile(repo);
+	int res = 0, isint = 0, x;
 
 	if (findid != NULL && !strlen(findid))
 		findid = NULL;
+
+	if (findid != NULL && (strcmp(findid, "0") == 0 ||
+	strcmp(findid, "genesis") == 0))
+		return commitid_genesis();
+
+	fp = commitid_logfile(repo);
+	if (fp == NULL)
+		return NULL;
 
 	if (findid != NULL && strlen(findid)) {
 		isint = 1;
@@ -166,8 +190,8 @@ commitid_find(char *repo, char *findid)
 	}
 
 	/*
-	 * TODO: if we're asking for latest (findid == NULL), seek to the end
-	 * of the file and walk backwards
+	 * TODO: if we're asking for latest (findid == NULL && findcs == -1),
+	 * seek to the end of the file and walk backwards
 	 */
 
 	while ((len = getline(&line, &ps, fp)) != -1) {
@@ -176,21 +200,14 @@ commitid_find(char *repo, char *findid)
 			len--;
 		}
 
-		if ((tab = strstr(line, "\t")) == NULL) {
-			if (genesis)
-				error(1, 0, "non-genesis commit with no "
-				    "files: %s", line);
-			else
-				genesis = 1;
+		if ((tab = strstr(line, "\t")) == NULL)
+			continue;
 
-			files = xstrdup("");
-		} else {
-			files = malloc(strlen(tab) + 1);
-			strlcpy(files, tab + 1, strlen(tab) + 1);
+		files = malloc(strlen(tab) + 1);
+		strlcpy(files, tab + 1, strlen(tab) + 1);
 
-			tab[0] = '\0';
-			len = strlen(line);
-		}
+		tab[0] = '\0';
+		len = strlen(line);
 
 		if ((tmpid = commitid_parse(repo, line)) == NULL)
 			error(1, 0, "failed parsing commandid line %s", line);
@@ -230,8 +247,11 @@ commitid_find(char *repo, char *findid)
 
 			if (previd)
 				retid->previous = xstrdup(previd->commitid);
-			else
-				retid->previous = NULL;
+			else {
+				CommitId *genesis = commitid_genesis();
+				retid->previous = xstrdup(genesis->commitid);
+				commitid_free(genesis);
+			}
 
 			while ((file = strsep(&files, "\t")) != NULL) {
 				Node *f;
@@ -252,8 +272,10 @@ commitid_find(char *repo, char *findid)
 				f = getnode();
 				f->key = xstrdup(fname);
 				f->data = xmalloc(sizeof(CommitIdFile));
-				((CommitIdFile *)(f->data))->revision = xstrdup(r2);
-				((CommitIdFile *)(f->data))->prev_revision = xstrdup(r1);
+				((CommitIdFile *)(f->data))->revision =
+				    xstrdup(r2);
+				((CommitIdFile *)(f->data))->prev_revision =
+				    xstrdup(r1);
 				addnode(retid->files, f);
 
 				free(fname);
@@ -293,6 +315,10 @@ commitid_gen_start(char *repo, unsigned long changeset)
 {
 	CommitId *out;
 
+	if ((repo == NULL || !strlen(repo)) && changeset)
+		error(1, 0, "creating commitid in blank repo with changeset "
+		    "%d", changeset);
+
 	out = xmalloc(sizeof(CommitId));
 	out->repo = xstrdup(repo);
 	out->version = COMMITID_VERSION;
@@ -300,6 +326,7 @@ commitid_gen_start(char *repo, unsigned long changeset)
 	out->changeset = changeset;
 	out->commitid = xmalloc(COMMITID_LENGTH + 1);
 	out->files = getlist();
+	out->genesis = (changeset == 0);
 
 	SHA256Init(&out->sha_ctx);
 
@@ -344,9 +371,16 @@ commitid_gen_add_diff(CommitId *id, char *filename, char *rcsfile, char *r1,
 	Node *f;
 	CommitIdFile *cif;
 
-	if (findnode(id->files, filename))
-		error(1, 0, "file %s already exists in file list\n",
-		    filename);
+	if (f = findnode(id->files, filename)) {
+		if (f->data != NULL &&
+		    strcmp(((CommitIdFile *)f->data)->revision, r2) == 0)
+			error(1, 0, "file %s with rev %s already exists in "
+			    "file list\n", filename);
+	}
+
+#ifdef DEBUG
+	printf("%s: %s, %s, %s, %s\n", __func__, filename, rcsfile, r1, r2);
+#endif
 
 	f = getnode();
 	f->key = xstrdup(filename);
@@ -409,6 +443,9 @@ commitid_store(CommitId *id)
 	RCSVers *delta;
 	char *rev;
 
+	if (id->genesis)
+		goto write_log;
+
 	head = id->files->list;
 	for (fn = head->next; fn != head; fn = fn->next) {
 		char *trcs, *tdir;
@@ -417,15 +454,16 @@ commitid_store(CommitId *id)
 			error(1, 0, "can't store commitid for file %s "
 			    "without rcsfile", fn->key);
 
-		trcs = xstrdup(((CommitIdFile *)fn->data)->rcsfile);
-		tdir = strrchr(trcs, '/');
-		if (tdir != NULL)
-			*tdir = '\0';
+		trcs = xmalloc(strlen(current_parsed_root->directory) + 1 +
+		    strlen(id->repo) + 1);
+		snprintf(trcs, strlen(current_parsed_root->directory) + 1 +
+		    strlen(id->repo) + 1, "%s/%s",
+		    current_parsed_root->directory, id->repo);
 
 		rcs = RCS_parse(fn->key, trcs);
 		if (rcs == NULL)
 			error(1, 0, "can't find RCS file %s in %s", fn->key,
-			    trcs);
+			    trcs, id->repo);
 
 		RCS_fully_parse(rcs);
 
@@ -457,20 +495,23 @@ commitid_store(CommitId *id)
 
 		RCS_rewrite(rcs, NULL, NULL);
 
+		free(rcs);
 		free(rev);
 		free(n);
 	}
 
 	/* all written, append to repo-specific log */
-
-	fp = open_file(commitid_filename(id->repo), "a");
+write_log:
+	fp = open_file(commitid_filename(id->repo, id->genesis), "a");
 	fprintf(fp, "%s", id->commitid);
 
-	head = id->files->list;
-	for (fn = head->next; fn != head; fn = fn->next) {
-		CommitIdFile *cif = (CommitIdFile *)fn->data;
-		fprintf(fp, "\t%s:%s:%s", cif->prev_revision,
-		    cif->revision, fn->key);
+	if (!id->genesis) {
+		head = id->files->list;
+		for (fn = head->next; fn != head; fn = fn->next) {
+			CommitIdFile *cif = (CommitIdFile *)fn->data;
+			fprintf(fp, "\t%s:%s:%s", cif->prev_revision,
+			    cif->revision, fn->key);
+		}
 	}
 
 	fprintf(fp, "\n");

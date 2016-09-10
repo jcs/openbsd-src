@@ -330,6 +330,7 @@ commit (argc, argv)
     int err = 0;
     int local = 0;
     char *repo;
+    CommitId *genesis;
 
     if (argc == -1)
 	usage (commit_usage);
@@ -644,16 +645,18 @@ commit (argc, argv)
     /*
      * If we have a commitids file, fetch the last id and setup a new one
      */
-    repo = commitid_repo_base();
-    if (commitid_logging(repo))
+    if (genesis = commitid_genesis())
     {
         CommitId *id;
+	repo = commitid_repo_base();
 
 	if ((id = commitid_find(repo, NULL)) == NULL)
 	    error (1, 0, "failed fetching last commitid");
 
 	global_commitid = commitid_gen_start(repo, id->changeset + 1);
 	global_commitid->previous = xstrdup(id->commitid);
+
+	commitid_free(genesis);
     }
 
     /*

@@ -902,9 +902,10 @@ init (argc, argv)
     /* create random genesis hash on which to start our initial CVSROOT admin
      * file commits */
     /* TODO: support taking this hash from a command arg to 'cvs init' */
-    genesis = commitid_gen_start(CVSROOTADM, 0);
+    genesis = commitid_gen_start("", 0);
     commitid_gen_add_rand(genesis, 100);
     commitid_gen_final(genesis);
+    commitid_store(genesis);
 
     /* create a new commitid that we'll later write back to the rcs files once
      * we know the hash output */
@@ -954,7 +955,7 @@ init (argc, argv)
 				    NULL, 0, NULL);
 	    if (retcode == 0)
 		commitid_gen_add_diff(rootcommit, fileptr->filename, info_v,
-				      "1.1.1.1", "1.1");
+				      "0", "1.1");
 	    else
 		/* add_rcs_file already printed an error message.  */
 		err = 1;
@@ -1002,7 +1003,6 @@ init (argc, argv)
         chmod (info, 0666);
     }
 
-    commitid_store(genesis);
     commitid_store(rootcommit);
 
     free (info);

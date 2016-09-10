@@ -56,8 +56,6 @@ show(int argc, char **argv)
 	cvs_output(commitid->commitid, 0);
 	cvs_output("\n", 1);
 
-	free(repo);
-
 	return show_commitid(commitid, 0);
 }
 
@@ -150,7 +148,7 @@ show_commitid(CommitId *commitid)
 		    ((CommitIdFile *)(fn->data))->revision);
 
 		diffargs[4] = xmalloc(strlen(commitid->repo) + 1 +
-		    strlen(fn->key));
+		    strlen(fn->key) + 1);
 		sprintf(diffargs[4], "%s/%s", commitid->repo, fn->key);
 
 		patch(sizeof(diffargs) / sizeof(diffargs[0]), diffargs);

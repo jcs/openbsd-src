@@ -191,7 +191,8 @@ extern int errno;
 #define CVSROOTADM_WRITERS	"writers"
 #define CVSROOTADM_PASSWD	"passwd"
 #define CVSROOTADM_CONFIG	"config"
-#define CVSROOTADM_COMMITIDS	"commitids-"
+#define CVSROOTADM_COMMITIDS	"commitids"
+#define CVSROOTADM_COMMITID_0	"commitid_genesis"
 
 #define CVSNULLREPOS		"Emptydir"	/* an empty directory */
 
@@ -927,6 +928,6 @@ extern int commitid_gen_final PROTO((CommitId *));
 extern void commitid_store PROTO((CommitId *));
 
 extern char *commitid_repo_base PROTO ((void));
-extern char *commitid_filename PROTO ((char *));
-extern int commitid_logging PROTO ((char *));
+extern char *commitid_filename PROTO ((char *, int));
+extern CommitId *commitid_genesis PROTO ((void));
 extern CommitId *commitid_find PROTO ((char *, char *));
