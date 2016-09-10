@@ -689,7 +689,7 @@ commit (argc, argv)
 
     /* XXX: it would be nice to keep the lock until we're done with our show
      * command, but we end up locking against ourself */
-    {
+    if (global_commitid != NULL) {
 	Node *head, *fn;
 	int didlog = 0;
 

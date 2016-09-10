@@ -113,7 +113,7 @@ commitid_genesis(void)
 	CommitId *genesis;
 
 	fn = commitid_filename(NULL, 1);
-	if ((fp = fopen(fn, "r")) < 0)
+	if ((fp = fopen(fn, "r")) == NULL)
 		return NULL;
 
 	if (!(len = getline(&line, &ps, fp))) {
