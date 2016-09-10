@@ -76,16 +76,36 @@ show_commitid(CommitId *commitid)
 	 */
 	head = commitid->files->list;
 	for (fn = head->next; fn != head; fn = fn->next) {
-		Node *revhead, *rev, *p;
-		RCSNode *rcsfile;
-		RCSVers *ver;
-		char *diffargs[] = { "rdiff", "-u", "-r", "-r", "" };
+		RCSNode *rcs;
+		char *diffargs[] = { "rdiff", "-upZ", "-r", "-r", "" };
+		ssize_t len = strlen(current_parsed_root->directory) +
+		    1 + strlen(commitid->repo) + 1;
+		char *rcspath = xmalloc(len);
 
-#if 0
+		snprintf(rcspath, len, "%s/%s", current_parsed_root->directory,
+		    commitid->repo);
+
+		rcs = RCS_parse(fn->key, rcspath);
+		if (rcs == NULL)
+			error(1, 0, "can't find RCS file %s in %s", fn->key,
+			    rcspath);
+
 		if (!didlog) {
+			Node *revhead, *rev, *n, *p;
+			RCSVers *ver;
 			int year, mon, mday, hour, min, sec;
 			char buf[1024];
 			char *line;
+
+			RCS_fully_parse(rcs);
+
+			n = findnode(rcs->versions,
+			    ((CommitIdFile *)fn->data)->revision);
+			if (n == NULL)
+				error (1, 0, "%s: no revision %s", rcs->path,
+				    ((CommitIdFile *)fn->data)->revision);
+
+			ver = (RCSVers *)n->data;
 
 			cvs_output("Author:   ", 0);
 			cvs_output(ver->author, 0);
@@ -122,22 +142,6 @@ show_commitid(CommitId *commitid)
 
 			didlog = 1;
 		}
-
-		/*
-		 * generate a diff between this version and this file's
-		 * previous version, blindly assuming they are in order
-		 */
-		thisver = xstrdup(ver->version);
-
-		rev = rev->nnnn;
-		if (rev == revhead)
-			/* end of the line, generated from nothing */
-			prevver = xstrdup("0");
-		else {
-			ver = (RCSVers *)rev->data;
-			prevver = xstrdup(ver->version);
-		}
-#endif
 
 		diffargs[2] = xmalloc(20);
 		snprintf(diffargs[2], 20, "-r%s",

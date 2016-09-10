@@ -324,7 +324,6 @@ import (argc, argv)
 
 	if ((id = commitid_find(repo, NULL)) == NULL)
 	{
-	    printf("starting new commitids for %s\n", repo);
 	    global_commitid = commitid_gen_start(repo, 1);
 	    global_commitid->previous = xstrdup(genesis->commitid);
 	}

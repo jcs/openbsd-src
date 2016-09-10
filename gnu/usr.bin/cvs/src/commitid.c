@@ -463,7 +463,7 @@ commitid_store(CommitId *id)
 		rcs = RCS_parse(fn->key, trcs);
 		if (rcs == NULL)
 			error(1, 0, "can't find RCS file %s in %s", fn->key,
-			    trcs, id->repo);
+			    trcs);
 
 		RCS_fully_parse(rcs);
 
@@ -473,17 +473,19 @@ commitid_store(CommitId *id)
 			error (1, 0, "%s: no revision %s", rcs->path,
 			    ((CommitIdFile *)fn->data)->revision);
 
+#ifdef DEBUG
 		printf("adding commitid %s to rev %s of %s\n",
 			id->commitid, rev,
 			((CommitIdFile *)fn->data)->rcsfile);
+#endif
 
 		n = findnode(rcs->versions, rev);
-		delta = (RCSVers *) n->data;
+		delta = (RCSVers *)n->data;
 
 		if (delta->other_delta == NULL)
 		    delta->other_delta = getlist();
 
-		if (n = findnode (delta->other_delta, "commitid"))
+		if (n = findnode(delta->other_delta, "commitid"))
 			n->data = xstrdup(id->commitid);
 		else {
 			n = getnode();
