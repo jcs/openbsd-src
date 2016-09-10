@@ -322,7 +322,7 @@ commitid_gen_start(char *repo, unsigned long changeset)
 	out = xmalloc(sizeof(CommitId));
 	out->repo = xstrdup(repo);
 	out->version = COMMITID_VERSION;
-	out->hash = xmalloc((SHA256_DIGEST_LENGTH * 2) + 1);
+	out->hash = xmalloc(COMMITID_HASH_LENGTH + 1);
 	out->changeset = changeset;
 	out->commitid = xmalloc(COMMITID_LENGTH + 1);
 	out->files = getlist();
@@ -407,7 +407,7 @@ commitid_gen_add_rand(CommitId *id, size_t len)
 int
 commitid_gen_final(CommitId *id)
 {
-	uint8_t *thash = xmalloc((SHA256_DIGEST_LENGTH * 2) + 1);
+	uint8_t *thash = xmalloc(COMMITID_HASH_LENGTH + 1);
 	char fmt[20];
 	int i;
 
@@ -415,7 +415,7 @@ commitid_gen_final(CommitId *id)
 
 	/* digest to hex */
 	id->hash[0] = '\0';
-	for (i = 0; i < SHA256_DIGEST_LENGTH; i++)
+	for (i = 0; i < (COMMITID_HASH_LENGTH / 2); i++)
 		snprintf(id->hash, ((i * 2) + 2 + 1), "%s%02x", id->hash,
 		    thash[i]);
 
