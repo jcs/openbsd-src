@@ -14,10 +14,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "cvs.h"
-
 #include <sys/types.h>
 #include <assert.h>
+#include "cvs.h"
 
 char *
 commitid_repo_base(void)
