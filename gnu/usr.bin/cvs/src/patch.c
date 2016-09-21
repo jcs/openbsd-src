@@ -42,6 +42,7 @@ static char *tmpfile3 = NULL;
 static int unidiff = 0;
 static int protos = 0;
 static int nodates = 0;
+static int forceascii = 0;
 
 static const char *const patch_usage[] =
 {
@@ -89,12 +90,13 @@ patch (argc, argv)
     unidiff = 0;
     protos = 0;
     nodates = 0;
+    forceascii = 0;
 
     if (argc == -1)
 	usage (patch_usage);
 
     optind = 0;
-    while ((c = getopt (argc, argv, "+V:k:cuftsQqlRD:r:pZ")) != -1)
+    while ((c = getopt (argc, argv, "+V:k:cuftsQqlRD:r:apZ")) != -1)
     {
 	switch (c)
 	{
@@ -180,6 +182,9 @@ patch (argc, argv)
 	    case 'c':			/* Context diff */
 		unidiff = 0;
 		break;
+	    case 'a':
+		forceascii = 1;
+		break;
 	    case 'p':
 		protos = 1;
 		break;
@@ -234,6 +239,8 @@ patch (argc, argv)
 	    send_arg("-s");
 	if (unidiff)
 	    send_arg("-u");
+	if (forceascii)
+	    send_arg("-a");
 	if (protos)
 	    send_arg("-p");
 	if (nodates)
@@ -622,6 +629,12 @@ patch_fileproc (callerdat, finfo)
     	snprintf(diffopts, dolen, "-u");
     else
     	snprintf(diffopts, dolen, "-c");
+
+    if (forceascii) {
+	dolen += 2;
+	diffopts = realloc(diffopts, dolen);
+	strlcat(diffopts, "a", dolen);
+    }
 
     if (protos) {
 	dolen += 2;

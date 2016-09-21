@@ -93,15 +93,29 @@ show_commitid(CommitId *commitid)
 	head = commitid->files->list;
 	for (fn = head->next; fn != head; fn = fn->next) {
 		RCSNode *rcs;
-		char *diffargs[] = { "rdiff", "-upZ", "-r", "-r", "" };
+		char *diffargs[] = { "rdiff", "-aupZ", "-r", "-r", "" };
 		ssize_t len = strlen(current_parsed_root->directory) +
-		    1 + strlen(commitid->repo) + 1;
+		    1 + strlen(commitid->repo) + 1 + strlen(fn->key) + 1;
 		char *rcspath = xmalloc(len);
+		char *rcsfile = xmalloc(strlen(fn->key) + 1);
+		char *slash;
 
-		snprintf(rcspath, len, "%s/%s", current_parsed_root->directory,
-		    commitid->repo);
+		/*
+		 * rcspath is something like "bin/csh/err.c" but we need to
+		 * pass "err.c" and "/cvs/src/bin/csh" to RCS_parse so it can
+		 * try an Attic path of "/cvs/src/bin/csh/Attic/err.c"
+		 */
 
-		rcs = RCS_parse(fn->key, rcspath);
+		snprintf(rcspath, len, "%s/%s/%s",
+		    current_parsed_root->directory, commitid->repo, fn->key);
+		slash = strrchr(rcspath, '/');
+		if (!slash)
+			error(1, 0, "can't find slash in %s", rcspath);
+
+		strlcpy(rcsfile, slash + 1, strlen(slash));
+		*slash = '\0';
+
+		rcs = RCS_parse(rcsfile, rcspath);
 		if (rcs == NULL)
 			error(1, 0, "can't find RCS file %s in %s", fn->key,
 			    rcspath);
