@@ -93,7 +93,7 @@ boot(dev_t bootdev)
 	for (i = 0; i < strlen(version); i++)
 		colorchar(version[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
 
-	colorchar('\n', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
+	printf("\n");
 
 	devboot(bootdev, cmd.bootdev);
 	strlcpy(cmd.image, kernelfile, sizeof(cmd.image));
