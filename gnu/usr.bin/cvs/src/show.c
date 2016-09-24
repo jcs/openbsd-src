@@ -27,7 +27,7 @@ static const char *const show_usage[] = {
 int
 show(int argc, char **argv)
 {
-	char *tcommitid, *repo;
+	char *tcommitid = NULL, *repo;
 	CommitId *commitid;
 
 	if (argc == 2) {

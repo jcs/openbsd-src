@@ -178,13 +178,13 @@ commitid_find(char *repo, char *findid)
 	ssize_t len;
 	size_t ps = 0;
 	long long findcs = -1;
-	int res = 0, isint = 0, x;
+	int isint = 0, x;
 
 	if (findid != NULL && !strlen(findid))
 		findid = NULL;
 
-	if (findid != NULL && (strcmp(findid, "0") == 0 ||
-	strcmp(findid, "genesis") == 0))
+	if (findid != NULL &&
+	    (strcmp(findid, "0") == 0 || strcmp(findid, "genesis") == 0))
 		return commitid_genesis();
 
 	fp = commitid_logfile(repo);
@@ -205,11 +205,28 @@ commitid_find(char *repo, char *findid)
 	}
 
 	/*
-	 * TODO: if we're asking for latest (findid == NULL && findcs == -1),
-	 * seek to the end of the file and walk backwards
+	 * if we just want the latest commitid, seek to the end of the file and
+	 * position fp right after the fourth-to-last newline (we must read two
+	 * commitids to set the final's parent)
 	 */
+	if (findid == NULL && findcs == -1) {
+		int nlines = 0;
+		char *c;
+
+		fseek(fp, 0, SEEK_END);
+		while (ftell(fp) > 0 && nlines != 4) {
+			if (fseek(fp, -1, SEEK_CUR) || ftell(fp) <= 0 ||
+			    fread(c, 1, 1, fp) != 1 || fseek(fp, -1, SEEK_CUR))
+				break;
+
+			if (*c == '\n')
+				nlines++;
+		}
+	}
 
 	while ((len = getline(&line, &ps, fp)) != -1) {
+		int match = 0;
+
 		if (line[len - 1] == '\n') {
 			line[len - 1] = '\0';
 			len--;
@@ -218,7 +235,7 @@ commitid_find(char *repo, char *findid)
 		if ((tab = strstr(line, "\t")) == NULL)
 			continue;
 
-		files = malloc(strlen(tab) + 1);
+		files = xmalloc(strlen(tab) + 1);
 		strlcpy(files, tab + 1, strlen(tab) + 1);
 
 		tab[0] = '\0';
@@ -230,31 +247,33 @@ commitid_find(char *repo, char *findid)
 		if (findcs >= 0) {
 			/* match on changeset id */
 			if (tmpid->changeset == findcs)
-				res = 1;
+				match = 1;
 		} else if (findid == NULL)
-			/* keep matching to find latest commitid */
-			res = 1;
-		else if (strcmp(findid, tmpid->commitid) == 0) {
+			/* keep matching to find final commitid */
+			match = 1;
+		else if (strncmp(findid, tmpid->commitid,
+		    strlen(findid)) == 0) {
 			/*
 			 * need to go hunting - match on first part of commitid
 			 * chars, allowing for shortened unless it matches more
 			 * than one
 			 */
-			if (res) {
-				res = 0;
-				if (retid) {
-					commitid_free(retid);
-					retid = NULL;
+			if (match) {
+				match = 0;
+				if (previd) {
+					commitid_free(previd);
+					previd = NULL;
 				}
+				retid = NULL;
 				error(0, 0, "commitid \"%s\" is ambiguous",
 				    findid);
 				break;
 			}
 
-			res = 1;
+			match = 1;
 		}
 
-		if (res && tmpid) {
+		if (match && tmpid) {
 			char *file;
 
 			retid = tmpid;
@@ -285,15 +304,12 @@ commitid_find(char *repo, char *findid)
 					    "file spec %s", file);
 
 				f = getnode();
-				f->key = xstrdup(fname);
+				f->key = fname;
 				f->data = xmalloc(sizeof(CommitIdFile));
-				((CommitIdFile *)(f->data))->revision =
-				    xstrdup(r2);
-				((CommitIdFile *)(f->data))->prev_revision =
-				    xstrdup(r1);
+				cif = (CommitIdFile *)(f->data);
+				cif->revision = xstrdup(r2);
+				cif->prev_revision = xstrdup(r1);
 				addnode(retid->files, f);
-
-				free(fname);
 			}
 
 			if (findcs >= 0 ||
@@ -316,7 +332,7 @@ commitid_find(char *repo, char *findid)
 	}
 	fclose(fp);
 
-	if (previd != retid)
+	if (previd != NULL && previd != retid)
 		commitid_free(previd);
 
 	if (retid)
