@@ -91,8 +91,8 @@ commitid_parse(char *repo, char *id)
 	if (!strlen(id))
 		return NULL;
 
-	/* %04u:%64s:%07lu */
-	snprintf(fmt, sizeof(fmt), "%%0%du:%%%ds:%%0%dlu",
+	/* %04u-%64s-%07lu */
+	snprintf(fmt, sizeof(fmt), "%%0%du-%%%ds-%%0%dlu",
 	    COMMITID_VERSION_LENGTH, COMMITID_HASH_LENGTH,
 	    COMMITID_CHANGESET_LENGTH);
 
@@ -452,8 +452,8 @@ commitid_gen_final(CommitId *id)
 
 	free(thash);
 
-	/* %04u:%64s:%07lu */
-	snprintf(fmt, sizeof(fmt), "%%0%du:%%%ds:%%0%dlu",
+	/* %04u-%64s-%07lu */
+	snprintf(fmt, sizeof(fmt), "%%0%du-%%%ds-%%0%dlu",
 	    COMMITID_VERSION_LENGTH, COMMITID_HASH_LENGTH,
 	    COMMITID_CHANGESET_LENGTH);
 
