@@ -211,15 +211,15 @@ commitid_find(char *repo, char *findid)
 	 */
 	if (findid == NULL && findcs == -1) {
 		int nlines = 0;
-		char *c;
+		char c;
 
 		fseek(fp, 0, SEEK_END);
 		while (ftell(fp) > 0 && nlines != 4) {
 			if (fseek(fp, -1, SEEK_CUR) || ftell(fp) <= 0 ||
-			    fread(c, 1, 1, fp) != 1 || fseek(fp, -1, SEEK_CUR))
+			    fread(&c, 1, 1, fp) != 1 || fseek(fp, -1, SEEK_CUR))
 				break;
 
-			if (*c == '\n')
+			if (c == '\n')
 				nlines++;
 		}
 	}
