@@ -1235,9 +1235,9 @@ valid_commitid(char *commitid)
 {
 	unsigned char *cp;
 
-	/* A-Za-z0-9 */
+	/* A-Za-z0-9- */
 	for (cp = commitid; *cp ; cp++) {
-		if (!isalnum(*cp))
+		if (!isalnum(*cp) && *cp != '-')
 			return 0;
 	}
 	if ((char *)cp - commitid > RCS_COMMITID_MAXLEN)
