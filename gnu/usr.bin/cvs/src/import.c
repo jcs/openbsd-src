@@ -305,7 +305,7 @@ import (argc, argv)
 	(void) fprintf (logfp, "%s\n\t\t", argv[i]);
     (void) fprintf (logfp, "\n");
 
-    if (genesis = commitid_genesis())
+    if ((genesis = commitid_genesis()))
     {
 	CommitId *id;
 	char *repo, *slash;
@@ -743,7 +743,7 @@ add_rev (message, rcs, vfile, vers)
     char *vers;
 {
     int locked, status, ierrno;
-    char *tocvsPath;
+    char *tocvsPath, *oldrev, *finalrev;
 
     if (noexec)
 	return (0);
@@ -766,7 +766,7 @@ add_rev (message, rcs, vfile, vers)
     tocvsPath = wrap_tocvs_process_file (vfile);
 
     status = RCS_checkin (rcs, tocvsPath == NULL ? vfile : tocvsPath,
-			  message, NULL, vbranch,
+			  message, &oldrev, vbranch, &finalrev,
 			  (RCS_FLAGS_QUIET | RCS_FLAGS_KEEPFILE
 			   | (use_file_modtime ? RCS_FLAGS_MODTIME : 0)));
     ierrno = errno;
@@ -794,7 +794,6 @@ add_rev (message, rcs, vfile, vers)
     if (global_commitid != NULL) {
 	char *rcs2 = xstrdup(rcs->path);
 	char *reporcs;
-	char *imprev;
 
 	reporcs = strstr(rcs2, current_parsed_root->directory);
 	if (reporcs == NULL)
@@ -804,7 +803,8 @@ add_rev (message, rcs, vfile, vers)
 	    strlen(global_commitid->repo) + 1);
 	reporcs[strlen(reporcs) - strlen(RCSEXT)] = '\0';
 
-	commitid_gen_add_diff(global_commitid, reporcs, rcs->path, "0", vers);
+	commitid_gen_add_diff(global_commitid, reporcs, rcs->path, oldrev,
+	    finalrev, NULL);
 
 	free(rcs2);
     }
@@ -1499,10 +1499,14 @@ userfile);
 	imprev = xmalloc(strlen(add_vbranch) + 2 + 1);
 	snprintf(imprev, strlen(add_vbranch) + 2 + 1, "%s.1", add_vbranch);
 
-	/* add once for 0 -> 1.1.1.1, then again for 1.1.1.1 -> 1.1 */
-	commitid_gen_add_diff(global_commitid, reporcs, rcs, "0", imprev);
-	commitid_gen_add_diff(global_commitid, reporcs, rcs, imprev,
-	    add_vhead);
+	/*
+	 * add once for 0 -> 1.1, then again for 1.1 -> 1.1.1.1 since that's
+	 * what a default checkout would land on
+	 */
+	commitid_gen_add_diff(global_commitid, reporcs, rcs, "0", add_vhead,
+	    NULL);
+	commitid_gen_add_diff(global_commitid, reporcs, rcs, add_vhead, imprev,
+	    NULL);
 
 	free(imprev);
 	free(rcs2);

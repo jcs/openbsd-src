@@ -43,9 +43,10 @@ struct commitid {
 typedef struct commitid CommitId;
 
 struct commitid_file {
+	char *filename;
 	char *rcsfile;
-
 	char *prev_revision;
 	char *revision;
+	char *branch;
 };
 typedef struct commitid_file CommitIdFile;

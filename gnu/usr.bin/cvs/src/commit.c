@@ -645,7 +645,7 @@ commit (argc, argv)
     /*
      * If we have a commitids file, fetch the last id and setup a new one
      */
-    if (genesis = commitid_genesis())
+    if ((genesis = commitid_genesis()))
     {
         CommitId *id;
 	repo = commitid_repo_base();
@@ -687,13 +687,12 @@ commit (argc, argv)
     Lock_Cleanup ();
     dellist (&mulist);
 
-    /* XXX: it would be nice to keep the lock until we're done with our show
-     * command, but we end up locking against ourself */
     if (global_commitid != NULL) {
-	Node *head, *fn;
-	int didlog = 0;
-
 	/* now add hash of our 'show' output */
+
+	/* XXX: it would be nice to keep the lock until we're done with our
+	 * show command, but we end up locking against ourself */
+
 	commitid_gen_add_show(global_commitid);
  	commitid_gen_final(global_commitid);
  	commitid_store(global_commitid);
@@ -1767,7 +1766,7 @@ remove_file (finfo, tag, message)
     if (corev != NULL)
 	free (corev);
 
-    retcode = RCS_checkin (finfo->rcs, finfo->file, message, NULL, rev,
+    retcode = RCS_checkin (finfo->rcs, finfo->file, message, NULL, rev, NULL,
 			   RCS_FLAGS_DEAD | RCS_FLAGS_QUIET);
     if (retcode	!= 0)
     {
@@ -2109,7 +2108,7 @@ checkaddfile (file, repository, tag, options, rcsnode)
 	    /* commit a dead revision. */
 	    (void) sprintf (tmp, "file %s was initially added on branch %s.",
 			    file, tag);
-	    retcode = RCS_checkin (rcsfile, NULL, tmp, NULL, NULL,
+	    retcode = RCS_checkin (rcsfile, NULL, tmp, NULL, NULL, NULL,
 				   RCS_FLAGS_DEAD | RCS_FLAGS_QUIET);
 	    free (tmp);
 	    if (retcode != 0)

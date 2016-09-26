@@ -221,7 +221,7 @@ void RCS_setexpand PROTO ((RCSNode *, char *));
 int RCS_checkout PROTO ((RCSNode *, char *, char *, char *, char *, char *,
 			 RCSCHECKOUTPROC, void *));
 int RCS_checkin PROTO ((RCSNode *rcs, char *workfile, char *message,
-			char **oldrev, char *rev, int flags));
+			char **oldrev, char *rev, char **finalrev, int flags));
 int RCS_cmp_file PROTO ((RCSNode *, char *, char *, const char *));
 int RCS_settag PROTO ((RCSNode *, const char *, const char *));
 int RCS_deltag PROTO ((RCSNode *, const char *));

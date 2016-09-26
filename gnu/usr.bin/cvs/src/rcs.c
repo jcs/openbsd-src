@@ -4828,12 +4828,13 @@ RCS_addbranch (rcs, branch)
    or zero for success.  */
 
 int
-RCS_checkin (rcs, workfile, message, oldrev, rev, flags)
+RCS_checkin (rcs, workfile, message, oldrev, rev, finalrev, flags)
     RCSNode *rcs;
     char *workfile;
     char *message;
     char **oldrev;
     char *rev;
+    char **finalrev;
     int flags;
 {
     RCSVers *delta, *commitpt;
@@ -4850,7 +4851,6 @@ RCS_checkin (rcs, workfile, message, oldrev, rev, flags)
 #ifdef PRESERVE_PERMISSIONS_SUPPORT
     struct stat sb;
 #endif
-    Node *np;
 
     commitpt = NULL;
 
@@ -5074,8 +5074,9 @@ workfile);
 	    cvs_output ("done\n", 5);
 
 	if (oldrev != NULL)
-	    /* XXX: is this always right? */
-	    *oldrev = xstrdup("1.1.1.1");
+	    *oldrev = xstrdup("0");
+	if (finalrev != NULL)
+	    *finalrev = xstrdup(rcs->head);
 
 	status = 0;
 	goto checkin_done;
@@ -5421,7 +5422,9 @@ workfile);
     }
 
     if (oldrev != NULL)
-    	*oldrev = xstrdup(commitpt->version);
+	*oldrev = xstrdup(commitpt->version);
+    if (finalrev != NULL)
+    	*finalrev = xstrdup(delta->version);
 
     RCS_rewrite (rcs, dtext, commitpt->version);
 

@@ -173,12 +173,12 @@ commitid_find(char *repo, char *findid)
 {
 	FILE *fp;
 	CommitId *tmpid = NULL, *retid = NULL, *previd = NULL;
-	char *line = NULL, *tab = NULL, *files, *ep;
-	const char *errstr;
+	char *line = NULL, *tab = NULL, *files = NULL, *ep, *revspec;
 	ssize_t len;
 	size_t ps = 0;
 	long long findcs = -1;
 	int isint = 0, x;
+	int match = 0;
 
 	if (findid != NULL && !strlen(findid))
 		findid = NULL;
@@ -225,21 +225,16 @@ commitid_find(char *repo, char *findid)
 	}
 
 	while ((len = getline(&line, &ps, fp)) != -1) {
-		int match = 0;
-
 		if (line[len - 1] == '\n') {
 			line[len - 1] = '\0';
 			len--;
 		}
 
-		if ((tab = strstr(line, "\t")) == NULL)
+		if ((tab = strchr(line, '\t')) == NULL)
 			continue;
 
-		files = xmalloc(strlen(tab) + 1);
-		strlcpy(files, tab + 1, strlen(tab) + 1);
-
-		tab[0] = '\0';
-		len = strlen(line);
+		*tab = '\0';
+		tab++;
 
 		if ((tmpid = commitid_parse(repo, line)) == NULL)
 			error(1, 0, "failed parsing commandid line %s", line);
@@ -274,8 +269,6 @@ commitid_find(char *repo, char *findid)
 		}
 
 		if (match && tmpid) {
-			char *file;
-
 			retid = tmpid;
 			tmpid = NULL;
 
@@ -287,30 +280,8 @@ commitid_find(char *repo, char *findid)
 				commitid_free(genesis);
 			}
 
-			while ((file = strsep(&files, "\t")) != NULL) {
-				Node *f;
-				char r1[15], r2[15];
-				char *fname;
-				int ret;
-				CommitIdFile *cif;
-
-				if (*file == '\0')
-					break;
-
-				fname = xmalloc(strlen(file));
-				if (sscanf(file, "%[^:]:%[^:]:%s", &r1, &r2,
-				    fname) != 3)
-					error(1, 0, "failed parsing commitid "
-					    "file spec %s", file);
-
-				f = getnode();
-				f->key = fname;
-				f->data = xmalloc(sizeof(CommitIdFile));
-				cif = (CommitIdFile *)(f->data);
-				cif->revision = xstrdup(r2);
-				cif->prev_revision = xstrdup(r1);
-				addnode(retid->files, f);
-			}
+			files = xmalloc(strlen(tab) + 2);
+			strlcpy(files, tab, strlen(tab) + 1);
 
 			if (findcs >= 0 ||
 			    (findid != NULL &&
@@ -335,8 +306,63 @@ commitid_find(char *repo, char *findid)
 	if (previd != NULL && previd != retid)
 		commitid_free(previd);
 
-	if (retid)
+	if (retid) {
 		retid->repo = xstrdup(repo);
+
+		if (files == NULL)
+			error(1, 0, "found commitid match but no files");
+
+		while ((revspec = strsep(&files, "\t")) != NULL) {
+			Node *f;
+			char *r1, *r2, *fspec, *branch, *fname;
+			CommitIdFile *cif;
+
+			if (*revspec == '\0')
+				break;
+
+			r1 = xmalloc(strlen(revspec) - 2 + 1);
+			r2 = xmalloc(strlen(revspec) - 2 + 1);
+			fspec = xmalloc(strlen(revspec) - 3 + 1);
+			if (sscanf(revspec, "%[^:]:%[^:]:%s",
+			    r1, r2, fspec) != 3)
+				error(1, 0, "failed parsing commitid "
+				    "revision spec %s", revspec);
+
+			/* ":%[^:]:" won't match "::" */
+			if (*fspec == ':') {
+				branch = xstrdup("");
+				fname = xstrdup(fspec + 1);
+			} else {
+				branch = xmalloc(strlen(fspec) - 2 + 1);
+				fname = xmalloc(strlen(fspec) - 2 + 1);
+				if (sscanf(fspec, "%[^:]:%s", branch,
+				    fname) != 2)
+					error(1, 0, "failed parsing "
+					    "branch/file %s", fspec);
+			}
+
+			f = getnode();
+			f->key = xmalloc(strlen(fname) + 1 +
+			    strlen(r2) + 1);
+			snprintf(f->key, strlen(fname) + 1 +
+			    strlen(r2), "%s:%s", fname, r2);
+			f->data = xmalloc(sizeof(CommitIdFile));
+			cif = (CommitIdFile *)(f->data);
+			cif->filename = xstrdup(fname);
+			cif->revision = xstrdup(r2);
+			cif->prev_revision = xstrdup(r1);
+			cif->branch = xstrdup(branch);
+			addnode(retid->files, f);
+
+			free(fname);
+			free(branch);
+			free(r2);
+			free(r1);
+		}
+	}
+
+	if (files != NULL)
+		free(files);
 
 	return retid;
 }
@@ -348,7 +374,7 @@ commitid_gen_start(char *repo, unsigned long changeset)
 
 	if ((repo == NULL || !strlen(repo)) && changeset)
 		error(1, 0, "creating commitid in blank repo with changeset "
-		    "%d", changeset);
+		    "%lu", changeset);
 
 	out = xmalloc(sizeof(CommitId));
 	out->repo = xstrdup(repo);
@@ -369,7 +395,7 @@ CommitId *_cur_capture_commitid;
 void
 _commitid_gen_add_output_hash(const char *str, size_t len)
 {
-	if (!_cur_capture_commitid)
+	if (_cur_capture_commitid == NULL)
 		error(1, 0, "running through %s with no commitid\n", __func__);
 
 #ifdef DEBUG
@@ -397,29 +423,36 @@ commitid_gen_add_buf(CommitId *id, uint8_t *buf, size_t len)
 
 void
 commitid_gen_add_diff(CommitId *id, char *filename, char *rcsfile, char *r1,
-    char *r2)
+    char *r2, char *branch)
 {
 	Node *f;
 	CommitIdFile *cif;
 
-	if (f = findnode(id->files, filename)) {
+	if ((f = findnode(id->files, filename))) {
 		if (f->data != NULL &&
 		    strcmp(((CommitIdFile *)f->data)->revision, r2) == 0)
 			error(1, 0, "file %s with rev %s already exists in "
-			    "file list\n", filename);
+			    "file list\n", filename, r2);
 	}
 
 #ifdef DEBUG
-	printf("%s: %s, %s, %s, %s\n", __func__, filename, rcsfile, r1, r2);
+	fprintf(stderr, "%s: %s, %s, %s, %s\n", __func__, filename, rcsfile,
+	    r1, r2);
 #endif
 
 	f = getnode();
-	f->key = xstrdup(filename);
+	f->key = xmalloc(strlen(filename) + 1 + strlen(r2) + 1);
+	snprintf(f->key, strlen(filename) + 1 + strlen(r2), "%s:%s", filename,
+	    r2);
 	f->data = xmalloc(sizeof(CommitIdFile));
+	bzero(f->data, sizeof(CommitIdFile));
 	cif = (CommitIdFile *)f->data;
+	cif->filename = xstrdup(filename);
 	cif->rcsfile = xstrdup(rcsfile);
 	cif->revision = xstrdup(r2);
 	cif->prev_revision = xstrdup(r1);
+	if (branch != NULL)
+		cif->branch = xstrdup(branch);
 	addnode(id->files, f);
 }
 
@@ -473,17 +506,19 @@ commitid_store(CommitId *id)
 	RCSNode *rcs;
 	RCSVers *delta;
 	char *rev;
+	int wrotefiles = 0;
 
 	if (id->genesis)
 		goto write_log;
 
 	head = id->files->list;
 	for (fn = head->next; fn != head; fn = fn->next) {
-		char *trcs, *tdir;
+		char *trcs;
+		CommitIdFile *cif = (CommitIdFile *)fn->data;
 
-		if (((CommitIdFile *)fn->data)->rcsfile == NULL)
+		if (cif->rcsfile == NULL)
 			error(1, 0, "can't store commitid for file %s "
-			    "without rcsfile", fn->key);
+			    "without rcsfile", cif->filename);
 
 		trcs = xmalloc(strlen(current_parsed_root->directory) + 1 +
 		    strlen(id->repo) + 1);
@@ -491,23 +526,22 @@ commitid_store(CommitId *id)
 		    strlen(id->repo) + 1, "%s/%s",
 		    current_parsed_root->directory, id->repo);
 
-		rcs = RCS_parse(fn->key, trcs);
+		rcs = RCS_parse(cif->filename, trcs);
 		if (rcs == NULL)
-			error(1, 0, "can't find RCS file %s in %s", fn->key,
-			    trcs);
+			error(1, 0, "can't find RCS file %s in %s",
+			    cif->filename, trcs);
 
 		RCS_fully_parse(rcs);
 
-		rev = RCS_gettag(rcs, ((CommitIdFile *)fn->data)->revision, 1,
-		    NULL);
+		rev = RCS_gettag(rcs, cif->revision, 1, NULL);
 		if (rev == NULL)
 			error (1, 0, "%s: no revision %s", rcs->path,
-			    ((CommitIdFile *)fn->data)->revision);
+			    cif->revision);
 
 #ifdef DEBUG
-		printf("adding commitid %s to rev %s of %s\n",
-			id->commitid, rev,
-			((CommitIdFile *)fn->data)->rcsfile);
+		fprintf(stderr, "adding commitid %s to rev %s of %s (%s)\n",
+			id->commitid, rev, cif->rcsfile, cif->branch ?
+			cif->branch : "head");
 #endif
 
 		n = findnode(rcs->versions, rev);
@@ -516,7 +550,7 @@ commitid_store(CommitId *id)
 		if (delta->other_delta == NULL)
 		    delta->other_delta = getlist();
 
-		if (n = findnode(delta->other_delta, "commitid"))
+		if ((n = findnode(delta->other_delta, "commitid")))
 			n->data = xstrdup(id->commitid);
 		else {
 			n = getnode();
@@ -528,10 +562,17 @@ commitid_store(CommitId *id)
 
 		RCS_rewrite(rcs, NULL, NULL);
 
+		if (!wrotefiles)
+			wrotefiles++;
+
 		free(rcs);
 		free(rev);
 		free(n);
 	}
+
+	if (!id->genesis && !wrotefiles)
+		/* no files changed, don't bother taking a commitid */
+		return;
 
 	/* all written, append to repo-specific log */
 write_log:
@@ -542,8 +583,11 @@ write_log:
 		head = id->files->list;
 		for (fn = head->next; fn != head; fn = fn->next) {
 			CommitIdFile *cif = (CommitIdFile *)fn->data;
-			fprintf(fp, "\t%s:%s:%s", cif->prev_revision,
-			    cif->revision, fn->key);
+			fprintf(fp, "\t%s:%s:%s:%s",
+			    cif->prev_revision,
+			    cif->revision,
+			    cif->branch == NULL ? "" : cif->branch,
+			    cif->filename);
 		}
 	}
 

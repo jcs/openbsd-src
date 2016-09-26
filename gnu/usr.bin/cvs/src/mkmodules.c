@@ -853,8 +853,6 @@ init (argc, argv)
     /* Exit status.  */
     int err;
     CommitId *genesis, *rootcommit;
-    Node *head, *fn;
-    char *genline;
 
     const struct admin_file *fileptr;
 
@@ -955,7 +953,7 @@ init (argc, argv)
 				    NULL, 0, NULL);
 	    if (retcode == 0)
 		commitid_gen_add_diff(rootcommit, fileptr->filename, info_v,
-				      "0", "1.1");
+				      "0", "1.1", NULL);
 	    else
 		/* add_rcs_file already printed an error message.  */
 		err = 1;

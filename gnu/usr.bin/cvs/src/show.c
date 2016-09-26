@@ -24,6 +24,8 @@ static const char *const show_usage[] = {
 	NULL
 };
 
+void show_commitid_header(RCSNode *, char *);
+
 int
 show(int argc, char **argv)
 {
@@ -72,7 +74,7 @@ show(int argc, char **argv)
 	cvs_output(commitid->commitid, 0);
 	cvs_output("\n", 1);
 
-	return show_commitid(commitid, 0);
+	return show_commitid(commitid);
 }
 
 int
@@ -87,18 +89,25 @@ show_commitid(CommitId *commitid)
 
 	/*
 	 * walk changeset file list, find the commitid revision in each file
-	 * and generate a diff -uNP on it.  the log messages should be the same
-	 * on every file, so just print the first one.
+	 * and generate a diff on it.
 	 */
 	head = commitid->files->list;
 	for (fn = head->next; fn != head; fn = fn->next) {
 		RCSNode *rcs;
 		char *diffargs[] = { "rdiff", "-aupZ", "-r", "-r", "" };
-		ssize_t len = strlen(current_parsed_root->directory) +
-		    1 + strlen(commitid->repo) + 1 + strlen(fn->key) + 1;
-		char *rcspath = xmalloc(len);
-		char *rcsfile = xmalloc(strlen(fn->key) + 1);
-		char *slash;
+		CommitIdFile *cif = (CommitIdFile *)fn->data;
+		ssize_t len;
+		char *rcspath, *rcsfile, *slash;
+
+		if (commitid->repo == NULL)
+			error(1, 0, "show_commmitid: null repo");
+		if (cif->filename == NULL)
+			error(1, 0, "show_commitid: file with no filename");
+
+		len = strlen(current_parsed_root->directory) + 1 +
+		    strlen(commitid->repo) + 1 + strlen(cif->filename) + 1;
+		rcspath = xmalloc(len);
+		rcsfile = xmalloc(strlen(cif->filename) + 1);
 
 		/*
 		 * rcspath is something like "bin/csh/err.c" but we need to
@@ -107,7 +116,8 @@ show_commitid(CommitId *commitid)
 		 */
 
 		snprintf(rcspath, len, "%s/%s/%s",
-		    current_parsed_root->directory, commitid->repo, fn->key);
+		    current_parsed_root->directory, commitid->repo,
+		    cif->filename);
 		slash = strrchr(rcspath, '/');
 		if (!slash)
 			error(1, 0, "can't find slash in %s", rcspath);
@@ -117,75 +127,51 @@ show_commitid(CommitId *commitid)
 
 		rcs = RCS_parse(rcsfile, rcspath);
 		if (rcs == NULL)
-			error(1, 0, "can't find RCS file %s in %s", fn->key,
+			error(1, 0, "can't find RCS file %s in %s", rcsfile,
 			    rcspath);
 
 		if (!didlog) {
-			Node *revhead, *rev, *n, *p;
-			RCSVers *ver;
-			int year, mon, mday, hour, min, sec;
-			char buf[1024];
-			char *line;
-
-			RCS_fully_parse(rcs);
-
-			n = findnode(rcs->versions,
-			    ((CommitIdFile *)fn->data)->revision);
-			if (n == NULL)
-				error (1, 0, "%s: no revision %s", rcs->path,
-				    ((CommitIdFile *)fn->data)->revision);
-
-			ver = (RCSVers *)n->data;
-
-			cvs_output("Author:   ", 0);
-			cvs_output(ver->author, 0);
-			cvs_output("\n", 1);
-
-			if (sscanf(ver->date, SDATEFORM, &year, &mon, &mday,
-			    &hour, &min, &sec) != 6)
-				error(1, 0, "malformed date: %s", ver->date);
-
-			if (year < 1900)
-				year += 1900;
-
-			p = findnode(ver->other, "log");
-			if (p == NULL || !p->data)
-				error(1, 0, "no log found on first commit");
-
-			sprintf(buf, "%04d/%02d/%02d %02d:%02d:%02d",
-			    year, mon, mday, hour, min, sec);
-
-			cvs_output("Date:     ", 0);
-			cvs_output(buf, 0);
-			cvs_output("\n\n", 2);
-
-			while ((line = strsep(&p->data, "\n")) != NULL) {
-				if (*line == '\0')
-					break;
-
-				cvs_output("    ", 4);
-				cvs_output(line, 0);
-				cvs_output("\n", 1);
+			/*
+			 * if we have another revision of this same file in
+			 * this same changeset, use that one's log, since it's
+			 * probably the 1.1.1.1 commit (vs. our 1.1) which has
+			 * the actual commit message instead of just "Initial
+			 * revision".
+			 */
+			if (fn->next && fn->next != head) {
+				CommitIdFile *ncif =
+				    (CommitIdFile *)fn->next->data;
+				if (ncif != NULL && strcmp(cif->filename,
+				    ncif->filename) == 0) {
+					show_commitid_header(rcs,
+					    ncif->revision);
+					didlog = 1;
+				}
 			}
+		}
 
-			cvs_output("\n", 1);
-
+		if (!didlog) {
+			show_commitid_header(rcs, cif->revision);
 			didlog = 1;
 		}
 
 		diffargs[2] = xmalloc(20);
-		snprintf(diffargs[2], 20, "-r%s",
-		    ((CommitIdFile *)(fn->data))->prev_revision);
+		snprintf(diffargs[2], 20, "-r%s", cif->prev_revision);
 
 		diffargs[3] = xmalloc(20);
-		snprintf(diffargs[3], 20, "-r%s",
-		    ((CommitIdFile *)(fn->data))->revision);
+		snprintf(diffargs[3], 20, "-r%s", cif->revision);
 
 		diffargs[4] = xmalloc(strlen(commitid->repo) + 1 +
-		    strlen(fn->key) + 1);
-		sprintf(diffargs[4], "%s/%s", commitid->repo, fn->key);
+		    strlen(cif->filename) + 1);
+		sprintf(diffargs[4], "%s/%s", commitid->repo, cif->filename);
 
 		patch(sizeof(diffargs) / sizeof(diffargs[0]), diffargs);
+
+#ifdef DEBUG
+		fprintf(stderr, "%s: %s %s %s %s %s\n",
+			__func__, diffargs[0], diffargs[1], diffargs[2],
+			diffargs[3], diffargs[4]);
+#endif
 
 		free(diffargs[4]);
 		free(diffargs[3]);
@@ -193,4 +179,55 @@ show_commitid(CommitId *commitid)
 	}
 
 	return 0;
+}
+
+void
+show_commitid_header(RCSNode *rcs, char *revision)
+{
+	Node *n, *p;
+	RCSVers *ver;
+	int year, mon, mday, hour, min, sec;
+	char buf[1024];
+	char *line;
+
+	RCS_fully_parse(rcs);
+
+	n = findnode(rcs->versions, revision);
+	if (n == NULL)
+		error (1, 0, "%s: no revision %s", rcs->path, revision);
+
+	ver = (RCSVers *)n->data;
+
+	cvs_output("Author:   ", 0);
+	cvs_output(ver->author, 0);
+	cvs_output("\n", 1);
+
+	if (sscanf(ver->date, SDATEFORM, &year, &mon, &mday, &hour, &min,
+	    &sec) != 6)
+		error(1, 0, "malformed date: %s", ver->date);
+
+	if (year < 1900)
+		year += 1900;
+
+	p = findnode(ver->other, "log");
+	if (p == NULL || !p->data)
+		error(1, 0, "no log found on first commit");
+
+	sprintf(buf, "%04d/%02d/%02d %02d:%02d:%02d", year, mon, mday, hour,
+	    min, sec);
+
+	cvs_output("Date:     ", 0);
+	cvs_output(buf, 0);
+	cvs_output("\n\n", 2);
+
+	while ((line = strsep(&p->data, "\n")) != NULL) {
+		if (*line == '\0')
+			break;
+
+		cvs_output("    ", 4);
+		cvs_output(line, 0);
+		cvs_output("\n", 1);
+	}
+
+	cvs_output("\n", 1);
 }
