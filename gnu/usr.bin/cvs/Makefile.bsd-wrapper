@@ -2,6 +2,8 @@
 
 .include <bsd.own.mk>
 
+CFLAGS+=	-g -Wall
+
 MAN=	man/cvs.1 man/cvs.5 man/cvsbug.8 man/rcs2log.1
 GNUCFLAGS=	CC="${CC}" CFLAGS="${CFLAGS} ${COPTS}" CPP="${CPP}"
 CLEANFILES=	src/version.c lib/getdate.c lib/getdate.h macintosh/Makefile \
