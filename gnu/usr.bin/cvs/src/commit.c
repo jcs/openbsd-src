@@ -2087,7 +2087,7 @@ checkaddfile (file, repository, tag, options, rcsnode)
     {
 	if (newfile)
 	{
-	    char *tmp;
+	    char *tmp, *finalrev = NULL;
 	    FILE *fp;
 
 	    /* move the new file out of the way. */
@@ -2108,7 +2108,7 @@ checkaddfile (file, repository, tag, options, rcsnode)
 	    /* commit a dead revision. */
 	    (void) sprintf (tmp, "file %s was initially added on branch %s.",
 			    file, tag);
-	    retcode = RCS_checkin (rcsfile, NULL, tmp, NULL, NULL, NULL,
+	    retcode = RCS_checkin (rcsfile, NULL, tmp, NULL, NULL, &finalrev,
 				   RCS_FLAGS_DEAD | RCS_FLAGS_QUIET);
 	    free (tmp);
 	    if (retcode != 0)
@@ -2118,6 +2118,10 @@ checkaddfile (file, repository, tag, options, rcsnode)
 		retval = 1;
 		goto out;
 	    }
+
+	    if (global_commitid != NULL)
+	        commitid_gen_add_diff(global_commitid, file,
+    		    rcsfile->path, "0", finalrev, NULL);
 
 	    /* put the new file back where it was */
 	    rename_file (fname, file);
