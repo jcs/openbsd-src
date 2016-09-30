@@ -772,26 +772,23 @@ admin_fileproc (callerdat, finfo)
 
 		n = findnode (rcs->versions, rev);
 		delta = (RCSVers *) n->data;
+		free (rev);
 
 		if (delta->other_delta == NULL)
     		    delta->other_delta = getlist();
 
-		if ((n = findnode (delta->other_delta, "commitid")))
-		{
-		    error (0, 0, "%s: revision %s already has commitid %s",
-		        rcs->path, rev, n->data);
-		    free (rev);
-		    status = 1;
-		    continue;
+		n = findnode (delta->other_delta, "commitid");
+		if (n == NULL) {
+		    n = getnode();
+		    n->type = RCSFIELD;
+		    n->key = xstrdup ("commitid");
+		    n->data = xstrdup(commitid);
+		    addnode (delta->other_delta, n);
+		} else {
+		    if (n->data != NULL)
+		        free (n->data);
+		    n->data = xstrdup(commitid);
 		}
-
-		n = getnode();
-		n->type = RCSFIELD;
-		n->key = xstrdup ("commitid");
-		n->data = xstrdup(commitid);
-		addnode (delta->other_delta, n);
-
-		free (rev);
 
 		break;
 	    case 'n': /* fall through */
