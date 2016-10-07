@@ -56,7 +56,8 @@ show(int argc, char **argv)
 
 	repo = commitid_repo_base();
 	if ((commitid = commitid_find(repo, tcommitid)) == NULL)
-		error(1, 0, "commitid not found: %s", tcommitid);
+		error(1, 0, "commitid not found: %s", tcommitid == NULL ?
+		    "(latest)" : tcommitid);
 
 	if (commitid->previous == NULL && !commitid->genesis)
 		error(1, 0, "commitid has no previous but is not genesis: %s",

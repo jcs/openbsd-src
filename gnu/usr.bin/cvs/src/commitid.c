@@ -178,7 +178,6 @@ commitid_find(char *repo, char *findid)
 	size_t ps = 0;
 	long long findcs = -1;
 	int isint = 0, x;
-	int match = 0;
 
 	if (findid != NULL && !strlen(findid))
 		findid = NULL;
@@ -225,6 +224,8 @@ commitid_find(char *repo, char *findid)
 	}
 
 	while ((len = getline(&line, &ps, fp)) != -1) {
+		int match = 0;
+
 		if (line[len - 1] == '\n') {
 			line[len - 1] = '\0';
 			len--;
@@ -253,7 +254,7 @@ commitid_find(char *repo, char *findid)
 			 * chars, allowing for shortened unless it matches more
 			 * than one
 			 */
-			if (match) {
+			if (retid != NULL) {
 				match = 0;
 				if (previd) {
 					commitid_free(previd);
@@ -268,18 +269,29 @@ commitid_find(char *repo, char *findid)
 			match = 1;
 		}
 
-		if (match && tmpid) {
+		if (match) {
 			retid = tmpid;
 			tmpid = NULL;
 
-			if (previd)
+			if (previd) {
+				if (previd->changeset != retid->changeset - 1) {
+					error(0, 0, "commitid \"%s\" previous "
+					    "incorrectly \"%s\"",
+					    retid->commitid,
+					    previd->commitid);
+					retid = NULL;
+					break;
+				}
+
 				retid->previous = xstrdup(previd->commitid);
-			else {
+			} else if (retid->changeset == 0) {
 				CommitId *genesis = commitid_genesis();
 				retid->previous = xstrdup(genesis->commitid);
 				commitid_free(genesis);
 			}
 
+			if (files != NULL)
+				free(files);
 			files = xmalloc(strlen(tab) + 2);
 			strlcpy(files, tab, strlen(tab) + 1);
 
@@ -289,24 +301,25 @@ commitid_find(char *repo, char *findid)
 				/* no possible duplicates, finish early */
 				break;
 
+			/*
+			 * assuming we loop again, we weren't the final match,
+			 * so stage us to be the next one's previous
+			 */
 			if (previd)
 				commitid_free(previd);
-
 			previd = retid;
 		} else {
-			if (previd)
+			if (previd && previd != retid)
 				commitid_free(previd);
-
 			previd = tmpid;
 			tmpid = NULL;
 		}
 	}
 	fclose(fp);
-
-	if (previd != NULL && previd != retid)
-		commitid_free(previd);
+	free(line);
 
 	if (retid) {
+		/* have a match to return, parse file list */
 		retid->repo = xstrdup(repo);
 
 		if (files == NULL)
@@ -342,10 +355,9 @@ commitid_find(char *repo, char *findid)
 			}
 
 			f = getnode();
-			f->key = xmalloc(strlen(fname) + 1 +
-			    strlen(r2) + 1);
-			snprintf(f->key, strlen(fname) + 1 +
-			    strlen(r2), "%s:%s", fname, r2);
+			f->key = xmalloc(strlen(fname) + 1 + strlen(r2) + 1);
+			snprintf(f->key, strlen(fname) + 1 + strlen(r2),
+			    "%s:%s", fname, r2);
 			f->data = xmalloc(sizeof(CommitIdFile));
 			cif = (CommitIdFile *)(f->data);
 			cif->filename = xstrdup(fname);
@@ -361,6 +373,8 @@ commitid_find(char *repo, char *findid)
 		}
 	}
 
+	if (previd != NULL && previd != retid)
+		commitid_free(previd);
 	if (files != NULL)
 		free(files);
 
