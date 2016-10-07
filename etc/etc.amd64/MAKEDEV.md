@@ -21,6 +21,8 @@ dnl
 __devitem(apm, apm, Power Management Interface)dnl
 __devitem(nvram, nvram, NVRAM access)dnl
 _mkdev(nvram, nvram, {-M nvram c major_nvram_c 0 440 kmem-})dnl
+__devitem(chromeec, chromeec, Chrome EC)dnl
+_mkdev(chromeec, chromeec, {-M chromeec c major_chromeec_c 0 600-})dnl
 _TITLE(make)
 _DEV(all)
 _DEV(ramdisk)
@@ -94,6 +96,7 @@ _DEV(vmm, 10)
 _DEV(vscsi, 89)
 _DEV(pvbus, 95)
 _DEV(switch, 97)
+_DEV(chromeec, 98)
 dnl
 divert(__mddivert)dnl
 dnl
@@ -135,5 +138,6 @@ target(all, drm, 0, 1, 2, 3)dnl
 target(all, ttyVI, 00, 10, 20, 30, 40)dnl
 target(all, ipmi, 0)dnl
 target(all, switch, 0, 1, 2, 3)dnl
+target(all, chromeec)dnl
 twrget(ramd, wsdisp, ttyC, 0)dnl
 target(ramd, fd, 0)dnl

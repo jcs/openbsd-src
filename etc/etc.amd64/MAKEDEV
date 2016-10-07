@@ -3,8 +3,8 @@
 # THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
 # generated from:
 #
-#	OpenBSD: etc.amd64/MAKEDEV.md,v 1.68 2016/09/04 15:38:59 naddy Exp 
-#	OpenBSD: MAKEDEV.common,v 1.93 2016/09/11 03:06:31 deraadt Exp 
+#	OpenBSD: etc.amd64/MAKEDEV.md,v 1.69 2016/09/11 19:59:53 deraadt Exp 
+#	OpenBSD: MAKEDEV.common,v 1.94 2016/09/11 19:59:51 deraadt Exp 
 #	OpenBSD: MAKEDEV.mi,v 1.83 2016/09/11 03:06:31 deraadt Exp 
 #	OpenBSD: MAKEDEV.sub,v 1.14 2005/02/07 06:14:18 david Exp 
 #
@@ -96,6 +96,7 @@
 #	vscsi*	Virtual SCSI controller
 #	pvbus*	paravirtual device tree root
 #	switch*	Switch driver
+#	chromeec	Chrome EC
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 T=$0
 
@@ -245,6 +246,10 @@ std)
 ttyc*)
 	M ttyc$U c 38 $U 660 dialer root
 	M cuac$U c 38 $(($U+128)) 660 dialer root
+	;;
+
+chromeec)
+	M chromeec c 98 0 600
 	;;
 
 switch*)
@@ -565,10 +570,10 @@ local)
 	;;
 
 all)
-	R switch0 switch1 switch2 switch3 ipmi0 ttyVI00 ttyVI10
-	R ttyVI20 ttyVI30 ttyVI40 drm0 drm1 drm2 drm3 nvram gpio0
-	R gpio1 gpio2 bktr0 vnd0 vnd1 vnd2 vnd3 sd0 sd1 sd2 sd3 sd4
-	R sd5 sd6 sd7 sd8 sd9 cd0 cd1 rd0 tap0 tap1 tap2 tap3 tun0
+	R chromeec switch0 switch1 switch2 switch3 ipmi0 ttyVI00
+	R ttyVI10 ttyVI20 ttyVI30 ttyVI40 drm0 drm1 drm2 drm3 nvram
+	R gpio0 gpio1 gpio2 bktr0 vnd0 vnd1 vnd2 vnd3 sd0 sd1 sd2 sd3
+	R sd4 sd5 sd6 sd7 sd8 sd9 cd0 cd1 rd0 tap0 tap1 tap2 tap3 tun0
 	R tun1 tun2 tun3 bio pty0 fd1 fd1B fd1C fd1D fd1E fd1F fd1G
 	R fd1H fd0 fd0B fd0C fd0D fd0E fd0F fd0G fd0H diskmap vscsi0
 	R ch0 audio0 audio1 audio2 bpf pvbus0 vmm fuse pppx hotplug

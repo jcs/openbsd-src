@@ -115,8 +115,11 @@ int	nblkdev = nitems(bdevsw);
 /* open, close, ioctl */
 #define cdev_chromeec_init(c,n) { \
 	dev_init(c,n,open), dev_init(c,n,close), \
-	(dev_type_read((*))) enodev, (dev_type_write((*))) enodev, \
-	dev_init(c,n,ioctl) }
+	(dev_type_read((*))) enodev, \
+	(dev_type_write((*))) enodev, \
+	dev_init(c,n,ioctl), \
+	(dev_type_stop((*))) enodev, 0, seltrue, \
+	(dev_type_mmap((*))) enodev }
 
 #define	mmread	mmrw
 #define	mmwrite	mmrw
