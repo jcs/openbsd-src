@@ -920,13 +920,15 @@ extern struct commitid *global_commitid;
 
 extern void commitid_free PROTO((CommitId *));
 extern CommitId *commitid_gen_start PROTO ((char *, unsigned long));
-extern int commitid_gen_add_buf PROTO ((CommitId *, uint8_t *, size_t));
+extern void commitid_gen_add_buf PROTO ((CommitId *, uint8_t *, size_t));
 extern void commitid_gen_add_diff PROTO ((CommitId *, char *, char *, char *,
 					  char *, char *));
-extern int commitid_gen_add_rand PROTO((CommitId *, size_t));
+extern void commitid_gen_add_rand PROTO((CommitId *, size_t));
 extern void commitid_gen_add_show PROTO((CommitId *));
-extern int commitid_gen_final PROTO((CommitId *));
+extern void commitid_gen_final PROTO((CommitId *));
 extern void commitid_store PROTO((CommitId *));
+
+extern CommitId *commitid_gen_start_legacy PROTO ((char *));
 
 extern char *commitid_repo_base PROTO ((void));
 extern char *commitid_filename PROTO ((char *, int));

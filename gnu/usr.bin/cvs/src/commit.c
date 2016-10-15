@@ -643,12 +643,13 @@ commit (argc, argv)
 #endif
 
     /*
-     * If we have a commitids file, fetch the last id and setup a new one
+     * If we have a commitids file, fetch the last id and setup a new one.
+     * Otherwise setup a legacy-style commitid.
      */
+    repo = commitid_repo_base();
     if ((genesis = commitid_genesis()))
     {
-        CommitId *id;
-	repo = commitid_repo_base();
+	CommitId *id;
 
 	if ((id = commitid_find(repo, NULL)) == NULL)
 	    error (1, 0, "failed fetching last commitid");
@@ -657,6 +658,10 @@ commit (argc, argv)
 	global_commitid->previous = xstrdup(id->commitid);
 
 	commitid_free(genesis);
+    }
+    else
+    {
+	global_commitid = commitid_gen_start_legacy(repo);
     }
 
     /*

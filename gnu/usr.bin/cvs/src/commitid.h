@@ -24,6 +24,8 @@
 					    COMMITID_HASH_LENGTH + 1 + \
 					    COMMITID_CHANGESET_LENGTH)
 
+#define COMMITID_LEGACY_LENGTH		16
+
 struct commitid {
 	char *repo;
 	char *previous;
@@ -39,6 +41,9 @@ struct commitid {
 	int genesis;
 
 	SHA2_CTX sha_ctx;
+
+	/* legacy random-style hash, no genesis or history tracking */
+	int legacy;
 };
 typedef struct commitid CommitId;
 

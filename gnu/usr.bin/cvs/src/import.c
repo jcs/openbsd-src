@@ -69,7 +69,8 @@ import (argc, argv)
     List *ulist;
     Node *p;
     struct logfile_info *li;
-    CommitId *genesis;
+    CommitId *genesis, *id;
+    char *repo, *slash;
 
     if (argc == -1)
 	usage (import_usage);
@@ -305,23 +306,22 @@ import (argc, argv)
 	(void) fprintf (logfp, "%s\n\t\t", argv[i]);
     (void) fprintf (logfp, "\n");
 
+    /*
+     * Setup new commitid - repository is a full path, we want the first
+     * component after our root, minus first slash.
+     */
+    repo = strstr(repository, current_parsed_root->directory);
+    if (repo == NULL)
+    	error(1, 0, "can't find %s in %s",
+    	    current_parsed_root->directory, repository);
+    repo += (strlen(current_parsed_root->directory) + 1);
+
+    slash = strchr(repo, '/');
+    if (slash)
+    	*slash = '\0';
+
     if ((genesis = commitid_genesis()))
     {
-	CommitId *id;
-	char *repo, *slash;
-
-	/* repository is a full path, we want the first component after our
-	 * root, minus first slash */
-	repo = strstr(repository, current_parsed_root->directory);
-	if (repo == NULL)
-		error(1, 0, "can't find %s in %s",
-		    current_parsed_root->directory, repository);
-	repo += (strlen(current_parsed_root->directory) + 1);
-
-	slash = strchr(repo, '/');
-	if (slash)
-		*slash = '\0';
-
 	if ((id = commitid_find(repo, NULL)) == NULL)
 	{
 	    global_commitid = commitid_gen_start(repo, 1);
@@ -335,6 +335,10 @@ import (argc, argv)
 
 	commitid_free(id);
 	commitid_free(genesis);
+    }
+    else
+    {
+	global_commitid = commitid_gen_start_legacy(repo);
     }
 
     /* Just Do It.  */

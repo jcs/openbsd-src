@@ -107,13 +107,13 @@ commitid_parse(char *repo, char *id)
 		return NULL;
 
 	out = xmalloc(sizeof(CommitId));
+	memset(out, 0, sizeof(CommitId));
 	out->commitid = xstrdup(id);
 	out->version = version;
 	out->hash = xstrdup(hash);
 	out->changeset = changeset;
 	out->repo = xstrdup(repo);
 	out->files = getlist();
-	out->genesis = 0;
 
 	return out;
 }
@@ -391,6 +391,7 @@ commitid_gen_start(char *repo, unsigned long changeset)
 		    "%lu", changeset);
 
 	out = xmalloc(sizeof(CommitId));
+	memset(out, 0, sizeof(CommitId));
 	out->repo = xstrdup(repo);
 	out->version = COMMITID_VERSION;
 	out->hash = xmalloc(COMMITID_HASH_LENGTH + 1);
@@ -400,6 +401,33 @@ commitid_gen_start(char *repo, unsigned long changeset)
 	out->genesis = (changeset == 0);
 
 	SHA512_256Init(&out->sha_ctx);
+
+	return out;
+}
+
+CommitId *
+commitid_gen_start_legacy(char *repo)
+{
+	CommitId *out;
+	int i = 0;
+	uint32_t c;
+
+	out = xmalloc(sizeof(CommitId));
+	memset(out, 0, sizeof(CommitId));
+	out->repo = xstrdup(repo);
+	out->commitid = xmalloc(COMMITID_LEGACY_LENGTH + 1);
+	out->files = getlist();
+	out->legacy = 1;
+
+	while (i <= COMMITID_LEGACY_LENGTH) {
+		c = arc4random_uniform(75) + 48;
+		if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) ||
+		    (c >= 97 && c <= 122)) {
+			out->commitid[i] = c;
+			i++;
+		}
+	}
+	out->commitid[COMMITID_LEGACY_LENGTH] = '\0';
 
 	return out;
 }
@@ -421,18 +449,22 @@ _commitid_gen_add_output_hash(const char *str, size_t len)
 void
 commitid_gen_add_show(CommitId *id)
 {
+	if (id->legacy)
+		return;
+
 	_cur_capture_commitid = id;
 	cvs_output_capture = _commitid_gen_add_output_hash;
 	show_commitid(id);
 	_cur_capture_commitid = NULL;
 }
 
-int
+void
 commitid_gen_add_buf(CommitId *id, uint8_t *buf, size_t len)
 {
-	SHA512_256Update(&id->sha_ctx, buf, len);
+	if (id->legacy)
+		return;
 
-	return 1;
+	SHA512_256Update(&id->sha_ctx, buf, len);
 }
 
 void
@@ -470,24 +502,25 @@ commitid_gen_add_diff(CommitId *id, char *filename, char *rcsfile, char *r1,
 	addnode(id->files, f);
 }
 
-int
+void
 commitid_gen_add_rand(CommitId *id, size_t len)
 {
-	char *rbuf = xmalloc(100);
+	char *rbuf = xmalloc(len);
 
-	arc4random_buf(rbuf, 100);
-	commitid_gen_add_buf(id, rbuf, 100);
+	arc4random_buf(rbuf, len);
+	commitid_gen_add_buf(id, rbuf, len);
 	free(rbuf);
-
-	return 1;
 }
 
-int
+void
 commitid_gen_final(CommitId *id)
 {
 	uint8_t *thash = xmalloc(COMMITID_HASH_LENGTH + 1);
 	char fmt[22];
 	int i;
+
+	if (id->legacy)
+		return;
 
 	SHA512_256Final(thash, &id->sha_ctx);
 
@@ -508,8 +541,6 @@ commitid_gen_final(CommitId *id)
 	    id->hash, id->changeset);
 
 	assert(strlen(id->commitid) == COMMITID_LENGTH);
-
-	return 1;
 }
 
 void
@@ -584,8 +615,7 @@ commitid_store(CommitId *id)
 		free(n);
 	}
 
-	if (!id->genesis && !wrotefiles)
-		/* no files changed, don't bother taking a commitid */
+	if (id->legacy || (!id->genesis && !wrotefiles))
 		return;
 
 	/* all written, append to repo-specific log */
