@@ -178,13 +178,20 @@ commitid_find(char *repo, char *findid)
 	size_t ps = 0;
 	long long findcs = -1;
 	int isint = 0, x;
+	CommitId *genesis;
+
+	genesis = commitid_genesis();
+	if (genesis == NULL) {
+		error(1, 0, "commitid history tracking not enabled");
+		return NULL;
+	}
 
 	if (findid != NULL && !strlen(findid))
 		findid = NULL;
 
 	if (findid != NULL &&
 	    (strcmp(findid, "0") == 0 || strcmp(findid, "genesis") == 0))
-		return commitid_genesis();
+		return genesis;
 
 	fp = commitid_logfile(repo);
 	if (fp == NULL)
@@ -277,8 +284,7 @@ commitid_find(char *repo, char *findid)
 				if (previd->changeset != retid->changeset - 1) {
 					error(0, 0, "commitid \"%s\" previous "
 					    "incorrectly \"%s\"",
-					    retid->commitid,
-					    previd->commitid);
+					    retid->commitid, previd->commitid);
 					retid = NULL;
 					break;
 				}
@@ -377,6 +383,15 @@ commitid_find(char *repo, char *findid)
 		commitid_free(previd);
 	if (files != NULL)
 		free(files);
+
+	if (retid && retid->changeset == 1) {
+		if (retid->previous == NULL)
+			retid->previous = xstrdup(genesis->commitid);
+
+		if (strcmp(retid->previous, genesis->commitid) != 0)
+			error(1, 0, "changeset 1 has invalid previous: %s",
+			    retid->previous);
+	}
 
 	return retid;
 }
