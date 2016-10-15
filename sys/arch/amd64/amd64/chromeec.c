@@ -119,12 +119,6 @@ struct ec_response_get_protocol_info {
 	uint32_t	flags;
 } __packed;
 
-#define EC_LB_PROG_LEN 192
-struct lightbar_program {
-	uint8_t size;
-	uint8_t data[EC_LB_PROG_LEN];
-};
-
 #define EC_CMD_LIGHTBAR_CMD		0x28
 struct ec_params_lightbar {
 	uint8_t cmd;
@@ -162,8 +156,7 @@ struct ec_params_lightbar {
 			uint8_t led;
 		} get_rgb;
 
-		struct lightbar_program set_program;
-
+		struct chromeec_lightbar_program set_program;
 		struct chromeec_lightbar_params_v1 set_params_v1;
 	};
 } __packed;
@@ -385,7 +378,7 @@ chromeec_lightbar_cmd(struct ec_params_lightbar params, int resp)
 	msg.command_version = 0;
 	msg.params = (uint8_t *)&params;
 	msg.params_size = sizeof(params);
-	if (resp)
+	//if (resp)
 		msg.response_size = sizeof(struct ec_response_lightbar);
 
 	ret = chromeec_send_message(&msg);
@@ -452,30 +445,16 @@ chromeec_init_lightbar(void)
 	ps->s3_sleep_for = 100;
 	ps->s3_ramp_up = 20000;
 	ps->s3_ramp_down = 15000;
-	/* battery */
-	ps->s0_idx[0][0] = 5;
-	ps->s0_idx[0][1] = 5;
-	ps->s0_idx[0][2] = 4;
-	ps->s0_idx[0][3] = 4;
-	/* ac */
-	ps->s0_idx[1][0] = 5;
-	ps->s0_idx[1][1] = 5;
-	ps->s0_idx[1][2] = 4;
-	ps->s0_idx[1][3] = 4;
+	ps->s0_idx[0][0] = ps->s0_idx[1][0] = 5;
+	ps->s0_idx[0][1] = ps->s0_idx[1][1] = 5;
+	ps->s0_idx[0][2] = ps->s0_idx[1][2] = 4;
+	ps->s0_idx[0][3] = ps->s0_idx[1][3] = 4;
 
 	/* un-google-ify */
-	ps->color[0].r = 50;
-	ps->color[0].g = 50;
-	ps->color[0].b = 50;
-	ps->color[1].r = 100;
-	ps->color[1].g = 100;
-	ps->color[1].b = 100;
-	ps->color[2].r = 150;
-	ps->color[2].g = 150;
-	ps->color[2].b = 150;
-	ps->color[3].r = 200;
-	ps->color[3].g = 200;
-	ps->color[3].b = 200;
+	ps->color[0].r = ps->color[0].g = ps->color[0].b = 60;
+	ps->color[1].r = ps->color[1].g = ps->color[1].b = 100;
+	ps->color[2].r = ps->color[2].g = ps->color[2].b = 120;
+	ps->color[3].r = ps->color[3].g = ps->color[3].b = 160;
 
 	/* write back */
 	bzero(&params, sizeof(params));
@@ -697,36 +676,49 @@ chromeecioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *proc)
 
 	case CHROMEEC_IOC_LIGHTBAR_INIT:
 		lb_params.cmd = LIGHTBAR_CMD_INIT;
+
 		if ((ret = chromeec_lightbar_cmd(lb_params, 0)))
 			ret = ENXIO;
 
 		break;
 
 	case CHROMEEC_IOC_LIGHTBAR_GET_BRIGHTNESS:
-	case CHROMEEC_IOC_LIGHTBAR_SET_BRIGHTNESS:
-		if (cmd == CHROMEEC_IOC_LIGHTBAR_GET_BRIGHTNESS) {
-			lb_params.cmd = LIGHTBAR_CMD_GET_BRIGHTNESS;
-			resp = 1;
-		} else if (cmd == CHROMEEC_IOC_LIGHTBAR_SET_BRIGHTNESS) {
-			lb_params.cmd = LIGHTBAR_CMD_SET_BRIGHTNESS;
-			lb_params.set_brightness.num = 0xff & *(uint8_t *)data;
-		}
+		lb_params.cmd = LIGHTBAR_CMD_GET_BRIGHTNESS;
 
-		if ((ret = chromeec_lightbar_cmd(lb_params, resp))) {
+		if ((ret = chromeec_lightbar_cmd(lb_params, 1))) {
 			ret = ENXIO;
 			break;
 		}
 
-		if (cmd == CHROMEEC_IOC_LIGHTBAR_GET_BRIGHTNESS)
-			*(uint8_t *)data = ((struct ec_response_lightbar *)
-			    chromeec_softc->response_data)->get_brightness.num;
+		*(uint8_t *)data = ((struct ec_response_lightbar *)
+		    chromeec_softc->response_data)->get_brightness.num;
+
+		break;
+
+	case CHROMEEC_IOC_LIGHTBAR_SET_BRIGHTNESS:
+		lb_params.cmd = LIGHTBAR_CMD_SET_BRIGHTNESS;
+		lb_params.set_brightness.num = 0xff & *(uint8_t *)data;
+
+		if ((ret = chromeec_lightbar_cmd(lb_params, resp)))
+			ret = ENXIO;
+
+		break;
+
+	case CHROMEEC_IOC_LIGHTBAR_GET_SEQ:
+		lb_params.cmd = LIGHTBAR_CMD_GET_SEQ;
+
+		if ((ret = chromeec_lightbar_cmd(lb_params, 1))) {
+			ret = ENXIO;
+			break;
+		}
+
+		*(uint8_t *)data = ((struct ec_response_lightbar *)
+		    chromeec_softc->response_data)->get_seq.num;
 
 		break;
 
 	case CHROMEEC_IOC_LIGHTBAR_SET_SEQ:
 		val = *(uint8_t *)data;
-
-		/* 12 is custom program */
 
 		lb_params.cmd = LIGHTBAR_CMD_SEQ;
 		lb_params.seq.num = val;
@@ -735,48 +727,60 @@ chromeecioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *proc)
 
 		break;
 
-	case CHROMEEC_IOC_LIGHTBAR_GET_RGB:
-	case CHROMEEC_IOC_LIGHTBAR_SET_RGB: {
+	case CHROMEEC_IOC_LIGHTBAR_GET_RGB: {
 		struct chromeec_led_rgb *lrgb = (struct chromeec_led_rgb *)data;
 
-		if (cmd == CHROMEEC_IOC_LIGHTBAR_GET_RGB) {
-			lb_params.cmd = LIGHTBAR_CMD_GET_RGB;
-			lb_params.get_rgb.led = lrgb->led;
-			resp = 1;
-		}
-		else if (cmd == CHROMEEC_IOC_LIGHTBAR_SET_RGB) {
-			lb_params.cmd = LIGHTBAR_CMD_SET_RGB;
-			lb_params.set_rgb.led = lrgb->led;
-			lb_params.set_rgb.red = lrgb->red;
-			lb_params.set_rgb.green = lrgb->green;
-			lb_params.set_rgb.blue = lrgb->blue;
-		} else {
-			ret = ENOENT;
-			break;
-		}
+		lb_params.cmd = LIGHTBAR_CMD_GET_RGB;
+		lb_params.get_rgb.led = lrgb->led;
 
-		if ((ret = chromeec_lightbar_cmd(lb_params, resp))) {
+		if ((ret = chromeec_lightbar_cmd(lb_params, 1))) {
 			ret = ENXIO;
 			break;
 		}
 
-		if (cmd == CHROMEEC_IOC_LIGHTBAR_GET_RGB) {
-			struct ec_response_lightbar *erl =
-			    ((struct ec_response_lightbar *)
-			    chromeec_softc->response_data);
+		struct ec_response_lightbar *erl =
+		    ((struct ec_response_lightbar *)
+		    chromeec_softc->response_data);
 
-			lrgb->red = erl->get_rgb.red;
-			lrgb->green = erl->get_rgb.green;
-			lrgb->blue = erl->get_rgb.blue;
-		}
+		lrgb->red = erl->get_rgb.red;
+		lrgb->green = erl->get_rgb.green;
+		lrgb->blue = erl->get_rgb.blue;
 
 		break;
 	}
+	case CHROMEEC_IOC_LIGHTBAR_SET_RGB: {
+		struct chromeec_led_rgb *lrgb = (struct chromeec_led_rgb *)data;
+
+		lb_params.cmd = LIGHTBAR_CMD_SET_RGB;
+		lb_params.set_rgb.led = lrgb->led;
+		lb_params.set_rgb.red = lrgb->red;
+		lb_params.set_rgb.green = lrgb->green;
+		lb_params.set_rgb.blue = lrgb->blue;
+
+		if ((ret = chromeec_lightbar_cmd(lb_params, resp)))
+			ret = ENXIO;
+
+		break;
+	}
+	case CHROMEEC_IOC_LIGHTBAR_GET_DEMO:
+		lb_params.cmd = LIGHTBAR_CMD_GET_DEMO;
+
+		if ((ret = chromeec_lightbar_cmd(lb_params, 1))) {
+			ret = ENXIO;
+			break;
+		}
+
+		*(uint8_t *)data = ((struct ec_response_lightbar *)
+		    chromeec_softc->response_data)->get_demo.num;
+
+		break;
+
 	case CHROMEEC_IOC_LIGHTBAR_SET_DEMO:
 		val = *(uint8_t *)data;
 
 		lb_params.cmd = LIGHTBAR_CMD_DEMO;
 		lb_params.demo.num = (val ? 1 : 0);
+
 		if ((ret = chromeec_lightbar_cmd(lb_params, 0)))
 			ret = ENXIO;
 
@@ -805,7 +809,30 @@ chromeecioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *proc)
 		lb_params.cmd = LIGHTBAR_CMD_SET_PARAMS_V1;
 		memcpy(&lb_params.set_params_v1, ps,
 		    sizeof(struct chromeec_lightbar_params_v1));
-		if ((ret = chromeec_lightbar_cmd(lb_params, 1))) {
+		if ((ret = chromeec_lightbar_cmd(lb_params, 0))) {
+			ret = ENXIO;
+			break;
+		}
+
+		break;
+	}
+	case CHROMEEC_IOC_LIGHTBAR_SET_PROGRAM: {
+		struct chromeec_lightbar_program *pg =
+		    (struct chromeec_lightbar_program *)data;
+		int j;
+
+		lb_params.cmd = LIGHTBAR_CMD_SET_PROGRAM;
+		memcpy(&lb_params.set_program, pg,
+		    sizeof(struct chromeec_lightbar_program));
+
+		printf("loading program of size %d:\n",
+			lb_params.set_program.size);
+		for (j = 0; j < sizeof(struct chromeec_lightbar_program); j++) {
+			printf(" %02x", lb_params.set_program.data[j]);
+		}
+		printf("\n");
+
+		if ((ret = chromeec_lightbar_cmd(lb_params, 0))) {
 			ret = ENXIO;
 			break;
 		}

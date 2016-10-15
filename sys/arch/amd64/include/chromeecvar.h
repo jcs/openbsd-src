@@ -79,6 +79,29 @@ struct chromeec_lightbar_params_v1 {
 	struct chromeec_rgb_s color[8];		/* 0-3 s0 colors, 4-7 b/r/y/g */
 } __packed;
 
+struct chromeec_lightbar_program {
+	uint8_t size;
+# define CHROMEEC_LIGHTBAR_PROGRAM_LEN 192
+	uint8_t data[CHROMEEC_LIGHTBAR_PROGRAM_LEN];
+# define CHROMEEC_LIGHTBAR_OPCODE_ON			0
+# define CHROMEEC_LIGHTBAR_OPCODE_OFF			1
+# define CHROMEEC_LIGHTBAR_OPCODE_JUMP			2
+# define CHROMEEC_LIGHTBAR_OPCODE_JUMP_BATTERY		3
+# define CHROMEEC_LIGHTBAR_OPCODE_JUMP_IF_CHARGING	4
+# define CHROMEEC_LIGHTBAR_OPCODE_SET_WAIT_DELAY	5
+# define CHROMEEC_LIGHTBAR_OPCODE_SET_RAMP_DELAY	6
+# define CHROMEEC_LIGHTBAR_OPCODE_WAIT			7
+# define CHROMEEC_LIGHTBAR_OPCODE_SET_BRIGHTNESS	8
+# define CHROMEEC_LIGHTBAR_OPCODE_SET_COLOR_SINGLE	9
+# define CHROMEEC_LIGHTBAR_OPCODE_SET_COLOR_RGB		10
+# define CHROMEEC_LIGHTBAR_OPCODE_GET_COLORS		11
+# define CHROMEEC_LIGHTBAR_OPCODE_SWAP_COLORS		12
+# define CHROMEEC_LIGHTBAR_OPCODE_RAMP_ONCE		13
+# define CHROMEEC_LIGHTBAR_OPCODE_CYCLE_ONCE		14
+# define CHROMEEC_LIGHTBAR_OPCODE_CYCLE			15
+# define CHROMEEC_LIGHTBAR_OPCODE_HALT			16
+};
+
 #define CHROMEEC_IOC_LIGHTBAR_SET_POWER		_IOW('C', 1, uint8_t)
 
 #define CHROMEEC_IOC_LIGHTBAR_INIT		_IO('C', 2)
@@ -89,7 +112,8 @@ struct chromeec_lightbar_params_v1 {
 #define CHROMEEC_IOC_LIGHTBAR_GET_RGB		_IOWR('C', 5, struct chromeec_led_rgb)
 #define CHROMEEC_IOC_LIGHTBAR_SET_RGB		_IOW('C', 6, struct chromeec_led_rgb)
 
-#define CHROMEEC_IOC_LIGHTBAR_SET_SEQ		_IOW('C', 7, uint8_t)
+#define CHROMEEC_IOC_LIGHTBAR_GET_SEQ		_IOWR('C', 7, uint8_t)
+#define CHROMEEC_IOC_LIGHTBAR_SET_SEQ		_IOW('C', 8, uint8_t)
 # define CHROMEEC_LIGHTBAR_SEQ_ERROR		0
 # define CHROMEEC_LIGHTBAR_SEQ_S5		1
 # define CHROMEEC_LIGHTBAR_SEQ_S3		2
@@ -104,11 +128,12 @@ struct chromeec_lightbar_params_v1 {
 # define CHROMEEC_LIGHTBAR_SEQ_TAP		11
 # define CHROMEEC_LIGHTBAR_SEQ_PROGRAM		12
 
-#define CHROMEEC_IOC_LIGHTBAR_SET_DEMO		_IOW('C', 8, uint8_t)
+#define CHROMEEC_IOC_LIGHTBAR_GET_DEMO		_IOWR('C', 9, uint8_t)
+#define CHROMEEC_IOC_LIGHTBAR_SET_DEMO		_IOW('C', 10, uint8_t)
 
-#define CHROMEEC_IOC_LIGHTBAR_GET_PARAMS_V1	_IOWR('C', 9, struct chromeec_lightbar_params_v1)
-#define CHROMEEC_IOC_LIGHTBAR_SET_PARAMS_V1	_IOW('C', 10, struct chromeec_lightbar_params_v1)
+#define CHROMEEC_IOC_LIGHTBAR_GET_PARAMS_V1	_IOWR('C', 11, struct chromeec_lightbar_params_v1)
+#define CHROMEEC_IOC_LIGHTBAR_SET_PARAMS_V1	_IOW('C', 12, struct chromeec_lightbar_params_v1)
 
-#define CHROMEEC_IOC_LIGHTBAR_SET_PROGRAM	_IOW('C', 11, uint8_t)
+#define CHROMEEC_IOC_LIGHTBAR_SET_PROGRAM	_IOW('C', 13, struct chromeec_lightbar_program)
 
 #endif
