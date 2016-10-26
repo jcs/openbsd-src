@@ -95,7 +95,7 @@ show_commitid(CommitId *commitid)
 	head = commitid->files->list;
 	for (fn = head->next; fn != head; fn = fn->next) {
 		RCSNode *rcs;
-		char *diffargs[] = { "rdiff", "-aupZ", "-r", "-r", "" };
+		char *diffargs[] = { "rdiff", "-apuZ", "-r", "-r", "" };
 		CommitIdFile *cif = (CommitIdFile *)fn->data;
 		ssize_t len;
 		char *rcspath, *rcsfile, *slash;
