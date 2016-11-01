@@ -47,7 +47,11 @@ show(int argc, char **argv)
 
 		ign_setup();
 
-		send_arg(tcommitid);
+		if (tcommitid != NULL)
+			send_arg(tcommitid);
+
+		send_files(argc, argv, 0, 0, SEND_NO_CONTENTS);
+
 		send_to_server("show\012", 0);
 
 		return get_responses_and_close ();
