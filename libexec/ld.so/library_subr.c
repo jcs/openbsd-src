@@ -1,4 +1,4 @@
-/*	$OpenBSD: library_subr.c,v 1.45 2016/01/24 03:54:34 guenther Exp $ */
+/*	$OpenBSD: library_subr.c,v 1.47 2017/01/24 07:48:36 guenther Exp $ */
 
 /*
  * Copyright (c) 2002 Dale Rahn
@@ -286,20 +286,23 @@ _dl_find_loaded_shlib(const char *req_name, struct sod req_sod, int flags)
  *	     this will only match specific library version.
  *	   search path preceding library name
  *	     this will find largest minor version in path provided
- *	try the LD_LIBRARY_PATH specification (if present)
- *	   search hints for match in LD_LIBRARY_PATH dirs
- *           this will only match specific library version.
- *	   search LD_LIBRARY_PATH dirs for match.
- *           this will find largest minor version in first dir found.
- *	check DT_RPATH paths, (if present)
- *	   search hints for match in DT_RPATH dirs
- *           this will only match specific library version.
- *	   search DT_RPATH dirs for match.
- *           this will find largest minor version in first dir found.
- *	last look in default search directory, either as specified
- *      by ldconfig or default to '/usr/lib'
+ *
+ *	Otherwise, the name doesn't contain a '/':
+ *	search hints for the specific library version, trying in turn
+ *	paths from the following:
+ *	  - the LD_LIBRARY_PATH environment variable (if set)
+ *	  - the library's own DT_RUNPATH
+ *	  - if DT_RUNPATH wasn't set, then:
+ *	    - the library's own DT_RPATH
+ *	    - the executable's own DT_RPATH
+ *	  - the default search path set by ldconfig, or /usr/lib if unset
+ *
+ *	If the hints doesn't have an exact match, then we search
+ *	that exact same list of directories again, looking for a
+ *	lib with the correct major version.  If we find a match on
+ *	the major, then we take the match *in that directory* which
+ *	has the largest minor version
  */
-
 
 elf_object_t *
 _dl_load_shlib(const char *libname, elf_object_t *parent, int type, int flags)
@@ -317,7 +320,7 @@ _dl_load_shlib(const char *libname, elf_object_t *parent, int type, int flags)
 		char *lpath, *lname;
 		lpath = _dl_strdup(libname);
 		if (lpath == NULL)
-			_dl_exit(5);
+			_dl_oom();
 		lname = _dl_strrchr(lpath, '/');
 		if (lname == NULL) {
 			_dl_free(lpath);
@@ -371,18 +374,28 @@ again:
 			goto done;
 	}
 
-	/* Check DT_RPATH.  */
-	if (parent->rpath != NULL) {
-		hint = _dl_find_shlib(&req_sod, parent->rpath, ignore_hints);
+	/* Check DT_RUNPATH */
+	if (parent->runpath != NULL) {
+		hint = _dl_find_shlib(&req_sod, parent->runpath, ignore_hints);
 		if (hint != NULL)
 			goto done;
-	}
-
-	/* Check main program's DT_RPATH, if parent != main program */
-	if (parent != _dl_objects && _dl_objects->rpath != NULL) {
-		hint = _dl_find_shlib(&req_sod, _dl_objects->rpath, ignore_hints);
-		if (hint != NULL)
-			goto done;
+	} else {
+		/* 
+		 * If DT_RUNPATH wasn't set then first check DT_RPATH,
+		 * followed by the main program's DT_RPATH.
+		 */
+		if (parent->rpath != NULL) {
+			hint = _dl_find_shlib(&req_sod, parent->rpath,
+			    ignore_hints);
+			if (hint != NULL)
+				goto done;
+		}
+		if (parent != _dl_objects && _dl_objects->rpath != NULL) {
+			hint = _dl_find_shlib(&req_sod, _dl_objects->rpath,
+			    ignore_hints);
+			if (hint != NULL)
+				goto done;
+		}
 	}
 
 	/* check 'standard' locations */
@@ -424,7 +437,7 @@ _dl_link_dlopen(elf_object_t *dep)
 
 	n = _dl_malloc(sizeof *n);
 	if (n == NULL)
-		_dl_exit(5);
+		_dl_oom();
 
 	n->data = dep;
 	TAILQ_INSERT_TAIL(&_dlopened_child_list, n, next_sib);
@@ -487,7 +500,7 @@ _dl_link_grpref(elf_object_t *load_group, elf_object_t *load_object)
 
 	n = _dl_malloc(sizeof *n);
 	if (n == NULL)
-		_dl_exit(7);
+		_dl_oom();
 	n->data = load_group;
 	TAILQ_INSERT_TAIL(&load_object->grpref_list, n, next_sib);
 	load_group->grprefcount++;
@@ -500,7 +513,7 @@ _dl_link_child(elf_object_t *dep, elf_object_t *p)
 
 	n = _dl_malloc(sizeof *n);
 	if (n == NULL)
-		_dl_exit(7);
+		_dl_oom();
 	n->data = dep;
 	TAILQ_INSERT_TAIL(&p->child_list, n, next_sib);
 
@@ -531,7 +544,7 @@ _dl_link_grpsym(elf_object_t *object, int checklist)
 
 	n = _dl_malloc(sizeof *n);
 	if (n == NULL)
-		_dl_exit(8);
+		_dl_oom();
 	n->data = object;
 	TAILQ_INSERT_TAIL(&_dl_loading_object->grpsym_list, n, next_sib);
 }

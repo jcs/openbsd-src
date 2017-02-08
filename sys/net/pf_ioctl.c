@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf_ioctl.c,v 1.305 2016/11/16 08:46:05 mpi Exp $ */
+/*	$OpenBSD: pf_ioctl.c,v 1.307 2017/01/30 17:41:34 benno Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -111,7 +111,6 @@ void			 pf_qid2qname(u_int16_t, char *);
 void			 pf_qid_unref(u_int16_t);
 
 struct pf_rule		 pf_default_rule, pf_default_rule_new;
-struct rwlock		 pf_consistency_lock = RWLOCK_INITIALIZER("pfcnslk");
 
 struct {
 	char		statusif[IFNAMSIZ];
@@ -540,11 +539,11 @@ pf_remove_queues(void)
 	struct pf_queuespec	*q;
 	struct ifnet		*ifp;
 
-	/* put back interfaces in normal queueing mode */	
+	/* put back interfaces in normal queueing mode */
 	TAILQ_FOREACH(q, pf_queues_active, entries) {
 		if (q->parent_qid != 0)
 			continue;
-			
+
 		ifp = q->kif->pfik_ifp;
 		if (ifp == NULL)
 			continue;
@@ -987,12 +986,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 			return (EACCES);
 		}
 
-	if (flags & FWRITE)
-		rw_enter_write(&pf_consistency_lock);
-	else
-		rw_enter_read(&pf_consistency_lock);
-
-	s = splsoftnet();
+	NET_LOCK(s);
 	switch (cmd) {
 
 	case DIOCSTART:
@@ -1123,7 +1117,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 
 		break;
 	}
-	
+
 	case DIOCADDRULE: {
 		struct pfioc_rule	*pr = (struct pfioc_rule *)addr;
 		struct pf_ruleset	*ruleset;
@@ -1612,7 +1606,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		bzero(pf_status.fcounters, sizeof(pf_status.fcounters));
 		bzero(pf_status.scounters, sizeof(pf_status.scounters));
 		pf_status.since = time_second;
-		
+
 		break;
 	}
 
@@ -2388,11 +2382,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		break;
 	}
 fail:
-	splx(s);
-	if (flags & FWRITE)
-		rw_exit_write(&pf_consistency_lock);
-	else
-		rw_exit_read(&pf_consistency_lock);
+	NET_UNLOCK(s);
 	return (error);
 }
 

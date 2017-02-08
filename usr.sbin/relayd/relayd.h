@@ -1,4 +1,4 @@
-/*	$OpenBSD: relayd.h,v 1.236 2016/11/24 21:01:18 reyk Exp $	*/
+/*	$OpenBSD: relayd.h,v 1.239 2017/02/02 08:24:16 reyk Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2016 Reyk Floeter <reyk@openbsd.org>
@@ -28,6 +28,7 @@
 #include <sys/time.h>
 
 #include <net/if.h>
+#include <net/pfvar.h>
 
 #include <stdarg.h>
 #include <limits.h>
@@ -175,13 +176,6 @@ enum direction {
 	RELAY_DIR_RESPONSE	=  2
 };
 
-enum tlsreneg_state {
-	TLSRENEG_INIT		= 0,	/* first/next negotiation is allowed */
-	TLSRENEG_ALLOW		= 1,	/* all (re-)negotiations are allowed */
-	TLSRENEG_DENY		= 2,	/* next renegotiation must be denied */
-	TLSRENEG_ABORT		= 3	/* the connection should be aborted */
-};
-
 enum relay_state {
 	STATE_INIT,
 	STATE_PENDING,
@@ -201,7 +195,6 @@ struct ctl_relay_event {
 	SSL			*ssl;	/* libssl object */
 
 	X509			*tlscert;
-	enum tlsreneg_state	 tlsreneg_state;
 
 	off_t			 splicelen;
 	off_t			 toread;
@@ -680,7 +673,7 @@ TAILQ_HEAD(relay_rules, relay_rule);
 #define TLSFLAG_CIPHER_SERVER_PREF		0x20
 #define TLSFLAG_CLIENT_RENEG			0x40
 #define TLSFLAG_DEFAULT				\
-	(TLSFLAG_TLSV1_2|TLSFLAG_CIPHER_SERVER_PREF|TLSFLAG_CLIENT_RENEG)
+	(TLSFLAG_TLSV1_2|TLSFLAG_CIPHER_SERVER_PREF)
 
 #define TLSFLAG_BITS						\
 	"\06\01sslv3\02tlsv1.0\03tlsv1.1\04tlsv1.2"	\
@@ -1050,6 +1043,14 @@ struct relayd_config {
 	u_int32_t		 flags;
 };
 
+struct pfdata {
+	int			 dev;
+	struct pf_anchor	*anchor;
+	struct pfioc_trans	 pft;
+	struct pfioc_trans_e	 pfte;
+	u_int8_t		 pfused;
+};
+
 struct relayd {
 	struct relayd_config	 sc_conf;
 	const char		*sc_conffile;
@@ -1142,7 +1143,6 @@ int	 disable_table(struct ctl_conn *, struct ctl_id *);
 int	 disable_host(struct ctl_conn *, struct ctl_id *, struct host *);
 
 /* pfe_filter.c */
-void	 init_filter(struct relayd *, int);
 void	 init_tables(struct relayd *);
 void	 flush_table(struct relayd *, struct rdr *);
 void	 sync_table(struct relayd *, struct rdr *, struct table *);
@@ -1352,7 +1352,8 @@ u_int16_t	shuffle_generate16(struct shuffle *);
 /* log.c */
 void	log_init(int, int);
 void	log_procinit(const char *);
-void	log_verbose(int);
+void	log_setverbose(int);
+int	log_getverbose(void);
 void	log_warn(const char *, ...)
 	    __attribute__((__format__ (printf, 1, 2)));
 void	log_warnx(const char *, ...)

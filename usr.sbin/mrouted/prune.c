@@ -23,21 +23,6 @@ extern int phys_vif;
  */
 #define CACHE_LIFETIME(x) ((x) + (arc4random_uniform(x)))
 
-#define CHK_GS(x, y) {	\
-		switch(x) { \
-			case 2:	\
-			case 4:	\
-			case 8:	\
-			case 16: \
-			case 32: \
-			case 64: \
-			case 128: \
-			case 256: y = 1; \
-				  break; \
-			default:  y = 0; \
-		} \
-	}
-
 struct gtable *kernel_table;		/* ptr to list of kernel grp entries*/
 static struct gtable *kernel_no_route;	/* list of grp entries w/o routes   */
 struct gtable *gtp;			/* pointer for kernel rt entries    */
@@ -562,7 +547,7 @@ reset_neighbor_state(vifi_t vifi, u_int32_t addr)
 
 		g->gt_prsent_timer = 0;
 		g->gt_grftsnt = 0;
-		while (st = g->gt_srctbl) {
+		while ((st = g->gt_srctbl)) {
 		    g->gt_srctbl = st->st_next;
 		    k_del_rg(st->st_origin, g);
 		    kroutes--;
@@ -1433,10 +1418,19 @@ age_table_entry(void)
 
 	/* retransmit graft if graft sent flag is still set */
 	if (gt->gt_grftsnt) {
-	    int y;
-	    CHK_GS(gt->gt_grftsnt++, y);
-	    if (y)
+	    switch(gt->gt_grftsnt++) {
+	    case 2:
+	    case 4:
+	    case 8:
+	    case 16:
+	    case 32:
+	    case 64:
+	    case 128:
 		send_graft(gt);
+		break;
+	    default:
+		break;
+	    }
 	}
 
 	/*
@@ -1510,11 +1504,12 @@ age_table_entry(void)
 	    if (gt->gt_pruntbl != NULL || gt->gt_srctbl != NULL ||
 		gt->gt_prsent_timer > 0) {
 		gt->gt_timer = CACHE_LIFETIME(cache_lifetime);
-		if (gt->gt_prsent_timer == -1)
+		if (gt->gt_prsent_timer == -1) {
 		    if (gt->gt_grpmems == 0)
 			send_prune(gt);
 		    else
 			gt->gt_prsent_timer = 0;
+		}
 		gtnptr = &gt->gt_gnext;
 		continue;
 	    }
@@ -1547,11 +1542,12 @@ age_table_entry(void)
 #endif /* RSRR */
 	    free((char *)gt);
 	} else {
-	    if (gt->gt_prsent_timer == -1)
+	    if (gt->gt_prsent_timer == -1) {
 		if (gt->gt_grpmems == 0)
 		    send_prune(gt);
 		else
 		    gt->gt_prsent_timer = 0;
+	    }
 	    gtnptr = &gt->gt_gnext;
 	}
     }
@@ -1929,12 +1925,13 @@ accept_mtrace(u_int32_t src, u_int32_t dst, u_int32_t group,
 	    resp->tr_rflags = TR_SCOPED;
 	else if (gt->gt_prsent_timer)
 	    resp->tr_rflags = TR_PRUNED;
-	else if (!VIFM_ISSET(vifi, gt->gt_grpmems))
+	else if (!VIFM_ISSET(vifi, gt->gt_grpmems)) {
 	    if (VIFM_ISSET(vifi, rt->rt_children) &&
 		!VIFM_ISSET(vifi, rt->rt_leaves))
 		resp->tr_rflags = TR_OPRUNED;
 	    else
 		resp->tr_rflags = TR_NO_FWD;
+	}
     } else {
 	if (scoped_addr(vifi, group))
 	    resp->tr_rflags = TR_SCOPED;

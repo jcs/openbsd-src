@@ -1,4 +1,4 @@
-/*	$OpenBSD: regcomp.c,v 1.29 2016/09/21 04:38:56 guenther Exp $ */
+/*	$OpenBSD: regcomp.c,v 1.31 2016/12/22 00:09:07 krw Exp $ */
 /*-
  * Copyright (c) 1992, 1993, 1994 Henry Spencer.
  * Copyright (c) 1992, 1993, 1994
@@ -124,10 +124,7 @@ static char nuls[10];		/* place to point scanner in event of error */
 #define	NEXTn(n)	(p->next += (n))
 #define	GETNEXT()	(*p->next++)
 #define	SETERROR(e)	seterr(p, (e))
-#define	REQUIRE(co, e)	((co) || SETERROR(e))
-#define	MUSTSEE(c, e)	(REQUIRE(MORE() && PEEK() == (c), e))
-#define	MUSTEAT(c, e)	(REQUIRE(MORE() && GETNEXT() == (c), e))
-#define	MUSTNOTSEE(c, e)	(REQUIRE(!MORE() || PEEK() != (c), e))
+#define	REQUIRE(co, e)	(void) ((co) || SETERROR(e))
 #define	EMIT(op, sopnd)	doemit(p, (sop)(op), (size_t)(sopnd))
 #define	INSERT(op, pos)	doinsert(p, (sop)(op), HERE()-(pos)+1, pos)
 #define	AHEAD(pos)		dofwd(p, pos, HERE()-(pos))
@@ -317,7 +314,7 @@ p_ere_exp(struct parse *p)
 			assert(p->pend[subno] != 0);
 		}
 		EMIT(ORPAREN, subno);
-		MUSTEAT(')', REG_EPAREN);
+		REQUIRE(MORE() && GETNEXT() == ')', REG_EPAREN);
 		break;
 	case '^':
 		EMIT(OBOL, 0);
@@ -648,7 +645,7 @@ p_bracket(struct parse *p)
 		p_b_term(p, cs);
 	if (EAT('-'))
 		CHadd(cs, '-');
-	MUSTEAT(']', REG_EBRACK);
+	REQUIRE(MORE() && GETNEXT() == ']', REG_EBRACK);
 
 	if (p->error != 0) {	/* don't mess things up further */
 		freeset(p, cs);

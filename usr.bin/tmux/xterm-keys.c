@@ -1,4 +1,4 @@
-/* $OpenBSD: xterm-keys.c,v 1.19 2016/10/03 22:52:11 nicm Exp $ */
+/* $OpenBSD: xterm-keys.c,v 1.21 2017/01/25 14:36:08 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>

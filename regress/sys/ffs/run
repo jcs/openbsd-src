@@ -1,5 +1,5 @@
 #!/bin/sh
-# $OpenBSD: run,v 1.2 2016/02/28 13:25:57 natano Exp $
+# $OpenBSD: run,v 1.5 2017/01/12 17:15:10 bluhm Exp $
 # Heavily inspired on FreeBSD's misc.sh.
 
 totntest=0
@@ -18,14 +18,16 @@ expect()
   e="${1}"
   shift
   echo -n "Running test #${ntest}... "
-#  echo ${FSTEST} $*
-  r=`${FSTEST} $* 2>/dev/null | tail -1`
-  echo "${r}" | egrep '^'${e}'$' >/dev/null 2>&1
+  r=`${FSTEST} $* | tail -1`
+  echo "${r}" | egrep -q '^'${e}'$'
   if [ $? -eq 0 ]; then
     echo "okay."
   else
     nfail=`expr $nfail + 1`
-    echo "failed."
+    echo "failed:"
+    echo " test\t$*"
+    echo " expect\t$e"
+    echo " result\t$r"
   fi
   ntest=`expr $ntest + 1`
 }
@@ -37,7 +39,8 @@ test_check()
     echo "okay."
   else
     nfail=`expr $nfail + 1`
-    echo "failed."
+    echo "failed:"
+    echo " test\t$*"
   fi
   ntest=`expr $ntest + 1`
 }
@@ -45,13 +48,14 @@ test_check()
 # Generate a random file/directory name.
 namegen()
 {
-  echo "fstest_`dd if=/dev/urandom bs=1k count=1 2>/dev/null | md5`"
+  echo "fstest_`dd if=/dev/urandom bs=1k count=1 status=none | md5`"
 }
 
 for arg in $*; do
   ntest=0
   nfail=0
   echo $arg:
+  sed -n 's/^desc=//p' $arg
   . $arg
   totntest=`expr $totntest + $ntest`
   totnfail=`expr $totnfail + $nfail`

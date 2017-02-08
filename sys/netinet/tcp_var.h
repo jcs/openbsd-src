@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_var.h,v 1.117 2016/11/16 08:50:33 mpi Exp $	*/
+/*	$OpenBSD: tcp_var.h,v 1.121 2017/02/01 20:59:47 dhill Exp $	*/
 /*	$NetBSD: tcp_var.h,v 1.17 1996/02/13 23:44:24 christos Exp $	*/
 
 /*
@@ -601,8 +601,8 @@ int	 tcp_freeq(struct tcpcb *);
 #ifdef INET6
 void	 tcp6_ctlinput(int, struct sockaddr *, u_int, void *);
 #endif
-void	 *tcp_ctlinput(int, struct sockaddr *, u_int, void *);
-int	 tcp_ctloutput(int, struct socket *, int, int, struct mbuf **);
+void	 tcp_ctlinput(int, struct sockaddr *, u_int, void *);
+int	 tcp_ctloutput(int, struct socket *, int, int, struct mbuf *);
 struct tcpcb *
 	 tcp_disconnect(struct tcpcb *);
 struct tcpcb *
@@ -610,10 +610,7 @@ struct tcpcb *
 int	 tcp_dooptions(struct tcpcb *, u_char *, int, struct tcphdr *,
 		struct mbuf *, int, struct tcp_opt_info *, u_int);
 void	 tcp_init(void);
-#ifdef INET6
-int	 tcp6_input(struct mbuf **, int *, int);
-#endif
-void	 tcp_input(struct mbuf *, ...);
+int	 tcp_input(struct mbuf **, int *, int);
 int	 tcp_mss(struct tcpcb *, int);
 void	 tcp_mss_update(struct tcpcb *);
 u_int	 tcp_hdrsz(struct tcpcb *);

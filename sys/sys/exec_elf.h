@@ -1,4 +1,4 @@
-/*	$OpenBSD: exec_elf.h,v 1.65 2016/11/28 21:50:12 patrick Exp $	*/
+/*	$OpenBSD: exec_elf.h,v 1.71 2017/02/08 05:09:25 guenther Exp $	*/
 /*
  * Copyright (c) 1995, 1996 Erik Theisen.  All rights reserved.
  *
@@ -386,7 +386,7 @@ typedef struct {
 #undef	ELF64_R_SYM
 #undef	ELF64_R_TYPE
 #undef	ELF64_R_INFO
-#define	ELF64_R_TYPE(info)	(swap32((info) >> 32))
+#define	ELF64_R_TYPE(info)	((__uint64_t)swap32((info) >> 32))
 #define	ELF64_R_SYM(info)	((info) & 0xFFFFFFFF)
 #define	ELF64_R_INFO(s,t)	(((__uint64_t)swap32(t) << 32) + (__uint32_t)(s))
 #endif	/* __mips64__ && __MIPSEL__ */
@@ -601,7 +601,7 @@ struct elfcore_procinfo {
 	uint32_t	cpi_rgid;	/* real group ID */
 	uint32_t	cpi_egid;	/* effective group ID */
 	uint32_t	cpi_svgid;	/* saved group ID */
-	int8_t		cpi_name[32];	/* copy of p->p_comm */
+	int8_t		cpi_name[32];	/* copy of pr->ps_comm */
 };
 
 /*
@@ -610,7 +610,6 @@ struct elfcore_procinfo {
 #if defined(_KERNEL) || defined(_DYN_LOADER)
 
 #define ELF32_NO_ADDR	((uint32_t) ~0)	/* Indicates addr. not yet filled in */
-#define ELF_AUX_ENTRIES	8		/* Size of aux array passed to loader */
 
 typedef struct {
 	Elf32_Sword	au_id;				/* 32-bit id */
@@ -618,7 +617,6 @@ typedef struct {
 } Aux32Info;
 
 #define ELF64_NO_ADDR	((__uint64_t) ~0)/* Indicates addr. not yet filled in */
-#define ELF64_AUX_ENTRIES	8	/* Size of aux array passed to loader */
 
 typedef struct {
 	Elf64_Shalf	au_id;				/* 32-bit id */
@@ -659,8 +657,6 @@ struct elf_args {
 #if defined(ELFSIZE)
 #define CONCAT(x,y)	__CONCAT(x,y)
 #define ELFNAME(x)	CONCAT(elf,CONCAT(ELFSIZE,CONCAT(_,x)))
-#define ELFNAME2(x,y)	CONCAT(x,CONCAT(_elf,CONCAT(ELFSIZE,CONCAT(_,y))))
-#define ELFNAMEEND(x)	CONCAT(x,CONCAT(_elf,ELFSIZE))
 #define ELFDEFNNAME(x)	CONCAT(ELF,CONCAT(ELFSIZE,CONCAT(_,x)))
 #endif
 
@@ -689,6 +685,7 @@ struct elf_args {
 #define ELF_ST_TYPE	ELF32_ST_TYPE
 #define ELF_ST_INFO	ELF32_ST_INFO
 
+#define ELF_NO_ADDR	ELF32_NO_ADDR
 #define AuxInfo		Aux32Info
 #elif defined(ELFSIZE) && (ELFSIZE == 64)
 #define Elf_Ehdr	Elf64_Ehdr
@@ -715,6 +712,7 @@ struct elf_args {
 #define ELF_ST_TYPE	ELF64_ST_TYPE
 #define ELF_ST_INFO	ELF64_ST_INFO
 
+#define ELF_NO_ADDR	ELF64_NO_ADDR
 #define AuxInfo		Aux64Info
 #endif
 
@@ -723,25 +721,7 @@ extern Elf_Dyn		_DYNAMIC[];
 #endif
 
 #ifdef	_KERNEL
-#ifdef _KERN_DO_ELF64
-int exec_elf64_makecmds(struct proc *, struct exec_package *);
-void *elf64_copyargs(struct exec_package *, struct ps_strings *,
-        void *, void *);
-int exec_elf64_fixup(struct proc *, struct exec_package *);
-char *elf64_check_brand(Elf64_Ehdr *);
-int elf64_os_pt_note(struct proc *, struct exec_package *, Elf64_Ehdr *,
-	char *, size_t, size_t);
-#endif
-#ifdef _KERN_DO_ELF
-int exec_elf32_makecmds(struct proc *, struct exec_package *);
-void *elf32_copyargs(struct exec_package *, struct ps_strings *,
-        void *, void *);
-int exec_elf32_fixup(struct proc *, struct exec_package *);
-char *elf32_check_brand(Elf32_Ehdr *);
-int elf32_os_pt_note(struct proc *, struct exec_package *, Elf32_Ehdr *,
-	char *, size_t, size_t);
-#endif
-
+int	exec_elf_makecmds(struct proc *, struct exec_package *);
 #endif /* _KERNEL */
 
 #define ELF_TARG_VER	1	/* The ver for which this code is intended */

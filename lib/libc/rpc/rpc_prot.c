@@ -1,4 +1,4 @@
-/*	$OpenBSD: rpc_prot.c,v 1.13 2015/09/13 15:36:56 guenther Exp $ */
+/*	$OpenBSD: rpc_prot.c,v 1.15 2017/01/21 08:29:13 krw Exp $ */
 
 /*
  * Copyright (c) 2010, Oracle America, Inc.
@@ -77,7 +77,7 @@ xdr_des_block(XDR *xdrs, des_block *blkp)
 /*
  * XDR the MSG_ACCEPTED part of a reply message union
  */
-bool_t 
+bool_t
 xdr_accepted_reply(XDR *xdrs, struct accepted_reply *ar)
 {
 
@@ -103,7 +103,7 @@ DEF_WEAK(xdr_accepted_reply);
 /*
  * XDR the MSG_DENIED part of a reply message union
  */
-bool_t 
+bool_t
 xdr_rejected_reply(XDR *xdrs, struct rejected_reply *rr)
 {
 
@@ -134,7 +134,7 @@ static struct xdr_discrim reply_dscrm[3] = {
 bool_t
 xdr_replymsg(XDR *xdrs, struct rpc_msg *rmsg)
 {
-	if (xdr_u_int32_t(xdrs, &(rmsg->rm_xid)) && 
+	if (xdr_u_int32_t(xdrs, &(rmsg->rm_xid)) &&
 	    xdr_enum(xdrs, (enum_t *)&(rmsg->rm_direction)) &&
 	    rmsg->rm_direction == REPLY)
 		return (xdr_union(xdrs, (enum_t *)&(rmsg->rm_reply.rp_stat),
@@ -202,7 +202,7 @@ accepted(enum accept_stat acpt_stat, struct rpc_err *error)
 	error->re_lb.s2 = (long)acpt_stat;
 }
 
-static void 
+static void
 rejected(enum reject_stat rjct_stat, struct rpc_err *error)
 {
 
@@ -263,6 +263,9 @@ _seterr_reply(struct rpc_msg *msg, struct rpc_err *error)
 	case RPC_PROGVERSMISMATCH:
 		error->re_vers.low = msg->acpted_rply.ar_vers.low;
 		error->re_vers.high = msg->acpted_rply.ar_vers.high;
+		break;
+
+	default:
 		break;
 	}
 }

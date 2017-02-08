@@ -1,4 +1,4 @@
-/*	$OpenBSD: ospfe.c,v 1.96 2016/09/03 10:22:57 renato Exp $ */
+/*	$OpenBSD: ospfe.c,v 1.99 2017/01/24 04:24:25 benno Exp $ */
 
 /*
  * Copyright (c) 2005 Claudio Jeker <claudio@openbsd.org>
@@ -122,8 +122,14 @@ ospfe(struct ospfd_conf *xconf, int pipe_parent2ospfe[2], int pipe_ospfe2rde[2],
 		fatal("chdir(\"/\")");
 
 	setproctitle("ospf engine");
+	/*
+	 * XXX needed with fork+exec
+	 * log_init(debug, LOG_DAEMON);
+	 * log_setverbose(verbose);
+	 */
+
 	ospfd_process = PROC_OSPF_ENGINE;
-	log_procname = log_procnames[ospfd_process];
+	log_procinit(log_procnames[ospfd_process]);
 
 	if (setgroups(1, &pw->pw_gid) ||
 	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
@@ -315,9 +321,17 @@ ospfe_dispatch_main(int fd, short event, void *bula)
 					if (kif->ifindex == iface->ifindex &&
 					    iface->type !=
 					    IF_TYPE_VIRTUALLINK) {
+						int prev_link_state =
+						    (iface->flags & IFF_UP) &&
+						    LINK_STATE_IS_UP(iface->linkstate);
+
 						iface->flags = kif->flags;
 						iface->linkstate =
 						    kif->link_state;
+						iface->mtu = kif->mtu;
+
+						if (link_ok == prev_link_state)
+							break;
 
 						if (link_ok) {
 							if_fsm(iface,

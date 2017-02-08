@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_syscalls.c,v 1.142 2016/11/29 10:22:30 jsg Exp $	*/
+/*	$OpenBSD: uipc_syscalls.c,v 1.148 2017/01/26 01:58:00 dhill Exp $	*/
 /*	$NetBSD: uipc_syscalls.c,v 1.19 1996/02/09 19:00:48 christos Exp $	*/
 
 /*
@@ -277,69 +277,46 @@ doaccept(struct proc *p, int sock, struct sockaddr *name, socklen_t *anamelen,
 		return (error);
 
 	headfp = fp;
-redo:
-	s = splsoftnet();
+
+	fdplock(fdp);
+	error = falloc(p, &fp, &tmpfd);
+	if (!error && (flags & SOCK_CLOEXEC))
+		fdp->fd_ofileflags[tmpfd] |= UF_EXCLOSE;
+	fdpunlock(fdp);
+	if (error) {
+		FRELE(headfp, p);
+		return (error);
+	}
+
+	nam = m_get(M_WAIT, MT_SONAME);
+	
+	NET_LOCK(s);
 	head = headfp->f_data;
 	if (isdnssocket(head) || (head->so_options & SO_ACCEPTCONN) == 0) {
 		error = EINVAL;
-		goto bad;
+		goto out;
 	}
 	if ((head->so_state & SS_NBIO) && head->so_qlen == 0) {
 		if (head->so_state & SS_CANTRCVMORE)
 			error = ECONNABORTED;
 		else
 			error = EWOULDBLOCK;
-		goto bad;
+		goto out;
 	}
 	while (head->so_qlen == 0 && head->so_error == 0) {
 		if (head->so_state & SS_CANTRCVMORE) {
 			head->so_error = ECONNABORTED;
 			break;
 		}
-		error = tsleep(&head->so_timeo, PSOCK | PCATCH, "netcon", 0);
-		if (error) {
-			goto bad;
-		}
+		error = rwsleep(&head->so_timeo, &netlock, PSOCK | PCATCH,
+		    "netcon", 0);
+		if (error)
+			goto out;
 	}
 	if (head->so_error) {
 		error = head->so_error;
 		head->so_error = 0;
-		goto bad;
-	}
-
-	/* Figure out whether the new socket should be non-blocking. */
-	nflag = flags & SOCK_NONBLOCK_INHERIT ? (headfp->f_flag & FNONBLOCK)
-	    : (flags & SOCK_NONBLOCK ? FNONBLOCK : 0);
-
-	fdplock(fdp);
-	error = falloc(p, &fp, &tmpfd);
-	if (error == 0 && (flags & SOCK_CLOEXEC))
-		fdp->fd_ofileflags[tmpfd] |= UF_EXCLOSE;
-	fdpunlock(fdp);
-	if (error != 0) {
-		/*
-		 * Probably ran out of file descriptors.  Wakeup
-		 * so some other process might have a chance at it.
-		 */
-		wakeup_one(&head->so_timeo);
-		goto bad;
-	}
-
-	nam = m_get(M_WAIT, MT_SONAME);
-
-	/*
-	 * Check whether the queue emptied while we slept: falloc() or
-	 * m_get() may have blocked, allowing the connection to be reset
-	 * or another thread or process to accept it.  If so, start over.
-	 */
-	if (head->so_qlen == 0) {
-		splx(s);
-		m_freem(nam);
-		fdplock(fdp);
-		fdremove(fdp, tmpfd);
-		closef(fp, p);
-		fdpunlock(fdp);
-		goto redo;
+		goto out;
 	}
 
 	/*
@@ -348,6 +325,10 @@ redo:
 	so = TAILQ_FIRST(&head->so_q);
 	if (soqremque(so, 1) == 0)
 		panic("accept");
+
+	/* Figure out whether the new socket should be non-blocking. */
+	nflag = flags & SOCK_NONBLOCK_INHERIT ? (headfp->f_flag & FNONBLOCK)
+	    : (flags & SOCK_NONBLOCK ? FNONBLOCK : 0);
 
 	/* connection has been removed from the listen queue */
 	KNOTE(&head->so_rcv.sb_sel.si_note, 0);
@@ -359,24 +340,20 @@ redo:
 	error = soaccept(so, nam);
 	if (!error && name != NULL)
 		error = copyaddrout(p, nam, name, namelen, anamelen);
-
+	if (!error) {
+		(*fp->f_ops->fo_ioctl)(fp, FIONBIO, (caddr_t)&nflag, p);
+		FILE_SET_MATURE(fp, p);
+		*retval = tmpfd;
+	}
+out:
+	NET_UNLOCK(s);
+	m_freem(nam);
 	if (error) {
-		/* if an error occurred, free the file descriptor */
-		splx(s);
-		m_freem(nam);
 		fdplock(fdp);
 		fdremove(fdp, tmpfd);
 		closef(fp, p);
 		fdpunlock(fdp);
-		goto out;
 	}
-	(*fp->f_ops->fo_ioctl)(fp, FIONBIO, (caddr_t)&nflag, p);
-	FILE_SET_MATURE(fp, p);
-	*retval = tmpfd;
-	m_freem(nam);
-bad:
-	splx(s);
-out:
 	FRELE(headfp, p);
 	return (error);
 }
@@ -433,9 +410,10 @@ sys_connect(struct proc *p, void *v, register_t *retval)
 		m_freem(nam);
 		return (EINPROGRESS);
 	}
-	s = splsoftnet();
+	NET_LOCK(s);
 	while ((so->so_state & SS_ISCONNECTING) && so->so_error == 0) {
-		error = tsleep(&so->so_timeo, PSOCK | PCATCH, "netcon2", 0);
+		error = rwsleep(&so->so_timeo, &netlock, PSOCK | PCATCH,
+		    "netcon2", 0);
 		if (error) {
 			if (error == EINTR || error == ERESTART)
 				interrupted = 1;
@@ -446,7 +424,7 @@ sys_connect(struct proc *p, void *v, register_t *retval)
 		error = so->so_error;
 		so->so_error = 0;
 	}
-	splx(s);
+	NET_UNLOCK(s);
 bad:
 	if (!interrupted)
 		so->so_state &= ~SS_ISCONNECTING;
@@ -482,15 +460,25 @@ sys_socketpair(struct proc *p, void *v, register_t *retval)
 	if (error)
 		goto free1;
 
+	if ((error = soconnect2(so1, so2)) != 0)
+		goto free2;
+
+	if ((SCARG(uap, type) & SOCK_TYPE_MASK) == SOCK_DGRAM) {
+		/*
+		 * Datagram socket connection is asymmetric.
+		 */
+		 if ((error = soconnect2(so2, so1)) != 0)
+			goto free2;
+	}
 	fdplock(fdp);
 	if ((error = falloc(p, &fp1, &sv[0])) != 0)
-		goto free2;
+		goto free3;
 	fp1->f_flag = fflag;
 	fp1->f_type = DTYPE_SOCKET;
 	fp1->f_ops = &socketops;
 	fp1->f_data = so1;
 	if ((error = falloc(p, &fp2, &sv[1])) != 0)
-		goto free3;
+		goto free4;
 	fp2->f_flag = fflag;
 	fp2->f_type = DTYPE_SOCKET;
 	fp2->f_ops = &socketops;
@@ -498,15 +486,6 @@ sys_socketpair(struct proc *p, void *v, register_t *retval)
 	if (flags & SOCK_CLOEXEC) {
 		fdp->fd_ofileflags[sv[0]] |= UF_EXCLOSE;
 		fdp->fd_ofileflags[sv[1]] |= UF_EXCLOSE;
-	}
-	if ((error = soconnect2(so1, so2)) != 0)
-		goto free4;
-	if ((SCARG(uap, type) & SOCK_TYPE_MASK) == SOCK_DGRAM) {
-		/*
-		 * Datagram socket connection is asymmetric.
-		 */
-		 if ((error = soconnect2(so2, so1)) != 0)
-			goto free4;
 	}
 	error = copyout(sv, SCARG(uap, rsv), 2 * sizeof (int));
 	if (error == 0) {
@@ -525,18 +504,18 @@ sys_socketpair(struct proc *p, void *v, register_t *retval)
 		fdpunlock(fdp);
 		return (0);
 	}
-free4:
 	fdremove(fdp, sv[1]);
 	closef(fp2, p);
 	so2 = NULL;
-free3:
+free4:
 	fdremove(fdp, sv[0]);
 	closef(fp1, p);
 	so1 = NULL;
+free3:
+	fdpunlock(fdp);
 free2:
 	if (so2 != NULL)
 		(void)soclose(so2);
-	fdpunlock(fdp);
 free1:
 	if (so1 != NULL)
 		(void)soclose(so1);
@@ -1072,9 +1051,9 @@ sys_getsockname(struct proc *p, void *v, register_t *retval)
 	if (error)
 		goto bad;
 	m = m_getclr(M_WAIT, MT_SONAME);
-	s = splsoftnet();
+	NET_LOCK(s);
 	error = (*so->so_proto->pr_usrreq)(so, PRU_SOCKADDR, 0, m, 0, p);
-	splx(s);
+	NET_UNLOCK(s);
 	if (error)
 		goto bad;
 	error = copyaddrout(p, m, SCARG(uap, asa), len, SCARG(uap, alen));
@@ -1115,9 +1094,9 @@ sys_getpeername(struct proc *p, void *v, register_t *retval)
 	if (error)
 		goto bad;
 	m = m_getclr(M_WAIT, MT_SONAME);
-	s = splsoftnet();
+	NET_LOCK(s);
 	error = (*so->so_proto->pr_usrreq)(so, PRU_PEERADDR, 0, m, 0, p);
-	splx(s);
+	NET_UNLOCK(s);
 	if (error)
 		goto bad;
 	error = copyaddrout(p, m, SCARG(uap, asa), len, SCARG(uap, alen));

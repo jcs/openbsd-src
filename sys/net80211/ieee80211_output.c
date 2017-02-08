@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_output.c,v 1.111 2016/04/12 14:33:27 mpi Exp $	*/
+/*	$OpenBSD: ieee80211_output.c,v 1.118 2017/02/02 16:47:53 stsp Exp $	*/
 /*	$NetBSD: ieee80211_output.c,v 1.13 2004/05/31 11:02:55 dyoung Exp $	*/
 
 /*-
@@ -275,8 +275,7 @@ ieee80211_mgmt_output(struct ifnet *ifp, struct ieee80211_node *ni,
  * 11G		15*	1023	(*) aCWmin(1)
  * 11N		15	1023
  */
-#if 0
-static const struct ieee80211_edca_ac_params
+const struct ieee80211_edca_ac_params
     ieee80211_edca_table[IEEE80211_MODE_MAX][EDCA_NUM_AC] = {
 	[IEEE80211_MODE_11B] = {
 		[EDCA_AC_BK] = { 5, 10, 7,   0 },
@@ -303,10 +302,9 @@ static const struct ieee80211_edca_ac_params
 		[EDCA_AC_VO] = { 2,  3, 2,  47 }
 	},
 };
-#endif
 
 #ifndef IEEE80211_STA_ONLY
-static const struct ieee80211_edca_ac_params
+const struct ieee80211_edca_ac_params
     ieee80211_qap_edca_table[IEEE80211_MODE_MAX][EDCA_NUM_AC] = {
 	[IEEE80211_MODE_11B] = {
 		[EDCA_AC_BK] = { 5, 10, 7,   0 },
@@ -363,7 +361,7 @@ ieee80211_up_to_ac(struct ieee80211com *ic, int up)
 #endif
 	/*
 	 * We do not support the admission control procedure defined in
-	 * IEEE Std 802.11-2007 section 9.9.3.1.2.  The spec says that
+	 * IEEE Std 802.11-2012 section 9.19.4.2.3. The spec says that
 	 * non-AP QSTAs that don't support this procedure shall use EDCA
 	 * parameters of a lower priority AC that does not require
 	 * admission control.
@@ -769,7 +767,7 @@ ieee80211_add_edca_params(u_int8_t *frm, struct ieee80211com *ic)
 	*frm++ = 0;	/* reserved */
 
 	/* setup AC Parameter Records */
-	edca = ieee80211_qap_edca_table[ic->ic_curmode];
+	edca = ieee80211_edca_table[ic->ic_curmode];
 	for (aci = 0; aci < EDCA_NUM_AC; aci++) {
 		const struct ieee80211_edca_ac_params *ac = &edca[aci];
 
@@ -789,6 +787,7 @@ u_int8_t *
 ieee80211_add_erp(u_int8_t *frm, struct ieee80211com *ic)
 {
 	u_int8_t erp;
+	int nonerpsta = 0;
 
 	*frm++ = IEEE80211_ELEMID_ERP;
 	*frm++ = 1;
@@ -797,7 +796,8 @@ ieee80211_add_erp(u_int8_t *frm, struct ieee80211com *ic)
 	 * The NonERP_Present bit shall be set to 1 when a NonERP STA
 	 * is associated with the BSS.
 	 */
-	if (ic->ic_nonerpsta != 0)
+	ieee80211_iterate_nodes(ic, ieee80211_count_nonerpsta, &nonerpsta);
+	if (nonerpsta != 0)
 		erp |= IEEE80211_ERP_NON_ERP_PRESENT;
 	/*
 	 * If one or more NonERP STAs are associated in the BSS, the
@@ -869,7 +869,7 @@ ieee80211_add_wme_param(uint8_t *frm, struct ieee80211com *ic)
 	*frm++ = 0; /* reserved */
 
 	/* setup AC Parameter Records */
-	edca = ieee80211_qap_edca_table[ic->ic_curmode];
+	edca = ieee80211_edca_table[ic->ic_curmode];
 	for (aci = 0; aci < EDCA_NUM_AC; aci++) {
 		const struct ieee80211_edca_ac_params *ac = &edca[aci];
 
@@ -1084,8 +1084,9 @@ ieee80211_add_htop(u_int8_t *frm, struct ieee80211com *ic)
 	*frm++ = IEEE80211_ELEMID_HTOP;
 	*frm++ = 22;
 	*frm++ = ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan);
-	LE_WRITE_2(frm, 0); frm += 2;
-	LE_WRITE_2(frm, 0); frm += 2;
+	*frm++ = ic->ic_bss->ni_htop0;
+	LE_WRITE_2(frm, ic->ic_bss->ni_htop1); frm += 2;
+	LE_WRITE_2(frm, ic->ic_bss->ni_htop2); frm += 2;
 	memset(frm, 0, 16); frm += 16;
 	return frm;
 }
@@ -1206,7 +1207,7 @@ ieee80211_get_probe_resp(struct ieee80211com *ic, struct ieee80211_node *ni)
 	    (((ic->ic_flags & IEEE80211_F_RSNON) &&
 	      (ic->ic_bss->ni_rsnprotos & IEEE80211_PROTO_WPA)) ?
 		2 + IEEE80211_WPAIE_MAXLEN : 0) +
-	    ((ic->ic_flags & IEEE80211_F_HTON) ? 28 + 24 : 0));
+	    ((ic->ic_flags & IEEE80211_F_HTON) ? 28 + 24 + 26 : 0));
 	if (m == NULL)
 		return NULL;
 
@@ -1235,6 +1236,7 @@ ieee80211_get_probe_resp(struct ieee80211com *ic, struct ieee80211_node *ni)
 	if (ic->ic_flags & IEEE80211_F_HTON) {
 		frm = ieee80211_add_htcaps(frm, ic);
 		frm = ieee80211_add_htop(frm, ic);
+		frm = ieee80211_add_wme_param(frm, ic);
 	}
 
 	m->m_pkthdr.len = m->m_len = frm - mtod(m, u_int8_t *);
@@ -1396,7 +1398,7 @@ ieee80211_get_assoc_resp(struct ieee80211com *ic, struct ieee80211_node *ni,
 		2 + rs->rs_nrates - IEEE80211_RATE_SIZE : 0) +
 	    ((ni->ni_flags & IEEE80211_NODE_QOS) ? 2 + 18 : 0) +
 	    ((status == IEEE80211_STATUS_TRY_AGAIN_LATER) ? 2 + 7 : 0) +
-	    ((ic->ic_flags & IEEE80211_F_HTON) ? 28 + 24 : 0));
+	    ((ic->ic_flags & IEEE80211_F_HTON) ? 28 + 24 + 26 : 0));
 	if (m == NULL)
 		return NULL;
 
@@ -1421,6 +1423,7 @@ ieee80211_get_assoc_resp(struct ieee80211com *ic, struct ieee80211_node *ni,
 	if (ic->ic_flags & IEEE80211_F_HTON) {
 		frm = ieee80211_add_htcaps(frm, ic);
 		frm = ieee80211_add_htop(frm, ic);
+		frm = ieee80211_add_wme_param(frm, ic);
 	}
 
 	m->m_pkthdr.len = m->m_len = frm - mtod(m, u_int8_t *);
@@ -1824,7 +1827,7 @@ ieee80211_beacon_alloc(struct ieee80211com *ic, struct ieee80211_node *ni)
 	    (((ic->ic_flags & IEEE80211_F_RSNON) &&
 	      (ni->ni_rsnprotos & IEEE80211_PROTO_WPA)) ?
 		2 + IEEE80211_WPAIE_MAXLEN : 0) +
-	    ((ic->ic_flags & IEEE80211_F_HTON) ? 28 + 24 : 0));
+	    ((ic->ic_flags & IEEE80211_F_HTON) ? 28 + 24 + 26 : 0));
 	if (m == NULL)
 		return NULL;
 
@@ -1870,6 +1873,7 @@ ieee80211_beacon_alloc(struct ieee80211com *ic, struct ieee80211_node *ni)
 	if (ic->ic_flags & IEEE80211_F_HTON) {
 		frm = ieee80211_add_htcaps(frm, ic);
 		frm = ieee80211_add_htop(frm, ic);
+		frm = ieee80211_add_wme_param(frm, ic);
 	}
 
 	m->m_pkthdr.len = m->m_len = frm - mtod(m, u_int8_t *);
@@ -1888,6 +1892,7 @@ ieee80211_pwrsave(struct ieee80211com *ic, struct mbuf *m,
     struct ieee80211_node *ni)
 {
 	const struct ieee80211_frame *wh;
+	int pssta = 0;
 
 	KASSERT(ic->ic_opmode == IEEE80211_M_HOSTAP);
 	if (!(ic->ic_caps & IEEE80211_C_APPMGT))
@@ -1899,8 +1904,8 @@ ieee80211_pwrsave(struct ieee80211com *ic, struct mbuf *m,
 		 * Buffer group addressed MSDUs with the Order bit clear
 		 * if any associated STAs are in PS mode.
 		 */
-		if ((wh->i_fc[1] & IEEE80211_FC1_ORDER) ||
-		    ic->ic_pssta == 0)
+		ieee80211_iterate_nodes(ic, ieee80211_count_pssta, &pssta);
+		if ((wh->i_fc[1] & IEEE80211_FC1_ORDER) || pssta == 0)
 			return 0;
 		ic->ic_tim_mcast_pending = 1;
 	} else {

@@ -1,12 +1,12 @@
-/*	$OpenBSD: pfkey.c,v 1.33 2016/11/29 10:22:30 jsg Exp $	*/
+/*	$OpenBSD: pfkey.c,v 1.36 2017/01/24 10:08:30 krw Exp $	*/
 
 /*
  *	@(#)COPYRIGHT	1.1 (NRL) 17 January 1995
- * 
+ *
  * NRL grants permission for redistribution and use in source and binary
  * forms, with or without modification, of the software and documentation
  * created at NRL provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
@@ -14,14 +14,14 @@
  *    documentation and/or other materials provided with the distribution.
  * 3. All advertising materials mentioning features or use of this software
  *    must display the following acknowledgements:
- * 	This product includes software developed by the University of
- * 	California, Berkeley and its contributors.
- * 	This product includes software developed at the Information
- * 	Technology Division, US Naval Research Laboratory.
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ *	This product includes software developed at the Information
+ *	Technology Division, US Naval Research Laboratory.
  * 4. Neither the name of the NRL nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
- * 
+ *
  * THE SOFTWARE PROVIDED BY NRL IS PROVIDED BY NRL AND CONTRIBUTORS ``AS
  * IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
  * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
@@ -33,7 +33,7 @@
  * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * The views and conclusions contained in the software and documentation
  * are those of the authors and should not be interpreted as representing
  * official policies, either expressed or implied, of the US Naval
@@ -136,7 +136,8 @@ int
 pfkey_sendup(struct socket *socket, struct mbuf *packet, int more)
 {
 	struct mbuf *packet2;
-	int s;
+
+	splsoftassert(IPL_SOFTNET);
 
 	if (more) {
 		if (!(packet2 = m_dup_pkt(packet, 0, M_DONTWAIT)))
@@ -144,13 +145,10 @@ pfkey_sendup(struct socket *socket, struct mbuf *packet, int more)
 	} else
 		packet2 = packet;
 
-	s = splsoftnet();
 	if (!sbappendaddr(&socket->so_rcv, &pfkey_addr, packet2, NULL)) {
 		m_freem(packet2);
-		splx(s);
 		return (ENOBUFS);
 	}
-	splx(s);
 
 	sorwakeup(socket);
 	return (0);
@@ -272,7 +270,7 @@ static struct protosw pfkey_protosw_template = {
 	&pfkeydomain,
 	-1, /* protocol */
 	PR_ATOMIC | PR_ADDR,
-	(void *) raw_input,
+	NULL, /* input */
 	(void *) pfkey_output,
 	NULL, /* ctlinput */
 	NULL, /* ctloutput */

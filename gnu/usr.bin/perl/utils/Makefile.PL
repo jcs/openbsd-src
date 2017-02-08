@@ -35,9 +35,9 @@ print $fh <<'EOT';
 # Files to be built with variable substitution after miniperl is
 # available.  Dependencies handled manually below (for now).
 
-pl = c2ph.PL config_data.PL corelist.PL cpan.PL h2ph.PL h2xs.PL instmodsh.PL perlbug.PL perldoc.PL perlivp.PL pl2pm.PL prove.PL splain.PL libnetcfg.PL piconv.PL enc2xs.PL xsubpp.PL pod2html.PL
-plextract = c2ph config_data corelist cpan h2ph h2xs instmodsh perlbug perldoc perlivp pl2pm prove splain libnetcfg piconv enc2xs xsubpp pod2html
-plextractexe = ./c2ph ./config_data ./corelist ./cpan ./h2ph ./h2xs ./instmodsh ./perlbug ./perldoc ./perlivp ./pl2pm ./prove ./splain ./libnetcfg ./piconv ./enc2xs ./xsubpp ./pod2html
+pl = c2ph.PL corelist.PL cpan.PL h2ph.PL h2xs.PL instmodsh.PL perlbug.PL perldoc.PL perlivp.PL pl2pm.PL prove.PL splain.PL libnetcfg.PL piconv.PL enc2xs.PL encguess.PL xsubpp.PL pod2html.PL
+plextract = c2ph corelist cpan h2ph h2xs instmodsh perlbug perldoc perlivp pl2pm prove splain libnetcfg piconv enc2xs encguess xsubpp pod2html
+plextractexe = ./c2ph ./corelist ./cpan ./h2ph ./h2xs ./instmodsh ./perlbug ./perldoc ./perlivp ./pl2pm ./prove ./splain ./libnetcfg ./piconv ./enc2xs ./encguess ./xsubpp ./pod2html
 
 all: $(plextract) 
 
@@ -47,8 +47,6 @@ $(plextract):
 c2ph:		c2ph.PL ../config.sh
 
 cpan:		cpan.PL ../config.sh
-
-config_data:	config_data.PL ../config.sh
 
 corelist:	corelist.PL ../config.sh
 
@@ -75,6 +73,8 @@ libnetcfg:	libnetcfg.PL ../config.sh
 piconv:		piconv.PL ../config.sh
 
 enc2xs:		enc2xs.PL ../config.sh
+
+enc2xs:		encguess.PL ../config.sh
 
 xsubpp:		xsubpp.PL ../config.sh
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: xenvar.h,v 1.43 2016/12/09 17:24:55 mikeb Exp $	*/
+/*	$OpenBSD: xenvar.h,v 1.49 2017/02/08 16:15:52 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Belopuhov
@@ -19,14 +19,6 @@
 #ifndef _DEV_PV_XENVAR_H_
 #define _DEV_PV_XENVAR_H_
 
-/* #define XEN_DEBUG */
-
-#ifdef XEN_DEBUG
-#define DPRINTF(x...)		printf(x)
-#else
-#define DPRINTF(x...)
-#endif
-
 static inline void
 clear_bit(u_int b, volatile void *p)
 {
@@ -45,12 +37,16 @@ test_bit(u_int b, volatile void *p)
 	return !!(((volatile u_int *)p)[b >> 5] & (1 << (b & 0x1f)));
 }
 
+#define XEN_MAX_NODE_LEN	64
+#define XEN_MAX_BACKEND_LEN	128
+
 struct xen_intsrc {
 	SLIST_ENTRY(xen_intsrc)	 xi_entry;
 	struct evcount		 xi_evcnt;
 	evtchn_port_t		 xi_port;
 	short			 xi_noclose;
 	short			 xi_masked;
+	struct refcnt		 xi_refcnt;
 	struct task		 xi_task;
 	struct taskq		*xi_taskq;
 };
@@ -61,13 +57,29 @@ struct xen_gntent {
 	short			 ge_reserved;
 	short			 ge_next;
 	short			 ge_free;
-	struct mutex		 ge_mtx;
+	struct mutex		 ge_lock;
 };
 
 struct xen_gntmap {
 	grant_ref_t		 gm_ref;
 	paddr_t			 gm_paddr;
 };
+
+struct xen_device {
+	struct device		*dv_dev;
+	char			 dv_unit[16];
+	LIST_ENTRY(xen_device)	 dv_entry;
+};
+LIST_HEAD(xen_devices, xen_device);
+
+struct xen_devlist {
+	struct xen_softc	*dl_xen;
+	char			 dl_node[XEN_MAX_NODE_LEN];
+	struct task		 dl_task;
+	struct xen_devices	 dl_devs;
+	SLIST_ENTRY(xen_devlist) dl_entry;
+};
+SLIST_HEAD(xen_devlists, xen_devlist);
 
 struct xen_softc {
 	struct device		 sc_dev;
@@ -85,9 +97,10 @@ struct xen_softc {
 
 	uint64_t		 sc_irq;	/* IDT vector number */
 	SLIST_HEAD(, xen_intsrc) sc_intrs;
+	struct mutex		 sc_islck;
 
 	struct xen_gntent	*sc_gnt;	/* grant table entries */
-	struct mutex		 sc_gntmtx;
+	struct mutex		 sc_gntlck;
 	int			 sc_gntcnt;	/* number of allocated frames */
 	int			 sc_gntmax;	/* number of allotted frames */
 
@@ -95,14 +108,11 @@ struct xen_softc {
 	 * Xenstore
 	 */
 	struct xs_softc		*sc_xs;		/* xenstore softc */
-
 	struct task		 sc_ctltsk;	/* control task */
+	struct xen_devlists	 sc_devlists;	/* device lists heads */
 };
 
-extern struct xen_softc *xen_sc;
-
-#define XEN_MAX_NODE_LEN	64
-#define XEN_MAX_BACKEND_LEN	128
+extern struct xen_softc		*xen_sc;
 
 struct xen_attach_args {
 	char			 xa_name[16];
@@ -134,6 +144,7 @@ void	xen_intr(void);
 void	xen_intr_ack(void);
 void	xen_intr_signal(xen_intr_handle_t);
 void	xen_intr_schedule(xen_intr_handle_t);
+void	xen_intr_barrier(xen_intr_handle_t);
 int	xen_intr_establish(evtchn_port_t, xen_intr_handle_t *, int,
 	    void (*)(void *), void *, char *);
 int	xen_intr_disestablish(xen_intr_handle_t);
@@ -166,8 +177,6 @@ void	xen_unplug_emulated(void *, int);
 
 struct xs_transaction {
 	uint32_t		 xst_id;
-	uint32_t		 xst_flags;
-#define XST_POLL		0x0001
 	void			*xst_cookie;
 };
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: crtbeginS.c,v 1.16 2015/04/07 01:27:06 guenther Exp $	*/
+/*	$OpenBSD: crtbeginS.c,v 1.18 2017/01/21 05:46:56 guenther Exp $	*/
 /*	$NetBSD: crtbegin.c,v 1.1 1996/09/12 16:59:03 cgd Exp $	*/
 
 /*
@@ -38,7 +38,6 @@
  * constructors and destructors. The first element contains the
  * number of pointers in each.
  * The tables are also null-terminated.
-
  */
 #include <stdlib.h>
 
@@ -50,8 +49,7 @@
  * java class registration hooks
  */
 
-static void *__JCR_LIST__[]
-    __attribute__((section(".jcr"), aligned(sizeof(void*)))) = { };
+MD_DATA_SECTION_FLAGS_SYMBOL(".jcr", "aw", void *, __JCR_LIST__);
 
 extern void _Jv_RegisterClasses (void *)
     __attribute__((weak));
@@ -94,20 +92,15 @@ pthread_atfork(void (*prep)(void), void (*parent)(void), void (*child)(void))
 /* hppa doesn't permit directives in first column, so space after newline */
 asm(".hidden pthread_atfork\n .weak pthread_atfork");
 
+MD_DATA_SECTION_SYMBOL_VALUE(".ctors", init_f, __CTOR_LIST__, -1);
+MD_DATA_SECTION_SYMBOL_VALUE(".dtors", init_f, __DTOR_LIST__, -1);
 
-static init_f __CTOR_LIST__[1]
-    __attribute__((section(".ctors"))) = { (void *)-1 };	/* XXX */
-static init_f __DTOR_LIST__[1]
-    __attribute__((section(".dtors"))) = { (void *)-1 };	/* XXX */
 
-static void	__dtors(void) __used;
-static void	__ctors(void) __used;
-
-void
+static void
 __ctors(void)
 {
 	unsigned long i = (unsigned long) __CTOR_LIST__[0];
-	init_f *p;
+	const init_f *p;
 
 	if (i == -1)  {
 		for (i = 1; __CTOR_LIST__[i] != NULL; i++)
@@ -115,20 +108,19 @@ __ctors(void)
 		i--;
 	}
 	p = __CTOR_LIST__ + i;
-	while (i--) {
+	while (i--)
 		(**p--)();
-	}
 }
 
 static void
 __dtors(void)
 {
-	init_f *p = __DTOR_LIST__ + 1;
+	const init_f *p = __DTOR_LIST__ + 1;
 
-	while (*p) {
+	while (*p)
 		(**p++)();
-	}
 }
+
 void _init(void);
 void _fini(void);
 static void _do_init(void) __used;
@@ -140,6 +132,7 @@ MD_SECTION_PROLOGUE(".fini", _fini);
 
 MD_SECT_CALL_FUNC(".init", _do_init);
 MD_SECT_CALL_FUNC(".fini", _do_fini);
+
 
 void
 _do_init(void)
@@ -163,6 +156,7 @@ void
 _do_fini(void)
 {
 	static int finalized = 0;
+
 	if (!finalized) {
 		finalized = 1;
 

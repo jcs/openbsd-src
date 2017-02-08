@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.1 2016/11/24 22:32:29 patrick Exp $
+# $OpenBSD: Makefile,v 1.3 2017/01/24 08:44:47 patrick Exp $
 
 LIB=	LLVMAArch64CodeGen
 NOPIC=
@@ -12,7 +12,6 @@ SRCS=	AArch64A57FPLoadBalancing.cpp \
 	AArch64AddressTypePromotion.cpp \
 	AArch64AdvSIMDScalarPass.cpp \
 	AArch64AsmPrinter.cpp \
-	AArch64BranchRelaxation.cpp \
 	AArch64CleanupLocalDynamicTLSPass.cpp \
 	AArch64CollectLOH.cpp \
 	AArch64ConditionalCompares.cpp \
@@ -29,13 +28,15 @@ SRCS=	AArch64A57FPLoadBalancing.cpp \
 	AArch64MCInstLower.cpp \
 	AArch64PromoteConstant.cpp \
 	AArch64PBQPRegAlloc.cpp \
+	AArch64RedundantCopyElimination.cpp \
 	AArch64RegisterInfo.cpp \
 	AArch64SelectionDAGInfo.cpp \
 	AArch64StorePairSuppress.cpp \
 	AArch64Subtarget.cpp \
 	AArch64TargetMachine.cpp \
 	AArch64TargetObjectFile.cpp \
-	AArch64TargetTransformInfo.cpp
+	AArch64TargetTransformInfo.cpp \
+	AArch64VectorByElementOpt.cpp
 
 .PATH:	${.CURDIR}/../../../llvm/lib/Target/AArch64
 

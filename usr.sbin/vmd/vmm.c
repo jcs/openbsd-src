@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.59 2016/11/30 19:27:21 reyk Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.65 2017/01/24 09:58:00 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -83,6 +83,10 @@ int vmm_dispatch_parent(int, struct privsep_proc *, struct imsg *);
 void vmm_run(struct privsep *, struct privsep_proc *, void *);
 int vcpu_pic_intr(uint32_t, uint32_t, uint8_t);
 
+int vmm_pipe(struct vmd_vm *, int, void (*)(int, short, void *));
+void vmm_dispatch_vm(int, short, void *);
+void vm_dispatch_vmm(int, short, void *);
+
 static struct vm_mem_range *find_gpa_range(struct vm_create_params *, paddr_t,
     size_t);
 
@@ -162,7 +166,7 @@ vmm_run(struct privsep *ps, struct privsep_proc *p, void *arg)
 
 	/*
 	 * pledge in the vmm process:
- 	 * stdio - for malloc and basic I/O including events.
+	 * stdio - for malloc and basic I/O including events.
 	 * vmm - for the vmm ioctls and operations.
 	 * proc - for forking and maitaining vms.
 	 * recvfd - for disks, interfaces and other fds.
@@ -178,7 +182,7 @@ int
 vmm_dispatch_parent(int fd, struct privsep_proc *p, struct imsg *imsg)
 {
 	struct privsep		*ps = p->p_ps;
-	int			 res = 0, cmd = 0;
+	int			 res = 0, cmd = 0, verbose;
 	struct vmd_vm		*vm;
 	struct vm_terminate_params vtp;
 	struct vmop_result	 vmr;
@@ -215,11 +219,31 @@ vmm_dispatch_parent(int fd, struct privsep_proc *p, struct imsg *imsg)
 		IMSG_SIZE_CHECK(imsg, &vtp);
 		memcpy(&vtp, imsg->data, sizeof(vtp));
 		id = vtp.vtp_vm_id;
-		res = terminate_vm(&vtp);
-		cmd = IMSG_VMDOP_TERMINATE_VM_RESPONSE;
-		/* Remove local reference if it exists */
-		if ((vm = vm_getbyid(id)) != NULL)
+
+		if ((vm = vm_getbyid(id)) != NULL &&
+		    vm->vm_shutdown == 0) {
+			log_debug("%s: sending shutdown request to vm %d",
+			    __func__, id);
+
+			/*
+			 * Request reboot but mark the VM as shutting down.
+			 * This way we can terminate the VM after the triple
+			 * fault instead of reboot and avoid being stuck in
+			 * the ACPI-less powerdown ("press any key to reboot")
+			 * of the VM.
+			 */
+			vm->vm_shutdown = 1;
+			if (imsg_compose_event(&vm->vm_iev,
+			    IMSG_VMDOP_VM_REBOOT, 0, 0, -1, NULL, 0) == -1)
+				res = errno;
+			else
+				res = 0;
+		} else {
+			/* Terminate VMs that are unknown or shutting down */
+			res = terminate_vm(&vtp);
 			vm_remove(vm);
+		}
+		cmd = IMSG_VMDOP_TERMINATE_VM_RESPONSE;
 		break;
 	case IMSG_VMDOP_GET_INFO_VM_REQUEST:
 		res = get_info_vm(ps, imsg, 0);
@@ -236,6 +260,18 @@ vmm_dispatch_parent(int fd, struct privsep_proc *p, struct imsg *imsg)
 		}
 
 		config_getreset(env, imsg);
+		break;
+	case IMSG_CTL_VERBOSE:
+		IMSG_SIZE_CHECK(imsg, &verbose);
+		memcpy(&verbose, imsg->data, sizeof(verbose));
+		log_setverbose(verbose);
+
+		/* Forward message to each VM process */
+		TAILQ_FOREACH(vm, env->vmd_vms, vm_entry) {
+			imsg_compose_event(&vm->vm_iev,
+			    imsg->hdr.type, imsg->hdr.peerid, imsg->hdr.pid,
+			    -1, &verbose, sizeof(verbose));
+		}
 		break;
 	default:
 		return (-1);
@@ -272,7 +308,7 @@ void
 vmm_sighdlr(int sig, short event, void *arg)
 {
 	struct privsep *ps = arg;
-	int status;
+	int status, ret = 0;
 	uint32_t vmid;
 	pid_t pid;
 	struct vmop_result vmr;
@@ -297,11 +333,18 @@ vmm_sighdlr(int sig, short event, void *arg)
 					continue;
 				}
 
+				if (WIFEXITED(status))
+					ret = WEXITSTATUS(status);
+
+				/* don't reboot on pending shutdown */
+				if (ret == EAGAIN && vm->vm_shutdown)
+					ret = 0;
+
 				vmid = vm->vm_params.vmc_params.vcp_id;
 				vtp.vtp_vm_id = vmid;
 				if (terminate_vm(&vtp) == 0) {
 					memset(&vmr, 0, sizeof(vmr));
-					vmr.vmr_result = 0;
+					vmr.vmr_result = ret;
 					vmr.vmr_id = vmid;
 					if (proc_compose_imsg(ps, PROC_PARENT,
 					    -1, IMSG_VMDOP_TERMINATE_VM_EVENT,
@@ -325,7 +368,7 @@ vmm_sighdlr(int sig, short event, void *arg)
 
 /*
  * vmm_shutdown
- * 
+ *
  * Terminate VMs on shutdown to avoid "zombie VM" processes.
  */
 void
@@ -341,6 +384,136 @@ vmm_shutdown(void)
 		(void)terminate_vm(&vtp);
 		vm_remove(vm);
 	}
+}
+
+int
+vmm_pipe(struct vmd_vm *vm, int fd, void (*cb)(int, short, void *))
+{
+	struct imsgev	*iev = &vm->vm_iev;
+
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
+		log_warn("failed to set nonblocking mode on vm pipe");
+		return (-1);
+	}
+
+	imsg_init(&iev->ibuf, fd);
+	iev->handler = cb;
+	iev->data = vm;
+	imsg_event_add(iev);
+
+	return (0);
+}
+
+void
+vmm_dispatch_vm(int fd, short event, void *arg)
+{
+	struct vmd_vm		*vm = arg;
+	struct imsgev		*iev = &vm->vm_iev;
+	struct imsgbuf		*ibuf = &iev->ibuf;
+	struct imsg		 imsg;
+	ssize_t			 n;
+
+	if (event & EV_READ) {
+		if ((n = imsg_read(ibuf)) == -1 && errno != EAGAIN)
+			fatal("%s: imsg_read", __func__);
+		if (n == 0) {
+			/* this pipe is dead, so remove the event handler */
+			event_del(&iev->ev);
+			return;
+		}
+	}
+
+	if (event & EV_WRITE) {
+		if ((n = msgbuf_write(&ibuf->w)) == -1 && errno != EAGAIN)
+			fatal("%s: msgbuf_write fd %d", __func__, ibuf->fd);
+		if (n == 0) {
+			/* this pipe is dead, so remove the event handler */
+			event_del(&iev->ev);
+			return;
+		}
+	}
+
+	for (;;) {
+		if ((n = imsg_get(ibuf, &imsg)) == -1)
+			fatal("%s: imsg_get", __func__);
+		if (n == 0)
+			break;
+
+#if DEBUG > 1
+		log_debug("%s: got imsg %d from %s",
+		    __func__, imsg.hdr.type,
+		    vm->vm_params.vmc_params.vcp_name);
+#endif
+
+		switch (imsg.hdr.type) {
+		default:
+			fatalx("%s: got invalid imsg %d from %s",
+			    __func__, imsg.hdr.type,
+			    vm->vm_params.vmc_params.vcp_name);
+		}
+		imsg_free(&imsg);
+	}
+	imsg_event_add(iev);
+}
+
+void
+vm_dispatch_vmm(int fd, short event, void *arg)
+{
+	struct vmd_vm		*vm = arg;
+	struct imsgev		*iev = &vm->vm_iev;
+	struct imsgbuf		*ibuf = &iev->ibuf;
+	struct imsg		 imsg;
+	ssize_t			 n;
+	int			 verbose;
+
+	if (event & EV_READ) {
+		if ((n = imsg_read(ibuf)) == -1 && errno != EAGAIN)
+			fatal("%s: imsg_read", __func__);
+		if (n == 0)
+			_exit(0);
+	}
+
+	if (event & EV_WRITE) {
+		if ((n = msgbuf_write(&ibuf->w)) == -1 && errno != EAGAIN)
+			fatal("%s: msgbuf_write fd %d", __func__, ibuf->fd);
+		if (n == 0)
+			_exit(0);
+	}
+
+	for (;;) {
+		if ((n = imsg_get(ibuf, &imsg)) == -1)
+			fatal("%s: imsg_get", __func__);
+		if (n == 0)
+			break;
+
+#if DEBUG > 1
+		log_debug("%s: got imsg %d from %s",
+		    __func__, imsg.hdr.type,
+		    vm->vm_params.vmc_params.vcp_name);
+#endif
+
+		switch (imsg.hdr.type) {
+		case IMSG_CTL_VERBOSE:
+			IMSG_SIZE_CHECK(&imsg, &verbose);
+			memcpy(&verbose, imsg.data, sizeof(verbose));
+			log_setverbose(verbose);
+			break;
+		case IMSG_VMDOP_VM_SHUTDOWN:
+			if (vmmci_ctl(VMMCI_SHUTDOWN) == -1)
+				_exit(0);
+			break;
+		case IMSG_VMDOP_VM_REBOOT:
+			if (vmmci_ctl(VMMCI_REBOOT) == -1)
+				_exit(0);
+			break;
+		default:
+			fatalx("%s: got invalid imsg %d from %s",
+			    __func__, imsg.hdr.type,
+			    vm->vm_params.vmc_params.vcp_name);
+		}
+		imsg_free(&imsg);
+	}
+	imsg_event_add(iev);
 }
 
 /*
@@ -517,12 +690,14 @@ start_vm(struct imsg *imsg, uint32_t *id)
 		if (read(fds[0], &vcp->vcp_id, sizeof(vcp->vcp_id)) !=
 		    sizeof(vcp->vcp_id))
 			fatal("read vcp id");
-		close(fds[0]);
 
 		if (vcp->vcp_id == 0)
 			goto err;
 
 		*id = vcp->vcp_id;
+
+		if (vmm_pipe(vm, fds[0], vmm_dispatch_vm) == -1)
+			fatal("setup vm pipe");
 
 		return (0);
 	} else {
@@ -545,7 +720,6 @@ start_vm(struct imsg *imsg, uint32_t *id)
 		if (write(fds[1], &vcp->vcp_id, sizeof(vcp->vcp_id)) !=
 		    sizeof(vcp->vcp_id))
 			fatal("write vcp id");
-		close(fds[1]);
 
 		if (ret) {
 			errno = ret;
@@ -554,7 +728,7 @@ start_vm(struct imsg *imsg, uint32_t *id)
 
 		/*
 		 * pledge in the vm processes:
-	 	 * stdio - for malloc and basic I/O including events.
+		 * stdio - for malloc and basic I/O including events.
 		 * vmm - for the vmm ioctls and operations.
 		 */
 		if (pledge("stdio vmm", NULL) == -1)
@@ -563,7 +737,7 @@ start_vm(struct imsg *imsg, uint32_t *id)
 		/*
 		 * Set up default "flat 32 bit" register state - RIP,
 		 * RSP, and GDT info will be set in bootloader
-	 	 */
+		 */
 		memcpy(&vrs, &vcpu_init_flat32, sizeof(struct vcpu_reg_state));
 
 		/* Find and open kernel image */
@@ -591,10 +765,15 @@ start_vm(struct imsg *imsg, uint32_t *id)
 		for (i = 0; i < VMM_MAX_NICS_PER_VM; i++)
 			nicfds[i] = vm->vm_ifs[i].vif_fd;
 
+		event_init();
+
+		if (vmm_pipe(vm, fds[1], vm_dispatch_vmm) == -1)
+			fatal("setup vm pipe");
+
 		/* Execute the vcpu run loop(s) for this VM */
 		ret = run_vm(vm->vm_disks, nicfds, vcp, &vrs);
 
-		_exit(ret != 0);
+		_exit(ret);
 	}
 
 	return (0);
@@ -846,7 +1025,7 @@ init_emulated_hw(struct vm_create_params *vcp, int *child_disks,
 
 	/* Reset the IO port map */
 	memset(&ioports_map, 0, sizeof(io_fn_t) * MAX_PORTS);
-	
+
 	/* Init i8253 PIT */
 	i8253_init(vcp->vcp_id);
 	ioports_map[TIMER_CTRL] = vcpu_exit_i8253;
@@ -874,7 +1053,7 @@ init_emulated_hw(struct vm_create_params *vcp, int *child_disks,
 	/* Initialize PCI */
 	for (i = VMM_PCI_IO_BAR_BASE; i <= VMM_PCI_IO_BAR_END; i++)
 		ioports_map[i] = vcpu_exit_pci;
-	
+
 	ioports_map[PCI_MODE1_ADDRESS_REG] = vcpu_exit_pci;
 	ioports_map[PCI_MODE1_DATA_REG] = vcpu_exit_pci;
 	pci_init();
@@ -931,8 +1110,6 @@ run_vm(int *child_disks, int *child_taps, struct vm_create_params *vcp,
 	if (vcp->vcp_nmemranges == 0 ||
 	    vcp->vcp_nmemranges > VMM_MAX_MEM_RANGES)
 		return (EINVAL);
-
-	event_init();
 
 	tid = calloc(vcp->vcp_ncpus, sizeof(pthread_t));
 	vrp = calloc(vcp->vcp_ncpus, sizeof(struct vm_run_params *));
@@ -1051,12 +1228,7 @@ run_vm(int *child_disks, int *child_taps, struct vm_create_params *vcp,
 				return (EIO);
 			}
 
-			if (exit_status != NULL) {
-				log_warnx("%s: vm %d vcpu run thread %zd "
-				    "exited abnormally", __progname,
-				    vcp->vcp_id, i);
-				return (EIO);
-			}
+			ret = (long long)exit_status;
 		}
 
 		/* Did the event thread exit? => return with an error */
@@ -1072,19 +1244,18 @@ run_vm(int *child_disks, int *child_taps, struct vm_create_params *vcp,
 			return (EIO);
 		}
 
-		/* Did all VCPU threads exit successfully? => return 0 */
+		/* Did all VCPU threads exit successfully? => return */
 		for (i = 0; i < vcp->vcp_ncpus; i++) {
 			if (vcpu_done[i] == 0)
 				break;
 		}
 		if (i == vcp->vcp_ncpus)
-			return (0);
+			return (ret);
 
 		/* Some more threads to wait for, start over */
-
 	}
 
-	return (0);
+	return (ret);
 }
 
 void *
@@ -1193,10 +1364,9 @@ vcpu_run_loop(void *arg)
 			 * vmm(4) needs help handling an exit, handle in
 			 * vcpu_exit.
 			 */
-			if (vcpu_exit(vrp)) {
-				ret = EIO;
+			ret = vcpu_exit(vrp);
+			if (ret)
 				break;
-			}
 		}
 	}
 
@@ -1283,7 +1453,7 @@ vcpu_exit_inout(struct vm_run_params *vrp)
 		intr = ioports_map[vei->vei.vei_port](vrp);
 	else if (vei->vei.vei_dir == VEI_DIR_IN)
 			vei->vei.vei_data = 0xFFFFFFFF;
-	
+
 	if (intr != 0xFF)
 		vcpu_assert_pic_irq(vrp->vrp_vm_id, vrp->vrp_vcpu_id, intr);
 }
@@ -1313,29 +1483,42 @@ vcpu_exit(struct vm_run_params *vrp)
 	int ret;
 
 	switch (vrp->vrp_exit_reason) {
+	case VMX_EXIT_INT_WINDOW:
+	case VMX_EXIT_EXTINT:
+	case VMX_EXIT_EPT_VIOLATION:
+	case SVM_VMEXIT_NPF:
+		/*
+		 * We may be exiting to vmd to handle a pending interrupt but
+		 * at the same time the last exit type may have been one of
+		 * these. In this case, there's nothing extra to be done
+		 * here (and falling through to the default case below results
+		 * in more vmd log spam).
+		 */
+		break;
 	case VMX_EXIT_IO:
+	case SVM_VMEXIT_IOIO:
 		vcpu_exit_inout(vrp);
 		break;
 	case VMX_EXIT_HLT:
+	case SVM_VMEXIT_HLT:
 		ret = pthread_mutex_lock(&vcpu_run_mtx[vrp->vrp_vcpu_id]);
 		if (ret) {
 			log_warnx("%s: can't lock vcpu mutex (%d)",
 			    __func__, ret);
-			return (1);
+			return (ret);
 		}
 		vcpu_hlt[vrp->vrp_vcpu_id] = 1;
 		ret = pthread_mutex_unlock(&vcpu_run_mtx[vrp->vrp_vcpu_id]);
 		if (ret) {
 			log_warnx("%s: can't unlock vcpu mutex (%d)",
 			    __func__, ret);
-			return (1);
+			return (ret);
 		}
 		break;
-	case VMX_EXIT_INT_WINDOW:
-		break;
 	case VMX_EXIT_TRIPLE_FAULT:
-		log_warnx("%s: triple fault", __progname);
-		return (1);
+	case SVM_VMEXIT_SHUTDOWN:
+		/* XXX reset VM since we do not support reboot yet */
+		return (EAGAIN);
 	default:
 		log_debug("%s: unknown exit reason %d",
 		    __progname, vrp->vrp_exit_reason);

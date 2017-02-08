@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.236 2016/11/29 09:08:34 mpi Exp $
+#	$OpenBSD: GENERIC,v 1.239 2017/01/25 00:48:36 phessler Exp $
 #
 #	Machine-independent option; used by all architectures for their
 #	GENERIC kernel
@@ -58,9 +58,8 @@ option		PPP_BSDCOMP	# PPP BSD compression
 option		PPP_DEFLATE
 option		PIPEX		# Ppp IP EXtension, for npppd
 option		MROUTING	# Multicast router
-#option		PIM		# Protocol Independent Multicast
 option		MPLS		# Multi-Protocol Label Switching
-#option		BFD		# Bi-directional Forwarding Detection
+option		BFD		# Bi-directional Forwarding Detection
 
 #mpath0		at root		# SCSI Multipathing
 #scsibus*	at mpath?
@@ -108,7 +107,7 @@ pseudo-device	tun		# network tunneling over tty (tun & tap)
 pseudo-device	vether		# Virtual ethernet
 pseudo-device	vxlan		# Virtual extensible LAN
 pseudo-device	vlan		# IEEE 802.1Q VLAN
-#pseudo-device	switch		# Switch
+pseudo-device	switch		# Switch
 
 pseudo-device	bio	1	# ioctl multiplexing device
 

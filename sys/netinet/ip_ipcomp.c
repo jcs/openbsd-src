@@ -1,4 +1,4 @@
-/* $OpenBSD: ip_ipcomp.c,v 1.48 2016/09/24 14:51:37 naddy Exp $ */
+/* $OpenBSD: ip_ipcomp.c,v 1.53 2017/02/07 18:18:16 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Jean-Jacques Bernard-Gundol (jj@wabbitt.org)
@@ -56,8 +56,8 @@
 
 #include "bpfilter.h"
 
-int ipcomp_output_cb(struct cryptop *);
-int ipcomp_input_cb(struct cryptop *);
+void ipcomp_output_cb(struct cryptop *);
+void ipcomp_input_cb(struct cryptop *);
 
 #ifdef ENCDEBUG
 #define DPRINTF(x)      if (encdebug) printf x
@@ -158,7 +158,7 @@ ipcomp_input(struct mbuf *m, struct tdb *tdb, int skip, int protoff)
 		ipcompstat.ipcomps_crypto++;
 		return ENOBUFS;
 	}
-	crdc = crp->crp_desc;
+	crdc = &crp->crp_desc[0];
 
 	crdc->crd_skip = skip + hlen;
 	crdc->crd_len = m->m_pkthdr.len - (skip + hlen);
@@ -189,10 +189,10 @@ ipcomp_input(struct mbuf *m, struct tdb *tdb, int skip, int protoff)
 /*
  * IPComp input callback, called directly by the crypto driver
  */
-int
+void
 ipcomp_input_cb(struct cryptop *crp)
 {
-	int error, s, skip, protoff, roff, hlen = IPCOMP_HLENGTH, clen;
+	int s, skip, protoff, roff, hlen = IPCOMP_HLENGTH, clen;
 	u_int8_t nproto;
 	struct mbuf *m, *m1, *mo;
 	struct tdb_crypto *tc;
@@ -214,17 +214,16 @@ ipcomp_input_cb(struct cryptop *crp)
 		crypto_freereq(crp);
 		ipcompstat.ipcomps_crypto++;
 		DPRINTF(("ipcomp_input_cb(): bogus returned buffer from crypto\n"));
-		return (EINVAL);
+		return;
 	}
 
-	s = splsoftnet();
+	NET_LOCK(s);
 
 	tdb = gettdb(tc->tc_rdomain, tc->tc_spi, &tc->tc_dst, tc->tc_proto);
 	if (tdb == NULL) {
 		free(tc, M_XDATA, 0);
 		ipcompstat.ipcomps_notdb++;
 		DPRINTF(("ipcomp_input_cb(): TDB expired while in crypto"));
-		error = EPERM;
 		goto baddone;
 	}
 
@@ -238,7 +237,6 @@ ipcomp_input_cb(struct cryptop *crp)
 		free(tc, M_XDATA, 0);
 		pfkeyv2_expire(tdb, SADB_EXT_LIFETIME_HARD);
 		tdb_delete(tdb);
-		error = ENXIO;
 		goto baddone;
 	}
 	/* Notify on soft expiration */
@@ -254,14 +252,14 @@ ipcomp_input_cb(struct cryptop *crp)
 			/* Reset the session ID */
 			if (tdb->tdb_cryptoid != 0)
 				tdb->tdb_cryptoid = crp->crp_sid;
-			splx(s);
-			return crypto_dispatch(crp);
+			NET_UNLOCK(s);
+			crypto_dispatch(crp);
+			return;
 		}
 		free(tc, M_XDATA, 0);
 		ipcompstat.ipcomps_noxform++;
 		DPRINTF(("ipcomp_input_cb(): crypto error %d\n",
 		    crp->crp_etype));
-		error = crp->crp_etype;
 		goto baddone;
 	}
 	free(tc, M_XDATA, 0);
@@ -273,7 +271,6 @@ ipcomp_input_cb(struct cryptop *crp)
 	m->m_pkthdr.len = clen + hlen + skip;
 
 	if ((m->m_len < skip + hlen) && (m = m_pullup(m, skip + hlen)) == 0) {
-		error = ENOBUFS;
 		goto baddone;
 	}
 
@@ -284,7 +281,6 @@ ipcomp_input_cb(struct cryptop *crp)
 		DPRINTF(("ipcomp_input_cb(): bad mbuf chain, IPCA %s/%08x\n",
 		    ipsp_address(&tdb->tdb_dst, buf, sizeof(buf)),
 		    ntohl(tdb->tdb_spi)));
-		error = EINVAL;
 		goto baddone;
 	}
 	/* Keep the next protocol field */
@@ -335,18 +331,15 @@ ipcomp_input_cb(struct cryptop *crp)
 	m_copyback(m, protoff, sizeof(u_int8_t), &nproto, M_NOWAIT);
 
 	/* Back to generic IPsec input processing */
-	error = ipsec_common_input_cb(m, tdb, skip, protoff);
-	splx(s);
-	return error;
+	ipsec_common_input_cb(m, tdb, skip, protoff);
+	NET_UNLOCK(s);
 
 baddone:
-	splx(s);
+	NET_UNLOCK(s);
 
 	m_freem(m);
 
 	crypto_freereq(crp);
-
-	return error;
 }
 
 /*
@@ -481,7 +474,7 @@ ipcomp_output(struct mbuf *m, struct tdb *tdb, struct mbuf **mp, int skip,
 		ipcompstat.ipcomps_crypto++;
 		return ENOBUFS;
 	}
-	crdc = crp->crp_desc;
+	crdc = &crp->crp_desc[0];
 
 	/* Compression descriptor */
 	crdc->crd_skip = skip;
@@ -522,13 +515,13 @@ ipcomp_output(struct mbuf *m, struct tdb *tdb, struct mbuf **mp, int skip,
 /*
  * IPComp output callback, called directly from the crypto driver
  */
-int
+void
 ipcomp_output_cb(struct cryptop *crp)
 {
 	struct tdb_crypto *tc;
 	struct tdb *tdb;
 	struct mbuf *m, *mo;
-	int error, s, skip, rlen, roff;
+	int s, skip, rlen, roff;
 	u_int16_t cpi;
 	struct ip *ip;
 #ifdef INET6
@@ -551,17 +544,16 @@ ipcomp_output_cb(struct cryptop *crp)
 		ipcompstat.ipcomps_crypto++;
 		DPRINTF(("ipcomp_output_cb(): bogus returned buffer from "
 		    "crypto\n"));
-		return (EINVAL);
+		return;
 	}
 
-	s = splsoftnet();
+	NET_LOCK(s);
 
 	tdb = gettdb(tc->tc_rdomain, tc->tc_spi, &tc->tc_dst, tc->tc_proto);
 	if (tdb == NULL) {
 		free(tc, M_XDATA, 0);
 		ipcompstat.ipcomps_notdb++;
 		DPRINTF(("ipcomp_output_cb(): TDB expired while in crypto\n"));
-		error = EPERM;
 		goto baddone;
 	}
 
@@ -571,14 +563,14 @@ ipcomp_output_cb(struct cryptop *crp)
 			/* Reset the session ID */
 			if (tdb->tdb_cryptoid != 0)
 				tdb->tdb_cryptoid = crp->crp_sid;
-			splx(s);
-			return crypto_dispatch(crp);
+			NET_UNLOCK(s);
+			crypto_dispatch(crp);
+			return;
 		}
 		free(tc, M_XDATA, 0);
 		ipcompstat.ipcomps_noxform++;
 		DPRINTF(("ipcomp_output_cb(): crypto error %d\n",
 		    crp->crp_etype));
-		error = crp->crp_etype;
 		goto baddone;
 	}
 	free(tc, M_XDATA, 0);
@@ -587,9 +579,10 @@ ipcomp_output_cb(struct cryptop *crp)
 	if (rlen < crp->crp_olen) {
 		/* Compression was useless, we have lost time. */
 		crypto_freereq(crp);
-		error = ipsp_process_done(m, tdb);
-		splx(s);
-		return error;
+		if (ipsp_process_done(m, tdb))
+			ipcompstat.ipcomps_outfail++;
+		NET_UNLOCK(s);
+		return;
 	}
 
 	/* Inject IPCOMP header */
@@ -599,7 +592,6 @@ ipcomp_output_cb(struct cryptop *crp)
 		    "for IPCA %s/%08x\n", ipsp_address(&tdb->tdb_dst, buf,
 		     sizeof(buf)), ntohl(tdb->tdb_spi)));
 		ipcompstat.ipcomps_wrap++;
-		error = ENOBUFS;
 		goto baddone;
 	}
 
@@ -629,7 +621,6 @@ ipcomp_output_cb(struct cryptop *crp)
 		    ipsp_address(&tdb->tdb_dst, buf, sizeof(buf)),
 		    ntohl(tdb->tdb_spi)));
 		ipcompstat.ipcomps_nopf++;
-		error = EPFNOSUPPORT;
 		goto baddone;
 		break;
 	}
@@ -637,16 +628,15 @@ ipcomp_output_cb(struct cryptop *crp)
 	/* Release the crypto descriptor. */
 	crypto_freereq(crp);
 
-	error = ipsp_process_done(m, tdb);
-	splx(s);
-	return error;
+	if (ipsp_process_done(m, tdb))
+		ipcompstat.ipcomps_outfail++;
+	NET_UNLOCK(s);
+	return;
 
 baddone:
-	splx(s);
+	NET_UNLOCK(s);
 
 	m_freem(m);
 
 	crypto_freereq(crp);
-
-	return error;
 }

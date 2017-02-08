@@ -1,4 +1,4 @@
-/*	$OpenBSD: archdep.h,v 1.11 2016/05/18 20:40:20 deraadt Exp $	*/
+/*	$OpenBSD: archdep.h,v 1.15 2017/01/24 07:48:37 guenther Exp $	*/
 
 /*
  * Copyright (c) 2004 Michael Shalayeff
@@ -33,25 +33,12 @@
 #define	RELOC_TAG	DT_RELA
 #define	HAVE_JMPREL	1
 
-#define	DL_MALLOC_ALIGN	8	/* Arch constraint or otherwise */
-
 #define	MACHID	EM_PARISC		/* ELF e_machine ID value checked */
 
-#define	RELTYPE	Elf_Rela
-#define	RELSIZE	sizeof(Elf_Rela)
-
-#include <sys/mman.h>
 #include <elf_abi.h>
 #include <machine/reloc.h>
 #include "syscall.h"
 #include "util.h"
-
-static inline void *
-_dl_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
-{
-	return((void *)_dl__syscall((quad_t)SYS_mmap, addr, len, prot,
-	    flags, fd, 0, offset));
-}
 
 
 static inline void
@@ -62,7 +49,6 @@ RELOC_JMPREL(Elf_RelA *r, const Elf_Sym *s, Elf_Addr *p, unsigned long v,
 		p[0] = v + s->st_value + r->r_addend;
 		p[1] = (Elf_Addr)pltgot;
 	} else {
-		_dl_printf("unknown bootstrap relocation\n");
 		_dl_exit(5);
 	}
 }
@@ -78,14 +64,11 @@ RELOC_DYN(Elf_RelA *r, const Elf_Sym *s, Elf_Addr *p, unsigned long v)
 	} else if (ELF_R_TYPE(r->r_info) == RELOC_PLABEL32) {
 		*p = v + s->st_value + r->r_addend;
 	} else {
-		_dl_printf("unknown bootstrap relocation\n");
 		_dl_exit(6);
 	}
 }
 
 #define RELOC_GOT(obj, offs)
-
-#define GOT_PERMS PROT_READ
 
 void _hppa_dl_dtors(void);
 Elf_Addr _dl_md_plabel(Elf_Addr, Elf_Addr *);

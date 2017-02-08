@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_tun.c,v 1.169 2016/09/04 15:46:39 reyk Exp $	*/
+/*	$OpenBSD: if_tun.c,v 1.173 2017/01/24 10:08:30 krw Exp $	*/
 /*	$NetBSD: if_tun.c,v 1.24 1996/05/07 02:40:48 thorpej Exp $	*/
 
 /*
@@ -312,14 +312,17 @@ int
 tunopen(dev_t dev, int flag, int mode, struct proc *p)
 {
 	struct tun_softc *tp;
-	int error;
+	unsigned int rdomain = rtable_l2(p->p_p->ps_rtableid);
 
 	if ((tp = tun_lookup(minor(dev))) == NULL) {	/* create on demand */
 		char	xname[IFNAMSIZ];
+		int	s, error;
 
 		snprintf(xname, sizeof(xname), "%s%d", "tun", minor(dev));
-		if ((error = if_clone_create(xname,
-		    rtable_l2(p->p_p->ps_rtableid))) != 0)
+		NET_LOCK(s);
+		error = if_clone_create(xname, rdomain);
+		NET_UNLOCK(s);
+		if (error != 0)
 			return (error);
 
 		if ((tp = tun_lookup(minor(dev))) == NULL)
@@ -334,14 +337,17 @@ int
 tapopen(dev_t dev, int flag, int mode, struct proc *p)
 {
 	struct tun_softc *tp;
-	int error;
+	unsigned int rdomain = rtable_l2(p->p_p->ps_rtableid);
 
 	if ((tp = tap_lookup(minor(dev))) == NULL) {	/* create on demand */
 		char	xname[IFNAMSIZ];
+		int	s, error;
 
 		snprintf(xname, sizeof(xname), "%s%d", "tap", minor(dev));
-		if ((error = if_clone_create(xname,
-		    rtable_l2(p->p_p->ps_rtableid))) != 0)
+		NET_LOCK(s);
+		error = if_clone_create(xname, rdomain);
+		NET_UNLOCK(s);
+		if (error != 0)
 			return (error);
 
 		if ((tp = tap_lookup(minor(dev))) == NULL)
@@ -403,7 +409,7 @@ tapclose(dev_t dev, int flag, int mode, struct proc *p)
 int
 tun_dev_close(struct tun_softc *tp, int flag, int mode, struct proc *p)
 {
-	int			 s;
+	int			 s, error = 0;
 	struct ifnet		*ifp;
 
 	ifp = &tp->tun_if;
@@ -420,14 +426,16 @@ tun_dev_close(struct tun_softc *tp, int flag, int mode, struct proc *p)
 
 	TUNDEBUG(("%s: closed\n", ifp->if_xname));
 
-	if (!(tp->tun_flags & TUN_STAYUP))
-		return (if_clone_destroy(ifp->if_xname));
-	else {
+	if (!(tp->tun_flags & TUN_STAYUP)) {
+		NET_LOCK(s);
+		error = if_clone_destroy(ifp->if_xname);
+		NET_UNLOCK(s);
+	} else {
 		tp->tun_pgid = 0;
 		selwakeup(&tp->tun_rsel);
 	}
 
-	return (0);
+	return (error);
 }
 
 int
@@ -582,7 +590,6 @@ tun_output(struct ifnet *ifp, struct mbuf *m0, struct sockaddr *dst,
 		ifp->if_collisions++;
 		return (error);
 	}
-	ifp->if_opackets++;
 
 	tun_wakeup(tp);
 	return (0);
@@ -642,7 +649,7 @@ tun_dev_ioctl(struct tun_softc *tp, u_long cmd, caddr_t data, int flag,
 		}
 		tp->tun_if.if_mtu = tunp->mtu;
 		tp->tun_if.if_type = tunp->type;
-		tp->tun_if.if_flags = 
+		tp->tun_if.if_flags =
 		    (tunp->flags & TUN_IFF_FLAGS) |
 		    (tp->tun_if.if_flags & ~TUN_IFF_FLAGS);
 		tp->tun_if.if_baudrate = tunp->baudrate;
@@ -722,7 +729,7 @@ tun_dev_ioctl(struct tun_softc *tp, u_long cmd, caddr_t data, int flag,
 		break;
 	default:
 #ifdef PIPEX
-	    	if (!(tp->tun_flags & TUN_LAYER2)) {
+		if (!(tp->tun_flags & TUN_LAYER2)) {
 			int ret;
 			ret = pipex_ioctl(&tp->pipex_iface, cmd, data);
 			splx(s);
@@ -824,7 +831,6 @@ tun_dev_read(struct tun_softc *tp, struct uio *uio, int ioflag)
 		if (ifp->if_bpf)
 			bpf_mtap(ifp->if_bpf, m0, BPF_DIRECTION_OUT);
 #endif
-		ifp->if_opackets++;
 	}
 
 	while (m0 != NULL && uio->uio_resid > 0 && error == 0) {

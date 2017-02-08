@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.933 2016/11/25 21:13:58 rpe Exp $
+#	$OpenBSD: install.sub,v 1.962 2017/02/05 19:29:32 rpe Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -66,18 +66,27 @@ usage() {
 	exit 1
 }
 
-# Wait for the ftp process to finish, or be killed after the timeout.
+# Wait for the ftp process to finish, or be killed after the timeout and
+# extract various informations from the ftplist.cgi output.
 waitcgiinfo() {
-	local _l _key _val
+	local _l _s _key _val
 
+	# Wait for the ftp(1) process started in startcgiinfo() to end and
+	# ensure, there is actual data to extract info from.
 	wait "$CGIPID" 2>/dev/null
 	[[ -s $CGI_INFO ]] || return
 
-	sed -n 's,^http://\([[A-Za-z0-9\:_][]A-Za-z0-9:._-]*\),\1,p' \
+	# Extract list of mirror servers from the ftplist.cgi output.
+	sed -En 's,^https?://([[A-Za-z0-9:_][]A-Za-z0-9:._-]*),\1,p' \
 		$CGI_INFO >$HTTP_LIST 2>/dev/null
-	read -r -- _l <$HTTP_LIST
-	: ${HTTP_SERVER:=${_l%%/*}}
 
+	# Extract the previously selected mirror server (first entry in the
+	# ftplist.cgi output, if that has no location info).
+	read -r -- _s _l <$HTTP_LIST
+	[[ -z $_l ]] && : ${HTTP_SERVER:=${_s%%/*}}
+
+	# Extract the previously used install method, timezone information
+	# and a reference timestamp.
 	while IFS='=' read -r -- _key _val; do
 		case $_key=$_val in
 		method=+([a-z])*([0-9]))	CGI_METHOD=$_val;;
@@ -141,7 +150,7 @@ rmel() {
 
 	shift
 	for _b; do
-		[[ $_a != $_b ]] && _c="${_c:+$_c }$_b"
+		[[ $_a != "$_b" ]] && _c="${_c:+$_c }$_b"
 	done
 	echo -n "$_c"
 }
@@ -159,8 +168,8 @@ http_time() {
 # Quotes are added if needed, so you should not do that yourself.
 quote() (
 	# Since this is a subshell we won't pollute the calling namespace.
-	for a; do
-		alias Q=$a; a=$(alias Q); print -rn -- " ${a#Q=}"
+	for _a; do
+		alias Q=$_a; _a=$(alias Q); print -rn -- " ${_a#Q=}"
 	done | sed '1s/ //'
 	echo
 )
@@ -229,12 +238,10 @@ prep_root_mail() {
 __EOT
 }
 
-# Examine the contents of the DHCP lease file named in $1 for a line
-# containing the field provided as parameters.
+# Examine the contents of the DHCP lease file $1 for a line containing the
+# field provided as parameters and return the value of the first field found.
 #
 # Note that strings are unescaped but not unvis()'d.
-#
-# Return the value of the first field found.
 lease_value () {
 	local _lf=$1 _o
 
@@ -251,7 +258,8 @@ lease_value () {
 # Device related functions
 # ------------------------------------------------------------------------------
 
-# Show device name, label and size for the provided list of devices.
+# Show device name, label and size for the provided list of disk devices.
+# Create device nodes as needed and cleanup afterwards.
 diskinfo() {
 	local _d
 
@@ -314,7 +322,7 @@ get_ifs() {
 	done
 }
 
-# Return the device name of the device $1, which may be a disklabel UID.
+# Return the device name of the disk device $1, which may be a disklabel UID.
 get_dkdev_name() {
 	local _dev=${1#/dev/} _d
 
@@ -351,11 +359,15 @@ disk_has() {
 	local _p_sr='OPENBSD, SR'
 	local _p_sr_crypto='OPENBSD, SR CRYPTO'
 
+	# Compose command and patterns based on the parameters.
 	eval "_cmd=\"\$_c_${_pttype}\""
 	eval "_p_pttype=\"\$_p_${_pttype}\""
 	eval "_p_part=\"\$_p_${_pttype}_${_part}\""
+
+	# Set the default command if none was defined before.
 	_cmd=${_cmd:-fdisk $_disk}
 
+	# Abort in case of undefined patterns.
 	[[ -z $_p_pttype ]] && exit
 	[[ -n $_part && -z $_p_part ]] && exit
 
@@ -386,6 +398,10 @@ disklabel_autolayout() {
 	while $AUTO; do
 		ask "URL to autopartitioning template for disklabel?" none
 		[[ $resp == none ]] && break
+		if ! $FTP_TLS && [[ $resp == https://* ]]; then
+			echo "https not supported on this platform."
+			exit 1
+		fi
 		echo "Fetching $resp"
 		if unpriv ftp -Vo - "$resp" >$_dl && [[ -s $_dl ]]; then
 			disklabel -T $_dl -F $_f -w -A $_disk && return
@@ -425,7 +441,7 @@ configure_disk() {
 	rm -f /tmp/i/*.$_disk
 	md_prep_disklabel $_disk || return
 
-	# Make sure there is a '/ mount point.
+	# Make sure a '/' mount point exists on the root disk.
 	if ! grep -qs ' / ffs ' /tmp/i/fstab.$ROOTDISK; then
 		echo "'/' must be configured!"
 		$AUTO && exit 1 || return 1
@@ -510,38 +526,43 @@ log_answers() {
 
 # Fetch response file for autoinstall.
 get_responsefile() {
-	local _rf _if _mac _mode _lf _hn _path _aifile
-	AI_MODE=
+	local _rf _if _mode _lf _hn _path _aifile
+	export AI_MAC= AI_MODE= AI_SERVER=
 
 	[[ -f /auto_upgrade.conf ]] && _rf=/auto_upgrade.conf _mode=upgrade
 	[[ -f /auto_install.conf ]] && _rf=/auto_install.conf _mode=install
 	[[ -f $_rf ]] && cp $_rf /tmp/ai/ai.$_mode.conf && AI_MODE=$_mode && return
 
-	# Select a network interface for initial dhcp request.
-	# Ask if multiple were found and system was not netbooted.
-	# Extract server ip address, installer mode and response file path
-	# from lease file. Prime hostname with host-name option.
 	for _if in ''; do
 		[[ -x /sbin/dhclient ]] || break
+
+		# Select a network interface for initial dhcp request.
+		# Prefer the interface the system netbooted from.
 		set -- $(get_ifs netboot)
 		(($# == 0)) && set -- $(get_ifs)
 		(($# == 1)) && _if=$1
+
+		# Ask if multiple were found and system was not netbooted.
 		while (($# > 1)); do
 			ask_which "network interface" \
 				"should be used for the initial DHCP request" "$*"
 			isin "$resp" $* && _if=$resp && break
 		done
+
+		# Issue initial dhcp request via the found interface.
 		[[ -n $_if ]] && dhclient $_if || break
 		_lf=/var/db/dhclient.leases.$_if
 
+		# Extract installer mode and response file path from lease file.
 		_aifile=$(lease_value $_lf filename bootfile-name)
 		[[ $_aifile == ?(*/)auto_@(install|upgrade) ]] || _aifile=
 		_path=${_aifile%auto_@(install|upgrade)}
 		_mode=${_aifile##*?(/)auto_}
 
+		# Extract installer server ip address from lease file.
 		AI_SERVER=$(lease_value $_lf server-name tftp-server-name next-server)
-		export AI_SERVER
 
+		# Prime hostname with host-name option from lease file.
 		_hn=$(lease_value $_lf host-name)
 		hostname "$_hn"
 	done
@@ -550,8 +571,8 @@ get_responsefile() {
 	# one was missing. Try to fetch mac-mode.conf, then hostname-mode.conf,
 	# and finally mode.conf.
 	if [[ -n $AI_SERVER && -n $_mode ]]; then
-		_mac=$(ifconfig $_if | sed 's/.*lladdr \(.*\)/\1/p;d')
-		for _rf in {$_mac-,${_hn:+$_hn-,}}$_mode; do
+		AI_MAC=$(ifconfig $_if | sed 's/.*lladdr \(.*\)/\1/p;d')
+		for _rf in {$AI_MAC-,${_hn:+$_hn-,}}$_mode; do
 			_url="http://$AI_SERVER/$_path$_rf.conf?path=$HTTP_SETDIR"
 			echo "Fetching $_url"
 			if unpriv ftp -Vo - "$_url" >"/tmp/ai/ai.$_mode.conf" 2>/dev/null; then
@@ -1265,10 +1286,10 @@ __EOT
 			*)	_action=addel;;
 			esac
 			resp=${resp#[+-]}
-			[[ $resp = all ]] && resp=*
+			[[ $resp == all ]] && resp=*
 
 			for _f in $_avail; do
-				[[ $_f = $resp ]] && _selected=$($_action $_f $_selected)
+				[[ $_f == $resp ]] && _selected=$($_action $_f $_selected)
 			done
 		done
 	done
@@ -1403,6 +1424,12 @@ install_files() {
 
 		if ! $_srclocal; then
 			if [[ -d $_tmpfs ]]; then
+				# Try to clean up from previous runs, assuming
+				# the _tmpfs selection yields the same mount
+				# point.
+				for _tmpsrc in $_tmpfs/sets.+([0-9]).+([0-9]); do
+					[[ -d $_tmpsrc ]] && rm -r $_tmpsrc
+				done
 				! _tmpsrc=$(tmpdir "$_tmpfs/sets") &&
 				_issue="Cannot create prefetch area" && break
 			else
@@ -1421,8 +1448,7 @@ install_files() {
 			_issue="Cannot fetch SHA256.sig" && break
 
 		# Verify signature file with public keys.
-		! unpriv -f "$_cfile" signify -Vep /etc/signify/openbsd-${VERSION}-base.pub \
-			-x "$_cfile.sig" -m "$_cfile" &&
+		! unpriv -f "$_cfile" signify -Vep $PUB_KEY -x "$_cfile.sig" -m "$_cfile" &&
 			_issue="Signature check of SHA256.sig failed" && break
 
 		for _f in $_get_sets; do
@@ -1496,17 +1522,21 @@ install_files() {
 	[[ -d $_tmpsrc ]] && rm -rf "$_tmpsrc" || true
 }
 
-# Get several parameters from the user, and xfer files from the http server.
+# Fetch install sets from an HTTP server possibly using a proxy.
 install_http() {
-	local _file_list _prompt _mirror _url_base
+	local _f _flist _file_list _prompt _tls _http_proto _http_server
+	local _idx=/tmp/i/index.txt _sha=/tmp/i/SHA256 _sig=/tmp/i/SHA256.sig
+	local _url_base _install_url _mirror_url _mirror_srv _mirror_dir
 
-	# N.B.: 'http_proxy' is an environment variable used by ftp(1). DON'T
-	# change the name or case!
+	# N.B.: 'http_proxy' is an environment variable used by ftp(1).
+	# DON'T change the name or case!
 	ask "HTTP proxy URL? (e.g. 'http://proxy:8080', or 'none')" \
 		"${http_proxy:-none}"
 	unset http_proxy
 	[[ $resp == none ]] || export http_proxy=$resp
 
+	# If the mirror server listfile download failed, inform the user and
+	# show a reduced prompt.
 	if [[ -s $HTTP_LIST ]]; then
 		_prompt="HTTP Server? (hostname, list#, 'done' or '?')"
 	else
@@ -1514,26 +1544,47 @@ install_http() {
 		_prompt="HTTP Server? (hostname or 'done')"
 	fi
 
-	# Get server IP address or hostname.
+	# Use information from /etc/installurl as defaults for upgrades.
+	# Format of installurl: _http_proto://_http_server/_url_path
+	if [[ $MODE == upgrade ]] &&
+		_install_url=$(stripcom /mnt/etc/installurl); then
+		_http_server=${_install_url#*://}
+		_http_server=${_http_server%%/*}
+	fi
+
+	# Get server IP address or hostname and optionally the http protocol.
 	while :; do
-		ask_until "$_prompt" "$HTTP_SERVER"
+		ask_until "$_prompt" "${_http_server:-$HTTP_SERVER}"
 		case $resp in
 		done)	return
 			;;
 		"?")	[[ -s $HTTP_LIST ]] || continue
+			# Show a numbered list of mirror servers.
 			cat -n < $HTTP_LIST | more -c
 			;;
 		+([0-9]))
-			# A numeric hostname is ignored. A number is only used
-			# as a line number in $HTTP_LIST.
+			# A number is only used as a line number in $HTTP_LIST.
 			[[ -s $HTTP_LIST ]] || continue
+			# Extract the URL from the mirror server listfile.
 			set -- $(sed -n "${resp}p" $HTTP_LIST)
-			(($# < 1)) && { echo "There is no line $resp."; continue; }
+			if (($# < 1)); then
+				echo "There is no line $resp."
+				continue
+			fi
 			HTTP_SERVER=${1%%/*}
 			# Repeat loop to get user to confirm server address.
 			;;
-		+([A-Za-z0-9\:.\[\]_-]))
-			HTTP_SERVER=$resp
+		?(http?(s)://)+([A-Za-z0-9:.\[\]_-]))
+			case $resp in
+			https://*)	_tls=force _http_proto=https;;
+			http://*)	_tls=no    _http_proto=http;;
+			*)		_tls=try   _http_proto=$HTTP_PROTO;;
+			esac
+			if ! $FTP_TLS && [[ $_tls == force ]]; then
+				echo "https not supported on this platform."
+				$AUTO && exit 1 || continue
+			fi
+			HTTP_SERVER=${resp#*://}
 			break
 			;;
 		*)	echo "'$resp' is not a valid hostname."
@@ -1545,38 +1596,77 @@ install_http() {
 	# name. This means the last install from a mirror will not keep
 	# the specific directory info. But an install from a local
 	# server *will* remember the specific directory info.
+	# Format: _mirror_srv/_mirror_dir location_info
+	#         ^---- _mirror_url ----^
 	set -- $(sed "/^$HTTP_SERVER/x;\$!d;x" $HTTP_LIST 2>/dev/null)
-	resp=${1#*/}
-	# If there is no directory specified, don't use the server name!
-	[[ $resp == "$1" ]] && resp=
+	_mirror_url=$1
+	_mirror_srv=${_mirror_url%%/*}
+	_mirror_dir=${_mirror_url#*$_mirror_srv}
+
+	resp=$_mirror_dir/$HTTP_SETDIR
+	# If there is no directory specified, don't use this entry!
+	[[ -z $_mirror_dir ]] && resp=
+	INSTALL_MIRROR=
 	if (($# > 1)); then
 		# It's a mirror, since it has location info.
-		resp=$resp/$HTTP_SETDIR
-		_mirror=yes
+		resp=$_mirror_dir/$HTTP_SETDIR
+		INSTALL_MIRROR=$_mirror_url
 	fi
 
+	# Set HTTP_DIR to a default path in case it was not defined yet.
 	: ${HTTP_DIR:=pub/OpenBSD/$HTTP_SETDIR}
 	ask_until "Server directory?" "${resp:-$HTTP_DIR}"
 	HTTP_DIR=$resp
-	_url_base="http://$HTTP_SERVER/$HTTP_DIR"
+	_url_base="$_http_proto://$HTTP_SERVER/$HTTP_DIR"
 
-	# Get list of files from the server.
-	# Assumes index file is "index.txt" for http (or proxy).
-	# We can't use index.html since the format is server-dependent.
-	_file_list=$(unpriv ftp -Vo - "$_url_base/index.txt" | sed 's/^.* //;s///')
+	# Fetch SHA256.sig to create the list of files to select from.
+	rm -f $_idx $_sha $_sig
+	if ! unpriv -f $_sig \
+		ftp -w 15 -VMo $_sig "$_url_base/SHA256.sig" 2>/dev/null; then
+		case $_tls in
+		force)	$AUTO && exit 1 || return
+			;;
+		try)	ask_yn "Unable to connect using https. Use http instead?" ||
+				return
+			_http_proto=http
+			_url_base="http://$HTTP_SERVER/$HTTP_DIR"
+			unpriv -f $_sig ftp -VMo $_sig "$_url_base/SHA256.sig" \
+				2>/dev/null
+			;;
+		esac
+	fi
+
+	# Verify SHA256.sig, write SHA256 and extract the list of files.
+	if unpriv -f $_sha \
+		signify -Vep $PUB_KEY -x $_sig -m $_sha >/dev/null 2>&1; then
+		_file_list="$(sed -n 's/^SHA256 (\(.*\)).*$/\1/p' $_sha)"
+		_file_list="SHA256.sig $_file_list"
+	else
+		echo "Unable to get a verified list of distribution sets."
+		# Deny this server, if it's a mirror without a valid SHA256.sig.
+		if [[ -n $INSTALL_MIRROR ]]; then
+			$AUTO && exit 1 || return
+		fi
+	fi
+
+	# Fetch index.txt, extract file list but add only entries that are not
+	# already in _file_list. This allows for a verified list of distribution
+	# sets from SHA256.sig, siteXX sets or the whole set list from index.txt
+	# if SHA256.sig was not found (e.g. self compiled sets).
+	if unpriv -f $_idx \
+		ftp -VMo $_idx "$_url_base/index.txt" 2>/dev/null; then
+		_flist=$(sed -En 's/^.* ([a-zA-Z][a-zA-Z0-9._-]+)$/\1/p' $_idx)
+		for _f in $_flist; do
+			! isin "$_f" $_file_list && _file_list="$_file_list $_f"
+		done
+	fi
+	rm -f $_idx $_sha $_sig
 
 	install_files "$_url_base" "$_file_list"
 
 	# Remember where we installed from, to tell the cgi server.
-	INSTALL_URL=$_url_base
-
-	# Bake a package path only if we installed from a mirror.
-	PACKAGE_PATH=
-	if [[ -n $_mirror ]]; then
-		PACKAGE_PATH=$(print -r -- "$_url_base" |
-			sed -E "/\/(snapshots|[0-9]\.[0-9])\/($ARCH)\/*$/!d
-				s!!/\1/packages/$(arch -s)/!;q")
-	fi
+	INSTALL_URL=${_url_base%/$HTTP_SETDIR}
+	[[ -n $INSTALL_MIRROR ]] && INSTALL_URL=$_http_proto://$INSTALL_MIRROR
 }
 
 # Ask for the path to the set files on an already mounted filesystem and start
@@ -1599,7 +1689,7 @@ install_mounted_fs() {
 	install_files "file://$_dir" "$(ls $_dir/)"
 }
 
-# Install sets from CD-ROM.
+# Install sets from CD-ROM drive $1.
 install_cdrom() {
 	local _drive=$1
 
@@ -1608,14 +1698,16 @@ install_cdrom() {
 	install_mounted_fs
 }
 
-# Ask for the disk device containing the set files, mount it and start the set
-# installation.
+# Install sets from disk.
+# Ask for the disk device containing the set files.
 install_disk() {
 	if ! ask_yn "Is the disk partition already mounted?"; then
 		ask_which "disk" "contains the $MODE media" \
 			'$(bsort $(get_dkdevs))' \
 			'$(bsort $(rmel $ROOTDISK $(get_dkdevs)))'
 		[[ $resp == done ]] && return 1
+
+		# Ensure the device file exists and mount the fs on /mnt2.
 		makedev $resp && mount_mnt2 $resp || return
 	fi
 
@@ -1686,16 +1778,22 @@ set_term() {
 
 	if [[ -n $CONSOLE ]]; then
 		ask "Terminal type?" $TERM
-		export TERM=$resp
+		TERM=$resp
 	else
 		[[ -x /sbin/kbd ]] || return
 		_layouts=$(bsort $(kbd -l | egrep -v "^(user|tables|encoding)"))
 		while :; do
-			ask "Choose your keyboard layout ('?' or 'L' for list)" "default"
+			ask "Choose your keyboard layout ('?' or 'L' for list)" default
 			case $resp in
-			[lL\?]) echo "Available layouts: $_layouts";;
-			default) return;;
-			*)	kbd $resp && { echo $resp >/tmp/i/kbdtype; return; };;
+			[lL\?])		echo "Available layouts: $_layouts"
+					;;
+			default)	break
+					;;
+			*)		if kbd -q "$resp"; then
+						echo $resp >/tmp/i/kbdtype
+						break
+					fi
+					;;
 			esac
 		done
 	fi
@@ -1727,7 +1825,7 @@ donetconfig() {
 	# Get & apply fqdn to hostname. Don't ask if there's only one configured
 	# interface and if it's managed by dhclient and if the domain name is
 	# configured via dhclient too.
-	resp="${_dn:=$(get_fqdn)}"
+	resp="${_dn:-$(get_fqdn)}"
 	if ifconfig dhcp >/dev/null 2>&1 && [[ $NIFS == 1 && -n $_dn ]]; then
 		echo "Using DNS domainname $resp"
 	else
@@ -1738,7 +1836,7 @@ donetconfig() {
 	# Get & add nameservers to /tmp/i/resolv.conf. Don't ask if there's only
 	# one configured interface and if it's managed by dhclient and if the
 	# nameserver is configured via dhclient too.
-	resp="${_ns:=none}"
+	resp="${_ns:-none}"
 	if ifconfig dhcp >/dev/null 2>&1 && [[ $NIFS == 1 && -n $_ns ]]; then
 		echo "Using DNS nameservers at $resp"
 	else
@@ -1805,7 +1903,7 @@ user_setup() {
 		y|yes)	_q="No really, what is the lower-case loginname, or 'no'?"
 			continue
 			;;
-		root|daemon|operator|bin|sshd|uucp|www|nobody|ftp)
+		root|daemon|operator|bin|sshd|www|nobody|ftp)
 			;;
 		[a-z]*([a-z0-9_]))
 			((${#resp} <= 31)) && break
@@ -1813,9 +1911,9 @@ user_setup() {
 		esac
 		echo "$resp is not a useable loginname."
 	done
-	user=$resp
+	ADMIN=$resp
 	while :; do
-		ask "Full name for user $user?" $user
+		ask "Full name for user $ADMIN?" $ADMIN
 		case $resp in
 		*[:\&,]*)
 			echo "':', '&' or ',' are not allowed."
@@ -1826,14 +1924,14 @@ user_setup() {
 			;;
 		esac
 	done
-	username=$resp
+	ADMIN_NAME=$resp
 
-	askpassword "Password for user $user?"
-	userpass=$_password
+	askpassword "Password for user $ADMIN?"
+	ADMIN_PASS=$_password
 
-	userkey=
-	$AUTO && ask "Public ssh key for user $user" none &&
-		[[ $resp != none ]] && userkey=$resp
+	ADMIN_KEY=
+	$AUTO && ask "Public ssh key for user $ADMIN" none &&
+		[[ $resp != none ]] && ADMIN_KEY=$resp
 }
 
 # Ask user whether or not to allow logins to root in case sshd(8) is enabled.
@@ -1844,7 +1942,7 @@ ask_root_sshd() {
 
 	[[ $sshd == y ]] || return
 
-	if [[ -z $user ]]; then
+	if [[ -z $ADMIN ]]; then
 		echo "Since no user was setup, root logins via sshd(8) might be useful."
 	fi
 	echo "WARNING: root is targeted by password guessing attacks, pubkeys are safer."
@@ -1889,7 +1987,7 @@ set_timezone() {
 
 	# If neither the base or HTTP_LIST gave a hint, and this is the
 	# early question, give up, and ask after the sets are installed.
-	[[ $_zonefile = /var/tzlist && -z $TZ ]] && return
+	[[ $_zonefile == /var/tzlist && -z $TZ ]] && return
 
 	while :; do
 		ask "What timezone are you in? ('?' for list)" "$TZ"
@@ -2135,12 +2233,14 @@ startcgiinfo() {
 	# If no networks are configured, we do not need the httplist file.
 	((NIFS < 1)) && return
 
+	# Ensure proper name resolution in case there's no dns yet.
+	addhostent 129.128.5.191 ftp.openbsd.org
+
 	# Make sure the ftp subshell gets its own process group.
 	set -m
 	(
-		# ftp.openbsd.org == 129.128.5.191 and will remain at
-		# that address for the foreseeable future.
-		unpriv2 ftp -Vao - "http://129.128.5.191/cgi-bin/ftplist.cgi?path=$HTTP_SETDIR" \
+		unpriv2 ftp -w 15 -Vao - \
+			"$HTTP_PROTO://ftp.openbsd.org/cgi-bin/ftplist.cgi?dbversion=1" \
 			2>/dev/null >$CGI_INFO
 
 		# Remember finish time for adjusting the received timestamp.
@@ -2276,15 +2376,27 @@ feed_random() {
 # selects from that location. Repeat as many times as the user needs to get all
 # desired sets.
 install_sets() {
-	local _cddevs=$(get_cddevs) _d=$CGI_METHOD _im _locs="disk http" _src
+	local _cddevs=$(get_cddevs) _d _im _locs="disk http" _src
 
 	echo
 
+	# Set default location to method recorded last time.
+	_d=$CGI_METHOD
+
+	# Set default location to HTTP in case we netbooted.
 	ifconfig netboot >/dev/null 2>&1 && : ${_d:=http}
+
+	# Set default location to the first cdrom device if any are found.
 	[[ -n $_cddevs ]] && : ${_d:=cd0}
+
+	# Add NFS to set locations if the boot kernel supports it.
 	[[ -x /sbin/mount_nfs ]] && _locs="$_locs nfs"
+
+	# In case none of the above applied, set HTTP as default location.
 	: ${_d:=http}
 
+	# If the default location set so far is not one of the cdrom devices or
+	# is not in the list of valid locations, set a sane default.
 	if ! isin "$_d" $_cddevs $_locs; then
 		for _src in http $_cddevs nfs disk; do
 			isin "$_src" $_cddevs $_locs && _d=$_src && break
@@ -2293,6 +2405,7 @@ install_sets() {
 
 	echo "Let's $MODE the sets!"
 	while :; do
+		# Get list of cdroms again in case one just got plugged in.
 		_cddevs=$(get_cddevs)
 		umount -f /mnt2 >/dev/null 2>&1
 
@@ -2317,7 +2430,10 @@ install_sets() {
 			;;
 		esac
 
+		# Preserve the selected install source selection.
 		[[ -n $INSTALL_METHOD ]] && _d=$INSTALL_METHOD
+
+		# Set default to 'done' to leave the while-loop.
 		sane_install quiet || $AUTO && _d=done
 	done
 }
@@ -2400,11 +2516,9 @@ finish_up() {
 		done </mnt/etc/fstab
 	fi
 
-	# Create or update pkg.conf with the new package path, if any.
-	if [[ -n $PACKAGE_PATH ]]; then
-		grep -v '^[ 	]*installpath[ 	]*=' /mnt/etc/pkg.conf 2>/dev/null >/tmp/i/pkgconf
-		print -r -- "installpath = $PACKAGE_PATH" >>/tmp/i/pkgconf
-		cp /tmp/i/pkgconf /mnt/etc/pkg.conf
+	# Create /etc/installurl with the mirror used during install.
+	if [[ $MODE == install && -n $INSTALL_MIRROR ]]; then
+		echo "$INSTALL_URL" >/mnt/etc/installurl
 	fi
 
 	echo -n "Making all device nodes..."
@@ -2472,9 +2586,17 @@ __EOT
 }
 
 do_install(){
+	local _rootkey _rootpass
+
 	# Ask for and set the system hostname and add the hostname specific
 	# siteXX set.
-	ask_until "System hostname? (short form, e.g. 'foo')" "$(hostname -s)"
+	while :; do
+		ask_until "System hostname? (short form, e.g. 'foo')" \
+			"$(hostname -s)"
+		[[ $resp != *+([[:cntrl:]]|[[:space:]])* ]] && break
+		echo "Invalid hostname."
+		$AUTO && exit 1
+	done
 	[[ ${resp%%.*} != $(hostname -s) ]] && hostname "$resp"
 	THESETS="$THESETS site$VERSION-$(hostname -s).tgz"
 
@@ -2497,10 +2619,10 @@ do_install(){
 	done
 
 	# Ask for the root user public ssh key during autoinstall.
-	rootkey=
+	_rootkey=
 	if $AUTO; then
 		ask "Public ssh key for root account?" none
-		[[ $resp != none ]] && rootkey=$resp
+		[[ $resp != none ]] && _rootkey=$resp
 	fi
 
 	# Ask user about daemon startup on boot, X Window usage and console
@@ -2636,8 +2758,9 @@ do_install(){
 		_i=$_i${TZ:+TZ=$TZ&}
 		_i=$_i${INSTALL_METHOD:+method=$INSTALL_METHOD}
 		_i=${_i%&}
-		[[ -n $_i ]] && unpriv2 ftp -Vao - \
-			"http://129.128.5.191/cgi-bin/ftpinstall.cgi?$_i" >/dev/null 2>&1 &
+		[[ -n $_i ]] && unpriv2 ftp -w 15 -Vao - \
+			"$HTTP_PROTO://ftp.openbsd.org/cgi-bin/ftpinstall.cgi?dbversion=1&$_i" \ 
+			 >/dev/null 2>&1 &
 	fi
 
 	# Ensure an enabled console has the correct speed in /etc/ttys.
@@ -2666,6 +2789,8 @@ do_install(){
 
 	# Note we may have no hosts file if no interfaces were configured.
 	if [[ -f /tmp/i/hosts ]]; then
+		# Remove the entry for ftp.openbsd.org
+		sed -i '/^129\.128\.5\.191 /d' /tmp/i/hosts
 		_dn=$(get_fqdn)
 		while read _addr _hn _aliases; do
 			if [[ -n $_aliases || $_hn != ${_hn%%.*} || -z $_dn ]]; then
@@ -2694,26 +2819,26 @@ do_install(){
 	apply
 
 	# Create user account based on information from user_setup().
-	if [[ -n $user ]]; then
-		_encr=$(encr_pwd "$userpass")
-		_home=/home/$user
-		uline="${user}:${_encr}:1000:1000:staff:0:0:${username}:$_home:/bin/ksh"
+	if [[ -n $ADMIN ]]; then
+		_encr=$(encr_pwd "$ADMIN_PASS")
+		_home=/home/$ADMIN
+		uline="${ADMIN}:${_encr}:1000:1000:staff:0:0:${ADMIN_NAME}:$_home:/bin/ksh"
 		echo "$uline" >>/mnt/etc/master.passwd
-		echo "${user}:*:1000:" >>/mnt/etc/group
-		echo ${user} >/mnt/root/.forward
+		echo "${ADMIN}:*:1000:" >>/mnt/etc/group
+		echo $ADMIN >/mnt/root/.forward
 
 		_home=/mnt$_home
 		mkdir -p $_home
 		(cd /mnt/etc/skel; cp -pR . $_home)
-		(umask 077 && sed "s,^To: root\$,To: ${username} <${user}>," \
-			/mnt/var/mail/root >/mnt/var/mail/$user )
-		chown -R 1000:1000 $_home /mnt/var/mail/$user
-		sed -i -e "s@^wheel:.:0:root\$@wheel:\*:0:root,${user}@" \
+		(umask 077 && sed "s,^To: root\$,To: ${ADMIN_NAME} <${ADMIN}>," \
+			/mnt/var/mail/root >/mnt/var/mail/$ADMIN )
+		chown -R 1000:1000 $_home /mnt/var/mail/$ADMIN
+		sed -i -e "s@^wheel:.:0:root\$@wheel:\*:0:root,${ADMIN}@" \
 			/mnt/etc/group 2>/dev/null
 
 		# During autoinstall, add public ssh key to authorized_keys.
-		[[ -n "$userkey" ]] &&
-			print -r -- "$userkey" >>$_home/.ssh/authorized_keys
+		[[ -n "$ADMIN_KEY" ]] &&
+			print -r -- "$ADMIN_KEY" >>$_home/.ssh/authorized_keys
 	fi
 
 	# Store root password and rebuild password database.
@@ -2724,10 +2849,10 @@ do_install(){
 	pwd_mkdb -p -d /mnt/etc /etc/master.passwd
 
 	# During autoinstall, add root user's public ssh key to authorized_keys.
-	[[ -n "$rootkey" ]] && (
+	[[ -n "$_rootkey" ]] && (
 		umask 077
 		mkdir /mnt/root/.ssh
-		print -r -- "$rootkey" >>/mnt/root/.ssh/authorized_keys
+		print -r -- "$_rootkey" >>/mnt/root/.ssh/authorized_keys
 	)
 
 	# Perform final steps common to both an install and an upgrade.
@@ -2862,24 +2987,20 @@ if ! $AUTO; then
 	retrap
 fi
 
-AI_MODE=
-AI_SERVER=
-
 ROOTDISK=
 ROOTDEV=
-PACKAGE_PATH=
 
 SETDIR="$VNAME/$ARCH"
 CGI_INFO=/tmp/i/cgiinfo
 CGI_TZ=
 CGI_TIME=
 CGI_METHOD=
-INSTALL_URL=
 INSTALL_METHOD=
 HTTP_DIR=
 HTTP_SEC=/tmp/i/httpsec
 HTTP_LIST=/tmp/i/httplist
 WLANLIST=/tmp/i/wlanlist
+PUB_KEY=/etc/signify/openbsd-${VERSION}-base.pub
 
 # Do not limit ourselves during installs or upgrades.
 for _opt in d f l m n p s; do
@@ -2894,6 +3015,15 @@ dmesg | sed -n '/^OpenBSD /h;/^OpenBSD /!H;${g;p;}' >/var/run/dmesg.boot
 HTTP_SETDIR=$SETDIR
 set -- $(scan_dmesg "/^OpenBSD $VNAME\([^ ]*\).*$/s//\1/p")
 [[ $1 == -!(stable) ]] && HTTP_SETDIR=snapshots/$ARCH
+
+# Detect if ftp(1) has tls support and set defaults based on that.
+if [[ -e /etc/ssl/cert.pem ]]; then
+	FTP_TLS=true
+	HTTP_PROTO=https
+else
+	FTP_TLS=false
+	HTTP_PROTO=http
+fi
 
 # Scan /var/run/dmesg.boot for interesting devices.
 NIFS=0
@@ -2950,7 +3080,8 @@ elif [[ -z $RESPFILE ]]; then
 	fi
 	rm -f /tmp/ai/ai.done
 	echo "Performing non-interactive $AI_MODE..."
-	/$AI_MODE -af /tmp/ai/ai.$AI_MODE.conf 2>&1 </dev/null | sed 's/^.*//;w/tmp/ai/ai.log'
+	/$AI_MODE -af /tmp/ai/ai.$AI_MODE.conf 2>&1 </dev/null |
+		sed "s/^.*$(echo '\r')//;w/tmp/ai/ai.log"
 	if [[ -f /tmp/ai/ai.done ]]; then
 		# Email /tmp/ai/ai.log to root on next boot.
 		prep_root_mail /tmp/ai/ai.log "$(hostname) $AI_MODE log"

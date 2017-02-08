@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap.c,v 1.95 2016/11/21 13:50:22 visa Exp $	*/
+/*	$OpenBSD: pmap.c,v 1.101 2017/01/21 05:42:03 guenther Exp $	*/
 
 /*
  * Copyright (c) 2001-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)
@@ -360,7 +360,7 @@ pmap_bootstrap(void)
 	    "pmappl", NULL);
 	pool_init(&pmap_pv_pool, sizeof(struct pv_entry), 0, IPL_VM, 0,
 	    "pvpl", NULL);
-	pool_init(&pmap_pg_pool, PMAP_L2SIZE, PMAP_L2SIZE, IPL_VM, 0,
+	pool_init(&pmap_pg_pool, PMAP_PGSIZE, PMAP_PGSIZE, IPL_VM, 0,
 	    "pmappgpl", &pmap_pg_allocator);
 
 	pmap_kernel()->pm_count = 1;
@@ -502,8 +502,7 @@ extern struct user *proc0paddr;
 	mtx_init(&pmap->pm_mtx, IPL_VM);
 	pmap->pm_count = 1;
 
-	pmap->pm_segtab = (struct segtab *)pool_get(&pmap_pg_pool,
-	    PR_WAITOK | PR_ZERO);
+	pmap->pm_segtab = pool_get(&pmap_pg_pool, PR_WAITOK | PR_ZERO);
 
 	if (pmap == vmspace0.vm_map.pmap) {
 		/*
@@ -534,7 +533,12 @@ extern struct user *proc0paddr;
 void
 pmap_destroy(pmap_t pmap)
 {
+	pt_entry_t **pde, *pte;
 	int count;
+	unsigned int i, j;
+#ifdef PARANOIA
+	unsigned int k;
+#endif
 
 	DPRINTF(PDB_FOLLOW|PDB_CREATE, ("pmap_destroy(%p)\n", pmap));
 
@@ -543,24 +547,27 @@ pmap_destroy(pmap_t pmap)
 		return;
 
 	if (pmap->pm_segtab) {
-		pt_entry_t *pte;
-		int i;
-#ifdef PARANOIA
-		int j;
-#endif
-
 		for (i = 0; i < PMAP_SEGTABSIZE; i++) {
 			/* get pointer to segment map */
-			pte = pmap->pm_segtab->seg_tab[i];
-			if (!pte)
+			if ((pde = pmap->pm_segtab->seg_tab[i]) == NULL)
 				continue;
+			for (j = 0; j < NPDEPG; j++) {
+				if ((pte = pde[j]) == NULL)
+					continue;
 #ifdef PARANOIA
-			for (j = 0; j < NPTEPG; j++) {
-				if (pte[j] != PG_NV)
-					panic("pmap_destroy: segmap %p not empty at index %d", pte, j);
-			}
+				for (k = 0; k < NPTEPG; k++) {
+					if (pte[k] != PG_NV)
+						panic("pmap_destroy(%p): "
+						    "pgtab %p not empty at "
+						    "index %u", pmap, pte, k);
+				}
 #endif
-			pool_put(&pmap_pg_pool, pte);
+				pool_put(&pmap_pg_pool, pte);
+#ifdef PARANOIA
+				pde[j] = NULL;
+#endif
+			}
+			pool_put(&pmap_pg_pool, pde);
 #ifdef PARANOIA
 			pmap->pm_segtab->seg_tab[i] = NULL;
 #endif
@@ -572,6 +579,61 @@ pmap_destroy(pmap_t pmap)
 	}
 
 	pool_put(&pmap_pmap_pool, pmap);
+}
+
+void
+pmap_collect(pmap_t pmap)
+{
+	void *pmpg;
+	pt_entry_t **pde, *pte;
+	unsigned int i, j, k;
+	unsigned int m, n;
+
+	DPRINTF(PDB_FOLLOW, ("pmap_collect(%p)\n", pmap));
+
+	/* There is nothing to garbage collect in the kernel pmap. */
+	if (pmap == pmap_kernel())
+		return;
+
+	pmap_lock(pmap);
+
+	/*
+	 * When unlinking a directory page, the subsequent call to
+	 * pmap_shootdown_page() lets any parallel lockless directory
+	 * traversals end before the page gets freed.
+	 */
+
+	for (i = 0; i < PMAP_SEGTABSIZE; i++) {
+		if ((pde = pmap->pm_segtab->seg_tab[i]) == NULL)
+			continue;
+		m = 0;
+		for (j = 0; j < NPDEPG; j++) {
+			if ((pte = pde[j]) == NULL)
+				continue;
+			n = 0;
+			for (k = 0; k < NPTEPG; k++) {
+				if (pte[k] & PG_V) {
+					n++;
+					break;
+				}
+			}
+			if (n == 0) {
+				pmpg = pde[j];
+				pde[j] = NULL;
+				pmap_shootdown_page(pmap, 0);
+				pool_put(&pmap_pg_pool, pmpg);
+			} else
+				m++;
+		}
+		if (m == 0) {
+			pmpg = pmap->pm_segtab->seg_tab[i];
+			pmap->pm_segtab->seg_tab[i] = NULL;
+			pmap_shootdown_page(pmap, 0);
+			pool_put(&pmap_pg_pool, pmpg);
+		}
+	}
+
+	pmap_unlock(pmap);
 }
 
 /*
@@ -623,8 +685,8 @@ pmap_deactivate(struct proc *p)
 void
 pmap_do_remove(pmap_t pmap, vaddr_t sva, vaddr_t eva)
 {
-	vaddr_t nssva;
-	pt_entry_t *pte, entry;
+	vaddr_t ndsva, nssva;
+	pt_entry_t ***seg, **pde, *pte, entry;
 	paddr_t pa;
 	struct cpu_info *ci = curcpu();
 
@@ -670,40 +732,41 @@ pmap_do_remove(pmap_t pmap, vaddr_t sva, vaddr_t eva)
 	if (eva > VM_MAXUSER_ADDRESS)
 		panic("pmap_remove: uva not in range");
 #endif
-	while (sva < eva) {
+	/*
+	 * Invalidate every valid mapping within the range.
+	 */
+	seg = &pmap_segmap(pmap, sva);
+	for ( ; sva < eva; sva = nssva, seg++) {
 		nssva = mips_trunc_seg(sva) + NBSEG;
-		if (nssva == 0 || nssva > eva)
-			nssva = eva;
-		/*
-		 * If VA belongs to an unallocated segment,
-		 * skip to the next segment boundary.
-		 */
-		if (!(pte = pmap_segmap(pmap, sva))) {
-			sva = nssva;
+		if (*seg == NULL)
 			continue;
-		}
-		/*
-		 * Invalidate every valid mapping within this segment.
-		 */
-		pte += uvtopte(sva);
-		for (; sva < nssva; sva += PAGE_SIZE, pte++) {
-			entry = *pte;
-			if (!(entry & PG_V))
+		pde = *seg + uvtopde(sva);
+		for ( ; sva < eva && sva < nssva; sva = ndsva, pde++) {
+			ndsva = mips_trunc_dir(sva) + NBDIR;
+			if (*pde == NULL)
 				continue;
-			if (entry & PG_WIRED)
-				atomic_dec_long(&pmap->pm_stats.wired_count);
-			atomic_dec_long(&pmap->pm_stats.resident_count);
-			pa = pfn_to_pad(entry);
-			if ((entry & PG_CACHEMODE) == PG_CACHED)
-				Mips_SyncDCachePage(ci, sva, pa);
-			pmap_remove_pv(pmap, sva, pa);
-			*pte = PG_NV;
-			/*
-			 * Flush the TLB for the given address.
-			 */
-			pmap_invalidate_user_page(pmap, sva);
-			pmap_shootdown_page(pmap, sva);
-			stat_count(remove_stats.flushes);
+			pte = *pde + uvtopte(sva);
+			for ( ; sva < eva && sva < ndsva;
+			    sva += PAGE_SIZE, pte++) {
+				entry = *pte;
+				if (!(entry & PG_V))
+					continue;
+				if (entry & PG_WIRED)
+					atomic_dec_long(
+					    &pmap->pm_stats.wired_count);
+				atomic_dec_long(&pmap->pm_stats.resident_count);
+				pa = pfn_to_pad(entry);
+				if ((entry & PG_CACHEMODE) == PG_CACHED)
+					Mips_SyncDCachePage(ci, sva, pa);
+				pmap_remove_pv(pmap, sva, pa);
+				*pte = PG_NV;
+				/*
+				 * Flush the TLB for the given address.
+				 */
+				pmap_invalidate_user_page(pmap, sva);
+				pmap_shootdown_page(pmap, sva);
+				stat_count(remove_stats.flushes);
+			}
 		}
 	}
 }
@@ -751,9 +814,9 @@ pmap_page_wrprotect(struct vm_page *pg, vm_prot_t prot)
 			pmap_update_kernel_page(pv->pv_va, entry);
 			pmap_shootdown_page(pmap_kernel(), pv->pv_va);
 		} else if (pv->pv_pmap != NULL) {
-			if ((pte = pmap_segmap(pv->pv_pmap, pv->pv_va)) == NULL)
+			pte = pmap_pte_lookup(pv->pv_pmap, pv->pv_va);
+			if (pte == NULL)
 				continue;
-			pte += uvtopte(pv->pv_va);
 			entry = *pte;
 			if (!(entry & PG_V))
 				continue;
@@ -856,8 +919,8 @@ pmap_page_protect(struct vm_page *pg, vm_prot_t prot)
 void
 pmap_protect(pmap_t pmap, vaddr_t sva, vaddr_t eva, vm_prot_t prot)
 {
-	vaddr_t nssva;
-	pt_entry_t *pte, entry, p;
+	vaddr_t ndsva, nssva;
+	pt_entry_t ***seg, **pde, *pte, entry, p;
 	struct cpu_info *ci = curcpu();
 
 	DPRINTF(PDB_FOLLOW|PDB_PROTECT,
@@ -915,40 +978,40 @@ pmap_protect(pmap_t pmap, vaddr_t sva, vaddr_t eva, vm_prot_t prot)
 	if (eva > VM_MAXUSER_ADDRESS)
 		panic("pmap_protect: uva not in range");
 #endif
-	while (sva < eva) {
+	/*
+	 * Change protection on every valid mapping within the range.
+	 */
+	seg = &pmap_segmap(pmap, sva);
+	for ( ; sva < eva; sva = nssva, seg++) {
 		nssva = mips_trunc_seg(sva) + NBSEG;
-		if (nssva == 0 || nssva > eva)
-			nssva = eva;
-		/*
-		 * If VA belongs to an unallocated segment,
-		 * skip to the next segment boundary.
-		 */
-		if (!(pte = pmap_segmap(pmap, sva))) {
-			sva = nssva;
+		if (*seg == NULL)
 			continue;
-		}
-		/*
-		 * Change protection on every valid mapping within this segment.
-		 */
-		pte += uvtopte(sva);
-		for (; sva < nssva; sva += PAGE_SIZE, pte++) {
-			entry = *pte;
-			if (!(entry & PG_V))
+		pde = *seg + uvtopde(sva);
+		for ( ; sva < eva && sva < nssva; sva = ndsva, pde++) {
+			ndsva = mips_trunc_dir(sva) + NBDIR;
+			if (*pde == NULL)
 				continue;
-			if ((entry & PG_M) != 0 /* && p != PG_M */ &&
-			    (entry & PG_CACHEMODE) == PG_CACHED) {
-				if (prot & PROT_EXEC) {
-					/* This will also sync D$. */
-					pmap_invalidate_icache(pmap, sva,
-					    entry);
-				} else
-					Mips_SyncDCachePage(ci, sva,
-					    pfn_to_pad(entry));
+			pte = *pde + uvtopte(sva);
+			for ( ; sva < eva && sva < ndsva;
+			    sva += PAGE_SIZE, pte++) {
+				entry = *pte;
+				if (!(entry & PG_V))
+					continue;
+				if ((entry & PG_M) != 0 /* && p != PG_M */ &&
+				    (entry & PG_CACHEMODE) == PG_CACHED) {
+					if (prot & PROT_EXEC) {
+						/* This will also sync D$. */
+						pmap_invalidate_icache(pmap,
+						    sva, entry);
+					} else
+						Mips_SyncDCachePage(ci, sva,
+						    pfn_to_pad(entry));
+				}
+				entry = (entry & ~(PG_M | PG_RO | PG_XI)) | p;
+				*pte = entry;
+				pmap_update_user_page(pmap, sva, entry);
+				pmap_shootdown_page(pmap, sva);
 			}
-			entry = (entry & ~(PG_M | PG_RO | PG_XI)) | p;
-			*pte = entry;
-			pmap_update_user_page(pmap, sva, entry);
-			pmap_shootdown_page(pmap, sva);
 		}
 	}
 
@@ -967,7 +1030,7 @@ pmap_protect(pmap_t pmap, vaddr_t sva, vaddr_t eva, vm_prot_t prot)
 int
 pmap_enter(pmap_t pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 {
-	pt_entry_t *pte, npte;
+	pt_entry_t **pde, *pte, npte;
 	vm_page_t pg;
 	struct cpu_info *ci = curcpu();
 	u_long cpuid = ci->ci_cpuid;
@@ -996,6 +1059,14 @@ pmap_enter(pmap_t pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 
 	if (pg != NULL) {
 		mtx_enter(&pg->mdpage.pv_mtx);
+
+		/* Set page referenced/modified status based on flags */
+		if (flags & PROT_WRITE)
+			atomic_setbits_int(&pg->pg_flags,
+			    PGF_ATTR_MOD | PGF_ATTR_REF);
+		else if (flags & PROT_MASK)
+			atomic_setbits_int(&pg->pg_flags, PGF_ATTR_REF);
+
 		if (!(prot & PROT_WRITE)) {
 			npte = PG_ROPAGE;
 		} else {
@@ -1017,13 +1088,6 @@ pmap_enter(pmap_t pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 			npte &= ~PG_CACHED;
 			npte |= PG_UNCACHED;
 		}
-
-		/* Set page referenced/modified status based on flags */
-		if (flags & PROT_WRITE)
-			atomic_setbits_int(&pg->pg_flags,
-			    PGF_ATTR_MOD | PGF_ATTR_REF);
-		else if (flags & PROT_MASK)
-			atomic_setbits_int(&pg->pg_flags, PGF_ATTR_REF);
 
 		stat_count(enter_stats.managed);
 	} else {
@@ -1088,7 +1152,20 @@ pmap_enter(pmap_t pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 	/*
 	 *  User space mapping. Do table build.
 	 */
-	if ((pte = pmap_segmap(pmap, va)) == NULL) {
+	if ((pde = pmap_segmap(pmap, va)) == NULL) {
+		pde = pool_get(&pmap_pg_pool, PR_NOWAIT | PR_ZERO);
+		if (pde == NULL) {
+			if (flags & PMAP_CANFAIL) {
+				if (pg != NULL)
+					mtx_leave(&pg->mdpage.pv_mtx);
+				pmap_unlock(pmap);
+				return ENOMEM;
+			}
+			panic("%s: out of memory", __func__);
+		}
+		pmap_segmap(pmap, va) = pde;
+	}
+	if ((pte = pde[uvtopde(va)]) == NULL) {
 		pte = pool_get(&pmap_pg_pool, PR_NOWAIT | PR_ZERO);
 		if (pte == NULL) {
 			if (flags & PMAP_CANFAIL) {
@@ -1099,8 +1176,7 @@ pmap_enter(pmap_t pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 			}
 			panic("%s: out of memory", __func__);
 		}
-
-		pmap_segmap(pmap, va) = pte;
+		pde[uvtopde(va)] = pte;
 	}
 
 	if (pg != NULL) {
@@ -1269,11 +1345,9 @@ pmap_unwire(pmap_t pmap, vaddr_t va)
 	if (pmap == pmap_kernel())
 		pte = kvtopte(va);
 	else {
-		if ((pte = pmap_segmap(pmap, va)) == NULL) {
-			pmap_unlock(pmap);
-			return;
-		}
-		pte += uvtopte(va);
+		pte = pmap_pte_lookup(pmap, va);
+		if (pte == NULL)
+			goto out;
 	}
 
 	if (*pte & PG_V) {
@@ -1283,6 +1357,7 @@ pmap_unwire(pmap_t pmap, vaddr_t va)
 		}
 	}
 
+out:
 	pmap_unlock(pmap);
 }
 
@@ -1323,16 +1398,15 @@ pmap_extract(pmap_t pmap, vaddr_t va, paddr_t *pap)
 				rv = FALSE;
 		}
 	} else {
-		if (!(pte = pmap_segmap(pmap, va)))
+		pte = pmap_pte_lookup(pmap, va);
+		if (pte == NULL) {
 			rv = FALSE;
-		else {
-			pte += uvtopte(va);
-			if (*pte & PG_V)
-				pa = pfn_to_pad(*pte) | (va & PAGE_MASK);
-			else
-				rv = FALSE;
+			goto out;
 		}
+		if (*pte & PG_V)
+			pa = pfn_to_pad(*pte) | (va & PAGE_MASK);
 	}
+out:
 	if (rv != FALSE)
 		*pap = pa;
 
@@ -1363,12 +1437,8 @@ pmap_prefer(paddr_t foff, vaddr_t va)
  *	This routine is only advisory and need not do anything.
  */
 void
-pmap_copy(dst_pmap, src_pmap, dst_addr, len, src_addr)
-	pmap_t dst_pmap;
-	pmap_t src_pmap;
-	vaddr_t dst_addr;
-	vsize_t len;
-	vaddr_t src_addr;
+pmap_copy(pmap_t dst_pmap, pmap_t src_pmap, vaddr_t dst_addr, vsize_t len,
+    vaddr_t src_addr)
 {
 
 	DPRINTF(PDB_FOLLOW,("pmap_copy(%p, %p, %p, 0x%lx, %p)\n",
@@ -1515,9 +1585,9 @@ pmap_clear_modify(struct vm_page *pg)
 				pmap_shootdown_page(pmap_kernel(), pv->pv_va);
 			}
 		} else if (pv->pv_pmap != NULL) {
-			if ((pte = pmap_segmap(pv->pv_pmap, pv->pv_va)) == NULL)
+			pte = pmap_pte_lookup(pv->pv_pmap, pv->pv_va);
+			if (pte == NULL)
 				continue;
-			pte += uvtopte(pv->pv_va);
 			entry = *pte;
 			if ((entry & PG_V) != 0 && (entry & PG_M) != 0) {
 				if (pg->pg_flags & PGF_CACHED)
@@ -1604,10 +1674,10 @@ pmap_emulate_modify(pmap_t pmap, vaddr_t va)
 	if (pmap == pmap_kernel()) {
 		pte = kvtopte(va);
 	} else {
-		if ((pte = pmap_segmap(pmap, va)) == NULL)
-			panic("%s: invalid segmap in pmap %p va %p", __func__,
+		pte = pmap_pte_lookup(pmap, va);
+		if (pte == NULL)
+			panic("%s: invalid page dir in pmap %p va %p", __func__,
 			    pmap, (void *)va);
-		pte += uvtopte(va);
 	}
 	entry = *pte;
 	if (!(entry & PG_V) || (entry & PG_M)) {
@@ -1688,17 +1758,16 @@ pmap_do_page_cache(vm_page_t pg, u_int mode)
 				pmap_shootdown_page(pmap_kernel(), pv->pv_va);
 			}
 		} else if (pv->pv_pmap != NULL) {
-			if ((pte = pmap_segmap(pv->pv_pmap, pv->pv_va))) {
-				pte += uvtopte(pv->pv_va);
-				entry = *pte;
-				if (entry & PG_V) {
-					entry = (entry & ~PG_CACHEMODE) | newmode;
-					*pte = entry;
-					pmap_update_user_page(pv->pv_pmap,
-					    pv->pv_va, entry);
-					pmap_shootdown_page(pv->pv_pmap,
-					    pv->pv_va);
-				}
+			pte = pmap_pte_lookup(pv->pv_pmap, pv->pv_va);
+			if (pte == NULL)
+				continue;
+			entry = *pte;
+			if (entry & PG_V) {
+				entry = (entry & ~PG_CACHEMODE) | newmode;
+				*pte = entry;
+				pmap_update_user_page(pv->pv_pmap, pv->pv_va,
+				    entry);
+				pmap_shootdown_page(pv->pv_pmap, pv->pv_va);
 			}
 		}
 	}
@@ -1753,13 +1822,13 @@ pmap_alloc_tlbpid(struct proc *p)
 	if (curproc) {
 		DPRINTF(PDB_FOLLOW|PDB_TLBPID, 
 			("pmap_alloc_tlbpid: curproc %d '%s' ",
-				curproc->p_p->ps_pid, curproc->p_comm));
+				curproc->p_p->ps_pid, curproc->p_p->ps_comm));
 	} else {
 		DPRINTF(PDB_FOLLOW|PDB_TLBPID, 
 			("pmap_alloc_tlbpid: curproc <none> "));
 	}
 	DPRINTF(PDB_FOLLOW|PDB_TLBPID, ("segtab %p tlbpid %u pid %d '%s'\n",
-			pmap->pm_segtab, id, p->p_p->ps_pid, p->p_comm));
+			pmap->pm_segtab, id, p->p_p->ps_pid, p->p_p->ps_comm));
 
 	return (id);
 }

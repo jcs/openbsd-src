@@ -5,7 +5,6 @@ sys:*:3:root
 tty:*:4:root
 operator:*:5:root
 bin:*:7:
-news:*:8:
 wsrc:*:9:
 users:*:10:
 auth:*:11:
@@ -77,6 +76,7 @@ _vmd:*:107:
 _tftp_proxy:*:108:
 _ftp_proxy:*:109:
 _sndiop:*:110:
+_syspatch:*:112:
 dialer:*:117:
 nogroup:*:32766:
 nobody:*:32767:

@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.154 2016/12/10 19:03:53 stsp Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.163 2017/02/07 10:08:21 mpi Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>
@@ -118,10 +118,10 @@
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/systm.h>
+#include <sys/endian.h>
 
 #include <sys/task.h>
 #include <machine/bus.h>
-#include <machine/endian.h>
 #include <machine/intr.h>
 
 #include <dev/pci/pcireg.h>
@@ -409,8 +409,6 @@ int	iwm_add_sta_cmd(struct iwm_softc *, struct iwm_node *, int);
 int	iwm_add_aux_sta(struct iwm_softc *);
 uint16_t iwm_scan_rx_chain(struct iwm_softc *);
 uint32_t iwm_scan_rate_n_flags(struct iwm_softc *, int, int);
-uint16_t iwm_get_active_dwell(struct iwm_softc *, int, int);
-uint16_t iwm_get_passive_dwell(struct iwm_softc *, int);
 uint8_t	iwm_lmac_scan_fill_channels(struct iwm_softc *,
 	    struct iwm_scan_channel_cfg_lmac *, int);
 int	iwm_fill_probe_req(struct iwm_softc *, struct iwm_scan_probe_req *);
@@ -525,6 +523,8 @@ iwm_firmware_store_section(struct iwm_softc *sc, enum iwm_ucode_type type,
 	return 0;
 }
 
+#define IWM_DEFAULT_SCAN_CHANNELS 40
+
 struct iwm_tlv_calib_data {
 	uint32_t ucode_type;
 	struct iwm_tlv_calib_ctrl calib;
@@ -588,7 +588,7 @@ iwm_read_firmware(struct iwm_softc *sc, enum iwm_ucode_type ucode_type)
 	}
 
 	sc->sc_capaflags = 0;
-	sc->sc_capa_n_scan_channels = IWM_MAX_NUM_SCAN_CHANNELS;
+	sc->sc_capa_n_scan_channels = IWM_DEFAULT_SCAN_CHANNELS;
 	memset(sc->sc_enabled_capa, 0, sizeof(sc->sc_enabled_capa));
 	memset(sc->sc_fw_mcc, 0, sizeof(sc->sc_fw_mcc));
 
@@ -3339,14 +3339,17 @@ iwm_rx_rx_mpdu(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
 	if (sc->sc_drvbpf != NULL) {
 		struct mbuf mb;
 		struct iwm_rx_radiotap_header *tap = &sc->sc_rxtap;
+		uint16_t chan_flags;
 
 		tap->wr_flags = 0;
 		if (phy_info->phy_flags & htole16(IWM_PHY_INFO_FLAG_SHPREAMBLE))
 			tap->wr_flags |= IEEE80211_RADIOTAP_F_SHORTPRE;
 		tap->wr_chan_freq =
 		    htole16(ic->ic_channels[phy_info->channel].ic_freq);
-		tap->wr_chan_flags =
-		    htole16(ic->ic_channels[phy_info->channel].ic_flags);
+		chan_flags = ic->ic_channels[phy_info->channel].ic_flags;
+		if (ic->ic_curmode != IEEE80211_MODE_11N)
+			chan_flags &= ~IEEE80211_CHAN_HT;
+		tap->wr_chan_flags = htole16(chan_flags);
 		tap->wr_dbm_antsignal = (int8_t)rssi;
 		tap->wr_dbm_antnoise = (int8_t)sc->sc_noise;
 		tap->wr_tsft = phy_info->system_timestamp;
@@ -3434,8 +3437,6 @@ iwm_rx_tx_cmd_single(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
 
 	if (txfail)
 		ifp->if_oerrors++;
-	else
-		ifp->if_opackets++;
 }
 
 void
@@ -3991,10 +3992,14 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	if (sc->sc_drvbpf != NULL) {
 		struct mbuf mb;
 		struct iwm_tx_radiotap_header *tap = &sc->sc_txtap;
+		uint16_t chan_flags;
 
 		tap->wt_flags = 0;
 		tap->wt_chan_freq = htole16(ni->ni_chan->ic_freq);
-		tap->wt_chan_flags = htole16(ni->ni_chan->ic_flags);
+		chan_flags = ni->ni_chan->ic_flags;
+		if (ic->ic_curmode != IEEE80211_MODE_11N)
+			chan_flags &= ~IEEE80211_CHAN_HT;
+		tap->wt_chan_flags = htole16(chan_flags);
 		if ((ni->ni_flags & IEEE80211_NODE_HT) &&
 		    !IEEE80211_IS_MULTICAST(wh->i_addr1) &&
 		    type == IEEE80211_FC0_TYPE_DATA &&
@@ -4452,12 +4457,6 @@ iwm_add_aux_sta(struct iwm_softc *sc)
 	return err;
 }
 
-#define IWM_PLCP_QUIET_THRESH 1
-#define IWM_ACTIVE_QUIET_TIME 10
-#define LONG_OUT_TIME_PERIOD 600
-#define SHORT_OUT_TIME_PERIOD 200
-#define SUSPEND_TIME_PERIOD 100
-
 uint16_t
 iwm_scan_rx_chain(struct iwm_softc *sc)
 {
@@ -4493,30 +4492,6 @@ iwm_scan_rate_n_flags(struct iwm_softc *sc, int flags, int no_cck)
 				   tx_ant);
 	else
 		return htole32(IWM_RATE_6M_PLCP | tx_ant);
-}
-
-/*
- * If req->n_ssids > 0, it means we should do an active scan.
- * In case of active scan w/o directed scan, we receive a zero-length SSID
- * just to notify that this scan is active and not passive.
- * In order to notify the FW of the number of SSIDs we wish to scan (including
- * the zero-length one), we need to set the corresponding bits in chan->type,
- * one for each SSID, and set the active bit (first). If the first SSID is
- * already included in the probe template, so we need to set only
- * req->n_ssids - 1 bits in addition to the first bit.
- */
-uint16_t
-iwm_get_active_dwell(struct iwm_softc *sc, int flags, int n_ssids)
-{
-	if (flags & IEEE80211_CHAN_2GHZ)
-		return 30  + 3 * (n_ssids + 1);
-	return 20  + 2 * (n_ssids + 1);
-}
-
-uint16_t
-iwm_get_passive_dwell(struct iwm_softc *sc, int flags)
-{
-	return (flags & IEEE80211_CHAN_2GHZ) ? 100 + 20 : 100 + 10;
 }
 
 uint8_t
@@ -5489,10 +5464,8 @@ iwm_newstate_task(void *psc)
 	if (ostate == IEEE80211_S_SCAN && nstate != ostate)
 		iwm_led_blink_stop(sc);
 
-	if (ostate == IEEE80211_S_RUN && nstate != ostate) {
+	if (ostate == IEEE80211_S_RUN && nstate != ostate)
 		iwm_disable_beacon_filter(sc);
-		ieee80211_mira_node_destroy(&in->in_mn);
-	}
 
 	/* Reset the device if moving out of AUTH, ASSOC, or RUN. */
 	/* XXX Is there a way to switch states without a full reset? */
@@ -5625,8 +5598,11 @@ iwm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 {
 	struct ifnet *ifp = IC2IFP(ic);
 	struct iwm_softc *sc = ifp->if_softc;
+	struct iwm_node *in = (void *)ic->ic_bss;
 
 	timeout_del(&sc->sc_calib_to);
+	if (ic->ic_state == IEEE80211_S_RUN)
+		ieee80211_mira_cancel_timeouts(&in->in_mn);
 
 	sc->ns_nstate = nstate;
 	sc->ns_arg = arg;
@@ -6109,6 +6085,8 @@ iwm_stop(struct ifnet *ifp, int disable)
 	ifq_clr_oactive(&ifp->if_snd);
 
 	in->in_phyctxt = NULL;
+	if (ic->ic_state == IEEE80211_S_RUN)
+		ieee80211_mira_cancel_timeouts(&in->in_mn);
 
 	task_del(systq, &sc->init_task);
 	task_del(sc->sc_nswq, &sc->newstate_task);
@@ -6154,7 +6132,6 @@ iwm_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifreq *ifr;
 	int s, err = 0;
-
 
 	/*
 	 * Prevent processes from entering this function while another
@@ -6628,7 +6605,6 @@ iwm_notif_intr(struct iwm_softc *sc)
 		case IWM_PHY_CONTEXT_CMD:
 		case IWM_BINDING_CONTEXT_CMD:
 		case IWM_TIME_EVENT_CMD:
-		case IWM_SCAN_REQUEST_CMD:
 		case IWM_WIDE_ID(IWM_ALWAYS_LONG_GROUP, IWM_SCAN_CFG_CMD):
 		case IWM_WIDE_ID(IWM_ALWAYS_LONG_GROUP, IWM_SCAN_REQ_UMAC):
 		case IWM_SCAN_OFFLOAD_REQUEST_CMD:

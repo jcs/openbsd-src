@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_etherip.c,v 1.9 2016/11/17 13:37:20 mpi Exp $	*/
+/*	$OpenBSD: if_etherip.c,v 1.14 2017/01/29 19:58:47 bluhm Exp $	*/
 /*
  * Copyright (c) 2015 Kazuya GODA <goda@openbsd.org>
  *
@@ -118,6 +118,7 @@ etherip_clone_create(struct if_clone *ifc, int unit)
 	ifp->if_softc = sc;
 	ifp->if_ioctl = etherip_ioctl;
 	ifp->if_start = etherip_start;
+	ifp->if_xflags = IFXF_CLONED;
 	IFQ_SET_MAXLEN(&ifp->if_snd, IFQ_MAXLEN);
 
 	ifp->if_capabilities = IFCAP_VLAN_MTU;
@@ -184,8 +185,6 @@ etherip_start(struct ifnet *ifp)
 			m_freem(m);
 			continue;
 		}
-
-		ifp->if_opackets++;
 
 		switch (sc->sc_src.ss_family) {
 		case AF_INET:
@@ -405,34 +404,29 @@ ip_etherip_output(struct ifnet *ifp, struct mbuf *m)
 	return ip_output(m, NULL, NULL, IP_RAWOUTPUT, NULL, NULL, 0);
 }
 
-void
-ip_etherip_input(struct mbuf *m, ...)
+int
+ip_etherip_input(struct mbuf **mp, int *offp, int proto)
 {
+	struct mbuf *m = *mp;
 	struct mbuf_list ml = MBUF_LIST_INITIALIZER();
 	struct etherip_softc *sc;
 	const struct ip *ip;
 	struct etherip_header *eip;
 	struct sockaddr_in *src, *dst;
 	struct ifnet *ifp = NULL;
-	int off;
-	va_list ap;
-
-	va_start(ap, m);
-	off = va_arg(ap, int);
-	va_end(ap);
 
 	ip = mtod(m, struct ip *);
 
 	if (ip->ip_p != IPPROTO_ETHERIP) {
 		m_freem(m);
 		ipstat_inc(ips_noproto);
-		return;
+		return IPPROTO_DONE;
 	}
 
 	if (!etherip_allow) {
 		m_freem(m);
 		etheripstat.etherip_pdrops++;
-		return;
+		return IPPROTO_DONE;
 	}
 
 	LIST_FOREACH(sc, &etherip_softc_list, sc_entry) {
@@ -459,26 +453,26 @@ ip_etherip_input(struct mbuf *m, ...)
 		 * This is tricky but the path will be removed soon when
 		 * implementation of etherip is removed from gif(4).
 		 */
-		etherip_input(m, off);
+		return etherip_input(mp, offp, proto);
 #else
 		etheripstat.etherip_noifdrops++;
 		m_freem(m);
+		return IPPROTO_DONE;
 #endif /* NGIF */
-		return;
 	}
 
-	m_adj(m, off);
+	m_adj(m, *offp);
 	m = m_pullup(m, sizeof(struct etherip_header));
 	if (m == NULL) {
 		etheripstat.etherip_adrops++;
-		return;
+		return IPPROTO_DONE;
 	}
 
 	eip = mtod(m, struct etherip_header *);
 	if (eip->eip_ver != ETHERIP_VERSION || eip->eip_pad) {
 		etheripstat.etherip_adrops++;
 		m_freem(m);
-		return;
+		return IPPROTO_DONE;
 	}
 
 	etheripstat.etherip_ipackets++;
@@ -489,7 +483,7 @@ ip_etherip_input(struct mbuf *m, ...)
 	m = m_pullup(m, sizeof(struct ether_header));
 	if (m == NULL) {
 		etheripstat.etherip_adrops++;
-		return;
+		return IPPROTO_DONE;
 	}
 	m->m_flags &= ~(M_BCAST|M_MCAST);
 
@@ -499,6 +493,7 @@ ip_etherip_input(struct mbuf *m, ...)
 
 	ml_enqueue(&ml, m);
 	if_input(ifp, &ml);
+	return IPPROTO_DONE;
 }
 
 #ifdef INET6
@@ -509,18 +504,19 @@ ip6_etherip_output(struct ifnet *ifp, struct mbuf *m)
 	struct sockaddr_in6 *src, *dst;
 	struct etherip_header *eip;
 	struct ip6_hdr *ip6;
+	int error;
 
 	src = (struct sockaddr_in6 *)&sc->sc_src;
 	dst = (struct sockaddr_in6 *)&sc->sc_dst;
 
 	if (src == NULL || dst == NULL ||
 	    src->sin6_family != AF_INET6 || dst->sin6_family != AF_INET6) {
-		m_freem(m);
-		return EAFNOSUPPORT;
+		error = EAFNOSUPPORT;
+		goto drop;
 	}
 	if (IN6_IS_ADDR_UNSPECIFIED(&dst->sin6_addr)) {
-		m_freem(m);
-		return ENETUNREACH;
+		error = ENETUNREACH;
+		goto drop;
 	}
 
 	m->m_flags &= ~(M_BCAST|M_MCAST);
@@ -547,8 +543,12 @@ ip6_etherip_output(struct ifnet *ifp, struct mbuf *m)
 	ip6->ip6_nxt  = IPPROTO_ETHERIP;
 	ip6->ip6_hlim = ip6_defhlim;
 	ip6->ip6_plen = htons(m->m_pkthdr.len - sizeof(struct ip6_hdr));
-	ip6->ip6_src  = src->sin6_addr;
-	ip6->ip6_dst = dst->sin6_addr;
+	error = in6_embedscope(&ip6->ip6_src, src, NULL);
+	if (error != 0)
+		goto drop;
+	error = in6_embedscope(&ip6->ip6_dst, dst, NULL);
+	if (error != 0)
+		goto drop;
 
 	m->m_pkthdr.ph_rtableid = sc->sc_rdomain;
 
@@ -560,6 +560,10 @@ ip6_etherip_output(struct ifnet *ifp, struct mbuf *m)
 	    (sizeof(struct ip6_hdr) + sizeof(struct etherip_header)));
 
 	return ip6_output(m, 0, NULL, IPV6_MINMTU, 0, NULL);
+
+drop:
+	m_freem(m);
+	return (error);
 }
 
 int
@@ -567,10 +571,10 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto)
 {
 	struct mbuf *m = *mp;
 	struct mbuf_list ml = MBUF_LIST_INITIALIZER();
-	int off = *offp;
 	struct etherip_softc *sc;
 	const struct ip6_hdr *ip6;
 	struct etherip_header *eip;
+	struct sockaddr_in6 ipsrc, ipdst;
 	struct sockaddr_in6 *src6, *dst6;
 	struct ifnet *ifp = NULL;
 
@@ -582,6 +586,8 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto)
 	}
 
 	ip6 = mtod(m, const struct ip6_hdr *);
+	in6_recoverscope(&ipsrc, &ip6->ip6_src);
+	in6_recoverscope(&ipdst, &ip6->ip6_dst);
 
 	LIST_FOREACH(sc, &etherip_softc_list, sc_entry) {
 		if (sc->sc_src.ss_family != AF_INET6 ||
@@ -591,12 +597,13 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto)
 		src6 = (struct sockaddr_in6 *)&sc->sc_src;
 		dst6 = (struct sockaddr_in6 *)&sc->sc_dst;
 
-		if (!IN6_ARE_ADDR_EQUAL(&src6->sin6_addr, &ip6->ip6_dst) ||
-		    !IN6_ARE_ADDR_EQUAL(&dst6->sin6_addr, &ip6->ip6_src))
-			continue;
-
-		ifp = &sc->sc_ac.ac_if;
-		break;
+		if (IN6_ARE_ADDR_EQUAL(&src6->sin6_addr, &ipdst.sin6_addr) &&
+		    src6->sin6_scope_id == ipdst.sin6_scope_id &&
+		    IN6_ARE_ADDR_EQUAL(&dst6->sin6_addr, &ipsrc.sin6_addr) &&
+		    dst6->sin6_scope_id == ipsrc.sin6_scope_id) {
+			ifp = &sc->sc_ac.ac_if;
+			break;
+		}
 	}
 
 	if (ifp == NULL) {
@@ -606,7 +613,7 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto)
 		 * This is tricky but the path will be removed soon when
 		 * implementation of etherip is removed from gif(4).
 		 */
-		return etherip_input6(mp, offp, proto);
+		return etherip_input(mp, offp, proto);
 #else
 		etheripstat.etherip_noifdrops++;
 		m_freem(m);
@@ -614,7 +621,7 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto)
 #endif /* NGIF */
 	}
 
-	m_adj(m, off);
+	m_adj(m, *offp);
 	m = m_pullup(m, sizeof(struct etherip_header));
 	if (m == NULL) {
 		etheripstat.etherip_adrops++;
@@ -646,10 +653,8 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto)
 
 	ml_enqueue(&ml, m);
 	if_input(ifp, &ml);
-
 	return IPPROTO_DONE;
 }
-
 #endif /* INET6 */
 
 int

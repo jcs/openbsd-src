@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bge.c,v 1.382 2016/04/13 10:34:32 mpi Exp $	*/
+/*	$OpenBSD: if_bge.c,v 1.384 2017/01/24 03:57:34 dlg Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -142,7 +142,7 @@ int bge_encap(struct bge_softc *, struct mbuf *, int *);
 int bge_compact_dma_runt(struct mbuf *);
 
 int bge_intr(void *);
-void bge_start(struct ifnet *);
+void bge_start(struct ifqueue *);
 int bge_ioctl(struct ifnet *, u_long, caddr_t);
 int bge_rxrinfo(struct bge_softc *, struct if_rxrinfo *);
 void bge_init(void *);
@@ -2996,7 +2996,7 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 	ifp->if_xflags = IFXF_MPSAFE;
 	ifp->if_ioctl = bge_ioctl;
-	ifp->if_start = bge_start;
+	ifp->if_qstart = bge_start;
 	ifp->if_watchdog = bge_watchdog;
 	IFQ_SET_MAXLEN(&ifp->if_snd, BGE_TX_RING_CNT - 1);
 
@@ -3645,8 +3645,6 @@ bge_txeof(struct bge_softc *sc)
 	freed = 0;
 	while (cons != newcons) {
 		cur_tx = &sc->bge_rdata->bge_tx_ring[cons];
-		if (cur_tx->bge_flags & BGE_TXBDFLAG_END)
-			ifp->if_opackets++;
 		m = sc->bge_cdata.bge_tx_chain[cons];
 		if (m != NULL) {
 			dmamap = sc->bge_cdata.bge_tx_map[cons];
@@ -4118,14 +4116,15 @@ fail_unload:
  * to the mbuf data regions directly in the transmit descriptors.
  */
 void
-bge_start(struct ifnet *ifp)
+bge_start(struct ifqueue *ifq)
 {
+	struct ifnet *ifp = ifq->ifq_if;
 	struct bge_softc *sc = ifp->if_softc;
 	struct mbuf *m;
 	int txinc;
 
 	if (!BGE_STS_BIT(sc, BGE_STS_LINK)) {
-		IFQ_PURGE(&ifp->if_snd);
+		ifq_purge(ifq);
 		return;
 	}
 
@@ -4134,11 +4133,11 @@ bge_start(struct ifnet *ifp)
 		/* Check if we have enough free send BDs. */
 		if (sc->bge_txcnt + txinc + BGE_NTXSEG + 16 >=
 		    BGE_TX_RING_CNT) {
-			ifq_set_oactive(&ifp->if_snd);
+			ifq_set_oactive(ifq);
 			break;
 		}
 
-		IFQ_DEQUEUE(&ifp->if_snd, m);
+		m = ifq_dequeue(ifq);
 		if (m == NULL)
 			break;
 

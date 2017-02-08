@@ -1,7 +1,8 @@
-/*	$OpenBSD: session.c,v 1.354 2016/09/03 16:22:17 renato Exp $ */
+/*	$OpenBSD: session.c,v 1.358 2017/01/24 04:22:42 benno Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
+ * Copyright (c) 2017 Peter van Dijk <peter.van.dijk@powerdns.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -39,11 +40,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <unistd.h>
 
 #include "bgpd.h"
 #include "mrt.h"
 #include "session.h"
+#include "log.h"
 
 #define PFD_PIPE_MAIN		0
 #define PFD_PIPE_ROUTE		1
@@ -202,11 +205,11 @@ session_main(int debug, int verbose)
 	void			*newp;
 	short			 events;
 
-	bgpd_process = PROC_SE;
-	log_procname = log_procnames[bgpd_process];
+	log_init(debug, LOG_DAEMON);
+	log_setverbose(verbose);
 
-	log_init(debug);
-	log_verbose(verbose);
+	bgpd_process = PROC_SE;
+	log_procinit(log_procnames[bgpd_process]);
 
 	if ((pw = getpwnam(BGPD_USER)) == NULL)
 		fatal(NULL);
@@ -571,6 +574,9 @@ session_main(int debug, int verbose)
 
 	while ((p = peers) != NULL) {
 		peers = p->next;
+		strlcpy(p->conf.shutcomm,
+		    "bgpd shutting down",
+		    sizeof(p->conf.shutcomm));
 		session_stop(p, ERR_CEASE_ADMIN_DOWN);
 		pfkey_remove(p);
 		free(p);
@@ -1377,7 +1383,7 @@ session_sendmsg(struct bgp_msg *msg, struct peer *p)
 		    mrt->type == MRT_UPDATE_OUT)))
 			continue;
 		if ((mrt->peer_id == 0 && mrt->group_id == 0) ||
-		    mrt->peer_id == p->conf.id || (mrt->group_id == 0 &&
+		    mrt->peer_id == p->conf.id || (mrt->group_id != 0 &&
 		    mrt->group_id == p->conf.groupid))
 			mrt_dump_bgp_msg(mrt, msg->buf->buf, msg->len, p);
 	}
@@ -1796,6 +1802,7 @@ session_dispatch_msg(struct pollfd *pfd, struct peer *p)
 int
 session_process_msg(struct peer *p)
 {
+	struct mrt	*mrt;
 	ssize_t		rpos, av, left;
 	int		processed = 0;
 	u_int16_t	msglen;
@@ -1819,6 +1826,17 @@ session_process_msg(struct peer *p)
 		if (rpos + msglen > av)
 			break;
 		p->rbuf->rptr = p->rbuf->buf + rpos;
+
+		/* dump to MRT as soon as we have a full packet */
+		LIST_FOREACH(mrt, &mrthead, entry) {
+			if (!(mrt->type == MRT_ALL_IN || (msgtype == UPDATE &&
+			    mrt->type == MRT_UPDATE_IN)))
+				continue;
+			if ((mrt->peer_id == 0 && mrt->group_id == 0) ||
+			    mrt->peer_id == p->conf.id || (mrt->group_id != 0 &&
+			    mrt->group_id == p->conf.groupid))
+				mrt_dump_bgp_msg(mrt, p->rbuf->rptr, msglen, p);
+		}
 
 		switch (msgtype) {
 		case OPEN:
@@ -1868,7 +1886,6 @@ session_process_msg(struct peer *p)
 int
 parse_header(struct peer *peer, u_char *data, u_int16_t *len, u_int8_t *type)
 {
-	struct mrt		*mrt;
 	u_char			*p;
 	u_int16_t		 olen;
 	static const u_int8_t	 marker[MSGSIZE_HEADER_MARKER] = { 0xff, 0xff,
@@ -1958,15 +1975,6 @@ parse_header(struct peer *peer, u_char *data, u_int16_t *len, u_int8_t *type)
 		    type, 1);
 		bgp_fsm(peer, EVNT_CON_FATAL);
 		return (-1);
-	}
-	LIST_FOREACH(mrt, &mrthead, entry) {
-		if (!(mrt->type == MRT_ALL_IN || (*type == UPDATE &&
-		    mrt->type == MRT_UPDATE_IN)))
-			continue;
-		if ((mrt->peer_id == 0 && mrt->group_id == 0) ||
-		    mrt->peer_id == peer->conf.id || (mrt->group_id != 0 &&
-		    mrt->group_id == peer->conf.groupid))
-			mrt_dump_bgp_msg(mrt, data, *len, peer);
 	}
 	return (0);
 }
@@ -2219,6 +2227,7 @@ parse_notification(struct peer *peer)
 	u_int8_t	 subcode;
 	u_int8_t	 capa_code;
 	u_int8_t	 capa_len;
+	u_int8_t	 shutcomm_len;
 	u_int8_t	 i;
 
 	/* just log */
@@ -2311,6 +2320,31 @@ parse_notification(struct peer *peer)
 	if (errcode == ERR_OPEN && subcode == ERR_OPEN_OPT) {
 		session_capa_ann_none(peer);
 		return (1);
+	}
+
+	if (errcode == ERR_CEASE && subcode == ERR_CEASE_ADMIN_DOWN) {
+		if (datalen >= sizeof(shutcomm_len)) {
+			memcpy(&shutcomm_len, p, sizeof(shutcomm_len));
+			p += sizeof(shutcomm_len);
+			datalen -= sizeof(shutcomm_len);
+			if(datalen < shutcomm_len) {
+			    log_peer_warnx(&peer->conf,
+				"received truncated shutdown reason");
+			    return (0);
+			}
+			if (shutcomm_len > (SHUT_COMM_LEN-1)) {
+			    log_peer_warnx(&peer->conf,
+				"received overly long shutdown reason");
+			    return (0);
+			}
+			memcpy(peer->stats.last_shutcomm, p, shutcomm_len);
+			peer->stats.last_shutcomm[shutcomm_len] = '\0';
+			log_peer_warnx(&peer->conf,
+			    "received shutdown reason: \"%s\"",
+			    log_shutcomm(peer->stats.last_shutcomm));
+			p += shutcomm_len;
+			datalen -= shutcomm_len;
+		}
 	}
 
 	return (0);
@@ -3193,11 +3227,29 @@ session_demote(struct peer *p, int level)
 void
 session_stop(struct peer *peer, u_int8_t subcode)
 {
+	char data[SHUT_COMM_LEN];
+	uint8_t datalen;
+	uint8_t shutcomm_len;
+	char *communication;
+
+	datalen = 0;
+
+	communication = peer->conf.shutcomm;
+
+	if (subcode == ERR_CEASE_ADMIN_DOWN && communication &&
+	    *communication) {
+		shutcomm_len = strlen(communication);
+		if(shutcomm_len < SHUT_COMM_LEN) {
+			data[0] = shutcomm_len;
+			datalen = shutcomm_len + sizeof(data[0]);
+			memcpy(data + 1, communication, shutcomm_len);
+		}
+	}
 	switch (peer->state) {
 	case STATE_OPENSENT:
 	case STATE_OPENCONFIRM:
 	case STATE_ESTABLISHED:
-		session_notification(peer, ERR_CEASE, subcode, NULL, 0);
+		session_notification(peer, ERR_CEASE, subcode, data, datalen);
 		break;
 	default:
 		/* session not open, no need to send notification */

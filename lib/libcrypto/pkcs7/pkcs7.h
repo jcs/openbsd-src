@@ -1,4 +1,4 @@
-/* $OpenBSD: pkcs7.h,v 1.15 2016/09/04 17:20:55 jsing Exp $ */
+/* $OpenBSD: pkcs7.h,v 1.18 2016/12/27 16:12:47 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -95,7 +95,6 @@ typedef struct pkcs7_signer_info_st {
 } PKCS7_SIGNER_INFO;
 
 DECLARE_STACK_OF(PKCS7_SIGNER_INFO)
-DECLARE_ASN1_SET_OF(PKCS7_SIGNER_INFO)
 
 typedef struct pkcs7_recip_info_st {
 	ASN1_INTEGER			*version;	/* version 0 */
@@ -106,7 +105,6 @@ typedef struct pkcs7_recip_info_st {
 } PKCS7_RECIP_INFO;
 
 DECLARE_STACK_OF(PKCS7_RECIP_INFO)
-DECLARE_ASN1_SET_OF(PKCS7_RECIP_INFO)
 
 typedef struct pkcs7_signed_st {
 	ASN1_INTEGER			*version;	/* version 1 */
@@ -200,7 +198,6 @@ typedef struct pkcs7_st {
 } PKCS7;
 
 DECLARE_STACK_OF(PKCS7)
-DECLARE_ASN1_SET_OF(PKCS7)
 DECLARE_PKCS12_STACK_OF(PKCS7)
 
 #define PKCS7_OP_SET_DETACHED_SIGNATURE	1
@@ -321,11 +318,11 @@ PKCS7 *d2i_PKCS7(PKCS7 **a, const unsigned char **in, long len);
 int i2d_PKCS7(PKCS7 *a, unsigned char **out);
 extern const ASN1_ITEM PKCS7_it;
 
-DECLARE_ASN1_ITEM(PKCS7_ATTR_SIGN)
-DECLARE_ASN1_ITEM(PKCS7_ATTR_VERIFY)
+extern const ASN1_ITEM PKCS7_ATTR_SIGN_it;
+extern const ASN1_ITEM PKCS7_ATTR_VERIFY_it;
 
-DECLARE_ASN1_NDEF_FUNCTION(PKCS7)
-DECLARE_ASN1_PRINT_FUNCTION(PKCS7)
+int i2d_PKCS7_NDEF(PKCS7 *a, unsigned char **out);
+int PKCS7_print_ctx(BIO *out, PKCS7 *x, int indent, const ASN1_PCTX *pctx);
 
 long PKCS7_ctrl(PKCS7 *p7, int cmd, long larg, char *parg);
 

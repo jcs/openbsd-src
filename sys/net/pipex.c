@@ -1,4 +1,4 @@
-/*	$OpenBSD: pipex.c,v 1.90 2016/11/18 02:53:47 dlg Exp $	*/
+/*	$OpenBSD: pipex.c,v 1.92 2017/01/24 10:08:30 krw Exp $	*/
 
 /*-
  * Copyright (c) 2009 Internet Initiative Japan Inc.
@@ -90,13 +90,13 @@ struct pipex_hash_head
     pipex_session_list,				/* master session list */
     pipex_close_wait_list,			/* expired session list */
     pipex_peer_addr_hashtable[PIPEX_HASH_SIZE],	/* peer's address hash */
-    pipex_id_hashtable[PIPEX_HASH_SIZE]; 	/* peer id hash */
+    pipex_id_hashtable[PIPEX_HASH_SIZE];	/* peer id hash */
 
 struct radix_node_head pipex_rd_head4;
 struct radix_node_head pipex_rd_head6;
 int pipex_rd_head4_initialized;
 int pipex_rd_head6_initialized;
-struct timeout pipex_timer_ch; 		/* callout timer context */
+struct timeout pipex_timer_ch;		/* callout timer context */
 int pipex_prune = 1;			/* walk list every seconds */
 
 /* pipex traffic queue */
@@ -703,7 +703,6 @@ pipex_lookup_by_session_id(int protocol, int session_id)
 Static void
 pipex_softintr_handler(void *dummy)
 {
-	/* called at splsoftnet() */
 	pipex_ppp_dequeue();
 }
 

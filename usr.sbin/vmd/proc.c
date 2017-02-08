@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.c,v 1.11 2016/11/16 15:32:42 rzalamena Exp $	*/
+/*	$OpenBSD: proc.c,v 1.13 2017/01/17 21:51:01 krw Exp $	*/
 
 /*
  * Copyright (c) 2010 - 2016 Reyk Floeter <reyk@openbsd.org>
@@ -208,7 +208,7 @@ proc_init(struct privsep *ps, struct privsep_proc *procs, unsigned int nproc,
 		proc_setup(ps, procs, nproc);
 
 		/*
-		 * Create the children sockets so we can use them 
+		 * Create the children sockets so we can use them
 		 * to distribute the rest of the socketpair()s using
 		 * proc_connect() later.
 		 */
@@ -662,7 +662,7 @@ proc_dispatch(int fd, short event, void *arg)
 		case IMSG_CTL_VERBOSE:
 			IMSG_SIZE_CHECK(&imsg, &verbose);
 			memcpy(&verbose, imsg.data, sizeof(verbose));
-			log_verbose(verbose);
+			log_setverbose(verbose);
 			break;
 		case IMSG_CTL_PROCFD:
 			IMSG_SIZE_CHECK(&imsg, &pf);

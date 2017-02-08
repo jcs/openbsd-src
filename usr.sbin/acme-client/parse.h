@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.h,v 1.1 2016/09/18 20:18:25 benno Exp $ */
+/*	$OpenBSD: parse.h,v 1.7 2017/01/21 12:59:06 benno Exp $ */
 /*
  * Copyright (c) 2016 Sebastian Benoit <benno@openbsd.org>
  *
@@ -28,7 +28,7 @@
  */
 
 struct authority_c {
-	LIST_ENTRY(authority_c)	 entry;
+	TAILQ_ENTRY(authority_c)	 entry;
 	char		       	*name;
 	char		       	*agreement;
 	char		       	*api;
@@ -36,16 +36,20 @@ struct authority_c {
 };
 
 struct domain_c {
-	LIST_ENTRY(domain_c)	 entry;
-	LIST_HEAD(, altname_c)	altname_list;
+	TAILQ_ENTRY(domain_c)	 entry;
+	TAILQ_HEAD(, altname_c)	altname_list;
+	int			altname_count;
 	char		       	*domain;
 	char		       	*key;
 	char		       	*cert;
+	char			*chain;
+	char			*fullchain;
 	char		       	*auth;
+	char		       	*challengedir;
 };
 
 struct altname_c {
-	LIST_ENTRY(altname_c)	 entry;
+	TAILQ_ENTRY(altname_c)	 entry;
 	char		       	*domain;
 };
 
@@ -55,11 +59,14 @@ struct keyfile {
 };
 
 #define ACME_OPT_VERBOSE	0x00000001
+#define ACME_OPT_NEWACCT	0x00000002
+#define ACME_OPT_NEWDKEY	0x00000004
+#define ACME_OPT_CHECK		0x00000008
 
 struct acme_conf {
 	int			 opts;
-	LIST_HEAD(, authority_c) authority_list;
-	LIST_HEAD(, domain_c)	 domain_list;
+	TAILQ_HEAD(, authority_c) authority_list;
+	TAILQ_HEAD(, domain_c)	 domain_list;
 	LIST_HEAD(, keyfile)	 used_key_list;
 };
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: archdep.h,v 1.15 2016/05/18 20:40:20 deraadt Exp $ */
+/*	$OpenBSD: archdep.h,v 1.19 2017/01/24 07:48:37 guenther Exp $ */
 
 /*
  * Copyright (c) 1998 Per Fogelstrom, Opsycon AB
@@ -31,32 +31,12 @@
 
 #define	RELOC_TAG	DT_REL
 
-#define	DL_MALLOC_ALIGN	8	/* Arch constraint or otherwise */
-
 #define	MACHID	EM_386		/* ELF e_machine ID value checked */
 
-#define	RELTYPE	Elf32_Rela
-#define	RELSIZE	sizeof(Elf32_Rela)
-
-#include <sys/mman.h>
 #include <elf_abi.h>
 #include <machine/reloc.h>
 #include "syscall.h"
 #include "util.h"
-
-static inline void *
-_dl_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
-{
-	return((void *)_dl__syscall((quad_t)SYS_mmap, addr, len, prot,
-	    flags, fd, 0, offset));
-}
-
-static inline void *
-_dl_mquery(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
-{
-	return((void *)_dl__syscall((quad_t)SYS_mquery, addr, len, prot,
-	    flags, fd, 0, offset));
-}
 
 
 static inline void
@@ -70,13 +50,10 @@ RELOC_DYN(Elf32_Rel *r, const Elf32_Sym *s, Elf32_Addr *p, unsigned long v)
 	} else if (ELF32_R_TYPE(r->r_info) == RELOC_32) {
 		*p += v + s->st_value;
 	} else {
-		_dl_printf("unknown bootstrap relocation\n");
 		_dl_exit(6);
 	}
 }
 
 #define RELOC_GOT(obj, offs)
-
-#define GOT_PERMS PROT_READ
 
 #endif /* _I386_ARCHDEP_H_ */

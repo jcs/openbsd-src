@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: State.pm,v 1.40 2016/10/03 13:58:09 espie Exp $
+# $OpenBSD: State.pm,v 1.42 2017/02/06 15:13:23 espie Exp $
 #
 # Copyright (c) 2007-2014 Marc Espie <espie@openbsd.org>
 #
@@ -25,8 +25,22 @@ sub new
 	my ($class, $state) = @_;
 	my $self = bless {}, $class;
 	require OpenBSD::Paths;
+	$self->add_installurl(OpenBSD::Paths->installurl, $state);
 	$self->read_file(OpenBSD::Paths->pkgconf, $state);
 	return $self;
+}
+
+sub add_installurl
+{
+	my ($self, $filename, $state) = @_;
+	open(my $fh, '<', $filename) or return;
+	while (<$fh>) {
+		chomp;
+		next if m/^\s*\#/;
+		next if m/^\s*$/;
+		$self->{installpath} = ["$_/%c/packages/%a/"];
+		return;
+	}
 }
 
 sub read_file
@@ -39,10 +53,10 @@ sub read_file
 		next if m/^\s*$/;
 		my ($cmd, $k, $v, $add);
 		my $h = $self;
-		if (($cmd, $k, $add, $v) = m/^\s*(.*?)\.(.*?)\s*(\+?)\=\s*(.*)\s*$/) {
+		if (($cmd, $k, $add, $v) = m/^\s*(.*?)\.(.*?)\s*(\+?)\=\s*(.*?)\s*$/) {
 			next unless $cmd eq $state->{cmd};
 			my $h = $self->{cmd} = {};
-		} elsif (($k, $add, $v) = m/^\s*(.*?)\s*(\+?)\=\s*(.*)\s*$/) {
+		} elsif (($k, $add, $v) = m/^\s*(.*?)\s*(\+?)\=\s*(.*?)\s*$/) {
 		} else {
 			# bad line: should we say so ?
 			$state->errsay("Bad line in #1: #2 (#3)",

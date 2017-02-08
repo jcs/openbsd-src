@@ -1,4 +1,4 @@
-/* $OpenBSD: acpi.c,v 1.317 2016/10/25 06:48:58 pirofti Exp $ */
+/* $OpenBSD: acpi.c,v 1.320 2017/01/14 11:32:00 kettenis Exp $ */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -2820,15 +2820,15 @@ acpi_foundhid(struct aml_node *node, void *arg)
 {
 	struct acpi_softc	*sc = (struct acpi_softc *)arg;
 	struct device		*self = (struct device *)arg;
-	char		 	 cdev[16];
-	char		 	 dev[16];
+	char		 	 cdev[32];
+	char		 	 dev[32];
 	struct acpi_attach_args	 aaa;
 	int64_t			 sta;
 #ifndef SMALL_KERNEL
 	int			 i;
 #endif
 
-	if (acpi_parsehid(node, arg, cdev, dev, 16) != 0)
+	if (acpi_parsehid(node, arg, cdev, dev, sizeof(dev)) != 0)
 		return (0);
 
 	if (aml_evalinteger(sc, node->parent, "_STA", 0, NULL, &sta))

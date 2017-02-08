@@ -1,7 +1,7 @@
-/*	$OpenBSD: roff.c,v 1.156 2016/01/08 17:48:04 schwarze Exp $ */
+/*	$OpenBSD: roff.c,v 1.160 2017/01/12 18:02:24 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
- * Copyright (c) 2010-2015 Ingo Schwarze <schwarze@openbsd.org>
+ * Copyright (c) 2010-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -989,11 +989,11 @@ roff_node_alloc(struct roff_man *man, int line, int pos,
 	n->sec = man->lastsec;
 
 	if (man->flags & MDOC_SYNOPSIS)
-		n->flags |= MDOC_SYNPRETTY;
+		n->flags |= NODE_SYNPRETTY;
 	else
-		n->flags &= ~MDOC_SYNPRETTY;
+		n->flags &= ~NODE_SYNPRETTY;
 	if (man->flags & MDOC_NEWLINE)
-		n->flags |= MDOC_LINE;
+		n->flags |= NODE_LINE;
 	man->flags &= ~MDOC_NEWLINE;
 
 	return n;
@@ -1015,9 +1015,13 @@ roff_node_append(struct roff_man *man, struct roff_node *n)
 		n->parent = man->last->parent;
 		break;
 	case ROFF_NEXT_CHILD:
+		if (man->last->child != NULL) {
+			n->next = man->last->child;
+			man->last->child->prev = n;
+		} else
+			man->last->last = n;
 		man->last->child = n;
 		n->parent = man->last;
-		n->parent->last = n;
 		break;
 	default:
 		abort();
@@ -1057,10 +1061,7 @@ roff_word_alloc(struct roff_man *man, int line, int pos, const char *word)
 	n = roff_node_alloc(man, line, pos, ROFFT_TEXT, TOKEN_NONE);
 	n->string = roff_strdup(man->roff, word);
 	roff_node_append(man, n);
-	if (man->macroset == MACROSET_MDOC)
-		n->flags |= MDOC_VALID | MDOC_ENDED;
-	else
-		n->flags |= MAN_VALID;
+	n->flags |= NODE_VALID | NODE_ENDED;
 	man->next = ROFF_NEXT_SIBLING;
 }
 
@@ -1130,7 +1131,7 @@ roff_addeqn(struct roff_man *man, const struct eqn *eqn)
 	n = roff_node_alloc(man, eqn->ln, eqn->pos, ROFFT_EQN, TOKEN_NONE);
 	n->eqn = eqn;
 	if (eqn->ln > man->last->line)
-		n->flags |= MDOC_LINE;
+		n->flags |= NODE_LINE;
 	roff_node_append(man, n);
 	man->next = ROFF_NEXT_SIBLING;
 }
@@ -1145,10 +1146,7 @@ roff_addtbl(struct roff_man *man, const struct tbl_span *tbl)
 	n = roff_node_alloc(man, tbl->line, 0, ROFFT_TBL, TOKEN_NONE);
 	n->span = tbl;
 	roff_node_append(man, n);
-	if (man->macroset == MACROSET_MDOC)
-		n->flags |= MDOC_VALID | MDOC_ENDED;
-	else
-		n->flags |= MAN_VALID;
+	n->flags |= NODE_VALID | NODE_ENDED;
 	man->next = ROFF_NEXT_SIBLING;
 }
 
@@ -1223,16 +1221,12 @@ deroff(char **dest, const struct roff_node *n)
 		return;
 	}
 
-	/* Skip leading whitespace and escape sequences. */
+	/* Skip leading whitespace. */
 
-	cp = n->string;
-	while (*cp != '\0') {
-		if ('\\' == *cp) {
+	for (cp = n->string; *cp != '\0'; cp++) {
+		if (cp[0] == '\\' && strchr(" %&0^|~", cp[1]) != NULL)
 			cp++;
-			mandoc_escape((const char **)&cp, NULL, NULL);
-		} else if (isspace((unsigned char)*cp))
-			cp++;
-		else
+		else if ( ! isspace((unsigned char)*cp))
 			break;
 	}
 

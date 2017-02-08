@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_update.c,v 1.82 2014/12/18 19:28:44 tedu Exp $ */
+/*	$OpenBSD: rde_update.c,v 1.84 2017/01/24 04:22:42 benno Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -25,6 +25,7 @@
 
 #include "bgpd.h"
 #include "rde.h"
+#include "log.h"
 
 in_addr_t	up_get_nexthop(struct rde_peer *, struct rde_aspath *);
 int		up_generate_mp_reach(struct rde_peer *, struct update_attr *,
@@ -412,6 +413,7 @@ up_generate_updates(struct filter_head *rules, struct rde_peer *peer,
 		return;
 
 	if (new == NULL) {
+withdraw:
 		if (up_test_update(peer, old) != 1)
 			return;
 
@@ -427,8 +429,7 @@ up_generate_updates(struct filter_head *rules, struct rde_peer *peer,
 		case 1:
 			break;
 		case 0:
-			up_generate_updates(rules, peer, NULL, old);
-			return;
+			goto withdraw;
 		case -1:
 			return;
 		}
@@ -437,17 +438,16 @@ up_generate_updates(struct filter_head *rules, struct rde_peer *peer,
 		if (rde_filter(rules, &asp, peer, new->aspath, &addr,
 		    new->prefix->prefixlen, new->aspath->peer) == ACTION_DENY) {
 			path_put(asp);
-			up_generate_updates(rules, peer, NULL, old);
-			return;
+			goto withdraw;
 		}
+		if (asp == NULL)
+			asp = new->aspath;
 
-		/* generate update */
-		if (asp != NULL) {
-			up_generate(peer, asp, &addr, new->prefix->prefixlen);
+		up_generate(peer, asp, &addr, new->prefix->prefixlen);
+
+		/* free modified aspath */
+		if (asp != new->aspath)
 			path_put(asp);
-		} else
-			up_generate(peer, new->aspath, &addr,
-			    new->prefix->prefixlen);
 	}
 }
 

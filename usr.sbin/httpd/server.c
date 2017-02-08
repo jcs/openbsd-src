@@ -1,4 +1,4 @@
-/*	$OpenBSD: server.c,v 1.100 2016/11/17 14:58:37 jsing Exp $	*/
+/*	$OpenBSD: server.c,v 1.107 2017/02/07 12:27:42 reyk Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2015 Reyk Floeter <reyk@openbsd.org>
@@ -241,21 +241,14 @@ server_tls_init(struct server *srv)
 		return (-1);
 	}
 
-	if (tls_config_set_keypair_mem(srv->srv_tls_config,
+	if (tls_config_set_keypair_ocsp_mem(srv->srv_tls_config,
 	    srv->srv_conf.tls_cert, srv->srv_conf.tls_cert_len,
-	    srv->srv_conf.tls_key, srv->srv_conf.tls_key_len) != 0) {
+	    srv->srv_conf.tls_key, srv->srv_conf.tls_key_len,
+	    srv->srv_conf.tls_ocsp_staple,
+	    srv->srv_conf.tls_ocsp_staple_len) != 0) {
 		log_warnx("%s: failed to set tls certificate/key: %s",
 		    __func__, tls_config_error(srv->srv_tls_config));
 		return (-1);
-	}
-
-	if (srv->srv_conf.tls_ocsp_staple != NULL) {
-		if (tls_config_set_ocsp_staple_mem(srv->srv_tls_config,
-		    srv->srv_conf.tls_ocsp_staple,
-		    srv->srv_conf.tls_ocsp_staple_len) != 0 ) {
-			log_warnx("%s: failed to add ocsp staple", __func__);
-			return (-1);
-		}
 	}
 
 	TAILQ_FOREACH(srv_conf, &srv->srv_hosts, entry) {
@@ -263,20 +256,12 @@ server_tls_init(struct server *srv)
 			continue;
 		log_debug("%s: adding keypair for server %s", __func__,
 		    srv->srv_conf.name);
-		if (tls_config_add_keypair_mem(srv->srv_tls_config,
+		if (tls_config_add_keypair_ocsp_mem(srv->srv_tls_config,
 		    srv_conf->tls_cert, srv_conf->tls_cert_len,
-		    srv_conf->tls_key, srv_conf->tls_key_len) != 0) {
+		    srv_conf->tls_key, srv_conf->tls_key_len,
+		    srv_conf->tls_ocsp_staple,
+		    srv_conf->tls_ocsp_staple_len) != 0) {
 			log_warnx("%s: failed to add tls keypair", __func__);
-			return (-1);
-		}
-		if (srv_conf->tls_ocsp_staple == NULL)
-			continue;
-		log_debug("%s: adding ocsp staple for server %s", __func__,
-		    srv->srv_conf.name);
-		if (tls_config_set_ocsp_staple_mem(srv->srv_tls_config,
-		    srv_conf->tls_ocsp_staple, srv_conf->tls_ocsp_staple_len)
-		    != 0 ) {
-			log_warnx("%s: failed to add ocsp staple", __func__);
 			return (-1);
 		}
 	}
@@ -833,7 +818,7 @@ server_input(struct client *clt)
 	bufferevent_setwatermark(clt->clt_bev, EV_READ, 0, FCGI_CONTENT_SIZE);
 
 	bufferevent_settimeout(clt->clt_bev,
-	    srv_conf->timeout.tv_sec, srv_conf->timeout.tv_sec);
+	    srv_conf->requesttimeout.tv_sec, srv_conf->requesttimeout.tv_sec);
 	bufferevent_enable(clt->clt_bev, EV_READ|EV_WRITE);
 }
 
@@ -852,8 +837,6 @@ server_write(struct bufferevent *bev, void *arg)
 	if (clt->clt_done)
 		goto done;
 
-	bufferevent_enable(bev, EV_READ);
-
 	if (clt->clt_srvbev && clt->clt_srvbev_throttled) {
 		bufferevent_enable(clt->clt_srvbev, EV_READ);
 		clt->clt_srvbev_throttled = 0;
@@ -861,7 +844,7 @@ server_write(struct bufferevent *bev, void *arg)
 
 	return;
  done:
-	(*bev->errorcb)(bev, EVBUFFER_WRITE|EVBUFFER_EOF, bev->cbarg);
+	(*bev->errorcb)(bev, EVBUFFER_WRITE, bev->cbarg);
 	return;
 }
 
@@ -906,7 +889,7 @@ server_read(struct bufferevent *bev, void *arg)
 
 	return;
  done:
-	(*bev->errorcb)(bev, EVBUFFER_READ|EVBUFFER_EOF, bev->cbarg);
+	(*bev->errorcb)(bev, EVBUFFER_READ, bev->cbarg);
 	return;
  fail:
 	server_close(clt, strerror(errno));
@@ -919,7 +902,7 @@ server_error(struct bufferevent *bev, short error, void *arg)
 	struct evbuffer		*dst;
 
 	if (error & EVBUFFER_TIMEOUT) {
-		server_close(clt, "buffer event timeout");
+		server_abort_http(clt, 408, "timeout");
 		return;
 	}
 	if (error & EVBUFFER_ERROR) {
@@ -930,7 +913,11 @@ server_error(struct bufferevent *bev, short error, void *arg)
 		server_close(clt, "buffer event error");
 		return;
 	}
-	if (error & (EVBUFFER_READ|EVBUFFER_WRITE|EVBUFFER_EOF)) {
+	if (error & EVBUFFER_EOF) {
+		server_close(clt, "closed");
+		return;
+	}
+	if (error & (EVBUFFER_READ|EVBUFFER_WRITE)) {
 		bufferevent_disable(bev, EV_READ|EV_WRITE);
 
 		clt->clt_done = 1;
@@ -1153,14 +1140,13 @@ server_log(struct client *clt, const char *msg)
 	struct server_config	*srv_conf = clt->clt_srv_conf;
 	char			*ptr = NULL, *vmsg = NULL;
 	int			 debug_cmd = -1;
-	extern int		 verbose;
 
 	switch (srv_conf->logformat) {
 	case LOG_FORMAT_CONNECTION:
 		debug_cmd = IMSG_LOG_ACCESS;
 		break;
 	default:
-		if (verbose > 1)
+		if (log_getverbose() > 1)
 			debug_cmd = IMSG_LOG_ERROR;
 		if (EVBUFFER_LENGTH(clt->clt_log)) {
 			while ((ptr =

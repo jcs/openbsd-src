@@ -1,7 +1,7 @@
-/*	$OpenBSD: main.c,v 1.180 2016/09/18 15:45:50 schwarze Exp $ */
+/*	$OpenBSD: main.c,v 1.183 2017/01/27 13:47:17 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
- * Copyright (c) 2010-2012, 2014-2016 Ingo Schwarze <schwarze@openbsd.org>
+ * Copyright (c) 2010-2012, 2014-2017 Ingo Schwarze <schwarze@openbsd.org>
  * Copyright (c) 2010 Joerg Sonnenberger <joerg@netbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -117,6 +117,7 @@ main(int argc, char *argv[])
 	struct manpage	*res, *resp;
 	char		*conf_file, *defpaths;
 	const char	*sec;
+	const char	*thisarg;
 	size_t		 i, sz;
 	int		 prio, best_prio;
 	enum outmode	 outmode;
@@ -223,9 +224,14 @@ main(int argc, char *argv[])
 			break;
 		case 'O':
 			search.outkey = optarg;
-			while (optarg != NULL)
-				manconf_output(&conf.output,
-				    strsep(&optarg, ","));
+			while (optarg != NULL) {
+				thisarg = optarg;
+				if (manconf_output(&conf.output,
+				    strsep(&optarg, ","), 0) == 0)
+					continue;
+				warnx("-O %s: Bad argument", thisarg);
+				return (int)MANDOCLEVEL_BADARG;
+			}
 			break;
 		case 'S':
 			search.arch = optarg;
@@ -501,10 +507,10 @@ out:
 
 			/* Stop here until moved to the foreground. */
 
-			tc_pgid = tcgetpgrp(STDIN_FILENO);
+			tc_pgid = tcgetpgrp(tag_files->ofd);
 			if (tc_pgid != man_pgid) {
 				if (tc_pgid == pager_pid) {
-					(void)tcsetpgrp(STDIN_FILENO,
+					(void)tcsetpgrp(tag_files->ofd,
 					    man_pgid);
 					if (signum == SIGTTIN)
 						continue;
@@ -517,7 +523,7 @@ out:
 			/* Once in the foreground, activate the pager. */
 
 			if (pager_pid) {
-				(void)tcsetpgrp(STDIN_FILENO, pager_pid);
+				(void)tcsetpgrp(tag_files->ofd, pager_pid);
 				kill(pager_pid, SIGCONT);
 			} else
 				pager_pid = spawn_pager(tag_files);
@@ -751,6 +757,7 @@ parse(struct curparse *curp, int fd, const char *file)
 			break;
 		}
 	}
+	mparse_updaterc(curp->mp, &rc);
 }
 
 static void
@@ -1045,7 +1052,7 @@ spawn_pager(struct tag_files *tag_files)
 		break;
 	default:
 		(void)setpgid(pager_pid, 0);
-		(void)tcsetpgrp(STDIN_FILENO, pager_pid);
+		(void)tcsetpgrp(tag_files->ofd, pager_pid);
 		if (pledge("stdio rpath tmppath tty proc", NULL) == -1)
 			err((int)MANDOCLEVEL_SYSERR, "pledge");
 		tag_files->pager_pid = pager_pid;
@@ -1061,7 +1068,7 @@ spawn_pager(struct tag_files *tag_files)
 
 	/* Do not start the pager before controlling the terminal. */
 
-	while (tcgetpgrp(STDIN_FILENO) != getpid())
+	while (tcgetpgrp(STDOUT_FILENO) != getpid())
 		nanosleep(&timeout, NULL);
 
 	execvp(argv[0], argv);

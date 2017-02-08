@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_msk.c,v 1.123 2016/04/13 10:34:32 mpi Exp $	*/
+/*	$OpenBSD: if_msk.c,v 1.125 2017/01/22 10:17:38 dlg Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -1578,7 +1578,7 @@ msk_start(struct ifnet *ifp)
 		SK_IF_WRITE_2(sc_if, 1, SK_TXQA1_Y2_PREF_PUTIDX, idx);
 
 		/* Set a timeout in case the chip goes out to lunch. */
-		ifp->if_timer = 5;
+		ifp->if_timer = MSK_TX_TIMEOUT;
 	}
 }
 
@@ -1697,8 +1697,6 @@ msk_txeof(struct sk_if_softc *sc_if)
 		if (mskdebug >= 2)
 			msk_dump_txdesc(cur_tx, idx);
 #endif
-		if (sk_ctl & SK_Y2_TXCTL_LASTFRAG)
-			ifp->if_opackets++;
 		if (sc_if->sk_cdata.sk_tx_chain[idx].sk_mbuf != NULL) {
 			entry = sc_if->sk_cdata.sk_tx_map[idx];
 
@@ -1716,7 +1714,7 @@ msk_txeof(struct sk_if_softc *sc_if)
 		sc_if->sk_cdata.sk_tx_cnt--;
 		SK_INC(idx, MSK_TX_RING_CNT);
 	}
-	ifp->if_timer = sc_if->sk_cdata.sk_tx_cnt > 0 ? 5 : 0;
+	ifp->if_timer = sc_if->sk_cdata.sk_tx_cnt > 0 ? MSK_TX_TIMEOUT : 0;
 
 	if (sc_if->sk_cdata.sk_tx_cnt < MSK_TX_RING_CNT - 2)
 		ifq_clr_oactive(&ifp->if_snd);

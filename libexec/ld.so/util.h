@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.h,v 1.28 2016/08/27 03:52:25 guenther Exp $	*/
+/*	$OpenBSD: util.h,v 1.30 2017/01/24 07:48:37 guenther Exp $	*/
 
 /*
  * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -35,6 +35,7 @@
 #include <stdarg.h>
 #include <stddef.h>		/* for NULL */
 
+__BEGIN_HIDDEN_DECLS
 void *_dl_malloc(size_t size);
 void *_dl_calloc(size_t nmemb, const size_t size);
 void *_dl_realloc(void *, size_t size);
@@ -56,23 +57,17 @@ int _dl_uname(struct utsname *name);
 
 long _dl_strtol(const char *nptr, char **endptr, int base);
 
+__dead void _dl_oom(void);
+__dead void _dl_die(const char *, ...) __attribute__((format (printf, 1, 2)));
+#define _dl_diedie()	_dl_thrkill(0, 9, NULL)
+__END_HIDDEN_DECLS
+
 #define	_dl_round_page(x)	(((x) + (__LDPGSZ - 1)) & ~(__LDPGSZ - 1))
 
 /*
  *	The following functions are declared inline so they can
  *	be used before bootstrap linking has been finished.
  */
-static inline void
-_dl_wrstderr(const char *s)
-{
-	const char *p = s;
-	size_t n = 0;
-
-	while (*p++)
-		n++;
-	_dl_write(2, s, n);
-}
-
 static inline void *
 _dl_memset(void *dst, const int c, size_t n)
 {

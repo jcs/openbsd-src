@@ -1,4 +1,4 @@
-/*	$OpenBSD: fetch.c,v 1.151 2016/12/08 19:59:51 millert Exp $	*/
+/*	$OpenBSD: fetch.c,v 1.160 2017/01/21 08:33:07 krw Exp $	*/
 /*	$NetBSD: fetch.c,v 1.14 1997/08/18 10:20:20 lukem Exp $	*/
 
 /*-
@@ -58,16 +58,16 @@
 #include <util.h>
 #include <resolv.h>
 
-#ifndef SMALL
+#ifndef NOSSL
 #include <tls.h>
-#else /* !SMALL */
+#else /* !NOSSL */
 struct tls;
-#endif /* !SMALL */
+#endif /* !NOSSL */
 
 #include "ftp_var.h"
 #include "cmds.h"
 
-static int	url_get(const char *, const char *, const char *);
+static int	url_get(const char *, const char *, const char *, int);
 void		aborthttp(int);
 void		abortfile(int);
 char		hextochar(const char *);
@@ -76,11 +76,11 @@ char		*recode_credentials(const char *_userinfo);
 int		ftp_printf(FILE *, struct tls *, const char *, ...) __attribute__((format(printf, 3, 4)));
 char		*ftp_readline(FILE *, struct tls *, size_t *);
 size_t		ftp_read(FILE *, struct tls *, char *, size_t);
-#ifndef SMALL
+#ifndef NOSSL
 int		proxy_connect(int, char *, char *);
 int		SSL_vprintf(struct tls *, const char *, va_list);
 char		*SSL_readline(struct tls *, size_t *);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 
 #define	FTP_URL		"ftp://"	/* ftp URL prefix */
 #define	HTTP_URL	"http://"	/* http URL prefix */
@@ -100,8 +100,8 @@ static int	redirect_loop;
 
 /*
  * Determine whether the character needs encoding, per RFC1738:
- * 	- No corresponding graphic US-ASCII.
- * 	- Unsafe characters.
+ *	- No corresponding graphic US-ASCII.
+ *	- Unsafe characters.
  */
 static int
 unsafe_char(const char *c0)
@@ -165,19 +165,27 @@ url_encode(const char *path)
 	return (epath);
 }
 
+/* ARGSUSED */
+static void
+tooslow(int signo)
+{
+	dprintf(STDERR_FILENO, "%s: connect taking too long\n", __progname);
+	_exit(2);
+}
+
 /*
  * Retrieve URL, via the proxy in $proxyvar if necessary.
  * Modifies the string argument given.
  * Returns -1 on failure, 0 on success
  */
 static int
-url_get(const char *origline, const char *proxyenv, const char *outfile)
+url_get(const char *origline, const char *proxyenv, const char *outfile, int lastfile)
 {
 	char pbuf[NI_MAXSERV], hbuf[NI_MAXHOST], *cp, *portnum, *path, ststr[4];
 	char *hosttail, *cause = "unknown", *newline, *host, *port, *buf = NULL;
 	char *epath, *redirurl, *loctail, *h, *p;
 	int error, i, isftpurl = 0, isfileurl = 0, isredirect = 0, rval = -1;
-	struct addrinfo hints, *res0, *res, *ares = NULL;
+	struct addrinfo hints, *res0, *res;
 	const char * volatile savefile;
 	char * volatile proxyurl = NULL;
 	char *credentials = NULL;
@@ -188,12 +196,16 @@ url_get(const char *origline, const char *proxyenv, const char *outfile)
 	const char *errstr;
 	ssize_t len, wlen;
 	char *proxyhost = NULL;
-#ifndef SMALL
+#ifndef NOSSL
 	char *sslpath = NULL, *sslhost = NULL;
-	char *locbase, *full_host = NULL;
+	char *full_host = NULL;
 	const char *scheme;
 	int ishttpurl = 0, ishttpsurl = 0;
-#endif /* !SMALL */
+#endif /* !NOSSL */
+#ifndef SMALL
+	char *locbase;
+	struct addrinfo *ares = NULL;
+#endif
 	struct tls *tls = NULL;
 	int status;
 	int save_errno;
@@ -219,13 +231,13 @@ url_get(const char *origline, const char *proxyenv, const char *outfile)
 	} else if (strncasecmp(newline, FILE_URL, sizeof(FILE_URL) - 1) == 0) {
 		host = newline + sizeof(FILE_URL) - 1;
 		isfileurl = 1;
-#ifndef SMALL
+#ifndef NOSSL
 		scheme = FILE_URL;
 	} else if (strncasecmp(newline, HTTPS_URL, sizeof(HTTPS_URL) - 1) == 0) {
 		host = newline + sizeof(HTTPS_URL) - 1;
 		ishttpsurl = 1;
 		scheme = HTTPS_URL;
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	} else
 		errx(1, "url_get: Invalid URL '%s'", newline);
 
@@ -254,7 +266,7 @@ url_get(const char *origline, const char *proxyenv, const char *outfile)
 
 noslash:
 
-#ifndef SMALL
+#ifndef NOSSL
 	/*
 	 * Look for auth header in host, since now host does not
 	 * contain the path. Basic auth from RFC 2617, valid
@@ -267,7 +279,7 @@ noslash:
 			host = p + 1;
 		}
 	}
-#endif	/* SMALL */
+#endif	/* NOSSL */
 
 	if (outfile)
 		savefile = outfile;
@@ -293,14 +305,14 @@ noslash:
 #endif /* !SMALL */
 
 	if (!isfileurl && proxyenv != NULL) {		/* use proxy */
-#ifndef SMALL
+#ifndef NOSSL
 		if (ishttpsurl) {
 			sslpath = strdup(path);
 			sslhost = strdup(host);
 			if (! sslpath || ! sslhost)
 				errx(1, "Can't allocate memory for https path/host.");
 		}
-#endif /* !SMALL */
+#endif /* !NOSSL */
 		proxyhost = strdup(host);
 		if (proxyhost == NULL)
 			errx(1, "Can't allocate memory for proxy host.");
@@ -470,11 +482,11 @@ noslash:
 	portnum = strrchr(hosttail, ':');		/* find portnum */
 	if (portnum != NULL)
 		*portnum++ = '\0';
-#ifndef SMALL
+#ifndef NOSSL
 	port = portnum ? portnum : (ishttpsurl ? httpsport : httpport);
-#else /* !SMALL */
+#else /* !NOSSL */
 	port = portnum ? portnum : httpport;
-#endif /* !SMALL */
+#endif /* !NOSSL */
 
 #ifndef SMALL
 	if (full_host == NULL)
@@ -497,11 +509,11 @@ noslash:
 	if (error == EAI_SERVICE && port == httpport) {
 		snprintf(pbuf, sizeof(pbuf), "%d", HTTP_PORT);
 		error = getaddrinfo(host, pbuf, &hints, &res0);
-#ifndef SMALL
+#ifndef NOSSL
 	} else if (error == EAI_SERVICE && port == httpsport) {
 		snprintf(pbuf, sizeof(pbuf), "%d", HTTPS_PORT);
 		error = getaddrinfo(host, pbuf, &hints, &res0);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	}
 	if (error) {
 		warnx("%s: %s", host, gai_strerror(error));
@@ -557,6 +569,11 @@ noslash:
 		}
 #endif /* !SMALL */
 
+		if (connect_timeout) {
+			(void)signal(SIGALRM, tooslow);
+			alarmtimer(connect_timeout);
+		}
+
 		for (error = connect(s, res->ai_addr, res->ai_addrlen);
 		    error != 0 && errno == EINTR; error = connect_wait(s))
 			continue;
@@ -576,10 +593,10 @@ noslash:
 		else
 			port = NULL;
 
-#ifndef SMALL
+#ifndef NOSSL
 		if (proxyenv && sslhost)
 			proxy_connect(s, sslhost, credentials);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 		break;
 	}
 	freeaddrinfo(res0);
@@ -592,7 +609,7 @@ noslash:
 		goto cleanup_url_get;
 	}
 
-#ifndef SMALL
+#ifndef NOSSL
 	if (ishttpsurl) {
 		if (proxyenv && sslpath) {
 			ishttpsurl = 0;
@@ -620,16 +637,33 @@ noslash:
 	} else {
 		fin = fdopen(s, "r+");
 	}
-#else /* !SMALL */
+#else /* !NOSSL */
 	fin = fdopen(s, "r+");
-#endif /* !SMALL */
+#endif /* !NOSSL */
+
+#ifdef SMALL
+	if (lastfile) {
+		if (pipeout) {
+			if (pledge("stdio rpath inet dns tty",  NULL) == -1)
+				err(1, "pledge");
+		} else {
+			if (pledge("stdio rpath wpath cpath inet dns tty", NULL) == -1)
+				err(1, "pledge");
+		}
+	}
+#endif
+
+	if (connect_timeout) {
+		signal(SIGALRM, SIG_DFL);
+		alarmtimer(0);
+	}
 
 	/*
 	 * Construct and send the request. Proxy requests don't want leading /.
 	 */
-#ifndef SMALL
+#ifndef NOSSL
 	cookie_get(host, path, ishttpsurl, &buf);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 
 	epath = url_encode(path);
 	if (proxyurl) {
@@ -663,6 +697,8 @@ noslash:
 			else
 				restart_point = 0;
 		}
+#endif	/* SMALL */
+#ifndef NOSSL
 		if (credentials) {
 			ftp_printf(fin, tls,
 			    "GET /%s %s\r\nAuthorization: Basic %s\r\nHost: ",
@@ -672,7 +708,7 @@ noslash:
 			free(credentials);
 			credentials = NULL;
 		} else
-#endif	/* SMALL */
+#endif	/* NOSSL */
 			ftp_printf(fin, tls, "GET /%s %s\r\nHost: ", epath,
 #ifndef SMALL
 			    restart_point ? "HTTP/1.1\r\nConnection: close" :
@@ -701,24 +737,24 @@ noslash:
 		 * 80. Some broken HTTP servers get confused if you explicitly
 		 * send them the port number.
 		 */
-#ifndef SMALL
+#ifndef NOSSL
 		if (port && strcmp(port, (ishttpsurl ? "443" : "80")) != 0)
 			ftp_printf(fin, tls, ":%s", port);
 		if (restart_point)
 			ftp_printf(fin, tls, "\r\nRange: bytes=%lld-",
 				(long long)restart_point);
-#else /* !SMALL */
+#else /* !NOSSL */
 		if (port && strcmp(port, "80") != 0)
 			ftp_printf(fin, tls, ":%s", port);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 		ftp_printf(fin, tls, "\r\n%s%s\r\n\r\n",
 		    buf ? buf : "", httpuseragent);
 	}
 	free(epath);
 
-#ifndef SMALL
+#ifndef NOSSL
 	free(buf);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	buf = NULL;
 
 	if (fin != NULL && fflush(fin) == EOF) {
@@ -880,7 +916,7 @@ noslash:
 				fclose(fin);
 			else if (s != -1)
 				close(s);
-			rval = url_get(redirurl, proxyenv, savefile);
+			rval = url_get(redirurl, proxyenv, savefile, lastfile);
 			free(redirurl);
 			goto cleanup_url_get;
 		}
@@ -901,8 +937,15 @@ noslash:
 			warn("Can't open %s", savefile);
 			goto cleanup_url_get;
 		}
-	} else
+	} else {
 		out = fileno(stdout);
+#ifdef SMALL
+		if (lastfile) {
+			if (pledge("stdio tty", NULL) == -1)
+				err(1, "pledge");
+		}
+#endif
+	}
 
 	/* Trap signals */
 	oldintr = NULL;
@@ -986,14 +1029,14 @@ improper:
 	warnx("Improper response from %s", host);
 
 cleanup_url_get:
-#ifndef SMALL
+#ifndef NOSSL
 	if (tls != NULL) {
 		tls_close(tls);
 		tls_free(tls);
 	}
 	free(full_host);
 	free(sslhost);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	if (fin != NULL)
 		fclose(fin);
 	else if (s != -1)
@@ -1055,7 +1098,7 @@ auto_fetch(int argc, char *argv[], char *outfile)
 	char *cp, *url, *host, *dir, *file, *portnum;
 	char *username, *pass, *pathstart;
 	char *ftpproxy, *httpproxy;
-	int rval, xargc;
+	int rval, xargc, lastfile;
 	volatile int argpos;
 	int dirhasglob, filehasglob, oautologin;
 	char rempath[PATH_MAX];
@@ -1087,6 +1130,8 @@ auto_fetch(int argc, char *argv[], char *outfile)
 		free(pass);
 		host = dir = file = portnum = username = pass = NULL;
 
+		lastfile = (argv[argpos+1] == NULL);
+
 		/*
 		 * We muck with the string, so we make a copy.
 		 */
@@ -1098,13 +1143,13 @@ auto_fetch(int argc, char *argv[], char *outfile)
 		 * Try HTTP URL-style arguments first.
 		 */
 		if (strncasecmp(url, HTTP_URL, sizeof(HTTP_URL) - 1) == 0 ||
-#ifndef SMALL
+#ifndef NOSSL
 		    /* even if we compiled without SSL, url_get will check */
 		    strncasecmp(url, HTTPS_URL, sizeof(HTTPS_URL) -1) == 0 ||
-#endif /* !SMALL */
+#endif /* !NOSSL */
 		    strncasecmp(url, FILE_URL, sizeof(FILE_URL) - 1) == 0) {
 			redirect_loop = 0;
-			if (url_get(url, httpproxy, outfile) == -1)
+			if (url_get(url, httpproxy, outfile, lastfile) == -1)
 				rval = argpos + 1;
 			continue;
 		}
@@ -1119,7 +1164,7 @@ auto_fetch(int argc, char *argv[], char *outfile)
 			char *passend, *passagain, *userend;
 
 			if (ftpproxy) {
-				if (url_get(url, ftpproxy, outfile) == -1)
+				if (url_get(url, ftpproxy, outfile, lastfile) == -1)
 					rval = argpos + 1;
 				continue;
 			}
@@ -1431,9 +1476,9 @@ isurl(const char *p)
 
 	if (strncasecmp(p, FTP_URL, sizeof(FTP_URL) - 1) == 0 ||
 	    strncasecmp(p, HTTP_URL, sizeof(HTTP_URL) - 1) == 0 ||
-#ifndef SMALL
+#ifndef NOSSL
 	    strncasecmp(p, HTTPS_URL, sizeof(HTTPS_URL) - 1) == 0 ||
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	    strncasecmp(p, FILE_URL, sizeof(FILE_URL) - 1) == 0 ||
 	    strstr(p, ":/"))
 		return (1);
@@ -1445,10 +1490,10 @@ ftp_readline(FILE *fp, struct tls *tls, size_t *lenp)
 {
 	if (fp != NULL)
 		return fparseln(fp, lenp, NULL, "\0\0\0", 0);
-#ifndef SMALL
+#ifndef NOSSL
 	else if (tls != NULL)
 		return SSL_readline(tls, lenp);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	else
 		return NULL;
 }
@@ -1456,17 +1501,24 @@ ftp_readline(FILE *fp, struct tls *tls, size_t *lenp)
 size_t
 ftp_read(FILE *fp, struct tls *tls, char *buf, size_t len)
 {
+#ifndef NOSSL
 	ssize_t tls_ret;
+#endif
 	size_t ret = 0;
 
 	if (fp != NULL)
 		ret = fread(buf, sizeof(char), len, fp);
-#ifndef SMALL
+#ifndef NOSSL
 	else if (tls != NULL) {
+ again:
 		if ((tls_ret = tls_read(tls, buf, len)) >= 0)
 			ret = (size_t)tls_ret;
+		if (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT)
+			goto again;
+		if (ret < 0)
+			errx(1, "SSL read error: %s", tls_error(tls));
 	}
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	return (ret);
 }
 
@@ -1480,10 +1532,10 @@ ftp_printf(FILE *fp, struct tls *tls, const char *fmt, ...)
 
 	if (fp != NULL)
 		ret = vfprintf(fp, fmt, ap);
-#ifndef SMALL
+#ifndef NOSSL
 	else if (tls != NULL)
 		ret = SSL_vprintf(tls, fmt, ap);
-#endif /* !SMALL */
+#endif /* !NOSSL */
 	else
 		ret = 0;
 
@@ -1498,7 +1550,7 @@ ftp_printf(FILE *fp, struct tls *tls, const char *fmt, ...)
 	return (ret);
 }
 
-#ifndef SMALL
+#ifndef NOSSL
 int
 SSL_vprintf(struct tls *tls, const char *fmt, va_list ap)
 {
@@ -1515,7 +1567,7 @@ SSL_vprintf(struct tls *tls, const char *fmt, va_list ap)
 		if (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT)
 			continue;
 		if (ret < 0)
-			break;
+			errx(1, "SSL write error: %s", tls_error(tls));
 		buf += ret;
 		len -= ret;
 	}
@@ -1598,4 +1650,4 @@ proxy_connect(int socket, char *host, char *cookie)
 	free(connstr);
 	return(200);
 }
-#endif /* !SMALL */
+#endif /* !NOSSL */

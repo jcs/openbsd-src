@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.333 2016/11/10 14:36:03 gerhard Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.337 2017/01/21 08:31:44 krw Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -1723,8 +1723,7 @@ setifwpa(const char *val, int d)
 
 	memset(&wpa, 0, sizeof(wpa));
 	(void)strlcpy(wpa.i_name, name, sizeof(wpa.i_name));
-	if (ioctl(s, SIOCG80211WPAPARMS, (caddr_t)&wpa) < 0)
-		err(1, "SIOCG80211WPAPARMS");
+	/* Don't read current values. The kernel will set defaults. */
 	wpa.i_enabled = d;
 	if (ioctl(s, SIOCS80211WPAPARMS, (caddr_t)&wpa) < 0)
 		err(1, "SIOCS80211WPAPARMS");
@@ -1757,6 +1756,9 @@ setifwpaprotos(const char *val, int d)
 	if (ioctl(s, SIOCG80211WPAPARMS, (caddr_t)&wpa) < 0)
 		err(1, "SIOCG80211WPAPARMS");
 	wpa.i_protos = rval;
+	/* Let the kernel set up the appropriate default ciphers. */
+	wpa.i_ciphers = 0;
+	wpa.i_groupcipher = 0;
 	if (ioctl(s, SIOCS80211WPAPARMS, (caddr_t)&wpa) < 0)
 		err(1, "SIOCS80211WPAPARMS");
 }
@@ -1889,7 +1891,7 @@ setifwpakey(const char *val, int d)
 			if (val == NULL || passlen != sizeof(psk.i_psk))
 				errx(1, "wpakey: invalid pre-shared key");
 		} else {
-			/* Parse a WPA passphrase */ 
+			/* Parse a WPA passphrase */
 			if (passlen < 8 || passlen > 63)
 				errx(1, "wpakey: passphrase must be between "
 				    "8 and 63 characters");
@@ -2873,8 +2875,6 @@ phys_status(int force)
 	(void) strlcpy(req.iflr_name, name, sizeof(req.iflr_name));
 	if (ioctl(s, SIOCGLIFPHYADDR, (caddr_t)&req) < 0)
 		return;
-	if (req.addr.ss_family == AF_INET6)
-		in6_fillscopeid((struct sockaddr_in6 *)&req.addr);
 	if (getnameinfo((struct sockaddr *)&req.addr, req.addr.ss_len,
 	    psrcaddr, sizeof(psrcaddr), 0, 0, niflag) != 0)
 		strlcpy(psrcaddr, "<error>", sizeof(psrcaddr));
@@ -2883,10 +2883,8 @@ phys_status(int force)
 
 	if (req.dstaddr.ss_family == AF_INET)
 		dstport = ((struct sockaddr_in *)&req.dstaddr)->sin_port;
-	else if (req.dstaddr.ss_family == AF_INET6) {
-		in6_fillscopeid((struct sockaddr_in6 *)&req.dstaddr);
+	else if (req.dstaddr.ss_family == AF_INET6)
 		dstport = ((struct sockaddr_in6 *)&req.dstaddr)->sin6_port;
-	}
 	if (getnameinfo((struct sockaddr *)&req.dstaddr, req.dstaddr.ss_len,
 	    pdstaddr, sizeof(pdstaddr), 0, 0, niflag) != 0)
 		strlcpy(pdstaddr, "<error>", sizeof(pdstaddr));
@@ -3096,7 +3094,7 @@ status(int link, struct sockaddr_dl *sdl, int ls)
 			for (i = 0, printed_type = 0; i < ifmr.ifm_count; i++) {
 				if (IFM_TYPE(media_list[i]) == type) {
 
-					/* 
+					/*
 					 * Don't advertise media with fixed
 					 * data rates for wireless interfaces.
 					 * Normal people don't need these.
@@ -4446,7 +4444,7 @@ pflow_status(void)
 	case AF_INET:
 		sin = (struct sockaddr_in*)&preq.flowdst;
 		printf("receiver: %s:", sin->sin_addr.s_addr != INADDR_ANY ?
-		    buf : "INVALID");	
+		    buf : "INVALID");
 		if (sin->sin_port == 0)
 			printf("%s ", "INVALID");
 		else
@@ -4456,7 +4454,7 @@ pflow_status(void)
 		sin6 = (struct sockaddr_in6*) &preq.flowdst;
 		printf("receiver: [%s]:",
 		    !IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr) ? buf :
-		    "INVALID");	
+		    "INVALID");
 		if (sin6->sin6_port == 0)
 			printf("%s ", "INVALID");
 		else
@@ -5317,7 +5315,6 @@ utf16_to_char(uint16_t *in, int inlen, char *out, size_t outlen)
 		c = inlen > 0 ? letoh16(*in) : 0;
 		if (c == 0 || --outlen == 0) {
 			/* always NUL terminate result */
-done:
 			*out = '\0';
 			break;
 		}

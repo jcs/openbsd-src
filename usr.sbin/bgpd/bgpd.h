@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.297 2016/10/14 16:05:35 phessler Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.300 2017/01/25 00:11:07 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -33,13 +33,12 @@
 
 #include <imsg.h>
 
-#include "log.h"
-
 #define	BGP_VERSION			4
 #define	BGP_PORT			179
 #define	CONFFILE			"/etc/bgpd.conf"
 #define	BGPD_USER			"_bgpd"
 #define	PEER_DESCR_LEN			32
+#define	SHUT_COMM_LEN			129
 #define	PFTABLE_LEN			32
 #define	TCP_MD5_KEY_LEN			80
 #define	IPSEC_ENC_KEY_LEN		32
@@ -299,6 +298,7 @@ struct peer_config {
 	struct capabilities	 capabilities;
 	char			 group[PEER_DESCR_LEN];
 	char			 descr[PEER_DESCR_LEN];
+	char			 shutcomm[SHUT_COMM_LEN];
 	char			 rib[PEER_DESCR_LEN];
 	char			 if_depend[IFNAMSIZ];
 	char			 demote_group[IFNAMSIZ];
@@ -586,6 +586,7 @@ struct ctl_show_nexthop {
 struct ctl_neighbor {
 	struct bgpd_addr	addr;
 	char			descr[PEER_DESCR_LEN];
+	char			shutcomm[SHUT_COMM_LEN];
 	int			show_timers;
 };
 
@@ -902,7 +903,7 @@ SIMPLEQ_HEAD(rib_names, rde_rib);
 extern struct rib_names ribnames;
 
 /* rde_rib flags */
-#define F_RIB_ENTRYLOCK		0x0001
+#define F_RIB_LOCAL		0x0001
 #define F_RIB_NOEVALUATE	0x0002
 #define F_RIB_NOFIB		0x0004
 #define F_RIB_NOFIBSYNC		0x0008
@@ -1011,28 +1012,10 @@ int		 kr_reload(void);
 struct in6_addr	*prefixlen2mask6(u_int8_t prefixlen);
 
 /* log.c */
-void		 log_init(int);
-void		 log_verbose(int);
-void		 logit(int, const char *, ...)
-			__attribute__((__format__ (printf, 2, 3)));
-void		 vlog(int, const char *, va_list)
-			__attribute__((__format__ (printf, 2, 0)));
 void		 log_peer_warn(const struct peer_config *, const char *, ...)
 			__attribute__((__format__ (printf, 2, 3)));
 void		 log_peer_warnx(const struct peer_config *, const char *, ...)
 			__attribute__((__format__ (printf, 2, 3)));
-void		 log_warn(const char *, ...)
-			__attribute__((__format__ (printf, 1, 2)));
-void		 log_warnx(const char *, ...)
-			__attribute__((__format__ (printf, 1, 2)));
-void		 log_info(const char *, ...)
-			__attribute__((__format__ (printf, 1, 2)));
-void		 log_debug(const char *, ...)
-			__attribute__((__format__ (printf, 1, 2)));
-void		 fatal(const char *, ...) __dead
-			__attribute__((__format__ (printf, 1, 2)));
-void		 fatalx(const char *) __dead
-			__attribute__((__format__ (printf, 1, 0)));
 
 /* mrt.c */
 void		 mrt_clear_seq(void);
@@ -1084,6 +1067,7 @@ const char	*log_sockaddr(struct sockaddr *);
 const char	*log_as(u_int32_t);
 const char	*log_rd(u_int64_t);
 const char	*log_ext_subtype(u_int8_t);
+const char	*log_shutcomm(const char *);
 int		 aspath_snprint(char *, size_t, void *, u_int16_t);
 int		 aspath_asprint(char **, void *, u_int16_t);
 size_t		 aspath_strlen(void *, u_int16_t);

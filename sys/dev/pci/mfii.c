@@ -1,4 +1,4 @@
-/* $OpenBSD: mfii.c,v 1.28 2016/10/24 05:27:52 yasuoka Exp $ */
+/* $OpenBSD: mfii.c,v 1.41 2017/02/08 07:06:43 dlg Exp $ */
 
 /*
  * Copyright (c) 2012 David Gwynne <dlg@openbsd.org>
@@ -24,6 +24,8 @@
 #include <sys/device.h>
 #include <sys/types.h>
 #include <sys/pool.h>
+#include <sys/task.h>
+#include <sys/atomic.h>
 
 #include <dev/pci/pcidevs.h>
 #include <dev/pci/pcivar.h>
@@ -51,6 +53,7 @@
 
 #define MFII_REQ_MFA(_a)	htole64((_a) | MFII_REQ_TYPE_MFA)
 
+#define MFII_FUNCTION_PASSTHRU_IO			(0xf0)
 #define MFII_FUNCTION_LDIO_REQUEST			(0xf1)
 
 struct mfii_request_descr {
@@ -140,6 +143,23 @@ struct mfii_ld_map {
 	struct mfii_dev_handle	mlm_dev_handle[MFI_MAX_PD];
 } __packed;
 
+struct mfii_task_mgmt {
+	union {
+		uint8_t			request[128];
+		struct mpii_msg_scsi_task_request
+					mpii_request;
+	} __packed __aligned(8);
+
+	union {
+		uint8_t			reply[128];
+		uint32_t		flags;
+#define MFII_TASK_MGMT_FLAGS_LD				(1 << 0)
+#define MFII_TASK_MGMT_FLAGS_PD				(1 << 1)
+		struct mpii_msg_scsi_task_reply
+					mpii_reply;
+	} __packed __aligned(8);
+} __packed __aligned(8);
+
 struct mfii_dmamem {
 	bus_dmamap_t		mdm_map;
 	bus_dma_segment_t	mdm_seg;
@@ -159,7 +179,7 @@ struct mfii_ccb {
 	bus_addr_t		ccb_request_offset;
 
 	struct mfi_sense	*ccb_sense;
-	u_int32_t		ccb_sense_dva;
+	u_int64_t		ccb_sense_dva;
 	bus_addr_t		ccb_sense_offset;
 
 	struct mfii_sge		*ccb_sgl;
@@ -171,7 +191,7 @@ struct mfii_ccb {
 
 	bus_dmamap_t		ccb_dmamap;
 
-	/* data for sgl */  
+	/* data for sgl */
 	void			*ccb_data;
 	size_t			ccb_len;
 
@@ -187,20 +207,15 @@ struct mfii_ccb {
 	u_int32_t		ccb_flags;
 #define MFI_CCB_F_ERR			(1<<0)
 	u_int			ccb_smid;
+	u_int			ccb_refcnt;
 	SIMPLEQ_ENTRY(mfii_ccb)	ccb_link;
 };
 SIMPLEQ_HEAD(mfii_ccb_list, mfii_ccb);
 
-struct mfii_pd_link {
-	u_int16_t		pd_id;
-	struct mfi_pd_details	pd_info;
-	u_int16_t		pd_handle;
-};
-
 struct mfii_pd_softc {
 	struct scsi_link	pd_link;
 	struct scsibus_softc	*pd_scsibus;
-	struct mfii_pd_link	*pd_links[MFI_MAX_PD];
+	struct srp		pd_dev_handles;
 	uint8_t			pd_timeout;
 };
 
@@ -243,6 +258,13 @@ struct mfii_softc {
 
 	struct mfii_ccb		*sc_ccb;
 	struct mfii_ccb_list	sc_ccb_freeq;
+
+	struct mfii_ccb		*sc_aen_ccb;
+	struct task		sc_aen_task;
+
+	struct mutex		sc_abort_mtx;
+	struct mfii_ccb_list	sc_abort_list;
+	struct task		sc_abort_task;
 
 	struct scsi_link	sc_link;
 	struct scsibus_softc	*sc_scsibus;
@@ -326,7 +348,8 @@ int			mfii_load_mfa(struct mfii_softc *, struct mfii_ccb *,
 int			mfii_mfa_poll(struct mfii_softc *, struct mfii_ccb *);
 
 int			mfii_mgmt(struct mfii_softc *, struct mfii_ccb *,
-			    u_int32_t, u_int8_t *, void *, size_t, int);
+			    u_int32_t, const union mfi_mbox *,
+			    void *, size_t, int);
 
 int			mfii_scsi_cmd_io(struct mfii_softc *,
 			    struct scsi_xfer *);
@@ -334,7 +357,64 @@ int			mfii_scsi_cmd_cdb(struct mfii_softc *,
 			    struct scsi_xfer *);
 int			mfii_pd_scsi_cmd_cdb(struct mfii_softc *,
 			    struct scsi_xfer *);
+void			mfii_scsi_cmd_tmo(void *);
 
+int			mfii_dev_handles_update(struct mfii_softc *sc);
+void			mfii_dev_handles_dtor(void *, void *);
+
+void			mfii_abort_task(void *);
+void			mfii_abort(struct mfii_softc *, struct mfii_ccb *,
+			    uint16_t, uint16_t, uint8_t, uint32_t);
+void			mfii_scsi_cmd_abort_done(struct mfii_softc *,
+			    struct mfii_ccb *);
+
+int			mfii_aen_register(struct mfii_softc *);
+void			mfii_aen_start(struct mfii_softc *, struct mfii_ccb *,
+			    struct mfii_dmamem *, uint32_t);
+void			mfii_aen_done(struct mfii_softc *, struct mfii_ccb *);
+void			mfii_aen(void *);
+void			mfii_aen_unregister(struct mfii_softc *);
+
+void			mfii_aen_pd_insert(struct mfii_softc *,
+			    const struct mfi_evtarg_pd_address *);
+void			mfii_aen_pd_remove(struct mfii_softc *,
+			    const struct mfi_evtarg_pd_address *);
+void			mfii_aen_pd_state_change(struct mfii_softc *,
+			    const struct mfi_evtarg_pd_state *);
+
+/*
+ * mfii boards support asynchronous (and non-polled) completion of
+ * dcmds by proxying them through a passthru mpii command that points
+ * at a dcmd frame. since the passthru command is submitted like
+ * the scsi commands using an SMID in the request descriptor,
+ * ccb_request memory * must contain the passthru command because
+ * that is what the SMID refers to. this means ccb_request cannot
+ * contain the dcmd. rather than allocating separate dma memory to
+ * hold the dcmd, we reuse the sense memory buffer for it.
+ */
+
+void			mfii_dcmd_start(struct mfii_softc *,
+			    struct mfii_ccb *);
+
+static inline void
+mfii_dcmd_scrub(struct mfii_ccb *ccb)
+{
+	memset(ccb->ccb_sense, 0, sizeof(*ccb->ccb_sense));
+}
+
+static inline struct mfi_dcmd_frame *
+mfii_dcmd_frame(struct mfii_ccb *ccb)
+{
+	CTASSERT(sizeof(struct mfi_dcmd_frame) <= sizeof(*ccb->ccb_sense));
+	return ((struct mfi_dcmd_frame *)ccb->ccb_sense);
+}
+
+static inline void
+mfii_dcmd_sync(struct mfii_softc *sc, struct mfii_ccb *ccb, int flags)
+{
+	bus_dmamap_sync(sc->sc_dmat, MFII_DMA_MAP(sc->sc_sense),
+	    ccb->ccb_sense_offset, sizeof(*ccb->ccb_sense), flags);
+}
 
 #define mfii_fw_state(_sc) mfii_read((_sc), MFI_OSP)
 
@@ -416,6 +496,13 @@ mfii_attach(struct device *parent, struct device *self, void *aux)
 	mtx_init(&sc->sc_reply_postq_mtx, IPL_BIO);
 	scsi_iopool_init(&sc->sc_iopool, sc, mfii_get_ccb, mfii_put_ccb);
 
+	sc->sc_aen_ccb = NULL;
+	task_set(&sc->sc_aen_task, mfii_aen, sc);
+
+	mtx_init(&sc->sc_abort_mtx, IPL_BIO);
+	SIMPLEQ_INIT(&sc->sc_abort_list);
+	task_set(&sc->sc_abort_task, mfii_abort_task, sc);
+
 	/* wire up the bus shizz */
 	memtype = pci_mapreg_type(pa->pa_pc, pa->pa_tag, MFII_BAR);
 	if (pci_mapreg_map(pa, MFII_BAR, memtype, 0,
@@ -442,6 +529,7 @@ mfii_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_max_sgl = (status & MFI_STATE_MAXSGL_MASK) >> 16;
 
 	/* sense memory */
+	CTASSERT(sizeof(struct mfi_sense) == MFI_SENSE_SIZE);
 	sc->sc_sense = mfii_dmamem_alloc(sc, sc->sc_max_cmds * MFI_SENSE_SIZE);
 	if (sc->sc_sense == NULL) {
 		printf("%s: unable to allocate sense memory\n", DEVNAME(sc));
@@ -510,11 +598,18 @@ mfii_attach(struct device *parent, struct device *self, void *aux)
 
 	mfii_syspd(sc);
 
+	if (mfii_aen_register(sc) != 0) {
+		/* error printed by mfii_aen_register */
+		goto intr_disestablish;
+	}
+
 	/* enable interrupts */
 	mfii_write(sc, MFI_OSTS, 0xffffffff);
 	mfii_write(sc, MFI_OMSK, ~MFII_OSTS_INTR_VALID);
 
 	return;
+intr_disestablish:
+	pci_intr_disestablish(sc->sc_pc, sc->sc_ih);
 free_sgl:
 	mfii_dmamem_free(sc, sc->sc_sgl);
 free_requests:
@@ -527,59 +622,81 @@ pci_unmap:
 	bus_space_unmap(sc->sc_iot, sc->sc_ioh, sc->sc_ios);
 }
 
+struct srp_gc mfii_dev_handles_gc =
+    SRP_GC_INITIALIZER(mfii_dev_handles_dtor, NULL);
+
+static inline uint16_t
+mfii_dev_handle(struct mfii_softc *sc, uint16_t target)
+{
+	struct srp_ref sr;
+	uint16_t *map, handle;
+
+	map = srp_enter(&sr, &sc->sc_pd->pd_dev_handles);
+	handle = map[target];
+	srp_leave(&sr);
+
+	return (handle);
+}
+
+int
+mfii_dev_handles_update(struct mfii_softc *sc)
+{
+	struct mfii_ld_map *lm;
+	uint16_t *dev_handles = NULL;
+	struct mfii_ccb *ccb;
+	int i;
+	int rv = 0;
+
+	lm = malloc(sizeof(*lm), M_TEMP, M_WAITOK|M_ZERO);
+	ccb = scsi_io_get(&sc->sc_iopool, 0);
+
+	rv = mfii_mgmt(sc, ccb, MR_DCMD_LD_MAP_GET_INFO, NULL,
+	    lm, sizeof(*lm), SCSI_DATA_IN|SCSI_NOSLEEP);
+
+	scsi_io_put(&sc->sc_iopool, ccb);
+	if (rv != 0) {
+		rv = EIO;
+		goto free_lm;
+	}
+
+	dev_handles = mallocarray(MFI_MAX_PD, sizeof(*dev_handles),
+	    M_DEVBUF, M_WAITOK);
+
+	for (i = 0; i < MFI_MAX_PD; i++)
+		dev_handles[i] = lm->mlm_dev_handle[i].mdh_cur_handle;
+
+	/* commit the updated info */
+	sc->sc_pd->pd_timeout = lm->mlm_pd_timeout;
+	srp_update_locked(&mfii_dev_handles_gc,
+	    &sc->sc_pd->pd_dev_handles, dev_handles);
+
+free_lm:
+	free(lm, M_TEMP, sizeof(*lm));
+
+	return (rv);
+}
+
+void
+mfii_dev_handles_dtor(void *null, void *v)
+{
+	uint16_t *dev_handles = v;
+
+	free(dev_handles, M_DEVBUF, sizeof(*dev_handles) * MFI_MAX_PD);
+}
+
 int
 mfii_syspd(struct mfii_softc *sc)
 {
 	struct scsibus_attach_args saa;
 	struct scsi_link *link;
-	struct mfii_ld_map *lm;
-	struct mfii_pd_link *pl;
-	struct mfi_pd_list *pd;
-	struct mfii_ccb *ccb;
-	u_int npds, i;
-	int rv;
 
 	sc->sc_pd = malloc(sizeof(*sc->sc_pd), M_DEVBUF, M_WAITOK|M_ZERO);
 	if (sc->sc_pd == NULL)
 		return (1);
 
-	lm = malloc(sizeof(*lm), M_TEMP, M_WAITOK|M_ZERO);
-	if (lm == NULL)
+	srp_init(&sc->sc_pd->pd_dev_handles);
+	if (mfii_dev_handles_update(sc) != 0)
 		goto free_pdsc;
-
-	ccb = scsi_io_get(&sc->sc_iopool, 0);
-	rv = mfii_mgmt(sc, ccb, MR_DCMD_LD_MAP_GET_INFO, NULL,
-	    lm, sizeof(*lm), SCSI_DATA_IN|SCSI_NOSLEEP);
-	scsi_io_put(&sc->sc_iopool, ccb);
-	if (rv != 0)
-		goto free_lm;
-
-	sc->sc_pd->pd_timeout = lm->mlm_pd_timeout;
-
-	pd = malloc(sizeof(*pd), M_TEMP, M_WAITOK|M_ZERO);
-	if (pd == NULL)
-		goto free_lm;
-
-	ccb = scsi_io_get(&sc->sc_iopool, 0);
-	rv = mfii_mgmt(sc, ccb, MR_DCMD_PD_GET_LIST, NULL,
-	    pd, sizeof(*pd), SCSI_DATA_IN|SCSI_NOSLEEP);
-	scsi_io_put(&sc->sc_iopool, ccb);
-	if (rv != 0)
-		goto free_pd;
-
-	npds = letoh32(pd->mpl_no_pd);
-	for (i = 0; i < npds; i++) {
-		pl = malloc(sizeof(*pl), M_DEVBUF, M_WAITOK|M_ZERO);
-		if (pl == NULL)
-			goto free_pl;
-
-		pl->pd_id = pd->mpl_address[i].mpa_pd_id;
-		pl->pd_handle = lm->mlm_dev_handle[i].mdh_cur_handle;
-		sc->sc_pd->pd_links[i] = pl;
-	}
-
-	free(pd, M_TEMP, 0);
-	free(lm, M_TEMP, 0);
 
 	link = &sc->sc_pd->pd_link;
 	link->adapter = &mfii_pd_switch;
@@ -596,18 +713,7 @@ mfii_syspd(struct mfii_softc *sc)
 	    config_found(&sc->sc_dev, &saa, scsiprint);
 
 	return (0);
-free_pl:
-	for (i = 0; i < npds; i++) {
-		pl = sc->sc_pd->pd_links[i];
-		if (pl == NULL)
-			break;
 
-		free(pl, M_DEVBUF, 0);
-	}
-free_pd:
-	free(pd, M_TEMP, 0);
-free_lm:
-	free(lm, M_TEMP, 0);
 free_pdsc:
 	free(sc->sc_pd, M_DEVBUF, 0);
 	return (1);
@@ -621,7 +727,8 @@ mfii_detach(struct device *self, int flags)
 	if (sc->sc_ih == NULL)
 		return (0);
 
-	pci_intr_disestablish(sc->sc_pc, sc->sc_ih); 
+	mfii_aen_unregister(sc);
+	pci_intr_disestablish(sc->sc_pc, sc->sc_ih);
 	mfii_dmamem_free(sc, sc->sc_sgl);
 	mfii_dmamem_free(sc, sc->sc_requests);
 	mfii_dmamem_free(sc, sc->sc_reply_postq);
@@ -699,8 +806,228 @@ mfii_dmamem_free(struct mfii_softc *sc, struct mfii_dmamem *m)
 	free(m, M_DEVBUF, 0);
 }
 
+void
+mfii_dcmd_start(struct mfii_softc *sc, struct mfii_ccb *ccb)
+{
+	struct mpii_msg_scsi_io *io = ccb->ccb_request;
+	struct mfii_raid_context *ctx = (struct mfii_raid_context *)(io + 1);
+	struct mfii_sge *sge = (struct mfii_sge *)(ctx + 1);
 
+	io->function = MFII_FUNCTION_PASSTHRU_IO;
+	io->sgl_offset0 = (uint32_t *)sge - (uint32_t *)io;
 
+	htolem64(&sge->sg_addr, ccb->ccb_sense_dva);
+	htolem32(&sge->sg_len, sizeof(*ccb->ccb_sense));
+	sge->sg_flags = MFII_SGE_CHAIN_ELEMENT | MFII_SGE_ADDR_IOCPLBNTA;
+
+	ccb->ccb_req.flags = MFII_REQ_TYPE_SCSI;
+	ccb->ccb_req.smid = letoh16(ccb->ccb_smid);
+
+	mfii_start(sc, ccb);
+}
+
+int
+mfii_aen_register(struct mfii_softc *sc)
+{
+	struct mfi_evt_log_info mel;
+	struct mfii_ccb *ccb;
+	struct mfii_dmamem *mdm;
+	int rv;
+
+	ccb = scsi_io_get(&sc->sc_iopool, 0);
+	if (ccb == NULL) {
+		printf("%s: unable to allocate ccb for aen\n", DEVNAME(sc));
+		return (ENOMEM);
+	}
+
+	memset(&mel, 0, sizeof(mel));
+
+	rv = mfii_mgmt(sc, ccb, MR_DCMD_CTRL_EVENT_GET_INFO, NULL,
+	    &mel, sizeof(mel), SCSI_DATA_IN|SCSI_NOSLEEP);
+	if (rv != 0) {
+		scsi_io_put(&sc->sc_iopool, ccb);
+		printf("%s: unable to get event info\n", DEVNAME(sc));
+		return (EIO);
+	}
+
+	mdm = mfii_dmamem_alloc(sc, sizeof(struct mfi_evt_detail));
+	if (mdm == NULL) {
+		scsi_io_put(&sc->sc_iopool, ccb);
+		printf("%s: unable to allocate event data\n", DEVNAME(sc));
+		return (ENOMEM);
+	}
+
+	/* replay all the events from boot */
+	mfii_aen_start(sc, ccb, mdm, lemtoh32(&mel.mel_boot_seq_num));
+
+	return (0);
+}
+
+void
+mfii_aen_start(struct mfii_softc *sc, struct mfii_ccb *ccb,
+    struct mfii_dmamem *mdm, uint32_t seq)
+{
+	struct mfi_dcmd_frame *dcmd = mfii_dcmd_frame(ccb);
+	struct mfi_frame_header *hdr = &dcmd->mdf_header;
+	union mfi_sgl *sgl = &dcmd->mdf_sgl;
+	union mfi_evt_class_locale mec;
+
+	mfii_scrub_ccb(ccb);
+	mfii_dcmd_scrub(ccb);
+	memset(MFII_DMA_KVA(mdm), 0, MFII_DMA_LEN(mdm));
+
+	ccb->ccb_cookie = mdm;
+	ccb->ccb_done = mfii_aen_done;
+	sc->sc_aen_ccb = ccb;
+
+	mec.mec_members.class = MFI_EVT_CLASS_DEBUG;
+	mec.mec_members.reserved = 0;
+	mec.mec_members.locale = htole16(MFI_EVT_LOCALE_ALL);
+
+	hdr->mfh_cmd = MFI_CMD_DCMD;
+	hdr->mfh_sg_count = 1;
+	hdr->mfh_flags = htole16(MFI_FRAME_DIR_READ | MFI_FRAME_SGL64);
+	htolem32(&hdr->mfh_data_len, MFII_DMA_LEN(mdm));
+	dcmd->mdf_opcode = htole32(MR_DCMD_CTRL_EVENT_WAIT);
+	htolem32(&dcmd->mdf_mbox.w[0], seq);
+	htolem32(&dcmd->mdf_mbox.w[1], mec.mec_word);
+	htolem64(&sgl->sg64[0].addr, MFII_DMA_DVA(mdm));
+	htolem32(&sgl->sg64[0].len, MFII_DMA_LEN(mdm));
+
+	bus_dmamap_sync(sc->sc_dmat, MFII_DMA_MAP(mdm),
+	    0, MFII_DMA_LEN(mdm), BUS_DMASYNC_PREREAD);
+
+	mfii_dcmd_sync(sc, ccb, BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
+	mfii_dcmd_start(sc, ccb);
+}
+
+void
+mfii_aen_done(struct mfii_softc *sc, struct mfii_ccb *ccb)
+{
+	KASSERT(sc->sc_aen_ccb == ccb);
+
+	/* defer to a thread with KERNEL_LOCK so we can run autoconf */
+	task_add(systq, &sc->sc_aen_task);
+}
+
+void
+mfii_aen(void *arg)
+{
+	struct mfii_softc *sc = arg;
+	struct mfii_ccb *ccb = sc->sc_aen_ccb;
+	struct mfii_dmamem *mdm = ccb->ccb_cookie;
+	const struct mfi_evt_detail *med = MFII_DMA_KVA(mdm);
+
+	mfii_dcmd_sync(sc, ccb,
+	    BUS_DMASYNC_POSTREAD|BUS_DMASYNC_POSTWRITE);
+	bus_dmamap_sync(sc->sc_dmat, MFII_DMA_MAP(mdm),
+	    0, MFII_DMA_LEN(mdm), BUS_DMASYNC_POSTREAD);
+
+#if 0
+	printf("%s: %u %08x %02x %s\n", DEVNAME(sc),
+	    lemtoh32(&med->med_seq_num), lemtoh32(&med->med_code),
+	    med->med_arg_type, med->med_description);
+#endif
+
+	switch (lemtoh32(&med->med_code)) {
+	case MFI_EVT_PD_INSERTED_EXT:
+		if (med->med_arg_type != MFI_EVT_ARGS_PD_ADDRESS)
+			break;
+		
+		mfii_aen_pd_insert(sc, &med->args.pd_address);
+		break;
+ 	case MFI_EVT_PD_REMOVED_EXT:
+		if (med->med_arg_type != MFI_EVT_ARGS_PD_ADDRESS)
+			break;
+		
+		mfii_aen_pd_remove(sc, &med->args.pd_address);
+		break;
+
+	case MFI_EVT_PD_STATE_CHANGE:
+		if (med->med_arg_type != MFI_EVT_ARGS_PD_STATE)
+			break;
+
+		mfii_aen_pd_state_change(sc, &med->args.pd_state);
+		break;
+
+	default:
+		break;
+	}
+
+	mfii_aen_start(sc, ccb, mdm, lemtoh32(&med->med_seq_num) + 1);
+}
+
+void
+mfii_aen_pd_insert(struct mfii_softc *sc,
+    const struct mfi_evtarg_pd_address *pd)
+{
+#if 0
+	printf("%s: pd inserted ext\n", DEVNAME(sc));
+	printf("%s:  device_id %04x encl_id: %04x type %x\n", DEVNAME(sc),
+	    lemtoh16(&pd->device_id), lemtoh16(&pd->encl_id),
+	    pd->scsi_dev_type);
+	printf("%s:  connected %02x addrs %016llx %016llx\n", DEVNAME(sc),
+	    pd->connected.port_bitmap, lemtoh64(&pd->sas_addr[0]),
+	    lemtoh64(&pd->sas_addr[1]));
+#endif
+
+	if (mfii_dev_handles_update(sc) != 0) /* refresh map */
+		return;
+
+	scsi_probe_target(sc->sc_pd->pd_scsibus, lemtoh16(&pd->device_id));
+}
+
+void
+mfii_aen_pd_remove(struct mfii_softc *sc,
+    const struct mfi_evtarg_pd_address *pd)
+{
+#if 0
+	printf("%s: pd removed ext\n", DEVNAME(sc));
+	printf("%s:  device_id %04x encl_id: %04x type %u\n", DEVNAME(sc),
+	    lemtoh16(&pd->device_id), lemtoh16(&pd->encl_id),
+	    pd->scsi_dev_type);
+	printf("%s:  connected %02x addrs %016llx %016llx\n", DEVNAME(sc),
+	    pd->connected.port_bitmap, lemtoh64(&pd->sas_addr[0]),
+	    lemtoh64(&pd->sas_addr[1]));
+#endif
+	uint16_t target = lemtoh16(&pd->device_id);
+
+	scsi_activate(sc->sc_pd->pd_scsibus, target, -1, DVACT_DEACTIVATE);
+
+	/* the firmware will abort outstanding commands for us */
+
+	scsi_detach_target(sc->sc_pd->pd_scsibus, target, DETACH_FORCE);
+}
+
+void
+mfii_aen_pd_state_change(struct mfii_softc *sc,
+    const struct mfi_evtarg_pd_state *state)
+{
+	uint16_t target = lemtoh16(&state->pd.mep_device_id);
+
+	if (state->prev_state == htole32(MFI_PD_SYSTEM) &&
+	    state->new_state != htole32(MFI_PD_SYSTEM)) {
+		/* it's been pulled or configured for raid */
+
+		scsi_activate(sc->sc_pd->pd_scsibus, target, -1,
+		    DVACT_DEACTIVATE);
+		/* outstanding commands will simply complete or get aborted */
+		scsi_detach_target(sc->sc_pd->pd_scsibus, target,
+		    DETACH_FORCE);
+
+	} else if (state->prev_state == htole32(MFI_PD_UNCONFIG_GOOD) &&
+	    state->new_state == htole32(MFI_PD_SYSTEM)) {
+		/* the firmware is handing the disk over */
+
+		scsi_probe_target(sc->sc_pd->pd_scsibus, target);
+	}
+}
+
+void
+mfii_aen_unregister(struct mfii_softc *sc)
+{
+	/* XXX */
+}
 
 int
 mfii_transition_firmware(struct mfii_softc *sc)
@@ -1040,7 +1367,8 @@ mfii_exec_done(struct mfii_softc *sc, struct mfii_ccb *ccb)
 
 int
 mfii_mgmt(struct mfii_softc *sc, struct mfii_ccb *ccb,
-    u_int32_t opc, u_int8_t *mbox, void *buf, size_t len, int flags)
+    u_int32_t opc, const union mfi_mbox *mbox, void *buf, size_t len,
+    int flags)
 {
 	struct mfi_dcmd_frame *dcmd = ccb->ccb_request;
 	struct mfi_frame_header	*hdr = &dcmd->mdf_header;
@@ -1081,7 +1409,7 @@ mfii_mgmt(struct mfii_softc *sc, struct mfii_ccb *ccb,
 	dcmd->mdf_opcode = opc;
 	/* handle special opcodes */
 	if (mbox != NULL)
-		memcpy(dcmd->mdf_mbox, mbox, MFI_MBOX_SIZE);
+		memcpy(&dcmd->mdf_mbox, mbox, sizeof(dcmd->mdf_mbox));
 
 	if (ISSET(flags, SCSI_NOSLEEP))
 		mfii_mfa_poll(sc, ccb);
@@ -1146,7 +1474,7 @@ mfii_start(struct mfii_softc *sc, struct mfii_ccb *ccb)
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 #if defined(__LP64__)
-        bus_space_write_raw_8(sc->sc_iot, sc->sc_ioh, MFI_IQPL, *r);
+	bus_space_write_raw_8(sc->sc_iot, sc->sc_ioh, MFI_IQPL, *r);
 #else
 	mtx_enter(&sc->sc_post_mtx);
 	bus_space_write_raw_4(sc->sc_iot, sc->sc_ioh, MFI_IQPL, r[0]);
@@ -1348,6 +1676,8 @@ mfii_scsi_cmd(struct scsi_xfer *xs)
 	ccb->ccb_data = xs->data;
 	ccb->ccb_len = xs->datalen;
 
+	timeout_set(&xs->stimeout, mfii_scsi_cmd_tmo, xs);
+
 	switch (xs->cmd->opcode) {
 	case READ_COMMAND:
 	case READ_BIG:
@@ -1377,7 +1707,10 @@ mfii_scsi_cmd(struct scsi_xfer *xs)
 		return;
 	}
 
+	ccb->ccb_refcnt = 2; /* one for the chip, one for the timeout */
+	timeout_add_msec(&xs->stimeout, xs->timeout);
 	mfii_start(sc, ccb);
+
 	return;
 
 stuffup:
@@ -1391,6 +1724,10 @@ mfii_scsi_cmd_done(struct mfii_softc *sc, struct mfii_ccb *ccb)
 	struct scsi_xfer *xs = ccb->ccb_cookie;
 	struct mpii_msg_scsi_io *io = ccb->ccb_request;
 	struct mfii_raid_context *ctx = (struct mfii_raid_context *)(io + 1);
+	u_int refs = 1;
+
+	if (timeout_del(&xs->stimeout))
+		refs = 2;
 
 	switch (ctx->status) {
 	case MFI_STAT_OK:
@@ -1412,7 +1749,8 @@ mfii_scsi_cmd_done(struct mfii_softc *sc, struct mfii_ccb *ccb)
 		break;
 	}
 
-	scsi_done(xs);
+	if (atomic_sub_int_nv(&ccb->ccb_refcnt, refs) == 0)
+		scsi_done(xs);
 }
 
 int
@@ -1524,10 +1862,12 @@ mfii_pd_scsi_cmd(struct scsi_xfer *xs)
 	ccb->ccb_data = xs->data;
 	ccb->ccb_len = xs->datalen;
 
-	if (mfii_pd_scsi_cmd_cdb(sc, xs) != 0)
-		goto stuffup;
+	timeout_set(&xs->stimeout, mfii_scsi_cmd_tmo, xs);
 
-	xs->error = XS_NOERROR;
+	xs->error = mfii_pd_scsi_cmd_cdb(sc, xs);
+	if (xs->error != XS_NOERROR)
+		goto done;
+
 	xs->resid = 0;
 
 	if (ISSET(xs->flags, SCSI_POLL)) {
@@ -1536,40 +1876,41 @@ mfii_pd_scsi_cmd(struct scsi_xfer *xs)
 		return;
 	}
 
+	ccb->ccb_refcnt = 2; /* one for the chip, one for the timeout */
+	timeout_add_msec(&xs->stimeout, xs->timeout);
 	mfii_start(sc, ccb);
+
 	return;
 
 stuffup:
 	xs->error = XS_DRIVER_STUFFUP;
+done:
 	scsi_done(xs);
 }
 
 int
 mfii_pd_scsi_probe(struct scsi_link *link)
 {
-	struct mfii_ccb *ccb;
-	uint8_t mbox[MFI_MBOX_SIZE];
 	struct mfii_softc *sc = link->adapter_softc;
-	struct mfii_pd_link *pl = sc->sc_pd->pd_links[link->target];
+	struct mfii_ccb *ccb;
+	struct mfi_pd_details mpd;
+	union mfi_mbox mbox;
 	int rv;
 
 	if (link->lun > 0)
 		return (0);
 
-	if (pl == NULL)
-		return (ENXIO);
-
-	memset(mbox, 0, sizeof(mbox));
-	memcpy(&mbox[0], &pl->pd_id, sizeof(pl->pd_id));
+	memset(&mbox, 0, sizeof(mbox));
+	mbox.s[0] = htole16(link->target);
 
 	ccb = scsi_io_get(&sc->sc_iopool, 0);
-	rv = mfii_mgmt(sc, ccb, MR_DCMD_PD_GET_INFO, mbox, &pl->pd_info,
-	    sizeof(pl->pd_info), SCSI_DATA_IN|SCSI_NOSLEEP);
+	rv = mfii_mgmt(sc, ccb, MR_DCMD_PD_GET_INFO, &mbox, &mpd, sizeof(mpd),
+	    SCSI_DATA_IN|SCSI_NOSLEEP);
 	scsi_io_put(&sc->sc_iopool, ccb);
 	if (rv != 0)
 		return (EIO);
 
-	if (letoh16(pl->pd_info.mpd_fw_state) != MFI_PD_SYSTEM)
+	if (mpd.mpd_fw_state != htole16(MFI_PD_SYSTEM))
 		return (ENXIO);
 
 	return (0);
@@ -1582,8 +1923,13 @@ mfii_pd_scsi_cmd_cdb(struct mfii_softc *sc, struct scsi_xfer *xs)
 	struct mfii_ccb *ccb = xs->io;
 	struct mpii_msg_scsi_io *io = ccb->ccb_request;
 	struct mfii_raid_context *ctx = (struct mfii_raid_context *)(io + 1);
+	uint16_t dev_handle;
 
-	io->dev_handle = sc->sc_pd->pd_links[link->target]->pd_handle;
+	dev_handle = mfii_dev_handle(sc, link->target);
+	if (dev_handle == htole16(0xffff))
+		return (XS_SELTIMEOUT);
+
+	io->dev_handle = dev_handle;
 	io->function = 0;
 	io->sense_buffer_low_address = htole32(ccb->ccb_sense_dva);
 	io->sgl_flags = htole16(0x02); /* XXX */
@@ -1614,15 +1960,15 @@ mfii_pd_scsi_cmd_cdb(struct mfii_softc *sc, struct scsi_xfer *xs)
 
 	if (mfii_load_ccb(sc, ccb, ctx + 1,
 	    ISSET(xs->flags, SCSI_NOSLEEP)) != 0)
-		return (1);
+		return (XS_DRIVER_STUFFUP);
 
 	ctx->num_sge = (ccb->ccb_len == 0) ? 0 : ccb->ccb_dmamap->dm_nsegs;
 
 	ccb->ccb_req.flags = MFII_REQ_TYPE_HI_PRI;
 	ccb->ccb_req.smid = letoh16(ccb->ccb_smid);
-	ccb->ccb_req.dev_handle = sc->sc_pd->pd_links[link->target]->pd_handle;
+	ccb->ccb_req.dev_handle = dev_handle;
 
-	return (0);
+	return (XS_NOERROR);
 }
 
 int
@@ -1692,6 +2038,96 @@ mfii_load_ccb(struct mfii_softc *sc, struct mfii_ccb *ccb, void *sglp,
 	return (0);
 }
 
+void
+mfii_scsi_cmd_tmo(void *xsp)
+{
+	struct scsi_xfer *xs = xsp;
+	struct scsi_link *link = xs->sc_link;
+	struct mfii_softc *sc = link->adapter_softc;
+	struct mfii_ccb *ccb = xs->io;
+
+	mtx_enter(&sc->sc_abort_mtx);
+	SIMPLEQ_INSERT_TAIL(&sc->sc_abort_list, ccb, ccb_link);
+	mtx_leave(&sc->sc_abort_mtx);
+
+	task_add(systqmp, &sc->sc_abort_task);
+}
+
+void
+mfii_abort_task(void *scp)
+{
+	struct mfii_softc *sc = scp;
+	struct mfii_ccb *list;
+
+	mtx_enter(&sc->sc_abort_mtx);
+	list = SIMPLEQ_FIRST(&sc->sc_abort_list);
+	SIMPLEQ_INIT(&sc->sc_abort_list);
+	mtx_leave(&sc->sc_abort_mtx);
+
+	while (list != NULL) {
+		struct mfii_ccb *ccb = list;
+		struct scsi_xfer *xs = ccb->ccb_cookie;
+		struct scsi_link *link = xs->sc_link;
+
+		uint16_t dev_handle;
+		struct mfii_ccb *accb;
+
+		list = SIMPLEQ_NEXT(ccb, ccb_link);
+
+		dev_handle = mfii_dev_handle(sc, link->target);
+		if (dev_handle == htole16(0xffff)) {
+			/* device is gone */
+			if (atomic_dec_int_nv(&ccb->ccb_refcnt) == 0)
+				scsi_done(xs);
+			continue;
+		}
+
+		accb = scsi_io_get(&sc->sc_iopool, 0);
+		mfii_scrub_ccb(accb);
+		mfii_abort(sc, accb, dev_handle, ccb->ccb_smid,
+		    MPII_SCSI_TASK_ABORT_TASK,
+		    htole32(MFII_TASK_MGMT_FLAGS_PD));
+
+		accb->ccb_cookie = ccb;
+		accb->ccb_done = mfii_scsi_cmd_abort_done;
+
+		mfii_start(sc, accb);
+	}
+}
+
+void
+mfii_abort(struct mfii_softc *sc, struct mfii_ccb *accb, uint16_t dev_handle,
+    uint16_t smid, uint8_t type, uint32_t flags)
+{
+	struct mfii_task_mgmt *msg;
+	struct mpii_msg_scsi_task_request *req;
+
+	msg = accb->ccb_request;
+	req = &msg->mpii_request;
+	req->dev_handle = dev_handle;
+	req->function = MPII_FUNCTION_SCSI_TASK_MGMT;
+	req->task_type = type;
+	htolem16(&req->task_mid, smid);
+	msg->flags = flags;
+
+	accb->ccb_req.flags = MFII_REQ_TYPE_HI_PRI;
+	accb->ccb_req.smid = letoh16(accb->ccb_smid);
+}
+
+void
+mfii_scsi_cmd_abort_done(struct mfii_softc *sc, struct mfii_ccb *accb)
+{
+	struct mfii_ccb *ccb = accb->ccb_cookie;
+	struct scsi_xfer *xs = ccb->ccb_cookie;
+
+	/* XXX check accb completion? */
+
+	scsi_io_put(&sc->sc_iopool, accb);
+
+	if (atomic_dec_int_nv(&ccb->ccb_refcnt) == 0)
+		scsi_done(xs);
+}
+
 void *
 mfii_get_ccb(void *cookie)
 {
@@ -1717,6 +2153,7 @@ mfii_scrub_ccb(struct mfii_ccb *ccb)
 	ccb->ccb_direction = 0;
 	ccb->ccb_len = 0;
 	ccb->ccb_sgl_len = 0;
+	ccb->ccb_refcnt = 1;
 
 	memset(&ccb->ccb_req, 0, sizeof(ccb->ccb_req));
 	memset(ccb->ccb_request, 0, MFII_REQUEST_SIZE);
@@ -1768,10 +2205,10 @@ mfii_init_ccb(struct mfii_softc *sc)
 
 		/* select i'th sense */
 		ccb->ccb_sense_offset = MFI_SENSE_SIZE * i;
-		ccb->ccb_sense = (struct mfi_sense *)(sense + 
+		ccb->ccb_sense = (struct mfi_sense *)(sense +
 		    ccb->ccb_sense_offset);
-		ccb->ccb_sense_dva = (u_int32_t)(MFII_DMA_DVA(sc->sc_sense) +
-		    ccb->ccb_sense_offset);
+		ccb->ccb_sense_dva = MFII_DMA_DVA(sc->sc_sense) +
+		    ccb->ccb_sense_offset;
 
 		/* select i'th sgl */
 		ccb->ccb_sgl_offset = sizeof(struct mfii_sge) *

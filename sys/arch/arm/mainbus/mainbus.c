@@ -1,4 +1,4 @@
-/* $OpenBSD: mainbus.c,v 1.13 2016/08/06 00:04:39 jsg Exp $ */
+/* $OpenBSD: mainbus.c,v 1.15 2017/01/06 00:06:02 jsg Exp $ */
 /*
  * Copyright (c) 2016 Patrick Wildt <patrick@blueri.se>
  *
@@ -30,6 +30,7 @@ int mainbus_match(struct device *, void *, void *);
 void mainbus_attach(struct device *, struct device *, void *);
 
 void mainbus_attach_node(struct device *, int);
+void mainbus_attach_framebuffer(struct device *);
 
 int mainbus_legacy_search(struct device *, void *, void *);
 
@@ -82,6 +83,8 @@ mainbus_match(struct device *parent, void *cfdata, void *aux)
 }
 
 extern char *hw_prod;
+extern struct bus_space armv7_bs_tag;
+void platform_init_mainbus(struct device *);
 
 void
 mainbus_attach(struct device *parent, struct device *self, void *aux)
@@ -96,14 +99,9 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
-#ifdef CPU_ARMv7
 	arm_intr_init_fdt();
-#endif
 
-#ifdef CPU_ARMv7
-	extern struct bus_space armv7_bs_tag;
 	sc->sc_iot = &armv7_bs_tag;
-#endif
 	sc->sc_dmat = &mainbus_dma_tag;
 	sc->sc_acells = OF_getpropint(OF_peer(0), "#address-cells", 1);
 	sc->sc_scells = OF_getpropint(OF_peer(0), "#size-cells", 1);
@@ -118,10 +116,7 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 
 	/* Attach CPU first. */
 	mainbus_legacy_found(self, "cpu");
-#ifdef CPU_ARMv7
-	extern void platform_init_mainbus(struct device *);
 	platform_init_mainbus(self);
-#endif
 
 	/* TODO: Scan for interrupt controllers and attach them first? */
 
@@ -133,12 +128,10 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	/* Scan the whole tree. */
-	for (node = OF_child(node);
-	    node != 0;
-	    node = OF_peer(node))
-	{
+	for (node = OF_child(node); node != 0; node = OF_peer(node))
 		mainbus_attach_node(self, node);
-	}
+
+	mainbus_attach_framebuffer(self);
 }
 
 /*
@@ -212,6 +205,18 @@ mainbus_attach_node(struct device *self, int node)
 
 	free(fa.fa_reg, M_DEVBUF, fa.fa_nreg * sizeof(struct fdt_reg));
 	free(fa.fa_intr, M_DEVBUF, fa.fa_nintr * sizeof(uint32_t));
+}
+
+void
+mainbus_attach_framebuffer(struct device *self)
+{
+	int node = OF_finddevice("/chosen");
+
+	if (node == 0)
+		return;
+
+	for (node = OF_child(node); node != 0; node = OF_peer(node))
+		mainbus_attach_node(self, node);
 }
 
 /*

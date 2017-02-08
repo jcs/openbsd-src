@@ -1,4 +1,4 @@
-/* $OpenBSD: if_pppoe.c,v 1.57 2016/06/14 20:44:43 sthen Exp $ */
+/* $OpenBSD: if_pppoe.c,v 1.60 2017/01/22 10:17:39 dlg Exp $ */
 /* $NetBSD: if_pppoe.c,v 1.51 2003/11/28 08:56:48 keihan Exp $ */
 
 /*
@@ -202,8 +202,8 @@ pppoe_clone_create(struct if_clone *ifc, int unit)
         if (sc == NULL)
                 return (ENOMEM);
 
-	snprintf(sc->sc_sppp.pp_if.if_xname, 
-		 sizeof(sc->sc_sppp.pp_if.if_xname), 
+	snprintf(sc->sc_sppp.pp_if.if_xname,
+		 sizeof(sc->sc_sppp.pp_if.if_xname),
 		 "pppoe%d", unit);
 	sc->sc_sppp.pp_if.if_softc = sc;
 	sc->sc_sppp.pp_if.if_mtu = PPPOE_MTU;
@@ -221,17 +221,17 @@ pppoe_clone_create(struct if_clone *ifc, int unit)
 
 	/* changed to real address later */
 	memcpy(&sc->sc_dest, etherbroadcastaddr, sizeof(sc->sc_dest));
-	
+
 	/* init timer for interface watchdog */
-	timeout_set(&sc->sc_timeout, pppoe_timeout, sc);
-	
+	timeout_set_proc(&sc->sc_timeout, pppoe_timeout, sc);
+
 	if_attach(&sc->sc_sppp.pp_if);
 	if_alloc_sadl(&sc->sc_sppp.pp_if);
 	sppp_attach(&sc->sc_sppp.pp_if);
 #if NBPFILTER > 0
 	bpfattach(&sc->sc_sppp.pp_if.if_bpf, &sc->sc_sppp.pp_if, DLT_PPP_ETHER, 0);
 #endif
-	
+
 	s = splnet();
 retry:
 	unique = arc4random();
@@ -256,7 +256,7 @@ pppoe_clone_destroy(struct ifnet *ifp)
 	LIST_REMOVE(sc, sc_list);
 	timeout_del(&sc->sc_timeout);
 	splx(s);
-	
+
 	sppp_detach(&sc->sc_sppp.pp_if);
 	if_detach(ifp);
 
@@ -298,7 +298,7 @@ pppoe_find_softc_by_session(u_int session, u_int ifidx)
 	return (NULL);
 }
 
-/* 
+/*
  * Check host unique token passed and return appropriate softc pointer,
  * or NULL if token is bogus.
  */
@@ -574,7 +574,7 @@ breakbreak:
 			    sc->sc_sppp.pp_if.if_xname);
 			sc->sc_sppp.pp_if.if_mtu = PPPOE_MTU;
 		}
-		
+
 		memcpy(&sc->sc_dest, eh->ether_shost, sizeof(sc->sc_dest));
 		sc->sc_padr_retried = 0;
 		sc->sc_state = PPPOE_STATE_PADR_SENT;
@@ -584,12 +584,12 @@ breakbreak:
 		}
 		timeout_add(&sc->sc_timeout,
 		    PPPOE_DISC_TIMEOUT * (1 + sc->sc_padr_retried));
-		
+
 		break;
 	case PPPOE_CODE_PADS:
 		if (sc == NULL)
 			goto done;
-		
+
 		sc->sc_session = session;
 		timeout_del(&sc->sc_timeout);
 		PPPOEDEBUG(("%s: session 0x%x connected\n",
@@ -597,17 +597,17 @@ breakbreak:
 		sc->sc_state = PPPOE_STATE_SESSION;
 		microtime(&sc->sc_session_time);
 		sc->sc_sppp.pp_up(&sc->sc_sppp);	/* notify upper layers */
-		
+
 		break;
 	case PPPOE_CODE_PADT:
 		if (sc == NULL)
 			goto done;
-		
+
 		/* stop timer (we might be about to transmit a PADT ourself) */
 		timeout_del(&sc->sc_timeout);
 		PPPOEDEBUG(("%s: session 0x%x terminated, received PADT\n",
 		    sc->sc_sppp.pp_if.if_xname, session));
-		
+
 		/* clean up softc */
 		sc->sc_state = PPPOE_STATE_INITIAL;
 		memcpy(&sc->sc_dest, etherbroadcastaddr, sizeof(sc->sc_dest));
@@ -624,7 +624,7 @@ breakbreak:
 		sc->sc_session = 0;
 		sc->sc_session_time.tv_sec = 0;
 		sc->sc_session_time.tv_usec = 0;
-		sc->sc_sppp.pp_down(&sc->sc_sppp);	/* signal upper layer */ 
+		sc->sc_sppp.pp_down(&sc->sc_sppp);	/* signal upper layer */
 
 		break;
 	default:
@@ -778,7 +778,6 @@ pppoe_output(struct pppoe_softc *sc, struct mbuf *m)
 	/* encapsulated packet is forced into rdomain of physical interface */
 	m->m_pkthdr.ph_rtableid = eth_if->if_rdomain;
 
-	sc->sc_sppp.pp_if.if_opackets++;
 	ret = eth_if->if_output(eth_if, m, &dst, NULL);
 	if_put(eth_if);
 
@@ -958,7 +957,7 @@ pppoe_ioctl(struct ifnet *ifp, unsigned long cmd, caddr_t data)
 /*
  * Allocate a mbuf/cluster with space to store the given data length
  * of payload, leaving space for prepending an ethernet header
- * in front. 
+ * in front.
  */
 static struct mbuf *
 pppoe_get_mbuf(size_t len)
@@ -1056,9 +1055,11 @@ static void
 pppoe_timeout(void *arg)
 {
 	struct pppoe_softc *sc = (struct pppoe_softc *)arg;
-	int x, retry_wait, err;
+	int s, x, retry_wait, err;
 
 	PPPOEDEBUG(("%s: timeout\n", sc->sc_sppp.pp_if.if_xname));
+
+	NET_LOCK(s);
 
 	switch (sc->sc_state) {
 	case PPPOE_STATE_PADI_SENT:
@@ -1084,7 +1085,7 @@ pppoe_timeout(void *arg)
 			} else {
 				pppoe_abort_connect(sc);
 				splx(x);
-				return;
+				break;
 			}
 		}
 		if ((err = pppoe_send_padi(sc)) != 0) {
@@ -1094,7 +1095,7 @@ pppoe_timeout(void *arg)
 		}
 		timeout_add(&sc->sc_timeout, retry_wait);
 		splx(x);
-		
+
 		break;
 	case PPPOE_STATE_PADR_SENT:
 		x = splnet();
@@ -1111,7 +1112,7 @@ pppoe_timeout(void *arg)
 			timeout_add(&sc->sc_timeout,
 			    PPPOE_DISC_TIMEOUT * (1 + sc->sc_padi_retried));
 			splx(x);
-			return;
+			break;
 		}
 		if ((err = pppoe_send_padr(sc)) != 0) {
 			sc->sc_padr_retried--;
@@ -1121,14 +1122,16 @@ pppoe_timeout(void *arg)
 		timeout_add(&sc->sc_timeout,
 		    PPPOE_DISC_TIMEOUT * (1 + sc->sc_padr_retried));
 		splx(x);
-	
+
 		break;
 	case PPPOE_STATE_CLOSING:
 		pppoe_disconnect(sc);
 		break;
 	default:
-		return;	/* all done, work in peace */
+		break;	/* all done, work in peace */
 	}
+
+	NET_UNLOCK(s);
 }
 
 /* Start a connection (i.e. initiate discovery phase). */
@@ -1141,7 +1144,7 @@ pppoe_connect(struct pppoe_softc *sc)
 		return (EBUSY);
 
 	x = splnet();
-	
+
 	/* save state, in case we fail to send PADI */
 	sc->sc_state = PPPOE_STATE_PADI_SENT;
 	sc->sc_padr_retried = 0;
@@ -1149,10 +1152,10 @@ pppoe_connect(struct pppoe_softc *sc)
 	if (err != 0)
 		PPPOEDEBUG(("%s: failed to send PADI, error=%d\n",
 		    sc->sc_sppp.pp_if.if_xname, err));
-	
+
 	timeout_add(&sc->sc_timeout, PPPOE_DISC_TIMEOUT);
 	splx(x);
-	
+
 	return (err);
 }
 
@@ -1330,7 +1333,7 @@ static void
 pppoe_tls(struct sppp *sp)
 {
 	struct pppoe_softc *sc = (void *)sp;
-	
+
 	if (sc->sc_state != PPPOE_STATE_INITIAL)
 		return;
 	pppoe_connect(sc);
@@ -1341,7 +1344,7 @@ static void
 pppoe_tlf(struct sppp *sp)
 {
 	struct pppoe_softc *sc = (void *)sp;
-	
+
 	if (sc->sc_state < PPPOE_STATE_SESSION)
 		return;
 	/*

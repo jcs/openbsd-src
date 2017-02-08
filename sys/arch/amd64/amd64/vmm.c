@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.97 2016/11/15 11:25:38 jsg Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.111 2017/01/19 23:18:11 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -162,6 +162,9 @@ int vmx_handle_np_fault(struct vcpu *);
 const char *vcpu_state_decode(u_int);
 const char *vmx_exit_reason_decode(uint32_t);
 const char *vmx_instruction_error_decode(uint32_t);
+void svm_setmsrbr(struct vcpu *, uint32_t);
+void svm_setmsrbw(struct vcpu *, uint32_t);
+void svm_setmsrbrw(struct vcpu *, uint32_t);
 void vmx_setmsrbr(struct vcpu *, uint32_t);
 void vmx_setmsrbw(struct vcpu *, uint32_t);
 void vmx_setmsrbrw(struct vcpu *, uint32_t);
@@ -194,6 +197,13 @@ struct vmm_reg_debug_info {
 #endif /* VMM_DEBUG */
 
 const char *vmm_hv_signature = VMM_HV_SIGNATURE;
+
+const struct kmem_pa_mode vmm_kp_contig = {
+	.kp_constraint = &no_constraint,
+	.kp_maxseg = 1,
+	.kp_align = 4096,
+	.kp_zero = 1,
+};
 
 struct cfdriver vmm_cd = {
 	NULL, "vmm", DV_DULL
@@ -260,7 +270,7 @@ vmm_probe(struct device *parent, void *match, void *aux)
 	struct cpu_info *ci;
 	CPU_INFO_ITERATOR cii;
 	const char **busname = (const char **)aux;
-	int found_vmx, found_svm, vm_disabled;
+	int found_vmx, found_svm, vmm_disabled;
 
 	/* Check if this probe is for us */
 	if (strcmp(*busname, vmm_cd.cd_name) != 0)
@@ -268,7 +278,7 @@ vmm_probe(struct device *parent, void *match, void *aux)
 
 	found_vmx = 0;
 	found_svm = 0;
-	vm_disabled = 0;
+	vmm_disabled = 0;
 
 	/* Check if we have at least one CPU with either VMX or SVM */
 	CPU_INFO_FOREACH(cii, ci) {
@@ -277,7 +287,7 @@ vmm_probe(struct device *parent, void *match, void *aux)
 		if (ci->ci_vmm_flags & CI_VMM_SVM)
 			found_svm = 1;
 		if (ci->ci_vmm_flags & CI_VMM_DIS)
-			vm_disabled = 1;
+			vmm_disabled = 1;
 	}
 
 	/* Don't support both SVM and VMX at the same time */
@@ -287,8 +297,10 @@ vmm_probe(struct device *parent, void *match, void *aux)
 	/* SVM is not implemented yet */
 	if (found_vmx)
 		return 1;
-	if (vm_disabled)
+
+	if (vmm_disabled)
 		printf("vmm disabled by firmware\n");
+
 	return 0;
 }
 
@@ -1058,6 +1070,14 @@ vm_create(struct vm_create_params *vcp, struct proc *p)
  * vm_impl_init_vmx
  *
  * Intel VMX specific VM initialization routine
+ *
+ * Parameters:
+ *  vm: the VM being initialized
+ *   p: vmd process owning the VM
+ *
+ * Return values:
+ *  0: the initialization was successful
+ *  ENOMEM: the initialization failed (lack of resources)
  */
 int
 vm_impl_init_vmx(struct vm *vm, struct proc *p)
@@ -1129,12 +1149,71 @@ vm_impl_init_vmx(struct vm *vm, struct proc *p)
  * vm_impl_init_svm
  *
  * AMD SVM specific VM initialization routine
+ *
+ * Parameters:
+ *  vm: the VM being initialized
+ *   p: vmd process owning the VM
+ *
+ * Return values:
+ *  0: the initialization was successful
+ *  ENOMEM: the initialization failed (lack of resources)
  */
 int
 vm_impl_init_svm(struct vm *vm, struct proc *p)
 {
-	/* XXX removed due to rot */
-	return (-1);
+	int i, ret;
+	vaddr_t mingpa, maxgpa;
+	struct pmap *pmap;
+	struct vm_mem_range *vmr;
+
+	/* If not RVI, nothing to do here */
+	if (vmm_softc->mode != VMM_MODE_RVI)
+		return (0);
+
+	/* Create a new pmap for this VM */
+	pmap = pmap_create();
+	if (!pmap) {
+		printf("vm_impl_init_svm: pmap_create failed\n");
+		return (ENOMEM);
+	}
+
+	DPRINTF("%s: RVI pmap allocated @ %p\n", __func__, pmap);
+
+	/*
+	 * Create a new UVM map for this VM, and assign it the pmap just
+	 * created.
+	 */
+	vmr = &vm->vm_memranges[0];
+	mingpa = vmr->vmr_gpa;
+	vmr = &vm->vm_memranges[vm->vm_nmemranges - 1];
+	maxgpa = vmr->vmr_gpa + vmr->vmr_size;
+	vm->vm_map = uvm_map_create(pmap, mingpa, maxgpa,
+	    VM_MAP_ISVMSPACE | VM_MAP_PAGEABLE);
+
+	if (!vm->vm_map) {
+		printf("vm_impl_init_svm: uvm_map_create failed\n");
+		pmap_destroy(pmap);
+		return (ENOMEM);
+	}
+
+	/* Map the new map with an anon */
+	DPRINTF("vm_impl_init_svm: created vm_map @ %p\n", vm->vm_map);
+	for (i = 0; i < vm->vm_nmemranges; i++) {
+		vmr = &vm->vm_memranges[i];
+		ret = uvm_share(vm->vm_map, vmr->vmr_gpa,
+		    PROT_READ | PROT_WRITE | PROT_EXEC,
+		    &p->p_vmspace->vm_map, vmr->vmr_va, vmr->vmr_size);
+		if (ret) {
+			printf("vm_impl_init_svm: uvm_share failed (%d)\n",
+			    ret);
+			/* uvm_map_deallocate calls pmap_destroy for us */
+			uvm_map_deallocate(vm->vm_map);
+			vm->vm_map = NULL;
+			return (ENOMEM);
+		}
+	}
+
+	return (0);
 }
 
 /*
@@ -1213,7 +1292,6 @@ vcpu_reload_vmcs_vmx(uint64_t *vmcs)
 {
 	uint64_t old;
 
-	/* Flush any old state */
 	if (!vmptrst(&old)) {
 		if (old != 0xFFFFFFFFFFFFFFFFULL) {
 			if (vmclear(&old))
@@ -1363,7 +1441,8 @@ vcpu_writeregs_vmx(struct vcpu *vcpu, uint64_t regmask, int loadvmcs,
     struct vcpu_reg_state *vrs)
 {
 	int i, ret = 0;
-	uint64_t sel, limit, ar;
+	uint16_t sel;
+	uint64_t limit, ar;
 	uint64_t *gprs = vrs->vrs_gprs;
 	uint64_t *crs = vrs->vrs_crs;
 	struct vcpu_segment_info *sregs = vrs->vrs_sregs;
@@ -1451,24 +1530,296 @@ out:
 /*
  * vcpu_writeregs_svm
  *
- * XXX - unimplemented
+ * Writes 'vcpu's registers
+ *
+ * Parameters:
+ *  vcpu: the vcpu that has to get its registers written to
+ *  regmask: the types of registers to write
+ *  vrs: the register values to write
+ *
+ * Return values:
+ *  0: if successful
+ *  EINVAL an error writing registers occured
  */
 int
 vcpu_writeregs_svm(struct vcpu *vcpu, uint64_t regmask,
     struct vcpu_reg_state *vrs)
 {
+	uint64_t *gprs = vrs->vrs_gprs;
+	uint64_t *crs = vrs->vrs_crs;
+	struct vcpu_segment_info *sregs = vrs->vrs_sregs;
+	struct vmcb *vmcb = (struct vmcb *)vcpu->vc_control_va;
+
+	if (regmask & VM_RWREGS_GPRS) {
+		vcpu->vc_gueststate.vg_rax = gprs[VCPU_REGS_RAX];
+		vcpu->vc_gueststate.vg_rbx = gprs[VCPU_REGS_RBX];
+		vcpu->vc_gueststate.vg_rcx = gprs[VCPU_REGS_RCX];
+		vcpu->vc_gueststate.vg_rdx = gprs[VCPU_REGS_RDX];
+		vcpu->vc_gueststate.vg_rsi = gprs[VCPU_REGS_RSI];
+		vcpu->vc_gueststate.vg_rdi = gprs[VCPU_REGS_RDI];
+		vcpu->vc_gueststate.vg_r8 = gprs[VCPU_REGS_R8];
+		vcpu->vc_gueststate.vg_r9 = gprs[VCPU_REGS_R9];
+		vcpu->vc_gueststate.vg_r10 = gprs[VCPU_REGS_R10];
+		vcpu->vc_gueststate.vg_r11 = gprs[VCPU_REGS_R11];
+		vcpu->vc_gueststate.vg_r12 = gprs[VCPU_REGS_R12];
+		vcpu->vc_gueststate.vg_r13 = gprs[VCPU_REGS_R13];
+		vcpu->vc_gueststate.vg_r14 = gprs[VCPU_REGS_R14];
+		vcpu->vc_gueststate.vg_r15 = gprs[VCPU_REGS_R15];
+		vcpu->vc_gueststate.vg_rbp = gprs[VCPU_REGS_RBP];
+		vcpu->vc_gueststate.vg_rip = gprs[VCPU_REGS_RIP];
+
+		vmcb->v_rip = gprs[VCPU_REGS_RIP];
+		vmcb->v_rsp = gprs[VCPU_REGS_RSP];
+		vmcb->v_rflags = gprs[VCPU_REGS_RFLAGS];
+		DPRINTF("%s: set vcpu GPRs (rip=0x%llx rsp=0x%llx)\n",
+		    __func__, vmcb->v_rip, vmcb->v_rsp);
+	}
+
+	if (regmask & VM_RWREGS_SREGS) {
+		vmcb->v_cs.vs_sel = sregs[VCPU_REGS_CS].vsi_sel;
+		vmcb->v_cs.vs_lim = sregs[VCPU_REGS_CS].vsi_limit;
+		vmcb->v_cs.vs_attr = sregs[VCPU_REGS_CS].vsi_ar;
+		vmcb->v_cs.vs_base = sregs[VCPU_REGS_CS].vsi_base;
+		vmcb->v_ds.vs_sel = sregs[VCPU_REGS_DS].vsi_sel;
+		vmcb->v_ds.vs_lim = sregs[VCPU_REGS_DS].vsi_limit;
+		vmcb->v_ds.vs_attr = sregs[VCPU_REGS_DS].vsi_ar;
+		vmcb->v_ds.vs_base = sregs[VCPU_REGS_DS].vsi_base;
+		vmcb->v_es.vs_sel = sregs[VCPU_REGS_ES].vsi_sel;
+		vmcb->v_es.vs_lim = sregs[VCPU_REGS_ES].vsi_limit;
+		vmcb->v_es.vs_attr = sregs[VCPU_REGS_ES].vsi_ar;
+		vmcb->v_es.vs_base = sregs[VCPU_REGS_ES].vsi_base;
+		vmcb->v_fs.vs_sel = sregs[VCPU_REGS_FS].vsi_sel;
+		vmcb->v_fs.vs_lim = sregs[VCPU_REGS_FS].vsi_limit;
+		vmcb->v_fs.vs_attr = sregs[VCPU_REGS_FS].vsi_ar;
+		vmcb->v_fs.vs_base = sregs[VCPU_REGS_FS].vsi_base;
+		vmcb->v_gs.vs_sel = sregs[VCPU_REGS_GS].vsi_sel;
+		vmcb->v_gs.vs_lim = sregs[VCPU_REGS_GS].vsi_limit;
+		vmcb->v_gs.vs_attr = sregs[VCPU_REGS_GS].vsi_ar;
+		vmcb->v_gs.vs_base = sregs[VCPU_REGS_GS].vsi_base;
+		vmcb->v_ss.vs_sel = sregs[VCPU_REGS_SS].vsi_sel;
+		vmcb->v_ss.vs_lim = sregs[VCPU_REGS_SS].vsi_limit;
+		vmcb->v_ss.vs_attr = sregs[VCPU_REGS_SS].vsi_ar;
+		vmcb->v_ss.vs_base = sregs[VCPU_REGS_SS].vsi_base;
+		vmcb->v_ldtr.vs_sel = sregs[VCPU_REGS_LDTR].vsi_sel;
+		vmcb->v_ldtr.vs_lim = sregs[VCPU_REGS_LDTR].vsi_limit;
+		vmcb->v_ldtr.vs_attr = sregs[VCPU_REGS_LDTR].vsi_ar;
+		vmcb->v_ldtr.vs_base = sregs[VCPU_REGS_LDTR].vsi_base;
+		vmcb->v_tr.vs_sel = sregs[VCPU_REGS_TR].vsi_sel;
+		vmcb->v_tr.vs_lim = sregs[VCPU_REGS_TR].vsi_limit;
+		vmcb->v_tr.vs_attr = sregs[VCPU_REGS_TR].vsi_ar;
+		vmcb->v_tr.vs_base = sregs[VCPU_REGS_TR].vsi_base;
+		vmcb->v_gdtr.vs_lim = vrs->vrs_gdtr.vsi_limit;
+		vmcb->v_gdtr.vs_base = vrs->vrs_gdtr.vsi_base;
+		vmcb->v_idtr.vs_lim = vrs->vrs_idtr.vsi_limit;
+		vmcb->v_idtr.vs_base = vrs->vrs_idtr.vsi_base;
+
+		DPRINTF("%s: set vcpu seg regs (gdt.base=0x%llx, "
+		    "cs.sel=0x%llx)\n", __func__, vmcb->v_gdtr.vs_base,
+		    (uint64_t)vmcb->v_cs.vs_sel);
+	}
+
+	if (regmask & VM_RWREGS_CRS) {
+		vmcb->v_cr0 = crs[VCPU_REGS_CR0];
+		vmcb->v_cr3 = crs[VCPU_REGS_CR3];
+		vmcb->v_cr4 = crs[VCPU_REGS_CR4];
+
+		DPRINTF("%s: set vcpu CRs (cr0=0x%llx cr3=0x%llx "
+		    "cr4=0x%llx)\n", __func__, vmcb->v_cr0, vmcb->v_cr3,
+		    vmcb->v_cr4);
+	}
+
 	return (0);
 }
 
 /*
  * vcpu_reset_regs_svm
  *
- * XXX - unimplemented
+ * Initializes 'vcpu's registers to supplied state
+ *
+ * Parameters:
+ *  vcpu: the vcpu whose register state is to be initialized
+ *  vrs: the register state to set
+ * 
+ * Return values:
+ *  0: registers init'ed successfully
+ *  EINVAL: an error occurred setting register state
  */
 int
 vcpu_reset_regs_svm(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 {
-	return (0);
+	struct vmcb *vmcb;
+	int ret;
+
+	vmcb = (struct vmcb *)vcpu->vc_control_va;
+
+	/*
+	 * Intercept controls
+	 *
+	 * External Interrupt exiting (SVM_INTERCEPT_INTR)
+	 * External NMI exiting (SVM_INTERCEPT_NMI)
+	 * CPUID instruction (SVM_INTERCEPT_CPUID)
+	 * HLT instruction (SVM_INTERCEPT_HLT)
+	 * I/O instructions (SVM_INTERCEPT_INOUT)
+	 * MSR access (SVM_INTERCEPT_MSR)
+	 *
+	 * VMRUN instruction (SVM_INTERCEPT_VMRUN)
+	 * VMMCALL instruction (SVM_INTERCEPT_VMMCALL)
+	 * VMLOAD instruction (SVM_INTERCEPT_VMLOAD)
+	 * VMSAVE instruction (SVM_INTERCEPT_VMSAVE)
+	 * STGI instruction (SVM_INTERCEPT_STGI)
+	 * CLGI instruction (SVM_INTERCEPT_CLGI)
+	 * SKINIT instruction (SVM_INTERCEPT_SKINIT)
+	 * ICEBP instruction (SVM_INTERCEPT_ICEBP)
+	 * MWAIT instruction (SVM_INTERCEPT_MWAIT_UNCOND)
+	 */
+	vmcb->v_intercept1 = SVM_INTERCEPT_INTR | SVM_INTERCEPT_NMI |
+	    SVM_INTERCEPT_CPUID | SVM_INTERCEPT_HLT | SVM_INTERCEPT_INOUT |
+	    SVM_INTERCEPT_MSR;
+
+	vmcb->v_intercept2 = SVM_INTERCEPT_VMRUN | SVM_INTERCEPT_VMMCALL |
+	    SVM_INTERCEPT_VMLOAD | SVM_INTERCEPT_VMSAVE | SVM_INTERCEPT_STGI |
+	    SVM_INTERCEPT_CLGI | SVM_INTERCEPT_SKINIT | SVM_INTERCEPT_ICEBP |
+	    SVM_INTERCEPT_MWAIT_UNCOND;
+
+	/* Setup I/O bitmap */
+	memset((uint8_t *)vcpu->vc_svm_ioio_va, 0xFF, 3 * PAGE_SIZE);
+	vmcb->v_iopm_pa = (uint64_t)(vcpu->vc_svm_ioio_pa);
+
+	/* Setup MSR bitmap */
+	memset((uint8_t *)vcpu->vc_msr_bitmap_va, 0xFF, 2 * PAGE_SIZE);
+	vmcb->v_iopm_pa = (uint64_t)(vcpu->vc_msr_bitmap_pa);
+	svm_setmsrbrw(vcpu, MSR_IA32_FEATURE_CONTROL);
+	svm_setmsrbrw(vcpu, MSR_SYSENTER_CS);
+	svm_setmsrbrw(vcpu, MSR_SYSENTER_ESP);
+	svm_setmsrbrw(vcpu, MSR_SYSENTER_EIP);
+	svm_setmsrbrw(vcpu, MSR_EFER);
+	svm_setmsrbrw(vcpu, MSR_STAR);
+	svm_setmsrbrw(vcpu, MSR_LSTAR);
+	svm_setmsrbrw(vcpu, MSR_CSTAR);
+	svm_setmsrbrw(vcpu, MSR_SFMASK);
+	svm_setmsrbrw(vcpu, MSR_FSBASE);
+	svm_setmsrbrw(vcpu, MSR_GSBASE);
+	svm_setmsrbrw(vcpu, MSR_KERNELGSBASE);
+
+	/* Guest VCPU ASID */
+	vmcb->v_asid = vcpu->vc_parent->vm_id;
+
+	/* TLB Control */
+	vmcb->v_tlb_control = 2;	/* Flush this guest's TLB entries */
+
+	/* NPT */
+	if (vmm_softc->mode == VMM_MODE_RVI) {
+		vmcb->v_np_enable = 1;
+		vmcb->v_n_cr3 = vcpu->vc_parent->vm_map->pmap->pm_pdirpa;
+	}
+
+	ret = vcpu_writeregs_svm(vcpu, VM_RWREGS_ALL, vrs);
+
+	return ret;
+}
+
+/*
+ * svm_setmsrbr
+ *
+ * Allow read access to the specified msr on the supplied vcpu.
+ *
+ * Parameters:
+ *  vcpu: the VCPU to allow access
+ *  msr: the MSR number to allow access to
+ */
+void
+svm_setmsrbr(struct vcpu *vcpu, uint32_t msr)
+{
+	uint8_t *msrs;
+	uint16_t idx;
+
+	msrs = (uint8_t *)vcpu->vc_msr_bitmap_va;
+
+	/*
+	 * MSR Read bitmap layout:
+	 * Pentium MSRs (0x0 - 0x1fff) @ 0x0
+	 * Gen6 and Syscall MSRs (0xc0000000 - 0xc0001fff) @ 0x800
+	 * Gen7 and Gen8 MSRs (0xc0010000 - 0xc0011fff) @ 0x1000
+	 *
+	 * Read enable bit is low order bit of 2-bit pair
+	 * per MSR (eg, MSR 0x0 write bit is at bit 0 @ 0x0)
+	 */
+	if (msr <= 0x1fff) {
+		idx = SVM_MSRIDX(msr);
+		msrs[idx] &= ~(SVM_MSRBIT_R(msr));
+	} else if (msr >= 0xc0000000 && msr <= 0xc0001fff) {
+		idx = SVM_MSRIDX(msr - 0xc0000000) + 0x800;
+		msrs[idx] &= ~(SVM_MSRBIT_R(msr - 0xc0000000));
+	} else if (msr >= 0xc0010000 && msr <= 0xc0011fff) {
+		idx = SVM_MSRIDX(msr - 0xc0010000) + 0x1000;
+		msrs[idx] &= ~(SVM_MSRBIT_R(msr - 0xc0000000));
+	} else {
+		printf("%s: invalid msr 0x%x\n", __func__, msr);
+		return;
+	}
+
+	DPRINTF("%s: set msr read bitmap, msr=0x%x, idx=0x%x, "
+	    "msrs[0x%x]=0x%x\n", __func__, msr, idx, idx, msrs[idx]);
+}
+
+/*
+ * svm_setmsrbw
+ *
+ * Allow write access to the specified msr on the supplied vcpu
+ *
+ * Parameters:
+ *  vcpu: the VCPU to allow access
+ *  msr: the MSR number to allow access to
+ */
+void
+svm_setmsrbw(struct vcpu *vcpu, uint32_t msr)
+{
+	uint8_t *msrs;
+	uint16_t idx;
+
+	msrs = (uint8_t *)vcpu->vc_msr_bitmap_va;
+
+	/*
+	 * MSR Write bitmap layout:
+	 * Pentium MSRs (0x0 - 0x1fff) @ 0x0
+	 * Gen6 and Syscall MSRs (0xc0000000 - 0xc0001fff) @ 0x800
+	 * Gen7 and Gen8 MSRs (0xc0010000 - 0xc0011fff) @ 0x1000
+	 *
+	 * Write enable bit is high order bit of 2-bit pair
+	 * per MSR (eg, MSR 0x0 write bit is at bit 1 @ 0x0)
+	 */
+	if (msr <= 0x1fff) {
+		idx = SVM_MSRIDX(msr);
+		msrs[idx] &= ~(SVM_MSRBIT_W(msr));
+	} else if (msr >= 0xc0000000 && msr <= 0xc0001fff) {
+		idx = SVM_MSRIDX(msr - 0xc0000000) + 0x800;
+		msrs[idx] &= ~(SVM_MSRBIT_W(msr - 0xc0000000));
+	} else if (msr >= 0xc0010000 && msr <= 0xc0011fff) {
+		idx = SVM_MSRIDX(msr - 0xc0000000) + 0x1000;
+		msrs[idx] &= ~(SVM_MSRBIT_W(msr - 0xc0010000));
+	} else {
+		printf("%s: invalid msr 0x%x\n", __func__, msr);
+		return;
+	}
+
+	DPRINTF("%s: set msr write bitmap, msr=0x%x, idx=0x%x, "
+	    "msrs[0x%x]=0x%x\n", __func__, msr, idx, idx, msrs[idx]);
+}
+
+/*
+ * svm_setmsrbrw
+ *
+ * Allow read/write access to the specified msr on the supplied vcpu
+ *
+ * Parameters:
+ *  vcpu: the VCPU to allow access
+ *  msr: the MSR number to allow access to
+ */
+void
+svm_setmsrbrw(struct vcpu *vcpu, uint32_t msr)
+{
+	svm_setmsrbr(vcpu, msr);
+	svm_setmsrbw(vcpu, msr);
 }
 
 /*
@@ -1494,11 +1845,11 @@ vmx_setmsrbr(struct vcpu *vcpu, uint32_t msr)
 	 * "High" MSRs (0xc0000000 - 0xc0001fff) @ 0x400
 	 */
 	if (msr <= 0x1fff) {
-		idx = MSRIDX(msr);
-		msrs[idx] &= ~(MSRBIT(msr));
+		idx = VMX_MSRIDX(msr);
+		msrs[idx] &= ~(VMX_MSRBIT(msr));
 	} else if (msr >= 0xc0000000 && msr <= 0xc0001fff) {
-		idx = MSRIDX(msr - 0xc0000000) + 0x400;
-		msrs[idx] &= ~(MSRBIT(msr - 0xc0000000));
+		idx = VMX_MSRIDX(msr - 0xc0000000) + 0x400;
+		msrs[idx] &= ~(VMX_MSRBIT(msr - 0xc0000000));
 	} else
 		printf("%s: invalid msr 0x%x\n", __func__, msr);
 }
@@ -1526,11 +1877,11 @@ vmx_setmsrbw(struct vcpu *vcpu, uint32_t msr)
 	 * "High" MSRs (0xc0000000 - 0xc0001fff) @ 0xc00
 	 */
 	if (msr <= 0x1fff) {
-		idx = MSRIDX(msr) + 0x800;
-		msrs[idx] &= ~(MSRBIT(msr));
+		idx = VMX_MSRIDX(msr) + 0x800;
+		msrs[idx] &= ~(VMX_MSRBIT(msr));
 	} else if (msr >= 0xc0000000 && msr <= 0xc0001fff) {
-		idx = MSRIDX(msr - 0xc0000000) + 0xc00;
-		msrs[idx] &= ~(MSRBIT(msr - 0xc0000000));
+		idx = VMX_MSRIDX(msr - 0xc0000000) + 0xc00;
+		msrs[idx] &= ~(VMX_MSRBIT(msr - 0xc0000000));
 	} else
 		printf("%s: invalid msr 0x%x\n", __func__, msr);
 }
@@ -1602,7 +1953,6 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	if (vcpu_vmx_check_cap(vcpu, IA32_VMX_PROCBASED_CTLS,
 	    IA32_VMX_ACTIVATE_SECONDARY_CONTROLS, 1))
 		vcpu->vc_vmx_procbased2_ctls = rdmsr(IA32_VMX_PROCBASED2_CTLS);
-
 
 	/*
 	 * Pinbased ctrls
@@ -1806,6 +2156,10 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 		if (msr & IA32_EPT_VPID_CAP_PAGE_WALK_4) {
 			/* Page walk length 4 supported */
 			eptp |= ((IA32_EPT_PAGE_WALK_LENGTH - 1) << 3);
+		} else {
+			DPRINTF("EPT page walk length 4 not supported");
+			ret = EINVAL;
+			goto exit;
 		}
 
 		if (msr & IA32_EPT_VPID_CAP_WB) {
@@ -2004,7 +2358,6 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	vmx_setmsrbrw(vcpu, MSR_FSBASE);
 	vmx_setmsrbrw(vcpu, MSR_GSBASE);
 	vmx_setmsrbrw(vcpu, MSR_KERNELGSBASE);
-	
 
 	/* XXX CR0 shadow */
 	/* XXX CR4 shadow */
@@ -2026,6 +2379,14 @@ exit:
  *
  * This function allocates various per-VCPU memory regions, sets up initial
  * VCPU VMCS controls, and sets initial register values.
+ *
+ * Parameters:
+ *  vcpu: the VCPU structure being initialized
+ *
+ * Return values:
+ *  0: the VCPU was initialized successfully
+ *  ENOMEM: insufficient resources
+ *  EINVAL: an error occurred during VCPU initialization
  */
 int
 vcpu_init_vmx(struct vcpu *vcpu)
@@ -2247,12 +2608,121 @@ vcpu_reset_regs(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
  * vcpu_init_svm
  *
  * AMD SVM specific VCPU initialization routine.
+ *
+ * This function allocates various per-VCPU memory regions, sets up initial
+ * VCPU VMCB controls, and sets initial register values.
+ *
+ * Parameters:
+ *  vcpu: the VCPU structure being initialized
+ *
+ * Return values:
+ *  0: the VCPU was initialized successfully
+ *  ENOMEM: insufficient resources
+ *  EINVAL: an error occurred during VCPU initialization
  */
 int
 vcpu_init_svm(struct vcpu *vcpu)
 {
-	/* XXX removed due to rot */
-	return (0);
+	int ret;
+
+	ret = 0;
+
+	/* Allocate VMCB VA */
+	vcpu->vc_control_va = (vaddr_t)km_alloc(PAGE_SIZE, &kv_page, &kp_zero,
+	    &kd_waitok);
+
+	if (!vcpu->vc_control_va)
+		return (ENOMEM);
+
+	/* Compute VMCB PA */
+	if (!pmap_extract(pmap_kernel(), vcpu->vc_control_va,
+	    (paddr_t *)&vcpu->vc_control_pa)) {
+		ret = ENOMEM;
+		goto exit;
+	}
+
+	DPRINTF("%s: VMCB va @ 0x%llx, pa @ 0x%llx\n", __func__,
+	    (uint64_t)vcpu->vc_control_va,
+	    (uint64_t)vcpu->vc_control_pa);
+
+
+	/* Allocate MSR bitmap VA (2 pages) */
+	vcpu->vc_msr_bitmap_va = (vaddr_t)km_alloc(2 * PAGE_SIZE, &kv_any,
+	    &vmm_kp_contig, &kd_waitok);
+
+	if (!vcpu->vc_msr_bitmap_va) {
+		ret = ENOMEM;
+		goto exit;
+	}
+
+	/* Compute MSR bitmap PA */
+	if (!pmap_extract(pmap_kernel(), vcpu->vc_msr_bitmap_va,
+	    (paddr_t *)&vcpu->vc_msr_bitmap_pa)) {
+		ret = ENOMEM;
+		goto exit;
+	}
+
+	DPRINTF("%s: MSR bitmap va @ 0x%llx, pa @ 0x%llx\n", __func__,
+	    (uint64_t)vcpu->vc_msr_bitmap_va,
+	    (uint64_t)vcpu->vc_msr_bitmap_pa);
+
+	/* Allocate host state area VA */
+	vcpu->vc_svm_hsa_va = (vaddr_t)km_alloc(PAGE_SIZE, &kv_page,
+	   &kp_zero, &kd_waitok);
+
+	if (!vcpu->vc_svm_hsa_va) {
+		ret = ENOMEM;
+		goto exit;
+	}
+
+	/* Compute host state area PA */
+	if (!pmap_extract(pmap_kernel(), vcpu->vc_svm_hsa_va,
+	    &vcpu->vc_svm_hsa_pa)) {
+		ret = ENOMEM;
+		goto exit;
+	}
+
+	DPRINTF("%s: HSA va @ 0x%llx, pa @ 0x%llx\n", __func__,
+	    (uint64_t)vcpu->vc_svm_hsa_va,
+	    (uint64_t)vcpu->vc_svm_hsa_pa);
+
+	/* Allocate IOIO area VA (3 pages) */
+	vcpu->vc_svm_ioio_va = (vaddr_t)km_alloc(3 * PAGE_SIZE, &kv_any,
+	   &vmm_kp_contig, &kd_waitok);
+
+	if (!vcpu->vc_svm_ioio_va) {
+		ret = ENOMEM;
+		goto exit;
+	}
+
+	/* Compute IOIO area PA */
+	if (!pmap_extract(pmap_kernel(), vcpu->vc_svm_ioio_va,
+	    &vcpu->vc_svm_ioio_pa)) {
+		ret = ENOMEM;
+		goto exit;
+	}
+
+	DPRINTF("%s: IOIO va @ 0x%llx, pa @ 0x%llx\n", __func__,
+	    (uint64_t)vcpu->vc_svm_ioio_va,
+	    (uint64_t)vcpu->vc_svm_ioio_pa);
+
+exit:
+	if (ret) {
+		if (vcpu->vc_control_va)
+			km_free((void *)vcpu->vc_control_va, PAGE_SIZE,
+			    &kv_page, &kp_zero);
+		if (vcpu->vc_msr_bitmap_va)
+			km_free((void *)vcpu->vc_msr_bitmap_va, 2 * PAGE_SIZE,
+			    &kv_any, &vmm_kp_contig);
+		if (vcpu->vc_svm_hsa_va)
+			km_free((void *)vcpu->vc_svm_hsa_va, PAGE_SIZE,
+			    &kv_page, &kp_zero);
+		if (vcpu->vc_svm_ioio_va)
+			km_free((void *)vcpu->vc_svm_ioio_va,
+			    3 * PAGE_SIZE, &kv_any, &vmm_kp_contig);
+	}
+
+	return (ret);
 }
 
 /*
@@ -2265,11 +2735,6 @@ vcpu_init(struct vcpu *vcpu)
 {
 	int ret = 0;
 
-	vcpu->vc_hsa_stack_va = (vaddr_t)malloc(PAGE_SIZE, M_DEVBUF,
-	    M_NOWAIT|M_ZERO);
-	if (!vcpu->vc_hsa_stack_va)
-		return (ENOMEM);
-
 	vcpu->vc_virt_mode = vmm_softc->mode;
 	vcpu->vc_state = VCPU_STATE_STOPPED;
 	if (vmm_softc->mode == VMM_MODE_VMX ||
@@ -2281,9 +2746,6 @@ vcpu_init(struct vcpu *vcpu)
 	else
 		panic("unknown vmm mode\n");
 
-	if (ret)
-		free((void *)vcpu->vc_hsa_stack_va, M_DEVBUF, PAGE_SIZE);
-
 	return (ret);
 }
 
@@ -2291,6 +2753,9 @@ vcpu_init(struct vcpu *vcpu)
  * vcpu_deinit_vmx
  *
  * Deinitializes the vcpu described by 'vcpu'
+ *
+ * Parameters:
+ *  vcpu: the vcpu to be deinited
  */
 void
 vcpu_deinit_vmx(struct vcpu *vcpu)
@@ -2307,25 +2772,40 @@ vcpu_deinit_vmx(struct vcpu *vcpu)
 	if (vcpu->vc_vmx_msr_entry_load_va)
 		km_free((void *)vcpu->vc_vmx_msr_entry_load_va,
 		    PAGE_SIZE, &kv_page, &kp_zero);
-	if (vcpu->vc_hsa_stack_va)
-		free((void *)vcpu->vc_hsa_stack_va, M_DEVBUF, PAGE_SIZE);
 }
 
 /*
  * vcpu_deinit_svm
  *
  * Deinitializes the vcpu described by 'vcpu'
+ *
+ * Parameters:
+ *  vcpu: the vcpu to be deinited
  */
 void
 vcpu_deinit_svm(struct vcpu *vcpu)
 {
-	/* Unused */
+	if (vcpu->vc_control_va)
+		km_free((void *)vcpu->vc_control_va, PAGE_SIZE, &kv_page,
+		    &kp_zero);
+	if (vcpu->vc_msr_bitmap_va)
+		km_free((void *)vcpu->vc_msr_bitmap_va, 2 * PAGE_SIZE, &kv_any,
+		    &vmm_kp_contig);
+	if (vcpu->vc_svm_hsa_va)
+		km_free((void *)vcpu->vc_svm_hsa_va, PAGE_SIZE, &kv_page,
+		    &kp_zero);
+	if (vcpu->vc_svm_ioio_va)
+		km_free((void *)vcpu->vc_svm_ioio_va, 3 * PAGE_SIZE, &kv_any,
+		    &vmm_kp_contig);
 }
 
 /*
  * vcpu_deinit
  *
  * Calls the architecture-specific VCPU deinit routine
+ *
+ * Parameters:
+ *  vcpu: the vcpu to be deinited
  */
 void
 vcpu_deinit(struct vcpu *vcpu)
@@ -3766,8 +4246,8 @@ vmx_handle_cpuid(struct vcpu *vcpu)
 	case 0x01:	/* Version, brand, feature info */
 		*rax = cpu_id;
 		/* mask off host's APIC ID, reset to vcpu id */
-		*rbx = cpu_ebxfeature & 0x00FFFFFF;
-		*rbx &= (vcpu->vc_id & 0xFF) << 24;
+		*rbx = cpu_ebxfeature & 0x0000FFFF;
+		*rbx |= (vcpu->vc_id & 0xFF) << 24;
 		/*
 		 * clone host capabilities minus:
 		 *  debug store (CPUIDECX_DTES64, CPUIDECX_DSCPL, CPUID_DS)

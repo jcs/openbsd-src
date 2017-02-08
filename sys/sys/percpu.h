@@ -1,4 +1,4 @@
-/*	$OpenBSD: percpu.h,v 1.4 2016/11/14 03:26:31 dlg Exp $ */
+/*	$OpenBSD: percpu.h,v 1.6 2017/02/05 16:23:38 jca Exp $ */
 
 /*
  * Copyright (c) 2016 David Gwynne <dlg@openbsd.org>
@@ -110,9 +110,9 @@ static struct {								\
  * per cpu counters
  */
 
-struct cpumem	*counters_alloc(unsigned int, int);
-struct cpumem	*counters_alloc_ncpus(struct cpumem *, unsigned int, int);
-void		 counters_free(struct cpumem *, int, unsigned int);
+struct cpumem	*counters_alloc(unsigned int);
+struct cpumem	*counters_alloc_ncpus(struct cpumem *, unsigned int);
+void		 counters_free(struct cpumem *, unsigned int);
 void		 counters_read(struct cpumem *, uint64_t *, unsigned int);
 void		 counters_zero(struct cpumem *, unsigned int);
 
@@ -122,6 +122,7 @@ counters_enter(struct counters_ref *ref, struct cpumem *cm)
 	ref->c = cpumem_enter(cm);
 #ifdef MULTIPROCESSOR
 	ref->g = ++(*ref->c); /* make the generation number odd */
+	membar_producer();
 	return (ref->c + 1);
 #else
 	return (ref->c);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: control.c,v 1.13 2016/01/17 08:13:34 landry Exp $	*/
+/*	$OpenBSD: control.c,v 1.15 2017/01/20 11:55:08 benno Exp $	*/
 
 /*
  * Copyright (c) 2010 Martin Hedenfalk <martin@bzero.se>
@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #include "ldapd.h"
+#include "log.h"
 
 #define	CONTROL_BACKLOG	5
 
@@ -163,9 +164,10 @@ control_connbyfd(int fd)
 {
 	struct ctl_conn	*c;
 
-	for (c = TAILQ_FIRST(&ctl_conns); c != NULL && c->iev.ibuf.fd != fd;
-	    c = TAILQ_NEXT(c, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(c, &ctl_conns, entry) {
+		if (c->iev.ibuf.fd == fd)
+			break;
+	}
 
 	return (c);
 }

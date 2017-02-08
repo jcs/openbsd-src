@@ -343,16 +343,8 @@ hv_heartbeat(void *arg)
 static void
 hv_shutdown_task(void *arg)
 {
-	extern int allowpowerdown;
-
-	if (allowpowerdown == 0)
-		return;
-
-	suspend_randomness();
-
-	log(LOG_KERN | LOG_NOTICE, "Shutting down in response to "
-	    "request from Hyper-V host\n");
-	prsignal(initprocess, SIGUSR2);
+	struct hv_softc *sc = arg;
+	pvbus_shutdown(&sc->sc_dev);
 }
 
 int
@@ -485,8 +477,7 @@ hv_timesync(void *arg)
 		break;
 	case VMBUS_ICMSG_TYPE_TIMESYNC:
 		msg = (struct vmbus_icmsg_timesync *)hdr;
-		if (msg->ic_tsflags == VMBUS_ICMSG_TS_FLAG_SYNC ||
-		    msg->ic_tsflags == VMBUS_ICMSG_TS_FLAG_SAMPLE) {
+		if (msg->ic_tsflags == VMBUS_ICMSG_TS_FLAG_SAMPLE) {
 			microtime(&sc->sc_sensor.tv);
 			nanotime(&guest);
 			tns = (msg->ic_hvtime - 116444736000000000LL) * 100;

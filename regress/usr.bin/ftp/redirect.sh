@@ -1,5 +1,5 @@
 #!/bin/sh
-#	$OpenBSD: redirect.sh,v 1.2 2016/09/28 11:46:45 bluhm Exp $
+#	$OpenBSD: redirect.sh,v 1.6 2017/01/23 23:10:35 bluhm Exp $
 
 : ${FTP:=ftp}
 
@@ -13,14 +13,20 @@ req2=$3
 echo "Testing $req1 => $loc => $req2"
 
 # Be sure to kill any previous nc running on our port
-while pkill -fx "nc -l $rport1" && sleep 1; do done
+while pkill -fx "nc -4 -l $rport1" && sleep 1; do done
 
-echo "HTTP/1.0 302 Found\r\nLocation: $loc\r\n\r" | nc -l $rport1 >/dev/null &
+echo "HTTP/1.0 302 Found\r\nLocation: $loc\r\n\r" | \
+     nc -4 -l $rport1 >/dev/null &
 
-# Give the "server" some time to start
-sleep .1
+# Wait for the "server" to start
+until fstat | egrep 'nc[ ]+.*tcp 0x[0-9a-f]* \*:9000' > /dev/null; do
+	sleep .1
+done
 
-res=$(${FTP} -o/dev/null $req1 2>&1 | sed '/^Redirected to /{s///;x;};$!d;x')
+unset http_proxy
+
+res=$(${FTP} -4 -o/dev/null -v $req1 2>&1 | \
+    sed '/^Redirected to /{s///;x;};$!d;x')
 
 if [ X"$res" != X"$req2" ]; then
 	echo "*** Fail; expected \"$req2\", got \"$res\""

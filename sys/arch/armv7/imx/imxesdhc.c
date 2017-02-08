@@ -1,4 +1,4 @@
-/*	$OpenBSD: imxesdhc.c,v 1.34 2016/09/05 12:45:44 mglocker Exp $	*/
+/*	$OpenBSD: imxesdhc.c,v 1.36 2017/01/21 05:42:03 guenther Exp $	*/
 /*
  * Copyright (c) 2009 Dale Rahn <drahn@openbsd.org>
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -31,10 +31,8 @@
 #include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmcvar.h>
 
-#include <armv7/armv7/armv7var.h>
-#include <armv7/imx/imxccmvar.h>
-
 #include <dev/ofw/openfirm.h>
+#include <dev/ofw/ofw_clock.h>
 #include <dev/ofw/ofw_gpio.h>
 #include <dev/ofw/ofw_pinctrl.h>
 #include <dev/ofw/ofw_regulator.h>
@@ -185,7 +183,6 @@ struct imxesdhc_softc {
 	uint32_t		 sc_vdd;
 	u_int sc_flags;
 
-	int			 unit;		/* unit id */
 	struct device		*sdmmc;		/* generic SD/MMC device */
 	int			 clockbit;	/* clock control bit */
 	u_int			 clkbase;	/* base clock freq. in KHz */
@@ -301,7 +298,6 @@ imxesdhc_attach(struct device *parent, struct device *self, void *aux)
 	if (faa->fa_nreg < 1)
 		return;
 
-	sc->unit = (faa->fa_reg[0].addr & 0xc000) >> 14;
 	sc->sc_node = faa->fa_node;
 	sc->sc_dmat = faa->fa_dmat;
 	sc->sc_iot = faa->fa_iot;
@@ -339,7 +335,7 @@ imxesdhc_attach(struct device *parent, struct device *self, void *aux)
 	/*
 	 * Determine the base clock frequency. (2.2.24)
 	 */
-	sc->clkbase = imxccm_get_usdhx(sc->unit + 1);
+	sc->clkbase = clock_get_frequency(faa->fa_node, "per");
 
 	printf("%s: %d MHz base clock\n", DEVNAME(sc), sc->clkbase / 1000);
 
@@ -861,7 +857,7 @@ imxesdhc_start_command(struct imxesdhc_softc *sc, struct sdmmc_command *cmd)
 	DPRINTF(1,("%s: start cmd %u arg=%#x data=%p dlen=%d flags=%#x "
 	    "proc=\"%s\"\n", HDEVNAME(sc), cmd->c_opcode, cmd->c_arg,
 	    cmd->c_data, cmd->c_datalen, cmd->c_flags, curproc ?
-	    curproc->p_comm : ""));
+	    curproc->p_p->ps_comm : ""));
 
 	/*
 	 * The maximum block length for commands should be the minimum

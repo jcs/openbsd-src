@@ -1,4 +1,4 @@
-/* $OpenBSD: bn_sqrt.c,v 1.7 2016/11/08 01:40:22 guenther Exp $ */
+/* $OpenBSD: bn_sqrt.c,v 1.9 2017/01/29 17:49:22 beck Exp $ */
 /* Written by Lenka Fibikova <fibikova@exp-math.uni-essen.de>
  * and Bodo Moeller for the OpenSSL project. */
 /* ====================================================================
@@ -89,7 +89,7 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 			return ret;
 		}
 
-		BNerr(BN_F_BN_MOD_SQRT, BN_R_P_IS_NOT_PRIME);
+		BNerror(BN_R_P_IS_NOT_PRIME);
 		return (NULL);
 	}
 
@@ -149,7 +149,7 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 		q->neg = 0;
 		if (!BN_add_word(q, 1))
 			goto end;
-		if (!BN_mod_exp(ret, A, q, p, ctx))
+		if (!BN_mod_exp_ct(ret, A, q, p, ctx))
 			goto end;
 		err = 0;
 		goto vrfy;
@@ -190,7 +190,7 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 		if (!BN_rshift(q, p, 3))
 			goto end;
 		q->neg = 0;
-		if (!BN_mod_exp(b, t, q, p, ctx))
+		if (!BN_mod_exp_ct(b, t, q, p, ctx))
 			goto end;
 
 		/* y := b^2 */
@@ -250,7 +250,7 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 			goto end;
 		if (r == 0) {
 			/* m divides p */
-			BNerr(BN_F_BN_MOD_SQRT, BN_R_P_IS_NOT_PRIME);
+			BNerror(BN_R_P_IS_NOT_PRIME);
 			goto end;
 		}
 	}
@@ -262,7 +262,7 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 		 * Even if  p  is not prime, we should have found some  y
 		 * such that r == -1.
 		 */
-		BNerr(BN_F_BN_MOD_SQRT, BN_R_TOO_MANY_ITERATIONS);
+		BNerror(BN_R_TOO_MANY_ITERATIONS);
 		goto end;
 	}
 
@@ -272,10 +272,10 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 
 	/* Now that we have some non-square, we can find an element
 	 * of order  2^e  by computing its q'th power. */
-	if (!BN_mod_exp(y, y, q, p, ctx))
+	if (!BN_mod_exp_ct(y, y, q, p, ctx))
 		goto end;
 	if (BN_is_one(y)) {
-		BNerr(BN_F_BN_MOD_SQRT, BN_R_P_IS_NOT_PRIME);
+		BNerror(BN_R_P_IS_NOT_PRIME);
 		goto end;
 	}
 
@@ -314,7 +314,7 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 		} else if (!BN_one(x))
 			goto end;
 	} else {
-		if (!BN_mod_exp(x, A, t, p, ctx))
+		if (!BN_mod_exp_ct(x, A, t, p, ctx))
 			goto end;
 		if (BN_is_zero(x)) {
 			/* special case: a == 0  (mod p) */
@@ -359,7 +359,7 @@ BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 		while (!BN_is_one(t)) {
 			i++;
 			if (i == e) {
-				BNerr(BN_F_BN_MOD_SQRT, BN_R_NOT_A_SQUARE);
+				BNerror(BN_R_NOT_A_SQUARE);
 				goto end;
 			}
 			if (!BN_mod_mul(t, t, t, p, ctx))
@@ -392,7 +392,7 @@ vrfy:
 			err = 1;
 
 		if (!err && 0 != BN_cmp(x, A)) {
-			BNerr(BN_F_BN_MOD_SQRT, BN_R_NOT_A_SQUARE);
+			BNerror(BN_R_NOT_A_SQUARE);
 			err = 1;
 		}
 	}

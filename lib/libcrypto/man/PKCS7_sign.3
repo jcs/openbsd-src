@@ -1,4 +1,4 @@
-.\"	$OpenBSD: PKCS7_sign.3,v 1.4 2016/11/28 23:27:55 schwarze Exp $
+.\"	$OpenBSD: PKCS7_sign.3,v 1.7 2017/01/12 16:13:51 jmc Exp $
 .\"	OpenSSL 99d63d46 Oct 26 13:56:48 2016 -0400
 .\"
 .\" This file was written by Dr. Stephen Henson <steve@openssl.org>.
@@ -49,7 +49,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 .\" OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: November 28 2016 $
+.Dd $Mdocdate: January 12 2017 $
 .Dt PKCS7_SIGN 3
 .Os
 .Sh NAME
@@ -176,7 +176,7 @@ Alternatively finalization can be performed by obtaining the streaming
 ASN.1
 .Vt BIO
 directly using
-.Xr BIO_new_PKCS7 3 .
+.Fn BIO_new_PKCS7 .
 .Pp
 If a signer is specified, it will use the default digest for the
 signing algorithm.
@@ -196,7 +196,7 @@ if the
 flag is set.
 One or more signers can be added using the function
 .Xr PKCS7_sign_add_signer 3 .
-.Xr PKCS7_final 3
+.Fn PKCS7_final
 must also be called to finalize the structure if streaming is not
 enabled.
 Alternative signing digests can also be specified using this method.
@@ -228,6 +228,7 @@ The error can be obtained from
 .Fn ERR_get_error 3 .
 .Sh SEE ALSO
 .Xr ERR_get_error 3 ,
+.Xr PKCS7_new 3 ,
 .Xr PKCS7_verify 3
 .Sh HISTORY
 .Fn PKCS7_sign

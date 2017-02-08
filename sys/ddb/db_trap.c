@@ -1,4 +1,4 @@
-/*	$OpenBSD: db_trap.c,v 1.26 2016/09/02 12:17:33 tb Exp $	*/
+/*	$OpenBSD: db_trap.c,v 1.28 2017/01/09 17:58:44 mpi Exp $	*/
 /*	$NetBSD: db_trap.c,v 1.9 1996/02/05 01:57:18 christos Exp $	*/
 
 /*

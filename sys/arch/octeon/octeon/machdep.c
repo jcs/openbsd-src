@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.79 2016/11/26 15:42:03 martijn Exp $ */
+/*	$OpenBSD: machdep.c,v 1.82 2017/01/06 15:37:44 fcambus Exp $ */
 
 /*
  * Copyright (c) 2009, 2010 Miodrag Vallat.
@@ -195,6 +195,10 @@ octeon_memory_init(struct boot_info *boot_info)
 		if (lp > atop(pfn_to_pad(PG_FRAME)) + 1)
 			lp = atop(pfn_to_pad(PG_FRAME)) + 1;
 		if (fp >= lp)
+			continue;
+
+		/* Skip small fragments. */
+		if (lp - fp < atop(1u << 20))
 			continue;
 
 		mem_layout[i].mem_first_page = fp;
@@ -579,8 +583,8 @@ int
 octeon_ioclock_speed(void)
 {
 	extern struct boot_info *octeon_boot_info;
+	u_int64_t mio_rst_boot, rst_boot;
 	int chipid;
-	u_int64_t mio_rst_boot;
 
 	chipid = octeon_get_chipid();
 	switch (octeon_model_family(chipid)) {
@@ -588,7 +592,10 @@ octeon_ioclock_speed(void)
 		mio_rst_boot = octeon_xkphys_read_8(MIO_RST_BOOT);
 		return OCTEON_IO_REF_CLOCK * ((mio_rst_boot >>
 		    MIO_RST_BOOT_PNR_MUL_SHIFT) & MIO_RST_BOOT_PNR_MUL_MASK);
-		break;
+	case OCTEON_MODEL_FAMILY_CN71XX:
+		rst_boot = octeon_xkphys_read_8(RST_BOOT);
+		return OCTEON_IO_REF_CLOCK * ((rst_boot >>
+		    RST_BOOT_PNR_MUL_SHIFT) & RST_BOOT_PNR_MUL_MASK);
 	default:
 		return octeon_boot_info->eclock;
 	}
@@ -662,14 +669,8 @@ process_bootargs(void)
  * Machine dependent system variables.
  */
 int
-cpu_sysctl(name, namelen, oldp, oldlenp, newp, newlen, p)
-	int *name;
-	u_int namelen;
-	void *oldp;
-	size_t *oldlenp;
-	void *newp;
-	size_t newlen;
-	struct proc *p;
+cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
+    size_t newlen, struct proc *p)
 {
 	/* All sysctl names at this level are terminal. */
 	if (namelen != 1)
@@ -686,6 +687,8 @@ int	waittime = -1;
 __dead void
 boot(int howto)
 {
+	int chipid;
+
 	if (curproc)
 		savectx(curproc->p_addr, 0);
 
@@ -729,7 +732,17 @@ haltsys:
 		(void)disableintr();
 		tlb_set_wired(0);
 		tlb_flush(bootcpu_hwinfo.tlbsize);
-		octeon_xkphys_write_8(OCTEON_CIU_BASE + CIU_SOFT_RST, 1);
+
+		chipid = octeon_get_chipid();
+		switch (octeon_model_family(chipid)) {
+		case OCTEON_MODEL_FAMILY_CN71XX:
+			octeon_xkphys_write_8(RST_SOFT_RST, 1);
+			break;
+		default:
+			octeon_xkphys_write_8(OCTEON_CIU_BASE +
+			    CIU_SOFT_RST, 1);
+			break;
+		}
 	}
 
 	for (;;)

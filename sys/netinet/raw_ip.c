@@ -1,4 +1,4 @@
-/*	$OpenBSD: raw_ip.c,v 1.88 2016/11/21 09:09:06 mpi Exp $	*/
+/*	$OpenBSD: raw_ip.c,v 1.95 2017/02/01 20:59:47 dhill Exp $	*/
 /*	$NetBSD: raw_ip.c,v 1.25 1996/02/18 18:58:33 christos Exp $	*/
 
 /*
@@ -115,14 +115,10 @@ rip_init(void)
 
 struct sockaddr_in ripsrc = { sizeof(ripsrc), AF_INET };
 
-/*
- * Setup generic address and protocol structures
- * for raw_input routine, then pass them along with
- * mbuf chain.
- */
-void
-rip_input(struct mbuf *m, ...)
+int
+rip_input(struct mbuf **mp, int *offp, int proto)
 {
+	struct mbuf *m = *mp;
 	struct ip *ip = mtod(m, struct ip *);
 	struct inpcb *inp, *last = NULL;
 	struct mbuf *opts = NULL;
@@ -203,6 +199,7 @@ rip_input(struct mbuf *m, ...)
 		counters[ips_delivered]--;
 		counters_leave(&ref, ipcounters);
 	}
+	return IPPROTO_DONE;
 }
 
 /*
@@ -302,7 +299,7 @@ rip_output(struct mbuf *m, ...)
  */
 int
 rip_ctloutput(int op, struct socket *so, int level, int optname,
-    struct mbuf **mp)
+    struct mbuf *m)
 {
 	struct inpcb *inp = sotoinpcb(so);
 	int error = 0;
@@ -310,7 +307,7 @@ rip_ctloutput(int op, struct socket *so, int level, int optname,
 
 	if (level != IPPROTO_IP) {
 		if (op == PRCO_SETOPT)
-			(void) m_free(*mp);
+			(void) m_free(m);
 		return (EINVAL);
 	}
 
@@ -319,29 +316,27 @@ rip_ctloutput(int op, struct socket *so, int level, int optname,
 	case IP_HDRINCL:
 		error = 0;
 		if (op == PRCO_SETOPT) {
-			if (*mp == NULL || (*mp)->m_len < sizeof (int))
+			if (m == NULL || m->m_len < sizeof (int))
 				error = EINVAL;
-			else if (*mtod(*mp, int *))
+			else if (*mtod(m, int *))
 				inp->inp_flags |= INP_HDRINCL;
 			else
 				inp->inp_flags &= ~INP_HDRINCL;
-			if (*mp)
-				(void)m_free(*mp);
+			m_free(m);
 		} else {
-			*mp = m_get(M_WAIT, M_SOOPTS);
-			(*mp)->m_len = sizeof(int);
-			*mtod(*mp, int *) = inp->inp_flags & INP_HDRINCL;
+			m->m_len = sizeof(int);
+			*mtod(m, int *) = inp->inp_flags & INP_HDRINCL;
 		}
 		return (error);
 
 	case IP_DIVERTFL:
 		switch (op) {
 		case PRCO_SETOPT:
-			if (*mp == NULL || (*mp)->m_len < sizeof (int)) {
+			if (m == NULL || m->m_len < sizeof (int)) {
 				error = EINVAL;
 				break;
 			}
-			dir = *mtod(*mp, int *);
+			dir = *mtod(m, int *);
 			if (inp->inp_divertfl > 0)
 				error = ENOTSUP;
 			else if ((dir & IPPROTO_DIVERT_RESP) ||
@@ -353,9 +348,8 @@ rip_ctloutput(int op, struct socket *so, int level, int optname,
 			break;
 
 		case PRCO_GETOPT:
-			*mp = m_get(M_WAIT, M_SOOPTS);
-			(*mp)->m_len = sizeof(int);
-			*mtod(*mp, int *) = inp->inp_divertfl;
+			m->m_len = sizeof(int);
+			*mtod(m, int *) = inp->inp_divertfl;
 			break;
 
 		default:
@@ -364,7 +358,7 @@ rip_ctloutput(int op, struct socket *so, int level, int optname,
 		}
 
 		if (op == PRCO_SETOPT)
-			(void)m_free(*mp);
+			(void)m_free(m);
 		return (error);
 
 	case MRT_INIT:
@@ -380,10 +374,10 @@ rip_ctloutput(int op, struct socket *so, int level, int optname,
 #ifdef MROUTING
 		switch (op) {
 		case PRCO_SETOPT:
-			error = ip_mrouter_set(so, optname, mp);
+			error = ip_mrouter_set(so, optname, m);
 			break;
 		case PRCO_GETOPT:
-			error = ip_mrouter_get(so, optname, mp);
+			error = ip_mrouter_get(so, optname, m);
 			break;
 		default:
 			error = EINVAL;
@@ -392,11 +386,11 @@ rip_ctloutput(int op, struct socket *so, int level, int optname,
 		return (error);
 #else
 		if (op == PRCO_SETOPT)
-			m_free(*mp);
+			m_free(m);
 		return (EOPNOTSUPP);
 #endif
 	}
-	return (ip_ctloutput(op, so, level, optname, mp));
+	return (ip_ctloutput(op, so, level, optname, m));
 }
 
 u_long	rip_sendspace = RIPSNDQ;
@@ -410,7 +404,7 @@ rip_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 	struct inpcb *inp = sotoinpcb(so);
 	int error = 0;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	if (req == PRU_CONTROL)
 		return (in_control(so, (u_long)m, (caddr_t)nam,
@@ -455,8 +449,8 @@ rip_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 		if (inp == NULL)
 			panic("rip_detach");
 #ifdef MROUTING
-		if (so == ip_mrouter)
-			ip_mrouter_done();
+		if (so == ip_mrouter[inp->inp_rtableid])
+			ip_mrouter_done(so);
 #endif
 		in_pcbdetach(inp);
 		break;

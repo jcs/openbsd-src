@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-string.c,v 1.24 2016/10/14 22:14:22 nicm Exp $ */
+/* $OpenBSD: cmd-string.c,v 1.28 2017/01/24 19:53:37 nicm Exp $ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -54,32 +54,15 @@ cmd_string_ungetc(size_t *p)
 	(*p)--;
 }
 
-/*
- * Parse command string. Returns -1 on error. If returning -1, cause is error
- * string, or NULL for empty command.
- */
 int
-cmd_string_parse(const char *s, struct cmd_list **cmdlist, const char *file,
-    u_int line, char **cause)
+cmd_string_split(const char *s, int *rargc, char ***rargv)
 {
-	size_t		p;
-	int		ch, i, argc, rval;
-	char	      **argv, *buf, *t;
+	size_t		p = 0;
+	int		ch, argc = 0, append = 0;
+	char	      **argv = NULL, *buf = NULL, *t;
 	const char     *whitespace, *equals;
-	size_t		len;
+	size_t		len = 0;
 
-	argv = NULL;
-	argc = 0;
-
-	buf = NULL;
-	len = 0;
-
-	*cause = NULL;
-
-	*cmdlist = NULL;
-	rval = -1;
-
-	p = 0;
 	for (;;) {
 		ch = cmd_string_getc(s, &p);
 		switch (ch) {
@@ -130,48 +113,67 @@ cmd_string_parse(const char *s, struct cmd_list **cmdlist, const char *file,
 				argc--;
 				memmove(argv, argv + 1, argc * (sizeof *argv));
 			}
-			if (argc == 0)
-				goto out;
-
-			*cmdlist = cmd_list_parse(argc, argv, file, line,
-			    cause);
-			if (*cmdlist == NULL)
-				goto out;
-
-			rval = 0;
-			goto out;
+			goto done;
 		case '~':
-			if (buf == NULL) {
-				t = cmd_string_expand_tilde(s, &p);
-				if (t == NULL)
-					goto error;
-				cmd_string_copy(&buf, t, &len);
+			if (buf != NULL) {
+				append = 1;
 				break;
 			}
-			/* FALLTHROUGH */
-		default:
-			if (len >= SIZE_MAX - 2)
+			t = cmd_string_expand_tilde(s, &p);
+			if (t == NULL)
 				goto error;
-
-			buf = xrealloc(buf, len + 1);
-			buf[len++] = ch;
+			cmd_string_copy(&buf, t, &len);
+			break;
+		default:
+			append = 1;
 			break;
 		}
+		if (append) {
+			if (len >= SIZE_MAX - 2)
+				goto error;
+			buf = xrealloc(buf, len + 1);
+			buf[len++] = ch;
+		}
+		append = 0;
 	}
+
+done:
+	*rargc = argc;
+	*rargv = argv;
+
+	free(buf);
+	return (0);
+
+error:
+	if (argv != NULL)
+		cmd_free_argv(argc, argv);
+	free(buf);
+	return (-1);
+}
+
+struct cmd_list *
+cmd_string_parse(const char *s, const char *file, u_int line, char **cause)
+{
+	struct cmd_list	 *cmdlist = NULL;
+	int		  argc;
+	char		**argv;
+
+	*cause = NULL;
+	if (cmd_string_split(s, &argc, &argv) != 0)
+		goto error;
+	if (argc != 0) {
+		cmdlist = cmd_list_parse(argc, argv, file, line, cause);
+		if (cmdlist == NULL) {
+			cmd_free_argv(argc, argv);
+			goto error;
+		}
+	}
+	cmd_free_argv(argc, argv);
+	return (cmdlist);
 
 error:
 	xasprintf(cause, "invalid or unknown command: %s", s);
-
-out:
-	free(buf);
-
-	if (argv != NULL) {
-		for (i = 0; i < argc; i++)
-			free(argv[i]);
-		free(argv);
-	}
-
-	return (rval);
+	return (NULL);
 }
 
 static void

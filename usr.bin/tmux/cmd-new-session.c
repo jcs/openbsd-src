@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-new-session.c,v 1.95 2016/11/16 11:37:16 nicm Exp $ */
+/* $OpenBSD: cmd-new-session.c,v 1.100 2017/02/06 15:00:41 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -73,9 +73,9 @@ cmd_new_session_exec(struct cmd *self, struct cmdq_item *item)
 	struct window		*w;
 	struct environ		*env;
 	struct termios		 tio, *tiop;
-	const char		*newname, *target, *update, *errstr, *template;
-	const char		*path, *cwd, *to_free = NULL;
-	char		       **argv, *cmd, *cause, *cp;
+	const char		*newname, *target, *errstr, *template;
+	const char		*path, *cmd, *cwd, *to_free = NULL;
+	char		       **argv, *cause, *cp;
 	int			 detached, already_attached, idx, argc;
 	u_int			 sx, sy;
 	struct format_tree	*ft;
@@ -139,7 +139,7 @@ cmd_new_session_exec(struct cmd *self, struct cmdq_item *item)
 
 	/* Get the new session working directory. */
 	if (args_has(args, 'c')) {
-		ft = format_create(item, 0);
+		ft = format_create(item, FORMAT_NONE, 0);
 		format_defaults(ft, c, NULL, NULL, NULL);
 		to_free = cwd = format_expand(ft, args_get(args, 'c'));
 		format_free(ft);
@@ -217,7 +217,7 @@ cmd_new_session_exec(struct cmd *self, struct cmdq_item *item)
 		cmd = options_get_string(global_s_options, "default-command");
 		if (cmd != NULL && *cmd != '\0') {
 			argc = 1;
-			argv = &cmd;
+			argv = (char **)&cmd;
 		} else {
 			argc = 0;
 			argv = NULL;
@@ -234,11 +234,8 @@ cmd_new_session_exec(struct cmd *self, struct cmdq_item *item)
 
 	/* Construct the environment. */
 	env = environ_create();
-	if (c != NULL && !args_has(args, 'E')) {
-		update = options_get_string(global_s_options,
-		    "update-environment");
-		environ_update(update, c->environ, env);
-	}
+	if (c != NULL && !args_has(args, 'E'))
+		environ_update(global_s_options, c->environ, env);
 
 	/* Create the new session. */
 	idx = -1 - options_get_number(global_s_options, "base-index");
@@ -280,7 +277,8 @@ cmd_new_session_exec(struct cmd *self, struct cmdq_item *item)
 		} else if (c->session != NULL)
 			c->last_session = c->session;
 		c->session = s;
-		server_client_set_key_table(c, NULL);
+		if (!item->repeat)
+			server_client_set_key_table(c, NULL);
 		status_timer_start(c);
 		notify_client("client-session-changed", c);
 		session_update_activity(s, NULL);
@@ -302,7 +300,7 @@ cmd_new_session_exec(struct cmd *self, struct cmdq_item *item)
 		if ((template = args_get(args, 'F')) == NULL)
 			template = NEW_SESSION_TEMPLATE;
 
-		ft = format_create(item, 0);
+		ft = format_create(item, FORMAT_NONE, 0);
 		format_defaults(ft, c, s, NULL, NULL);
 
 		cp = format_expand(ft, template);

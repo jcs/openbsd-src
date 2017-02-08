@@ -1,10 +1,10 @@
-/*	$OpenBSD: extern.h,v 1.45 2016/09/27 12:32:26 fcambus Exp $	*/
+/*	$OpenBSD: extern.h,v 1.49 2017/01/21 08:33:07 krw Exp $	*/
 /*	$NetBSD: extern.h,v 1.17 1997/08/18 10:20:19 lukem Exp $	*/
 
 /*
  * Copyright (C) 1997 and 1998 WIDE Project.
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -16,7 +16,7 @@
  * 3. Neither the name of the project nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -109,14 +109,16 @@ void	sethash(int, char **);
 void	setpeer(int, char **);
 void	setttywidth(int);
 char   *slurpstring(void);
-void	usage(void);
+
+__dead void	usage(void);
+
+void	cookie_get(const char *, const char *, int, char **);
+void	cookie_load(void);
 
 #ifndef SMALL
 void	abortsend(int);
 unsigned char complete(EditLine *, int);
 void	controlediting(void);
-void	cookie_get(const char *, const char *, int, char **);
-void	cookie_load(void);
 void	domacro(int, char **);
 void	list_vertical(StringList *);
 void	parse_list(char **, char *);
@@ -136,6 +138,7 @@ extern int	proxy;
 extern char	reply_string[];
 extern off_t	restart_point;
 extern int	keep_alive_timeout;
+extern int	connect_timeout;
 extern int	pipeout;
 extern char	*action;
 

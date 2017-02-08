@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.436 2016/12/07 15:37:45 mikeb Exp $
+#	$OpenBSD: GENERIC,v 1.440 2017/01/13 20:30:59 reyk Exp $
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -67,6 +67,7 @@ sdhc*		at acpi?
 acpicbkbd*	at acpi?
 acpials*	at acpi?
 tpm*		at acpi?
+acpihve*	at acpi?
 
 mpbios0		at bios0
 
@@ -76,7 +77,7 @@ vmt0	at pvbus?		# VMware Tools
 
 xen0	at pvbus?		# Xen HVM domU
 xnf*	at xen?			# Xen Netfront
-#xbf*	at xen?			# Xen Blkfront
+xbf*	at xen?			# Xen Blkfront
 
 hyperv0	at pvbus?		# Hyper-V guest
 hvn*	at hyperv?		# Hyper-V NetVSC
@@ -655,4 +656,5 @@ vio*		at virtio?	# Virtio network device
 viomb*		at virtio?	# Virtio memory ballooning device
 viornd*		at virtio?	# Virtio entropy device
 vioscsi*	at virtio?	# Virtio SCSI device
-#viocon*		at virtio?	# Virtio console device
+#viocon*	at virtio?	# Virtio console device
+vmmci*		at virtio?	# VMM control interface

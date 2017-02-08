@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-break-pane.c,v 1.40 2016/10/16 19:04:05 nicm Exp $ */
+/* $OpenBSD: cmd-break-pane.c,v 1.42 2017/02/03 11:57:27 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -34,8 +34,8 @@ const struct cmd_entry cmd_break_pane_entry = {
 	.name = "break-pane",
 	.alias = "breakp",
 
-	.args = { "dPF:s:t:", 0, 0 },
-	.usage = "[-dP] [-F format] [-s src-pane] [-t dst-window]",
+	.args = { "dPF:n:s:t:", 0, 0 },
+	.usage = "[-dP] [-F format] [-n window-name] [-s src-pane] [-t dst-window]",
 
 	.sflag = CMD_PANE,
 	.tflag = CMD_WINDOW_INDEX,
@@ -53,8 +53,7 @@ cmd_break_pane_exec(struct cmd *self, struct cmdq_item *item)
 	struct session		*dst_s = item->state.tflag.s;
 	struct window_pane	*wp = item->state.sflag.wp;
 	struct window		*w = wl->window;
-	char			*name;
-	char			*cause;
+	char			*name, *cause;
 	int			 idx = item->state.tflag.idx;
 	struct format_tree	*ft;
 	const char		*template;
@@ -78,9 +77,16 @@ cmd_break_pane_exec(struct cmd *self, struct cmdq_item *item)
 	w = wp->window = window_create(dst_s->sx, dst_s->sy);
 	TAILQ_INSERT_HEAD(&w->panes, wp, entry);
 	w->active = wp;
-	name = default_window_name(w);
-	window_set_name(w, name);
-	free(name);
+
+	if (!args_has(args, 'n')) {
+		name = default_window_name(w);
+		window_set_name(w, name);
+		free(name);
+	} else {
+		window_set_name(w, args_get(args, 'n'));
+		options_set_number(w->options, "automatic-rename", 0);
+	}
+
 	layout_init(w, wp);
 	wp->flags |= PANE_CHANGED;
 
@@ -101,7 +107,7 @@ cmd_break_pane_exec(struct cmd *self, struct cmdq_item *item)
 		if ((template = args_get(args, 'F')) == NULL)
 			template = BREAK_PANE_TEMPLATE;
 
-		ft = format_create(item, 0);
+		ft = format_create(item, FORMAT_NONE, 0);
 		format_defaults(ft, item->state.c, dst_s, wl, wp);
 
 		cp = format_expand(ft, template);

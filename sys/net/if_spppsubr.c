@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_spppsubr.c,v 1.156 2016/11/16 14:25:19 mpi Exp $	*/
+/*	$OpenBSD: if_spppsubr.c,v 1.162 2017/01/24 10:08:30 krw Exp $	*/
 /*
  * Synchronous PPP link level subroutines.
  *
@@ -19,8 +19,8 @@
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE FREEBSD PROJECT ``AS IS'' AND ANY 
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+ * THIS SOFTWARE IS PROVIDED BY THE FREEBSD PROJECT ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE FREEBSD PROJECT OR CONTRIBUTORS BE
  * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
@@ -28,7 +28,7 @@
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE   
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  *
  * From: Version 2.6, Tue May 12 17:10:39 MSD 1998
@@ -70,8 +70,8 @@
 # define UNTIMEOUT(fun, arg, handle)	\
 	timeout_del(&(handle))
 
-#define LOOPALIVECNT     		3	/* loopback detection tries */
-#define MAXALIVECNT    			3	/* max. missed alive packets */
+#define LOOPALIVECNT			3	/* loopback detection tries */
+#define MAXALIVECNT			3	/* max. missed alive packets */
 #define	NORECV_TIME			15	/* before we get worried */
 
 /*
@@ -400,7 +400,7 @@ static const struct cp *cps[IDX_COUNT] = {
 };
 
 
-/*
+/*
  * Exported functions, comprising our interface to the lower layer.
  */
 
@@ -693,7 +693,7 @@ sppp_attach(struct ifnet *ifp)
 
 	/* Initialize keepalive handler. */
 	if (! spppq) {
-		timeout_set(&keepalive_ch, sppp_keepalive, NULL);
+		timeout_set_proc(&keepalive_ch, sppp_keepalive, NULL);
 		timeout_add_sec(&keepalive_ch, 10);
 	}
 
@@ -824,7 +824,6 @@ sppp_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	s = splnet();
 	rv = 0;
 	switch (cmd) {
-	case SIOCAIFADDR:
 	case SIOCSIFDSTADDR:
 		break;
 
@@ -891,7 +890,7 @@ sppp_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	return rv;
 }
 
-/*
+/*
  * PPP protocol implementation.
  */
 
@@ -1325,7 +1324,7 @@ sppp_cp_input(const struct cp *cp, struct sppp *sp, struct mbuf *m)
 		if (debug)
 			addlog(SPP_FMT "lcp got echo rep\n",
 			       SPP_ARGS(ifp));
-		    
+
 		nmagic = (u_long)p[0] << 24 |
 		    (u_long)p[1] << 16 | p[2] << 8 | p[3];
 
@@ -1540,7 +1539,7 @@ sppp_to_event(const struct cp *cp, struct sppp *sp)
 		case STATE_STOPPING:
 			sppp_cp_send(sp, cp->proto, TERM_REQ, ++sp->pp_seq,
 				     0, 0);
-  			sppp_increasing_timeout (cp, sp);
+			sppp_increasing_timeout (cp, sp);
 			break;
 		case STATE_REQ_SENT:
 		case STATE_ACK_RCVD:
@@ -1549,7 +1548,7 @@ sppp_to_event(const struct cp *cp, struct sppp *sp)
 			(cp->scr)(sp);
 			break;
 		case STATE_ACK_SENT:
-  			sppp_increasing_timeout (cp, sp);
+			sppp_increasing_timeout (cp, sp);
 			(cp->scr)(sp);
 			break;
 		}
@@ -1591,7 +1590,7 @@ sppp_cp_change_state(const struct cp *cp, struct sppp *sp, int newstate)
 		break;
 	}
 }
-/*
+/*
  *--------------------------------------------------------------------------*
  *                                                                          *
  *                         The LCP implementation.                          *
@@ -2252,7 +2251,7 @@ sppp_lcp_check_and_close(struct sppp *sp)
 
 	lcp.Close(sp);
 }
-/*
+/*
  *--------------------------------------------------------------------------*
  *                                                                          *
  *                        The IPCP implementation.                          *
@@ -3658,7 +3657,7 @@ sppp_chap_scr(struct sppp *sp)
 		       sp->myauth.name,
 		       0);
 }
-/*
+/*
  *--------------------------------------------------------------------------*
  *                                                                          *
  *                        The PAP implementation.                           *
@@ -3963,7 +3962,7 @@ sppp_pap_scr(struct sppp *sp)
 		       (size_t)pwdlen, sp->myauth.secret,
 		       0);
 }
-/*
+/*
  * Random miscellaneous functions.
  */
 
@@ -4050,9 +4049,10 @@ void
 sppp_keepalive(void *dummy)
 {
 	struct sppp *sp;
-	int s;
+	int s, sl;
 	struct timeval tv;
 
+	NET_LOCK(sl);
 	s = splnet();
 	getmicrouptime(&tv);
 	for (sp=spppq; sp; sp=sp->pp_next) {
@@ -4104,6 +4104,7 @@ sppp_keepalive(void *dummy)
 		}
 	}
 	splx(s);
+	NET_UNLOCK(sl);
 	timeout_add_sec(&keepalive_ch, 10);
 }
 
@@ -4193,7 +4194,7 @@ sppp_set_ip_addrs(void *arg1)
 	struct sockaddr_in *si;
 	struct sockaddr_in *dest;
 	int s;
-	
+
 	sppp_get_ip_addrs(sp, &myaddr, &hisaddr, NULL);
 	if ((sp->ipcp.flags & IPCP_MYADDR_DYN) &&
 	    (sp->ipcp.flags & IPCP_MYADDR_SEEN))
@@ -4202,8 +4203,8 @@ sppp_set_ip_addrs(void *arg1)
 	    (sp->ipcp.flags & IPCP_HISADDR_SEEN))
 		hisaddr = sp->ipcp.req_hisaddr;
 
-	s = splsoftnet();
 
+	NET_LOCK(s);
 	/*
 	 * Pick the first AF_INET address from the list,
 	 * aliases don't make any sense on a p2p link anyway.
@@ -4242,12 +4243,12 @@ sppp_set_ip_addrs(void *arg1)
 		if (debug && error) {
 			log(LOG_DEBUG, SPP_FMT "sppp_set_ip_addrs: in_ifinit "
 			" failed, error=%d\n", SPP_ARGS(ifp), error);
-			splx(s);
-			return;
+			goto out;
 		}
 		sppp_update_gw(ifp);
 	}
-	splx(s);
+out:
+	NET_UNLOCK(s);
 }
 
 /*
@@ -4266,7 +4267,7 @@ sppp_clear_ip_addrs(void *arg1)
 	u_int32_t remote;
 	int s;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 
 	if (sp->ipcp.flags & IPCP_HISADDR_DYN)
 		remote = sp->ipcp.saved_hisaddr;
@@ -4303,12 +4304,12 @@ sppp_clear_ip_addrs(void *arg1)
 		if (debug && error) {
 			log(LOG_DEBUG, SPP_FMT "sppp_clear_ip_addrs: in_ifinit "
 			" failed, error=%d\n", SPP_ARGS(ifp), error);
-			splx(s);
-			return;
+			goto out;
 		}
 		sppp_update_gw(ifp);
 	}
-	splx(s);
+out:
+	NET_UNLOCK(s);
 }
 
 
@@ -4361,16 +4362,15 @@ sppp_update_ip6_addr(void *arg)
 	struct in6_ifaddr *ia6;
 	int s, error;
 
-	s = splnet();
+	NET_LOCK(s);
 
 	ia6 = in6ifa_ifpforlinklocal(ifp, 0);
 	if (ia6 == NULL) {
 		/* IPv6 disabled? */
-		splx(s);
-		return;
+		goto out;
 	}
 
-	/* 
+	/*
 	 * Changing the link-local address requires purging all
 	 * existing addresses and routes for the interface first.
 	 */
@@ -4381,11 +4381,10 @@ sppp_update_ip6_addr(void *arg)
 			log(LOG_ERR, SPP_FMT
 			    "could not update IPv6 address (error %d)\n",
 			    SPP_ARGS(ifp), error);
-		splx(s);
-		return;
+		goto out;
 	}
 
-	/* 
+	/*
 	 * Code below changes address parameters only, not the address itself.
 	 */
 
@@ -4403,7 +4402,8 @@ sppp_update_ip6_addr(void *arg)
 		    "could not update IPv6 address (error %d)\n",
 		    SPP_ARGS(ifp), error);
 	}
-	splx(s);
+out:
+	NET_UNLOCK(s);
 }
 
 /*
@@ -4429,7 +4429,7 @@ sppp_set_ip6_addr(struct sppp *sp, const struct in6_addr *src,
 	} else
 		ifra->ifra_dstaddr.sin6_family = AF_UNSPEC;
 
-	/* 
+	/*
 	 * Don't change the existing prefixlen.
 	 * It is common to use a /64 for IPv6 over point-to-point links
 	 * to allow e.g. neighbour discovery and autoconf to work.
@@ -4535,7 +4535,7 @@ sppp_set_params(struct sppp *sp, struct ifreq *ifr)
 		struct spppreq *spr;
 
 		spr = malloc(sizeof(*spr), M_DEVBUF, M_WAITOK);
-		
+
 		if (copyin((caddr_t)ifr->ifr_data, spr, sizeof(*spr)) != 0) {
 			free(spr, M_DEVBUF, 0);
 			return EFAULT;

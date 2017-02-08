@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_ioctl.c,v 1.44 2016/09/15 03:32:48 dlg Exp $	*/
+/*	$OpenBSD: ieee80211_ioctl.c,v 1.48 2017/01/19 01:07:35 stsp Exp $	*/
 /*	$NetBSD: ieee80211_ioctl.c,v 1.15 2004/05/06 02:58:16 dyoung Exp $	*/
 
 /*-
@@ -71,6 +71,8 @@ ieee80211_node2req(struct ieee80211com *ic, const struct ieee80211_node *ni,
 	/* Channel and rates */
 	nr->nr_channel = ieee80211_chan2ieee(ic, ni->ni_chan);
 	nr->nr_chan_flags = ni->ni_chan->ic_flags;
+	if (ic->ic_curmode != IEEE80211_MODE_11N)
+		nr->nr_chan_flags &= ~IEEE80211_CHAN_HT;
 	nr->nr_nrates = ni->ni_rates.rs_nrates;
 	bcopy(ni->ni_rates.rs_rates, nr->nr_rates, IEEE80211_RATE_MAXSIZE);
 
@@ -254,6 +256,10 @@ ieee80211_ioctl_setwpaparms(struct ieee80211com *ic,
 		if (!(ic->ic_flags & IEEE80211_F_RSNON))
 			return 0;
 		ic->ic_flags &= ~IEEE80211_F_RSNON;
+		ic->ic_rsnprotos = 0;
+		ic->ic_rsnakms = 0;
+		ic->ic_rsngroupcipher = 0;
+		ic->ic_rsnciphers = 0;
 		return ENETRESET;
 	}
 
@@ -262,8 +268,8 @@ ieee80211_ioctl_setwpaparms(struct ieee80211com *ic,
 		ic->ic_rsnprotos |= IEEE80211_PROTO_WPA;
 	if (wpa->i_protos & IEEE80211_WPA_PROTO_WPA2)
 		ic->ic_rsnprotos |= IEEE80211_PROTO_RSN;
-	if (ic->ic_rsnprotos == 0)	/* set to default (WPA+RSN) */
-		ic->ic_rsnprotos = IEEE80211_PROTO_WPA | IEEE80211_PROTO_RSN;
+	if (ic->ic_rsnprotos == 0)	/* set to default (RSN) */
+		ic->ic_rsnprotos = IEEE80211_PROTO_RSN;
 
 	ic->ic_rsnakms = 0;
 	if (wpa->i_akms & IEEE80211_WPA_AKM_PSK)
@@ -299,9 +305,11 @@ ieee80211_ioctl_setwpaparms(struct ieee80211com *ic,
 		ic->ic_rsnciphers |= IEEE80211_CIPHER_CCMP;
 	if (wpa->i_ciphers & IEEE80211_WPA_CIPHER_USEGROUP)
 		ic->ic_rsnciphers = IEEE80211_CIPHER_USEGROUP;
-	if (ic->ic_rsnciphers == 0)	/* set to default (TKIP+CCMP) */
-		ic->ic_rsnciphers = IEEE80211_CIPHER_TKIP |
-		    IEEE80211_CIPHER_CCMP;
+	if (ic->ic_rsnciphers == 0) { /* set to default (CCMP, TKIP if WPA1) */
+		ic->ic_rsnciphers = IEEE80211_CIPHER_CCMP;
+		if (ic->ic_rsnprotos & IEEE80211_PROTO_WPA)
+			ic->ic_rsnciphers |= IEEE80211_CIPHER_TKIP;
+	}
 
 	ic->ic_flags |= IEEE80211_F_RSNON;
 

@@ -1,7 +1,7 @@
-/*	$OpenBSD: mandoc.h,v 1.152 2016/10/09 18:16:46 schwarze Exp $ */
+/*	$OpenBSD: mandoc.h,v 1.156 2017/01/28 23:26:56 schwarze Exp $ */
 /*
  * Copyright (c) 2010, 2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
- * Copyright (c) 2010-2016 Ingo Schwarze <schwarze@openbsd.org>
+ * Copyright (c) 2010-2017 Ingo Schwarze <schwarze@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -65,10 +65,11 @@ enum	mandocerr {
 	MANDOCERR_DOC_EMPTY, /* no document body */
 	MANDOCERR_SEC_BEFORE, /* content before first section header: macro */
 	MANDOCERR_NAMESEC_FIRST, /* first section is not NAME: Sh title */
-	MANDOCERR_NAMESEC_NONM, /* NAME section without name */
+	MANDOCERR_NAMESEC_NONM, /* NAME section without Nm before Nd */
 	MANDOCERR_NAMESEC_NOND, /* NAME section without description */
 	MANDOCERR_NAMESEC_ND, /* description not at the end of NAME */
 	MANDOCERR_NAMESEC_BAD, /* bad NAME section content: macro */
+	MANDOCERR_NAMESEC_PUNCT, /* missing comma before name: Nm name */
 	MANDOCERR_ND_EMPTY, /* missing description line, using "" */
 	MANDOCERR_SEC_ORDER, /* sections out of conventional order: Sh title */
 	MANDOCERR_SEC_REP, /* duplicate section title: Sh title */
@@ -107,6 +108,7 @@ enum	mandocerr {
 	MANDOCERR_BF_BADFONT, /* unknown font type, using \fR: Bf font */
 	MANDOCERR_PF_SKIP, /* nothing follows prefix: Pf arg */
 	MANDOCERR_RS_EMPTY, /* empty reference block: Rs */
+	MANDOCERR_XR_NOSEC, /* missing section argument: Xr arg */
 	MANDOCERR_ARG_STD, /* missing -std argument, adding it: macro */
 	MANDOCERR_OP_EMPTY, /* missing option string, using "": OP */
 	MANDOCERR_UR_NOHEAD, /* missing resource identifier, using "": UR */
@@ -132,6 +134,7 @@ enum	mandocerr {
 	MANDOCERR_FI_BLANK, /* blank line in fill mode, using .sp */
 	MANDOCERR_FI_TAB, /* tab in filled text */
 	MANDOCERR_SPACE_EOL, /* whitespace at end of input line */
+	MANDOCERR_EOS, /* new sentence, new line */
 	MANDOCERR_COMMENT_BAD, /* bad comment style */
 	MANDOCERR_ESC_BAD, /* invalid escape sequence: esc */
 	MANDOCERR_STR_UNDEF, /* undefined string, using "": name */
@@ -431,3 +434,4 @@ void		  mparse_result(struct mparse *,
 const char	 *mparse_getkeep(const struct mparse *);
 const char	 *mparse_strerror(enum mandocerr);
 const char	 *mparse_strlevel(enum mandoclevel);
+void		  mparse_updaterc(struct mparse *, enum mandoclevel *);

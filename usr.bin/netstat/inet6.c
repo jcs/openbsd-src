@@ -1,4 +1,4 @@
-/*	$OpenBSD: inet6.c,v 1.50 2016/03/28 07:30:28 jca Exp $	*/
+/*	$OpenBSD: inet6.c,v 1.52 2017/01/21 11:32:04 guenther Exp $	*/
 /*	BSDI inet.c,v 2.3 1995/10/24 02:19:29 prb Exp	*/
 /*
  * Copyright (c) 1983, 1988, 1993
@@ -45,7 +45,6 @@
 #include <netinet/ip_var.h>
 #include <netinet6/ip6_var.h>
 #include <netinet6/in6_var.h>
-#include <netinet6/pim6_var.h>
 #include <netinet6/raw_ip6.h>
 #include <netinet6/ip6_divert.h>
 
@@ -168,7 +167,7 @@ static	char *ip6nh[] = {
 	"#100",
 	"#101",
 	"#102",
-	"PIM",
+	"#103",
 	"#104",
 	"#105",
 	"#106",
@@ -826,37 +825,6 @@ icmp6_stats(char *name)
 }
 
 /*
- * Dump PIM statistics structure.
- */
-void
-pim6_stats(char *name)
-{
-	struct pim6stat pim6stat;
-	int mib[] = { CTL_NET, PF_INET6, IPPROTO_PIM, PIM6CTL_STATS };
-	size_t len = sizeof(pim6stat);
-
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]),
-	    &pim6stat, &len, NULL, 0) == -1) {
-		if (errno != ENOPROTOOPT)
-			warn("%s", name);
-		return;
-	}
-
-	printf("%s:\n", name);
-#define	p(f, m) if (pim6stat.f || sflag <= 1) \
-	printf(m, (unsigned long long)pim6stat.f, plural(pim6stat.f))
-
-	p(pim6s_rcv_total, "\t%llu message%s received\n");
-	p(pim6s_rcv_tooshort, "\t%llu message%s received with too few bytes\n");
-	p(pim6s_rcv_badsum, "\t%llu message%s received with bad checksum\n");
-	p(pim6s_rcv_badversion, "\t%llu message%s received with bad version\n");
-	p(pim6s_rcv_registers, "\t%llu register%s received\n");
-	p(pim6s_rcv_badregisters, "\t%llu bad register%s received\n");
-	p(pim6s_snd_registers, "\t%llu register%s sent\n");
-#undef p
-}
-
-/*
  * Dump raw ip6 statistics structure.
  */
 void
@@ -1015,7 +983,6 @@ inet6name(struct in6_addr *in6p)
 		strlcpy(line, cp, sizeof(line));
 	else {
 		memset(&sin6, 0, sizeof(sin6));
-		sin6.sin6_len = sizeof(sin6);
 		sin6.sin6_family = AF_INET6;
 		sin6.sin6_addr = *in6p;
 #ifdef __KAME__
@@ -1028,7 +995,7 @@ inet6name(struct in6_addr *in6p)
 			sin6.sin6_addr.s6_addr[3] = 0;
 		}
 #endif
-		if (getnameinfo((struct sockaddr *)&sin6, sin6.sin6_len,
+		if (getnameinfo((struct sockaddr *)&sin6, sizeof(sin6),
 		    hbuf, sizeof(hbuf), NULL, 0, niflag) != 0)
 			strlcpy(hbuf, "?", sizeof hbuf);
 		strlcpy(line, hbuf, sizeof(line));

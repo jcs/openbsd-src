@@ -1,4 +1,4 @@
-/* $OpenBSD: bn_mod.c,v 1.10 2016/11/05 10:47:16 miod Exp $ */
+/* $OpenBSD: bn_mod.c,v 1.12 2017/01/29 17:49:22 beck Exp $ */
 /* Includes code written by Lenka Fibikova <fibikova@exp-math.uni-essen.de>
  * for the OpenSSL project. */
 /* ====================================================================
@@ -121,7 +121,7 @@ BN_nnmod(BIGNUM *r, const BIGNUM *m, const BIGNUM *d, BN_CTX *ctx)
 	/* like BN_mod, but returns non-negative remainder
 	 * (i.e.,  0 <= r < |d|  always holds) */
 
-	if (!(BN_mod(r, m,d, ctx)))
+	if (!(BN_mod_ct(r, m,d, ctx)))
 		return 0;
 	if (!r->neg)
 		return 1;
@@ -212,7 +212,7 @@ BN_mod_sqr(BIGNUM *r, const BIGNUM *a, const BIGNUM *m, BN_CTX *ctx)
 	if (!BN_sqr(r, a, ctx))
 		return 0;
 	/* r->neg == 0,  thus we don't need BN_nnmod */
-	return BN_mod(r, r, m, ctx);
+	return BN_mod_ct(r, r, m, ctx);
 }
 
 int
@@ -278,7 +278,7 @@ BN_mod_lshift_quick(BIGNUM *r, const BIGNUM *a, int n, const BIGNUM *m)
 		/* max_shift >= 0 */
 
 		if (max_shift < 0) {
-			BNerr(BN_F_BN_MOD_LSHIFT_QUICK, BN_R_INPUT_NOT_REDUCED);
+			BNerror(BN_R_INPUT_NOT_REDUCED);
 			return 0;
 		}
 

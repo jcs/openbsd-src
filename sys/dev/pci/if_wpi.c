@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_wpi.c,v 1.136 2016/10/05 21:26:54 stsp Exp $	*/
+/*	$OpenBSD: if_wpi.c,v 1.138 2017/01/22 10:17:38 dlg Exp $	*/
 
 /*-
  * Copyright (c) 2006-2008
@@ -494,6 +494,8 @@ wpi_prph_write_region_4(struct wpi_softc *sc, uint32_t addr,
 		wpi_prph_write(sc, addr, *data);
 }
 
+#ifdef WPI_DEBUG
+
 static __inline uint32_t
 wpi_mem_read(struct wpi_softc *sc, uint32_t addr)
 {
@@ -517,6 +519,8 @@ wpi_mem_read_region_4(struct wpi_softc *sc, uint32_t addr, uint32_t *data,
 	for (; count > 0; count--, addr += 4)
 		*data++ = wpi_mem_read(sc, addr);
 }
+
+#endif
 
 int
 wpi_read_prom_data(struct wpi_softc *sc, uint32_t addr, void *data, int count)
@@ -1357,8 +1361,6 @@ wpi_tx_done(struct wpi_softc *sc, struct wpi_rx_desc *desc)
 
 	if ((letoh32(stat->status) & 0xff) != 1)
 		ifp->if_oerrors++;
-	else
-		ifp->if_opackets++;
 
 	/* Unmap and free mbuf. */
 	bus_dmamap_sync(sc->sc_dmat, data->map, 0, data->map->dm_mapsize,

@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpufunc.h,v 1.27 2016/08/22 01:42:00 jsg Exp $	*/
+/*	$OpenBSD: cpufunc.h,v 1.29 2017/01/06 00:06:02 jsg Exp $	*/
 /*	$NetBSD: cpufunc.h,v 1.29 2003/09/06 09:08:35 rearnsha Exp $	*/
 
 /*
@@ -218,7 +218,6 @@ u_int	cpufunc_dfar		(void);
 u_int	cpufunc_ifsr		(void);
 u_int	cpufunc_ifar		(void);
 
-#ifdef CPU_ARMv7
 void	armv7_setttb		(u_int);
 
 void	armv7_tlb_flushID_SE	(u_int);
@@ -252,57 +251,6 @@ extern unsigned armv7_dcache_sets_max;
 extern unsigned armv7_dcache_sets_inc;
 extern unsigned armv7_dcache_index_max;
 extern unsigned armv7_dcache_index_inc;
-#endif
-
-
-#if defined(CPU_XSCALE_PXA2X0)
-void	armv4_tlb_flushID	(void);
-void	armv4_tlb_flushI	(void);
-void	armv4_tlb_flushD	(void);
-void	armv4_tlb_flushD_SE	(u_int va);
-
-void	armv4_drain_writebuf	(void);
-#endif
-
-#if defined(CPU_XSCALE_PXA2X0) || (ARM_MMU_XSCALE == 1)
-void	xscale_cpwait		(void);
-
-void	xscale_cpu_sleep	(int mode);
-
-u_int	xscale_control		(u_int clear, u_int bic);
-
-void	xscale_setttb		(u_int ttb);
-
-void	xscale_tlb_flushID_SE	(u_int va);
-
-void	xscale_cache_flushID	(void);
-void	xscale_cache_flushI	(void);
-void	xscale_cache_flushD	(void);
-void	xscale_cache_flushD_SE	(u_int entry);
-
-void	xscale_cache_cleanID	(void);
-void	xscale_cache_cleanD	(void);
-void	xscale_cache_cleanD_E	(u_int entry);
-
-void	xscale_cache_clean_minidata (void);
-
-void	xscale_cache_purgeID	(void);
-void	xscale_cache_purgeID_E	(u_int entry);
-void	xscale_cache_purgeD	(void);
-void	xscale_cache_purgeD_E	(u_int entry);
-
-void	xscale_cache_syncI	(void);
-void	xscale_cache_cleanID_rng (vaddr_t start, vsize_t end);
-void	xscale_cache_cleanD_rng	(vaddr_t start, vsize_t end);
-void	xscale_cache_purgeID_rng (vaddr_t start, vsize_t end);
-void	xscale_cache_purgeD_rng	(vaddr_t start, vsize_t end);
-void	xscale_cache_syncI_rng	(vaddr_t start, vsize_t end);
-void	xscale_cache_flushD_rng	(vaddr_t start, vsize_t end);
-
-void	xscale_context_switch	(u_int);
-
-void	xscale_setup		(void);
-#endif	/* CPU_XSCALE_PXA2X0 */
 
 #define tlb_flush	cpu_tlb_flushID
 #define setttb		cpu_setttb

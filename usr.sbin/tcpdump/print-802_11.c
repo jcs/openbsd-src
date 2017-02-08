@@ -1,4 +1,4 @@
-/*	$OpenBSD: print-802_11.c,v 1.35 2016/11/19 19:35:46 stsp Exp $	*/
+/*	$OpenBSD: print-802_11.c,v 1.38 2017/01/29 15:16:14 stsp Exp $	*/
 
 /*
  * Copyright (c) 2005 Reyk Floeter <reyk@openbsd.org>
@@ -896,7 +896,7 @@ ieee80211_frame(struct ieee80211_frame *wh, u_int len)
 		case IEEE80211_FC0_SUBTYPE_BAR:
 		case IEEE80211_FC0_SUBTYPE_BA:
 			TCHECK2(*t, 2); /* Duration */
-			printf(", duration %dms", (t[0] | t[1] << 8));
+			printf(", duration %dus", (t[0] | t[1] << 8));
 			t += 2;
 			TCHECK2(*t, 6); /* RA */
 			printf(", ra %s", etheraddr_string(t));
@@ -927,7 +927,7 @@ ieee80211_frame(struct ieee80211_frame *wh, u_int len)
 		case IEEE80211_FC0_SUBTYPE_CTS:
 		case IEEE80211_FC0_SUBTYPE_ACK:
 			TCHECK2(*t, 2); /* Duration */
-			printf(", duration %dms", (t[0] | t[1] << 8));
+			printf(", duration %dus", (t[0] | t[1] << 8));
 			t += 2;
 			TCHECK2(*t, 6); /* RA */
 			printf(", ra %s", etheraddr_string(t));
@@ -1101,7 +1101,9 @@ ieee802_11_radio_if_print(u_char *user, const struct pcap_pkthdr *h,
 
 		printf(", chan %u", ieee80211_any2ieee(freq, flags));
 
-		if (flags & IEEE80211_CHAN_DYN &&
+		if (flags & IEEE80211_CHAN_HT)
+			printf(", 11n");
+		else if (flags & IEEE80211_CHAN_DYN &&
 		    flags & IEEE80211_CHAN_2GHZ)
 			printf(", 11g");
 		else if (flags & IEEE80211_CHAN_CCK &&

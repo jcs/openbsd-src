@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf_norm.c,v 1.197 2016/11/22 19:29:54 procter Exp $ */
+/*	$OpenBSD: pf_norm.c,v 1.201 2017/01/30 17:41:34 benno Exp $ */
 
 /*
  * Copyright 2001 Niels Provos <provos@citi.umich.edu>
@@ -175,6 +175,8 @@ pf_purge_expired_fragments(void)
 {
 	struct pf_fragment	*frag;
 	int32_t			 expire;
+
+	NET_ASSERT_LOCKED();
 
 	expire = time_uptime - pf_default_rule.timeout[PFTM_FRAG];
 	while ((frag = TAILQ_LAST(&pf_fragqueue, pf_fragqueue)) != NULL) {
@@ -631,7 +633,7 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr,
 	/* Take protocol from first fragment header */
 	if ((m = m_getptr(m, hdrlen + offsetof(struct ip6_frag, ip6f_nxt),
 	    &off)) == NULL)
-		panic("pf_reassemble6: short mbuf chain");
+		panic("%s: short frag mbuf chain", __func__);
 	proto = *(mtod(m, caddr_t) + off);
 	m = *m0;
 
@@ -662,7 +664,7 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr,
 		/* Write protocol into next field of last extension header */
 		if ((m = m_getptr(m, extoff + offsetof(struct ip6_ext,
 		    ip6e_nxt), &off)) == NULL)
-			panic("pf_reassemble6: short mbuf chain");
+			panic("%s: short ext mbuf chain", __func__);
 		*(mtod(m, caddr_t) + off) = proto;
 		m = *m0;
 	} else
@@ -687,11 +689,10 @@ fail:
 
 int
 pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
-    struct ifnet *ifp)
+    struct ifnet *ifp, struct rtentry *rt)
 {
 	struct mbuf		*m = *m0, *t;
 	struct pf_fragment_tag	*ftag = (struct pf_fragment_tag *)(mtag + 1);
-	struct rtentry		*rt = NULL;
 	u_int32_t		 mtu;
 	u_int16_t		 hdrlen, extoff, maxlen;
 	u_int8_t		 proto;
@@ -713,7 +714,7 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 		/* Use protocol from next field of last extension header */
 		if ((m = m_getptr(m, extoff + offsetof(struct ip6_ext,
 		    ip6e_nxt), &off)) == NULL)
-			panic("pf_refragment6: short mbuf chain");
+			panic("%s: short ext mbuf chain", __func__);
 		proto = *(mtod(m, caddr_t) + off);
 		*(mtod(m, caddr_t) + off) = IPPROTO_FRAGMENT;
 		m = *m0;
@@ -748,15 +749,6 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 		action = PF_DROP;
 	}
 
-	if (ifp != NULL) {
-		rt = rtalloc(sin6tosa(dst), RT_RESOLVE,
-		    m->m_pkthdr.ph_rtableid);
-		if (rt == NULL) {
-			ip6stat.ip6s_noroute++;
-			error = -1;
-		}
-	}
-
 	for (t = m; m; m = t) {
 		t = m->m_nextpkt;
 		m->m_nextpkt = NULL;
@@ -774,7 +766,6 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 			m_freem(m);
 		}
 	}
-	rtfree(rt);
 
 	return (action);
 }
@@ -880,14 +871,14 @@ pf_normalize_tcp(struct pf_pdesc *pd)
 	}
 
 	/* If flags changed, or reserved data set, then adjust */
- 	if (flags != th->th_flags || th->th_x2 != 0) {
- 		/* hack: set 4-bit th_x2 = 0 */
+	if (flags != th->th_flags || th->th_x2 != 0) {
+		/* hack: set 4-bit th_x2 = 0 */
 		u_int8_t *th_off = (u_int8_t*)(&th->th_ack+1);
- 		pf_patch_8(pd, th_off, th->th_off << 4, PF_HI);
+		pf_patch_8(pd, th_off, th->th_off << 4, PF_HI);
 
- 		pf_patch_8(pd, &th->th_flags, flags, PF_LO);
- 		rewrite = 1;
- 	}
+		pf_patch_8(pd, &th->th_flags, flags, PF_LO);
+		rewrite = 1;
+	}
 
 	/* Remove urgent pointer, if TH_URG is not set */
 	if (!(flags & TH_URG) && th->th_urp) {
@@ -1089,11 +1080,11 @@ pf_normalize_tcp_stateful(struct pf_pdesc *pd, u_short *reason,
 					if (tsval && src->scrub &&
 					    (src->scrub->pfss_flags &
 					    PFSS_TIMESTAMP)) {
-						/* note: tsval used further on */
+						/* tsval used further on */
 						tsval = ntohl(tsval);
 						pf_patch_32_unaligned(pd, ts,
 						    htonl(tsval +
-							src->scrub->pfss_ts_mod),
+						    src->scrub->pfss_ts_mod),
 						    PF_ALGNMNT(ts - opts));
 						copyback = 1;
 					}
@@ -1102,7 +1093,7 @@ pf_normalize_tcp_stateful(struct pf_pdesc *pd, u_short *reason,
 					if (tsecr && dst->scrub &&
 					    (dst->scrub->pfss_flags &
 					    PFSS_TIMESTAMP)) {
-						/* note: tsecr used further on */
+						/* tsecr used further on */
 						tsecr = ntohl(tsecr)
 						    - dst->scrub->pfss_ts_mod;
 						pf_patch_32_unaligned(pd, tsr,

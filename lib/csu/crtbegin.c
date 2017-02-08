@@ -1,4 +1,4 @@
-/*	$OpenBSD: crtbegin.c,v 1.20 2015/11/10 04:14:03 guenther Exp $	*/
+/*	$OpenBSD: crtbegin.c,v 1.23 2017/01/21 05:46:56 guenther Exp $	*/
 /*	$NetBSD: crtbegin.c,v 1.1 1996/09/12 16:59:03 cgd Exp $	*/
 
 /*
@@ -56,15 +56,13 @@ void __register_frame_info(const void *begin, struct dwarf2_eh_object *ob)
 {
 }
 
-static const char __EH_FRAME_BEGIN__[]
-    __attribute__((section(".eh_frame"), aligned(4))) = { };
+MD_DATA_SECTION_FLAGS_SYMBOL(".eh_frame", "a", const void *, __EH_FRAME_BEGIN__);
 
 /*
  * java class registration hooks
  */
 
-static void *__JCR_LIST__[]
-    __attribute__((section(".jcr"), aligned(sizeof(void*)))) = { };
+MD_DATA_SECTION_FLAGS_SYMBOL(".jcr", "aw", void *, __JCR_LIST__);
 
 extern void _Jv_RegisterClasses (void *)
     __attribute__((weak));
@@ -83,17 +81,12 @@ __asm(".hidden  __dso_handle");
 
 long __guard_local __dso_hidden __attribute__((section(".openbsd.randomdata")));
 
+MD_DATA_SECTION_SYMBOL_VALUE(".ctors", init_f, __CTOR_LIST__, -1);
+MD_DATA_SECTION_SYMBOL_VALUE(".dtors", init_f, __DTOR_LIST__, -1);
 
-static const init_f __CTOR_LIST__[1]
-    __attribute__((section(".ctors"))) = { (void *)-1 };	/* XXX */
-static const init_f __DTOR_LIST__[1]
-    __attribute__((section(".dtors"))) = { (void *)-1 };	/* XXX */
-
-static void	__dtors(void) __used;
-static void	__ctors(void) __used;
 
 static void
-__ctors()
+__ctors(void)
 {
 	unsigned long i = (unsigned long) __CTOR_LIST__[0];
 	const init_f *p;
@@ -109,7 +102,7 @@ __ctors()
 }
 
 static void
-__dtors()
+__dtors(void)
 {
 	const init_f *p = __DTOR_LIST__ + 1;
 
@@ -131,7 +124,7 @@ MD_SECT_CALL_FUNC(".fini", __do_fini);
 
 
 void
-__do_init()
+__do_init(void)
 {
 	static int initialized = 0;
 	static struct dwarf2_eh_object object;
@@ -146,14 +139,14 @@ __do_init()
 		__register_frame_info(__EH_FRAME_BEGIN__, &object);
 		if (__JCR_LIST__[0] && _Jv_RegisterClasses)
 			_Jv_RegisterClasses(__JCR_LIST__);
-		(__ctors)();
+		__ctors();
 
 		atexit(__fini);
 	}
 }
 
 void
-__do_fini()
+__do_fini(void)
 {
 	static int finalized = 0;
 
@@ -162,7 +155,7 @@ __do_fini()
 		/*
 		 * Call global destructors.
 		 */
-		(__dtors)();
+		__dtors();
 	}
 }
 

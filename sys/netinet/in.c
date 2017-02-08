@@ -1,4 +1,4 @@
-/*	$OpenBSD: in.c,v 1.130 2016/12/05 15:31:43 mpi Exp $	*/
+/*	$OpenBSD: in.c,v 1.134 2017/02/07 10:08:21 mpi Exp $	*/
 /*	$NetBSD: in.c,v 1.26 1996/02/13 23:41:39 christos Exp $	*/
 
 /*
@@ -84,7 +84,6 @@
 
 void in_socktrim(struct sockaddr_in *);
 int in_lifaddr_ioctl(u_long, caddr_t, struct ifnet *, int);
-int in_ioctl(u_long, caddr_t, struct ifnet *, int);
 
 void in_purgeaddr(struct ifaddr *);
 int in_addhost(struct in_ifaddr *, struct sockaddr_in *);
@@ -210,7 +209,6 @@ in_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, int privileged)
 	struct sockaddr_in oldaddr;
 	int error;
 	int newifaddr;
-	int s;
 
 	splsoftassert(IPL_SOFTNET);
 
@@ -310,18 +308,15 @@ in_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, int privileged)
 	case SIOCSIFDSTADDR:
 		if ((ifp->if_flags & IFF_POINTOPOINT) == 0)
 			return (EINVAL);
-		s = splsoftnet();
 		oldaddr = ia->ia_dstaddr;
 		ia->ia_dstaddr = *satosin(&ifr->ifr_dstaddr);
 		if (ifp->if_ioctl && (error = (*ifp->if_ioctl)
 					(ifp, SIOCSIFDSTADDR, (caddr_t)ia))) {
 			ia->ia_dstaddr = oldaddr;
-			splx(s);
 			return (error);
 		}
 		in_scrubhost(ia, &oldaddr);
 		in_addhost(ia, &ia->ia_dstaddr);
-		splx(s);
 		break;
 
 	case SIOCSIFBRDADDR:
@@ -395,7 +390,11 @@ in_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, int privileged)
 	default:
 		if (ifp->if_ioctl == NULL)
 			return (EOPNOTSUPP);
-		return ((*ifp->if_ioctl)(ifp, cmd, data));
+		/* XXXSMP breaks atomicity */
+		rw_exit_write(&netlock);
+		error = ((*ifp->if_ioctl)(ifp, cmd, data));
+		rw_enter_write(&netlock);
+		return (error);
 	}
 	return (0);
 }
@@ -603,7 +602,7 @@ in_ifinit(struct ifnet *ifp, struct in_ifaddr *ia, struct sockaddr_in *sin,
 {
 	u_int32_t i = sin->sin_addr.s_addr;
 	struct sockaddr_in oldaddr;
-	int error = 0;
+	int error = 0, rterror;
 
 	splsoftassert(IPL_SOFTNET);
 
@@ -633,8 +632,15 @@ in_ifinit(struct ifnet *ifp, struct in_ifaddr *ia, struct sockaddr_in *sin,
 	 * error occured, put back the original address.
 	 */
 	ifa_add(ifp, &ia->ia_ifa);
-	rt_ifa_addlocal(&ia->ia_ifa);
+	rterror = rt_ifa_addlocal(&ia->ia_ifa);
 
+	if (rterror) {
+		if (!newaddr)
+			ifa_del(ifp, &ia->ia_ifa);
+		if (!error)
+			error = rterror;
+		goto out;
+	}
 	if (error)
 		goto out;
 

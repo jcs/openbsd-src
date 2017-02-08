@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifq.c,v 1.4 2015/12/29 12:35:43 dlg Exp $ */
+/*	$OpenBSD: ifq.c,v 1.6 2017/01/24 03:57:35 dlg Exp $ */
 
 /*
  * Copyright (c) 2015 David Gwynne <dlg@openbsd.org>
@@ -28,20 +28,23 @@
 /*
  * priq glue
  */
-void		*priq_alloc(void *);
-void		 priq_free(void *);
+unsigned int	 priq_idx(unsigned int, const struct mbuf *);
 int		 priq_enq(struct ifqueue *, struct mbuf *);
 struct mbuf	*priq_deq_begin(struct ifqueue *, void **);
 void		 priq_deq_commit(struct ifqueue *, struct mbuf *, void *);
 void		 priq_purge(struct ifqueue *, struct mbuf_list *);
 
+void		*priq_alloc(unsigned int, void *);
+void		 priq_free(unsigned int, void *);
+
 const struct ifq_ops priq_ops = {
-	priq_alloc,
-	priq_free,
+	priq_idx,
 	priq_enq,
 	priq_deq_begin,
 	priq_deq_commit,
 	priq_purge,
+	priq_alloc,
+	priq_free,
 };
 
 const struct ifq_ops * const ifq_priq_ops = &priq_ops;
@@ -119,7 +122,7 @@ ifq_start_task(void *p)
 	    ifq_empty(ifq) || ifq_is_oactive(ifq))
 		return;
 
-	ifp->if_start(ifp);
+	ifp->if_qstart(ifq);
 }
 
 void
@@ -129,7 +132,7 @@ ifq_restart_task(void *p)
 	struct ifnet *ifp = ifq->ifq_if;
 
 	ifq_clr_oactive(ifq);
-	ifp->if_start(ifp);
+	ifp->if_qstart(ifq);
 }
 
 void
@@ -167,18 +170,25 @@ ifq_barrier_task(void *p)
  */
 
 void
-ifq_init(struct ifqueue *ifq, struct ifnet *ifp)
+ifq_init(struct ifqueue *ifq, struct ifnet *ifp, unsigned int idx)
 {
 	ifq->ifq_if = ifp;
+	ifq->ifq_softc = NULL;
 
 	mtx_init(&ifq->ifq_mtx, IPL_NET);
-	ifq->ifq_drops = 0;
+	ifq->ifq_qdrops = 0;
 
 	/* default to priq */
 	ifq->ifq_ops = &priq_ops;
-	ifq->ifq_q = priq_ops.ifqop_alloc(NULL);
+	ifq->ifq_q = priq_ops.ifqop_alloc(idx, NULL);
 
 	ifq->ifq_len = 0;
+
+	ifq->ifq_packets = 0;
+	ifq->ifq_bytes = 0;
+	ifq->ifq_qdrops = 0;
+	ifq->ifq_errors = 0;
+	ifq->ifq_mcasts = 0;
 
 	mtx_init(&ifq->ifq_task_mtx, IPL_NET);
 	TAILQ_INIT(&ifq->ifq_task_list);
@@ -189,6 +199,8 @@ ifq_init(struct ifqueue *ifq, struct ifnet *ifp)
 
 	if (ifq->ifq_maxlen == 0)
 		ifq_set_maxlen(ifq, IFQ_MAXLEN);
+
+	ifq->ifq_idx = idx;
 }
 
 void
@@ -200,7 +212,7 @@ ifq_attach(struct ifqueue *ifq, const struct ifq_ops *newops, void *opsarg)
 	const struct ifq_ops *oldops;
 	void *newq, *oldq;
 
-	newq = newops->ifqop_alloc(opsarg);
+	newq = newops->ifqop_alloc(ifq->ifq_idx, opsarg);
 
 	mtx_enter(&ifq->ifq_mtx);
 	ifq->ifq_ops->ifqop_purge(ifq, &ml);
@@ -214,14 +226,14 @@ ifq_attach(struct ifqueue *ifq, const struct ifq_ops *newops, void *opsarg)
 
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		if (ifq->ifq_ops->ifqop_enq(ifq, m) != 0) {
-			ifq->ifq_drops++;
+			ifq->ifq_qdrops++;
 			ml_enqueue(&free_ml, m);
 		} else
 			ifq->ifq_len++;
 	}
 	mtx_leave(&ifq->ifq_mtx);
 
-	oldops->ifqop_free(oldq);
+	oldops->ifqop_free(ifq->ifq_idx, oldq);
 
 	ml_purge(&free_ml);
 }
@@ -234,7 +246,7 @@ ifq_destroy(struct ifqueue *ifq)
 	/* don't need to lock because this is the last use of the ifq */
 
 	ifq->ifq_ops->ifqop_purge(ifq, &ml);
-	ifq->ifq_ops->ifqop_free(ifq->ifq_q);
+	ifq->ifq_ops->ifqop_free(ifq->ifq_idx, ifq->ifq_q);
 
 	ml_purge(&ml);
 }
@@ -246,10 +258,15 @@ ifq_enqueue_try(struct ifqueue *ifq, struct mbuf *m)
 
 	mtx_enter(&ifq->ifq_mtx);
 	rv = ifq->ifq_ops->ifqop_enq(ifq, m);
-	if (rv == 0)
+	if (rv == 0) {
 		ifq->ifq_len++;
-	else
-		ifq->ifq_drops++;
+
+		ifq->ifq_packets++;
+		ifq->ifq_bytes += m->m_pkthdr.len;
+		if (ISSET(m->m_flags, M_MCAST))
+			ifq->ifq_mcasts++;
+	} else
+		ifq->ifq_qdrops++;
 	mtx_leave(&ifq->ifq_mtx);
 
 	return (rv);
@@ -330,7 +347,7 @@ ifq_purge(struct ifqueue *ifq)
 	ifq->ifq_ops->ifqop_purge(ifq, &ml);
 	rv = ifq->ifq_len;
 	ifq->ifq_len = 0;
-	ifq->ifq_drops += rv;
+	ifq->ifq_qdrops += rv;
 	mtx_leave(&ifq->ifq_mtx);
 
 	KASSERT(rv == ml_len(&ml));
@@ -363,14 +380,25 @@ ifq_q_leave(struct ifqueue *ifq, void *q)
  * priq implementation
  */
 
+unsigned int
+priq_idx(unsigned int nqueues, const struct mbuf *m)
+{
+	unsigned int flow = 0;
+
+	if (ISSET(m->m_pkthdr.ph_flowid, M_FLOWID_VALID))
+		flow = m->m_pkthdr.ph_flowid & M_FLOWID_MASK;
+
+	return (flow % nqueues);
+}
+
 void *
-priq_alloc(void *null)
+priq_alloc(unsigned int idx, void *null)
 {
 	return (malloc(sizeof(struct priq), M_DEVBUF, M_WAITOK | M_ZERO));
 }
 
 void
-priq_free(void *pq)
+priq_free(unsigned int idx, void *pq)
 {
 	free(pq, M_DEVBUF, sizeof(struct priq));
 }

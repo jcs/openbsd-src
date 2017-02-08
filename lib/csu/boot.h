@@ -1,4 +1,4 @@
-/*	$OpenBSD: boot.h,v 1.23 2016/09/01 09:33:30 tedu Exp $ */
+/*	$OpenBSD: boot.h,v 1.28 2017/01/29 22:31:09 chl Exp $ */
 
 /*
  * Copyright (c) 1998 Per Fogelstrom, Opsycon AB
@@ -86,9 +86,6 @@ struct boot_dyn {
  */
 void _dl_boot_bind(const long, long *, Elf_Dyn *);
 
-extern char __got_start[];
-extern char __got_end[];
-
 void
 _dl_boot_bind(const long sp, long *dl_data, Elf_Dyn *dynamicp)
 {
@@ -96,13 +93,9 @@ _dl_boot_bind(const long sp, long *dl_data, Elf_Dyn *dynamicp)
 	AuxInfo		*auxstack;
 	long		*stack;
 	Elf_Dyn		*dynp;
-	Elf_Addr	start;
-	size_t		size;
-	int		pagesize;
 	int		n, argc;
 	char		**argv, **envp;
 	long		loff;
-	int		prot_exec = 0;
 	RELOC_TYPE	*rp;
 	Elf_Phdr	*phdp;
 	Elf_Addr	i;
@@ -174,13 +167,12 @@ _dl_boot_bind(const long sp, long *dl_data, Elf_Dyn *dynamicp)
 
 	rp = dynld.dt_jmprel;
 	for (i = 0; i < dynld.dt_pltrelsz; i += sizeof *rp) {
-		Elf_Addr *ra;
 		const Elf_Sym *sp;
 
 		sp = dynld.dt_symtab + ELF_R_SYM(rp->r_info);
 		if (!ELF_R_SYM(rp->r_info) || sp->st_value != 0) {
 #ifdef HAVE_JMPREL
-			ra = (Elf_Addr *)(rp->r_offset + loff);
+			Elf_Addr *ra = (Elf_Addr *)(rp->r_offset + loff);
 			RELOC_JMPREL(rp, sp, ra, loff, dynld.dt_pltgot);
 #else
 			_dl_exit(6);
@@ -214,11 +206,6 @@ _dl_boot_bind(const long sp, long *dl_data, Elf_Dyn *dynamicp)
 	 * them read-only.
 	 */
 
-	if (dl_data[AUX_pagesz] != 0)
-		pagesize = dl_data[AUX_pagesz];
-	else
-		pagesize = 4096;
-
 	/* do any RWX -> RX fixups for executable PLTs and apply GNU_RELRO */
 	phdp = (Elf_Phdr *)dl_data[AUX_phdr];
 	for (i = 0; i < dl_data[AUX_phnum]; i++, phdp++) {
@@ -239,18 +226,9 @@ _dl_boot_bind(const long sp, long *dl_data, Elf_Dyn *dynamicp)
 			 * GNU_RELRO (a) covers the GOT, and (b) comes after
 			 * all LOAD sections, so if we found it then we're done
 			 */
-			return;
+			break;
 		}
 	}
-
-#if defined(__powerpc__)
-	if (dynld.dt_proc[DT_PROC(DT_PPC_GOT)] == 0)
-		prot_exec = PROT_EXEC;
-#endif
-
-	start = ELF_TRUNC((Elf_Addr)__got_start, pagesize);
-	size = ELF_ROUND((Elf_Addr)__got_end - start, pagesize);
-	mprotect((void *)start, size, GOT_PERMS | prot_exec);
 }
 
 #ifdef __alpha__

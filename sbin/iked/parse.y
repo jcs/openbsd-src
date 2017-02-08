@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.58 2016/09/03 09:20:07 vgross Exp $	*/
+/*	$OpenBSD: parse.y,v 1.61 2017/01/20 13:56:51 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -125,7 +125,6 @@ struct iked_transform ikev2_default_ike_transforms[] = {
 	{ IKEV2_XFORMTYPE_PRF,	IKEV2_XFORMPRF_HMAC_SHA1 },
 	{ IKEV2_XFORMTYPE_INTEGR, IKEV2_XFORMAUTH_HMAC_SHA2_256_128 },
 	{ IKEV2_XFORMTYPE_INTEGR, IKEV2_XFORMAUTH_HMAC_SHA1_96 },
-	{ IKEV2_XFORMTYPE_DH,	IKEV2_XFORMDH_MODP_2048_256 },
 	{ IKEV2_XFORMTYPE_DH,	IKEV2_XFORMDH_MODP_2048 },
 	{ IKEV2_XFORMTYPE_DH,	IKEV2_XFORMDH_MODP_1536 },
 	{ IKEV2_XFORMTYPE_DH,	IKEV2_XFORMDH_MODP_1024 },
@@ -226,12 +225,6 @@ const struct ipsec_xf groupxfs[] = {
 	{ "grp20",		IKEV2_XFORMDH_ECP_384 },
 	{ "ecp521",		IKEV2_XFORMDH_ECP_521 },
 	{ "grp21",		IKEV2_XFORMDH_ECP_521 },
-	{ "modp1024-160",	IKEV2_XFORMDH_MODP_1024_160 },
-	{ "grp22",		IKEV2_XFORMDH_MODP_1024_160 },
-	{ "modp2048-224",	IKEV2_XFORMDH_MODP_2048_224 },
-	{ "grp23",		IKEV2_XFORMDH_MODP_2048_224 },
-	{ "modp2048-256",	IKEV2_XFORMDH_MODP_2048_256 },
-	{ "grp24",		IKEV2_XFORMDH_MODP_2048_256 },
 	{ "ecp192",		IKEV2_XFORMDH_ECP_192 },
 	{ "grp25",		IKEV2_XFORMDH_ECP_192 },
 	{ "ecp224",		IKEV2_XFORMDH_ECP_224 },
@@ -462,8 +455,10 @@ ikev2rule	: IKEV2 name ikeflags satype af proto hosts_list peers
 		    filters {
 			if (create_ike($2, $5, $6, $7, &$8, $9, $10, $4, $3,
 			    $11.srcid, $11.dstid, $12, &$13, &$14,
-			    $16, $15) == -1)
+			    $16, $15) == -1) {
+				yyerror("create_ike failed");
 				YYERROR;
+			}
 		}
 		;
 
@@ -1520,9 +1515,10 @@ symset(const char *nam, const char *val, int persist)
 {
 	struct sym	*sym;
 
-	for (sym = TAILQ_FIRST(&symhead); sym && strcmp(nam, sym->nam);
-	    sym = TAILQ_NEXT(sym, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(sym, &symhead, entry) {
+		if (strcmp(nam, sym->nam) == 0)
+			break;
+	}
 
 	if (sym != NULL) {
 		if (sym->persist == 1)
@@ -1581,11 +1577,12 @@ symget(const char *nam)
 {
 	struct sym	*sym;
 
-	TAILQ_FOREACH(sym, &symhead, entry)
+	TAILQ_FOREACH(sym, &symhead, entry) {
 		if (strcmp(nam, sym->nam) == 0) {
 			sym->used = 1;
 			return (sym->val);
 		}
+	}
 	return (NULL);
 }
 
@@ -2429,6 +2426,9 @@ create_ike(char *name, int af, uint8_t ipproto, struct ipsec_hosts *hosts,
 
 	bzero(&pol, sizeof(pol));
 	bzero(&prop, sizeof(prop));
+	bzero(&ikexforms, sizeof(ikexforms));
+	bzero(&ipsecxforms, sizeof(ipsecxforms));
+	bzero(&flows, sizeof(flows));
 	bzero(idstr, sizeof(idstr));
 
 	pol.pol_id = ++policy_id;
@@ -2626,6 +2626,8 @@ create_ike(char *name, int af, uint8_t ipproto, struct ipsec_hosts *hosts,
 
 	for (j = 0, ipa = hosts->src, ipb = hosts->dst; ipa && ipb;
 	    ipa = ipa->next, ipb = ipb->next, j++) {
+		if (j >= nitems(flows))
+			fatalx("create_ike: too many flows");
 		memcpy(&flows[j].flow_src.addr, &ipa->address,
 		    sizeof(ipa->address));
 		flows[j].flow_src.addr_af = ipa->af;
@@ -2653,8 +2655,10 @@ create_ike(char *name, int af, uint8_t ipproto, struct ipsec_hosts *hosts,
 
 		flows[j].flow_ipproto = ipproto;
 
-		pol.pol_nflows++;
-		RB_INSERT(iked_flows, &pol.pol_flows, &flows[j]);
+		if (RB_INSERT(iked_flows, &pol.pol_flows, &flows[j]) == NULL)
+			pol.pol_nflows++;
+		else
+			warnx("create_ike: duplicate flow");
 	}
 
 	for (j = 0, ipa = ikecfg; ipa; ipa = ipa->next, j++) {

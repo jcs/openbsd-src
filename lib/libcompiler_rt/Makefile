@@ -1,6 +1,8 @@
-# $OpenBSD: Makefile,v 1.3 2016/09/19 12:19:34 pascal Exp $
+# $OpenBSD: Makefile,v 1.5 2017/01/20 07:55:20 patrick Exp $
 
 .include <bsd.own.mk>
+
+.if ${COMPILER_VERSION:L} == "clang"
 
 LIB=	compiler_rt
 NOPIC=
@@ -164,6 +166,20 @@ SRCS+=	${file}.c
 .	endif
 .endfor
 
+.if ${RTARCH} == "aarch64"
+SRCS+=	comparetf2.c \
+	extenddftf2.c \
+	extendsftf2.c \
+	trunctfdf2.c \
+	trunctfsf2.c \
+	fixtfdi.c \
+	fixtfsi.c \
+	floatditf.c \
+	floatsitf.c \
+	floatunsitf.c \
+	multc3.c
+.endif
+
 .if ${RTARCH} == "arm"
 SRCS+=	aeabi_cdcmp.S \
 	aeabi_cdcmpeq_check_nan.c \
@@ -225,3 +241,8 @@ SRCS+=	divtc3.c \
 .endif
 
 .include <bsd.lib.mk>
+
+.else
+NOPROG=
+.include <bsd.prog.mk>
+.endif

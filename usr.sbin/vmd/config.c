@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.21 2016/11/24 07:58:55 reyk Exp $	*/
+/*	$OpenBSD: config.c,v 1.23 2017/01/17 21:51:01 krw Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -126,7 +126,7 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid)
 	struct vmop_create_params *vmc = &vm->vm_params;
 	struct vm_create_params	*vcp = &vmc->vmc_params;
 	unsigned int		 i;
-	int			 fd, ttys_fd;
+	int			 fd = -1, ttys_fd;
 	int			 kernfd = -1, *diskfds = NULL, *tapfds = NULL;
 	int			 saved_errno = 0;
 	char			 ptyname[VM_TTYNAME_MAX];
@@ -240,12 +240,18 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid)
 	}
 
 	/* Open TTY */
-	if (openpty(&fd, &ttys_fd, ptyname, NULL, NULL) == -1 ||
-	    (vm->vm_ttyname = strdup(ptyname)) == NULL) {
-		log_warn("%s: can't open tty %s", __func__, ptyname);
+	if (vm->vm_ttyname == NULL) {
+		if (openpty(&vm->vm_tty, &ttys_fd, ptyname, NULL, NULL) == -1 ||
+		    (vm->vm_ttyname = strdup(ptyname)) == NULL) {
+			log_warn("%s: can't open tty %s", __func__, ptyname);
+			goto fail;
+		}
+		close(ttys_fd);
+	}
+	if ((fd = dup(vm->vm_tty)) == -1) {
+		log_warn("%s: can't re-open tty %s", __func__, vm->vm_ttyname);
 		goto fail;
 	}
-	close(ttys_fd);
 
 	/* Send VM information */
 	proc_compose_imsg(ps, PROC_VMM, -1,
@@ -332,7 +338,7 @@ config_getdisk(struct privsep *ps, struct imsg *imsg)
 {
 	struct vmd_vm	*vm;
 	unsigned int	 n;
-	
+
 	errno = 0;
 	if ((vm = vm_getbyvmid(imsg->hdr.peerid)) == NULL) {
 		errno = ENOENT;

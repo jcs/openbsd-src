@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_mroute.h,v 1.16 2015/06/08 22:19:28 krw Exp $	*/
+/*	$OpenBSD: ip6_mroute.h,v 1.18 2017/02/01 20:59:47 dhill Exp $	*/
 /*	$KAME: ip6_mroute.h,v 1.17 2001/02/10 02:05:52 itojun Exp $	*/
 
 /*
@@ -53,7 +53,6 @@
 #define MRT6_DEL_MIF		103	/* delete multicast interface */
 #define MRT6_ADD_MFC		104	/* insert forwarding cache entry */
 #define MRT6_DEL_MFC		105	/* delete forwarding cache entry */
-#define MRT6_PIM                107     /* enable pim code */
 #define MRT6_INIT		108	/* initialize forwarder (mrt6msg) */
 
 /*
@@ -248,7 +247,7 @@ struct rtdetq {		/* XXX: rtdetq is also defined in ip_mroute.h */
 #define MAX_UPQ6	4		/* max. no of pkts in upcall Q */
 
 int	ip6_mrouter_set(int, struct socket *, struct mbuf *);
-int	ip6_mrouter_get(int, struct socket *, struct mbuf **);
+int	ip6_mrouter_get(int, struct socket *, struct mbuf *);
 int	ip6_mrouter_done(void);
 void	ip6_mrouter_detach(struct ifnet *);
 int	mrt6_ioctl(u_long, caddr_t);

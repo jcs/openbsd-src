@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_input.c,v 1.333 2016/11/16 14:11:26 mpi Exp $	*/
+/*	$OpenBSD: tcp_input.c,v 1.337 2017/01/29 19:58:47 bluhm Exp $	*/
 /*	$NetBSD: tcp_input.c,v 1.23 1996/02/13 23:43:44 christos Exp $	*/
 
 /*
@@ -351,24 +351,15 @@ tcp_flush_queue(struct tcpcb *tp)
 	return (flags);
 }
 
-#ifdef INET6
-int
-tcp6_input(struct mbuf **mp, int *offp, int proto)
-{
-	struct mbuf *m = *mp;
-
-	tcp_input(m, *offp, proto);
-	return IPPROTO_DONE;
-}
-#endif
-
 /*
  * TCP input routine, follows pages 65-76 of the
  * protocol specification dated September, 1981 very closely.
  */
-void
-tcp_input(struct mbuf *m, ...)
+int
+tcp_input(struct mbuf **mp, int *offp, int proto)
 {
+	struct mbuf *m = *mp;
+	int iphlen = *offp;
 	struct ip *ip;
 	struct inpcb *inp = NULL;
 	u_int8_t *optp = NULL;
@@ -383,8 +374,6 @@ tcp_input(struct mbuf *m, ...)
 	tcp_seq iss, *reuse = NULL;
 	u_long tiwin;
 	struct tcp_opt_info opti;
-	int iphlen;
-	va_list ap;
 	struct tcphdr *th;
 #ifdef INET6
 	struct ip6_hdr *ip6 = NULL;
@@ -399,10 +388,6 @@ tcp_input(struct mbuf *m, ...)
 #ifdef TCP_ECN
 	u_char iptos;
 #endif
-
-	va_start(ap, m);
-	iphlen = va_arg(ap, int);
-	va_end(ap);
 
 	tcpstat.tcps_rcvtotal++;
 
@@ -430,7 +415,7 @@ tcp_input(struct mbuf *m, ...)
 		break;
 	default:
 		m_freem(m);
-		return;	/*EAFNOSUPPORT*/
+		return IPPROTO_DONE;
 	}
 
 	/*
@@ -442,7 +427,7 @@ tcp_input(struct mbuf *m, ...)
 #ifdef DIAGNOSTIC
 		if (iphlen < sizeof(struct ip)) {
 			m_freem(m);
-			return;
+			return IPPROTO_DONE;
 		}
 #endif /* DIAGNOSTIC */
 		break;
@@ -451,20 +436,20 @@ tcp_input(struct mbuf *m, ...)
 #ifdef DIAGNOSTIC
 		if (iphlen < sizeof(struct ip6_hdr)) {
 			m_freem(m);
-			return;
+			return IPPROTO_DONE;
 		}
 #endif /* DIAGNOSTIC */
 		break;
 #endif
 	default:
 		m_freem(m);
-		return;
+		return IPPROTO_DONE;
 	}
 
 	IP6_EXTHDR_GET(th, struct tcphdr *, m, iphlen, sizeof(*th));
 	if (!th) {
 		tcpstat.tcps_rcvshort++;
-		return;
+		return IPPROTO_DONE;
 	}
 
 	tlen = m->m_pkthdr.len - iphlen;
@@ -558,7 +543,7 @@ tcp_input(struct mbuf *m, ...)
 		IP6_EXTHDR_GET(th, struct tcphdr *, m, iphlen, off);
 		if (!th) {
 			tcpstat.tcps_rcvshort++;
-			return;
+			return IPPROTO_DONE;
 		}
 		optlen = off - sizeof(struct tcphdr);
 		optp = (u_int8_t *)(th + 1);
@@ -880,7 +865,7 @@ findpcb:
 					tcpstat.tcps_dropsyn++;
 					goto drop;
 				}
-				return;
+				return IPPROTO_DONE;
 			}
 		}
 	}
@@ -1073,7 +1058,7 @@ findpcb:
 				if (so->so_snd.sb_cc ||
 				    tp->t_flags & TF_NEEDOUTPUT)
 					(void) tcp_output(tp);
-				return;
+				return IPPROTO_DONE;
 			}
 		} else if (th->th_ack == tp->snd_una &&
 		    TAILQ_EMPTY(&tp->t_segq) &&
@@ -1120,7 +1105,7 @@ findpcb:
 			tp->t_flags &= ~TF_BLOCKOUTPUT;
 			if (tp->t_flags & (TF_ACKNOW|TF_NEEDOUTPUT))
 				(void) tcp_output(tp);
-			return;
+			return IPPROTO_DONE;
 		}
 	}
 
@@ -2173,7 +2158,7 @@ dodata:							/* XXX */
 	 */
 	if (tp->t_flags & (TF_ACKNOW|TF_NEEDOUTPUT))
 		(void) tcp_output(tp);
-	return;
+	return IPPROTO_DONE;
 
 badsyn:
 	/*
@@ -2201,7 +2186,7 @@ dropafterack:
 	m_freem(m);
 	tp->t_flags |= TF_ACKNOW;
 	(void) tcp_output(tp);
-	return;
+	return IPPROTO_DONE;
 
 dropwithreset_ratelim:
 	/*
@@ -2235,7 +2220,7 @@ dropwithreset:
 		    (tcp_seq)0, TH_RST|TH_ACK, m->m_pkthdr.ph_rtableid);
 	}
 	m_freem(m);
-	return;
+	return IPPROTO_DONE;
 
 drop:
 	/*
@@ -2257,7 +2242,7 @@ drop:
 	}
 
 	m_freem(m);
-	return;
+	return IPPROTO_DONE;
 }
 
 int
@@ -3340,8 +3325,7 @@ syn_cache_rm(struct syn_cache *sc)
 void
 syn_cache_put(struct syn_cache *sc)
 {
-	if (sc->sc_ipopts)
-		(void) m_free(sc->sc_ipopts);
+	m_free(sc->sc_ipopts);
 	if (sc->sc_route4.ro_rt != NULL) {
 		rtfree(sc->sc_route4.ro_rt);
 		sc->sc_route4.ro_rt = NULL;
@@ -3398,7 +3382,7 @@ syn_cache_insert(struct syn_cache *sc, struct tcpcb *tp)
 	struct syn_cache *sc2;
 	int i;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	/*
 	 * If there are no entries in the hash table, reinitialize
@@ -3534,7 +3518,7 @@ syn_cache_timer(void *arg)
 	struct syn_cache *sc = arg;
 	int s;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 	if (sc->sc_flags & SCF_DEAD)
 		goto out;
 
@@ -3560,14 +3544,14 @@ syn_cache_timer(void *arg)
 	SYN_CACHE_TIMER_ARM(sc);
 
  out:
-	splx(s);
+	NET_UNLOCK(s);
 	return;
 
  dropit:
 	tcpstat.tcps_sc_timed_out++;
 	syn_cache_rm(sc);
 	syn_cache_put(sc);
-	splx(s);
+	NET_UNLOCK(s);
 }
 
 void
@@ -3589,7 +3573,7 @@ syn_cache_cleanup(struct tcpcb *tp)
 {
 	struct syn_cache *sc, *nsc;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	LIST_FOREACH_SAFE(sc, &tp->t_sc, sc_tpq, nsc) {
 #ifdef DIAGNOSTIC
@@ -3616,7 +3600,7 @@ syn_cache_lookup(struct sockaddr *src, struct sockaddr *dst,
 	u_int32_t hash;
 	int i;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	/* Check the active cache first, the passive cache is likely emtpy. */
 	sets[0] = &tcp_syn_cache[tcp_syn_cache_active];
@@ -3676,7 +3660,7 @@ syn_cache_get(struct sockaddr *src, struct sockaddr *dst, struct tcphdr *th,
 	struct pf_divert *divert = NULL;
 #endif
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	sc = syn_cache_lookup(src, dst, &scp, sotoinpcb(so)->inp_rtableid);
 	if (sc == NULL)
@@ -3904,7 +3888,7 @@ syn_cache_reset(struct sockaddr *src, struct sockaddr *dst, struct tcphdr *th,
 	struct syn_cache *sc;
 	struct syn_cache_head *scp;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	if ((sc = syn_cache_lookup(src, dst, &scp, rtableid)) == NULL)
 		return;
@@ -3923,7 +3907,7 @@ syn_cache_unreach(struct sockaddr *src, struct sockaddr *dst, struct tcphdr *th,
 	struct syn_cache *sc;
 	struct syn_cache_head *scp;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	if ((sc = syn_cache_lookup(src, dst, &scp, rtableid)) == NULL)
 		return;
@@ -4035,8 +4019,7 @@ syn_cache_add(struct sockaddr *src, struct sockaddr *dst, struct tcphdr *th,
 			 * If we were remembering a previous source route,
 			 * forget it and use the new one we've been given.
 			 */
-			if (sc->sc_ipopts)
-				(void) m_free(sc->sc_ipopts);
+			m_free(sc->sc_ipopts);
 			sc->sc_ipopts = ipopts;
 		}
 		sc->sc_timestamp = tb.ts_recent;
@@ -4049,8 +4032,7 @@ syn_cache_add(struct sockaddr *src, struct sockaddr *dst, struct tcphdr *th,
 
 	sc = pool_get(&syn_cache_pool, PR_NOWAIT|PR_ZERO);
 	if (sc == NULL) {
-		if (ipopts)
-			(void) m_free(ipopts);
+		m_free(ipopts);
 		return (-1);
 	}
 

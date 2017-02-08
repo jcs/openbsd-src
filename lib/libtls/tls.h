@@ -1,4 +1,4 @@
-/* $OpenBSD: tls.h,v 1.43 2016/11/11 14:03:33 jsing Exp $ */
+/* $OpenBSD: tls.h,v 1.47 2017/01/31 16:18:57 beck Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -27,7 +27,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-#define TLS_API	20161111
+#define TLS_API	20170126
 
 #define TLS_PROTOCOL_TLSv1_0	(1 << 1)
 #define TLS_PROTOCOL_TLSv1_1	(1 << 2)
@@ -66,6 +66,9 @@ extern "C" {
 #define TLS_CRL_REASON_PRIVILEGE_WITHDRAWN	9
 #define TLS_CRL_REASON_AA_COMPROMISE		10
 
+#define TLS_MAX_SESSION_ID_LENGTH		32
+#define TLS_TICKET_KEY_SIZE			48
+
 struct tls;
 struct tls_config;
 
@@ -86,7 +89,12 @@ int tls_config_add_keypair_file(struct tls_config *_config,
     const char *_cert_file, const char *_key_file);
 int tls_config_add_keypair_mem(struct tls_config *_config, const uint8_t *_cert,
     size_t _cert_len, const uint8_t *_key, size_t _key_len);
-
+int tls_config_add_keypair_ocsp_file(struct tls_config *_config,
+    const char *_cert_file, const char *_key_file,
+    const char *_ocsp_staple_file);
+int tls_config_add_keypair_ocsp_mem(struct tls_config *_config, const uint8_t *_cert,
+    size_t _cert_len, const uint8_t *_key, size_t _key_len,
+    const uint8_t *_staple, size_t _staple_len);
 int tls_config_set_alpn(struct tls_config *_config, const char *_alpn);
 int tls_config_set_ca_file(struct tls_config *_config, const char *_ca_file);
 int tls_config_set_ca_path(struct tls_config *_config, const char *_ca_path);
@@ -106,8 +114,15 @@ int tls_config_set_keypair_file(struct tls_config *_config,
     const char *_cert_file, const char *_key_file);
 int tls_config_set_keypair_mem(struct tls_config *_config, const uint8_t *_cert,
     size_t _cert_len, const uint8_t *_key, size_t _key_len);
-int tls_config_set_ocsp_staple_mem(struct tls_config *_config, char *_staple, size_t _len);
-int tls_config_set_ocsp_staple_file(struct tls_config *_config, const char *_staple_file);
+int tls_config_set_keypair_ocsp_file(struct tls_config *_config,
+    const char *_cert_file, const char *_key_file, const char *_staple_file);
+int tls_config_set_keypair_ocsp_mem(struct tls_config *_config, const uint8_t *_cert,
+    size_t _cert_len, const uint8_t *_key, size_t _key_len,
+    const uint8_t *_staple, size_t staple_len);
+int tls_config_set_ocsp_staple_mem(struct tls_config *_config,
+    const uint8_t *_staple, size_t _len);
+int tls_config_set_ocsp_staple_file(struct tls_config *_config,
+    const char *_staple_file);
 int tls_config_set_protocols(struct tls_config *_config, uint32_t _protocols);
 int tls_config_set_verify_depth(struct tls_config *_config, int _verify_depth);
 
@@ -125,6 +140,12 @@ void tls_config_verify_client_optional(struct tls_config *_config);
 
 void tls_config_clear_keys(struct tls_config *_config);
 int tls_config_parse_protocols(uint32_t *_protocols, const char *_protostr);
+
+int tls_config_set_session_id(struct tls_config *_config,
+    const unsigned char *_session_id, size_t _len);
+int tls_config_set_session_lifetime(struct tls_config *_config, int _lifetime);
+int tls_config_add_ticket_key(struct tls_config *_config, uint32_t _keyrev,
+    unsigned char *_key, size_t _keylen);
 
 struct tls *tls_client(void);
 struct tls *tls_server(void);
@@ -166,7 +187,8 @@ const char *tls_conn_version(struct tls *_ctx);
 
 uint8_t *tls_load_file(const char *_file, size_t *_len, char *_password);
 
-int tls_ocsp_process_response(struct tls *_ctx, const unsigned char *_response, size_t _size);
+int tls_ocsp_process_response(struct tls *_ctx, const unsigned char *_response,
+    size_t _size);
 int tls_peer_ocsp_cert_status(struct tls *_ctx);
 int tls_peer_ocsp_crl_reason(struct tls *_ctx);
 time_t tls_peer_ocsp_next_update(struct tls *_ctx);

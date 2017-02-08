@@ -1,4 +1,4 @@
-/*	$OpenBSD: systm.h,v 1.119 2016/09/24 18:35:52 tedu Exp $	*/
+/*	$OpenBSD: systm.h,v 1.123 2017/01/25 06:15:50 mpi Exp $	*/
 /*	$NetBSD: systm.h,v 1.50 1996/06/09 04:55:09 briggs Exp $	*/
 
 /*-
@@ -290,6 +290,36 @@ struct uio;
 int	uiomove(void *, size_t, struct uio *);
 
 #if defined(_KERNEL)
+
+#include <sys/rwlock.h>
+
+extern struct rwlock netlock;
+
+#define	NET_LOCK(s)							\
+do {									\
+	rw_enter_write(&netlock);					\
+	s = splsoftnet();						\
+} while (0)
+
+#define	NET_UNLOCK(s)						\
+do {									\
+	splx(s);							\
+	rw_exit_write(&netlock);					\
+} while (0)
+
+#define	NET_ASSERT_LOCKED()						\
+do {									\
+	if (rw_status(&netlock) != RW_WRITE)				\
+		splassert_fail(RW_WRITE, rw_status(&netlock), __func__);\
+	splsoftassert(IPL_SOFTNET);					\
+} while (0)
+
+#define	NET_ASSERT_UNLOCKED()						\
+do {									\
+	if (rw_status(&netlock) == RW_WRITE)				\
+		splassert_fail(0, rw_status(&netlock), __func__);	\
+} while (0)
+
 __returns_twice int	setjmp(label_t *);
 __dead void	longjmp(label_t *);
 #endif
@@ -305,6 +335,16 @@ int dk_mountroot(void);
 extern int (*mountroot)(void);
 
 #include <lib/libkern/libkern.h>
+
+#define bzero(b, n)		__builtin_bzero((b), (n))
+#define memcmp(b1, b2, n)	__builtin_memcmp((b1), (b2), (n))
+#define memcpy(d, s, n)		__builtin_memcpy((d), (s), (n))
+#define memset(b, c, n)		__builtin_memset((b), (c), (n))
+#if !defined(__clang__) && (defined(__GNUC__) && __GNUC__ >= 4)
+#define bcmp(b1, b2, n)		__builtin_bcmp((b1), (b2), (n))
+#define bcopy(s, d, n)		__builtin_bcopy((s), (d), (n))
+#define memmove(d, s, n)	__builtin_memmove((d), (s), (n))
+#endif
 
 #if defined(DDB) || defined(KGDB)
 /* debugger entry points */

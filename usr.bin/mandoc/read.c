@@ -1,7 +1,7 @@
-/*	$OpenBSD: read.c,v 1.127 2016/12/07 22:57:35 schwarze Exp $ */
+/*	$OpenBSD: read.c,v 1.133 2017/02/03 18:18:08 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
- * Copyright (c) 2010-2016 Ingo Schwarze <schwarze@openbsd.org>
+ * Copyright (c) 2010-2017 Ingo Schwarze <schwarze@openbsd.org>
  * Copyright (c) 2010, 2012 Joerg Sonnenberger <joerg@netbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -43,8 +43,8 @@
 #define	REPARSE_LIMIT	1000
 
 struct	mparse {
-	struct roff_man	 *man; /* man parser */
 	struct roff	 *roff; /* roff parser (!NULL) */
+	struct roff_man	 *man; /* man parser */
 	char		 *sodest; /* filename pointed to by .so */
 	const char	 *file; /* filename of current input file */
 	struct buf	 *primary; /* buffer currently being parsed */
@@ -103,10 +103,11 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"no document body",
 	"content before first section header",
 	"first section is not \"NAME\"",
-	"NAME section without name",
+	"NAME section without Nm before Nd",
 	"NAME section without description",
 	"description not at the end of NAME",
 	"bad NAME section content",
+	"missing comma before name",
 	"missing description line, using \"\"",
 	"sections out of conventional order",
 	"duplicate section title",
@@ -145,6 +146,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"unknown font type, using \\fR",
 	"nothing follows prefix",
 	"empty reference block",
+	"missing section argument",
 	"missing -std argument, adding it",
 	"missing option string, using \"\"",
 	"missing resource identifier, using \"\"",
@@ -170,6 +172,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"blank line in fill mode, using .sp",
 	"tab in filled text",
 	"whitespace at end of input line",
+	"new sentence, new line",
 	"bad comment style",
 	"invalid escape sequence",
 	"undefined string, using \"\"",
@@ -808,13 +811,15 @@ mparse_reset(struct mparse *curp)
 {
 	roff_reset(curp->roff);
 	roff_man_reset(curp->man);
+
+	free(curp->sodest);
+	curp->sodest = NULL;
+
 	if (curp->secondary)
 		curp->secondary->sz = 0;
 
 	curp->file_status = MANDOCLEVEL_OK;
-
-	free(curp->sodest);
-	curp->sodest = NULL;
+	curp->gzip = 0;
 }
 
 void
@@ -822,8 +827,7 @@ mparse_free(struct mparse *curp)
 {
 
 	roff_man_free(curp->man);
-	if (curp->roff)
-		roff_free(curp->roff);
+	roff_free(curp->roff);
 	if (curp->secondary)
 		free(curp->secondary->buf);
 
@@ -843,6 +847,13 @@ mparse_result(struct mparse *curp, struct roff_man **man,
 	}
 	if (man)
 		*man = curp->man;
+}
+
+void
+mparse_updaterc(struct mparse *curp, enum mandoclevel *rc)
+{
+	if (curp->file_status > *rc)
+		*rc = curp->file_status;
 }
 
 void

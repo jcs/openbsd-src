@@ -1,4 +1,4 @@
-/*	$OpenBSD: syscall.h,v 1.36 2016/08/31 13:18:57 guenther Exp $ */
+/*	$OpenBSD: syscall.h,v 1.38 2017/01/24 07:48:37 guenther Exp $ */
 
 /*
  * Copyright (c) 2001 Niklas Hallqvist
@@ -39,7 +39,7 @@
 
 int	_dl_close(int);
 __dead
-int	_dl_exit(int);
+void	_dl_exit(int);
 int	_dl_issetugid(void);
 int	_dl_getthrid(void);
 void *	_dl_mmap(void *, size_t, int, int, int, off_t);
@@ -57,5 +57,7 @@ int	_dl_getcwd(char *, size_t);
 int	_dl_utrace(const char *, const void *, size_t);
 int	_dl_getentropy(char *, size_t);
 int	_dl_sendsyslog(const char *, size_t, int);
+__dead
+void	_dl_thrkill(pid_t, int, void *);
 
 #endif /*__DL_SYSCALL_H__*/

@@ -1,4 +1,4 @@
-/* $OpenBSD: screen-redraw.c,v 1.41 2016/10/13 20:27:27 nicm Exp $ */
+/* $OpenBSD: screen-redraw.c,v 1.44 2017/02/08 15:41:41 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -280,7 +280,7 @@ screen_redraw_make_pane_status(struct client *c, struct window *w,
 
 	fmt = options_get_string(w->options, "pane-border-format");
 
-	ft = format_create(NULL, 0);
+	ft = format_create(NULL, FORMAT_PANE|wp->id, 0);
 	format_defaults(ft, c, NULL, NULL, wp);
 
 	memcpy(&old, &wp->status_screen, sizeof old);
@@ -422,6 +422,9 @@ screen_redraw_pane(struct client *c, struct window_pane *wp)
 	yoff = wp->yoff;
 	if (status_at_line(c) == 0)
 		yoff++;
+
+	log_debug("%s: redraw pane %%%u (at %u,%u)", c->tty.path, wp->id,
+	    wp->xoff, yoff);
 
 	for (i = 0; i < wp->sy; i++)
 		tty_draw_pane(&c->tty, wp, i, wp->xoff, yoff);
@@ -588,6 +591,8 @@ screen_redraw_draw_number(struct client *c, struct window_pane *wp, u_int top)
 		gc.bg = active_colour;
 	else
 		gc.bg = colour;
+	gc.flags |= GRID_FLAG_NOPALETTE;
+
 	tty_attributes(tty, &gc, wp);
 	for (ptr = buf; *ptr != '\0'; ptr++) {
 		if (*ptr < '0' || *ptr > '9')
@@ -615,6 +620,8 @@ draw_text:
 		gc.fg = active_colour;
 	else
 		gc.fg = colour;
+	gc.flags |= GRID_FLAG_NOPALETTE;
+
 	tty_attributes(tty, &gc, wp);
 	tty_puts(tty, buf);
 

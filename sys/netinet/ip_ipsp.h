@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_ipsp.h,v 1.174 2016/09/15 03:37:09 dlg Exp $	*/
+/*	$OpenBSD: ip_ipsp.h,v 1.178 2017/02/07 22:28:37 bluhm Exp $	*/
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr),
@@ -474,15 +474,11 @@ int	tdb_walk(u_int, int (*)(struct tdb *, void *, int), void *);
 int	ipe4_attach(void);
 int	ipe4_init(struct tdb *, struct xformsw *, struct ipsecinit *);
 int	ipe4_zeroize(struct tdb *);
-void	ipe4_input(struct mbuf *, ...);
-void	ipip_input(struct mbuf *, int, struct ifnet *, int);
+void	ipe4_input(struct mbuf *, int, int);
+int	ipip_input(struct mbuf **, int *, struct ifnet *, int);
 int	ipip_output(struct mbuf *, struct tdb *, struct mbuf **, int, int);
 
-void	ip4_input(struct mbuf *, ...);
-
-#ifdef INET6
-int	ip4_input6(struct mbuf **, int *, int);
-#endif /* INET6 */
+int	ip4_input(struct mbuf **, int *, int);
 
 /* XF_AH */
 int 	ah_attach(void);
@@ -492,9 +488,9 @@ int	ah_input(struct mbuf *, struct tdb *, int, int);
 int	ah_output(struct mbuf *, struct tdb *, struct mbuf **, int, int);
 int	ah_sysctl(int *, u_int, void *, size_t *, void *, size_t);
 
-void	ah4_input(struct mbuf *, ...);
-void	*ah4_ctlinput(int, struct sockaddr *, u_int, void *);
-void	*udpencap_ctlinput(int, struct sockaddr *, u_int, void *);
+int	ah4_input(struct mbuf **, int *, int);
+void	ah4_ctlinput(int, struct sockaddr *, u_int, void *);
+void	udpencap_ctlinput(int, struct sockaddr *, u_int, void *);
 
 #ifdef INET6
 int	ah6_input(struct mbuf **, int *, int);
@@ -508,8 +504,8 @@ int	esp_input(struct mbuf *, struct tdb *, int, int);
 int	esp_output(struct mbuf *, struct tdb *, struct mbuf **, int, int);
 int	esp_sysctl(int *, u_int, void *, size_t *, void *, size_t);
 
-void	esp4_input(struct mbuf *, ...);
-void	*esp4_ctlinput(int, struct sockaddr *, u_int, void *);
+int	esp4_input(struct mbuf **, int *, int);
+void	esp4_ctlinput(int, struct sockaddr *, u_int, void *);
 
 #ifdef INET6
 int 	esp6_input(struct mbuf **, int *, int);
@@ -522,9 +518,7 @@ int	ipcomp_zeroize(struct tdb *);
 int	ipcomp_input(struct mbuf *, struct tdb *, int, int);
 int	ipcomp_output(struct mbuf *, struct tdb *, struct mbuf **, int, int);
 int	ipcomp_sysctl(int *, u_int, void *, size_t *, void *, size_t);
-
-void	ipcomp4_input(struct mbuf *, ...);
-
+int	ipcomp4_input(struct mbuf **, int *, int);
 #ifdef INET6
 int	ipcomp6_input(struct mbuf **, int *, int);
 #endif /* INET6 */
@@ -557,7 +551,7 @@ struct ipsec_ids *ipsp_ids_lookup(u_int32_t);
 void	ipsp_ids_free(struct ipsec_ids *);
 
 int	ipsec_common_input(struct mbuf *, int, int, int, int, int);
-int	ipsec_common_input_cb(struct mbuf *, struct tdb *, int, int);
+void	ipsec_common_input_cb(struct mbuf *, struct tdb *, int, int);
 int	ipsec_delete_policy(struct ipsec_policy *);
 ssize_t	ipsec_hdrsz(struct tdb *);
 void	ipsec_adjust_mtu(struct mbuf *, u_int32_t);

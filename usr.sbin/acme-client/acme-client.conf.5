@@ -1,4 +1,4 @@
-.\"	$OpenBSD: acme-client.conf.5,v 1.2 2016/09/18 21:53:41 jmc Exp $
+.\"	$OpenBSD: acme-client.conf.5,v 1.8 2017/01/21 15:53:15 jmc Exp $
 .\"
 .\" Copyright (c) 2005 Esben Norby <norby@openbsd.org>
 .\" Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -17,7 +17,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: September 18 2016 $
+.Dd $Mdocdate: January 21 2017 $
 .Dt ACME-CLIENT.CONF 5
 .Os
 .Sh NAME
@@ -122,19 +122,37 @@ Specify a list of alternative names the certificate will be valid for.
 The private key file for which the certificate will be obtained.
 .It Ic domain certificate Ar file
 The filename of the certificate that will be issued.
+.It Ic domain chain certificate Ar file
+The filename in which to store the certificate chain
+that will be returned by the CA.
+It needs to be in the same directory as the
+.Ar domain certificate
+(or in a subdirectory) and can be specified as a relative or absolute path.
+.It Ic domain full chain certificate Ar file
+The filename in which to store the full certificate chain
+that will be returned by the CA.
+It needs to be in the same directory as the
+.Ar domain certificate
+(or in a subdirectory) and can be specified as a relative or absolute path.
 .It Ic sign with Ar authority
-the certificate authority (as declared above in the
+The certificate authority (as declared above in the
 .Sx AUTHORITIES
 section) to use for this domain is selected.
+.It Ic challengedir Ar path
+The directory in which the challenge file will be stored.
+If it is not specified, a default of
+.Pa /var/www/acme
+will be used.
 .El
 .Pp
 An example domain declaration looks like this:
 .Bd -literal -offset indent
 domain example.com {
-	alternative names { secure.example.com }
-	domain key /etc/ssl/private/example.com.key
-	domain certificate /etc/ssl/example.com.crt
+	alternative names { secure.example.com www.example.com }
+	domain key "/etc/ssl/private/example.com.key"
+	domain certificate "/etc/ssl/example.com.crt"
 	sign with letsencrypt
+	challengedir "/var/www/acme"
 }
 .Ed
 .Sh FILES

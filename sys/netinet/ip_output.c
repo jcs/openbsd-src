@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_output.c,v 1.331 2016/11/28 10:14:00 mpi Exp $	*/
+/*	$OpenBSD: ip_output.c,v 1.335 2017/02/01 20:59:47 dhill Exp $	*/
 /*	$NetBSD: ip_output.c,v 1.28 1996/02/13 23:43:07 christos Exp $	*/
 
 /*
@@ -108,6 +108,8 @@ ip_output(struct mbuf *m0, struct mbuf *opt, struct route *ro, int flags,
 #if defined(MROUTING)
 	int rv;
 #endif
+
+	NET_ASSERT_LOCKED();
 
 #ifdef IPSEC
 	if (inp && (inp->inp_flags & INP_IPV6) != 0)
@@ -338,7 +340,7 @@ reroute:
 			 * above, will be forwarded by the ip_input() routine,
 			 * if necessary.
 			 */
-			if (ipmforwarding && ip_mrouter &&
+			if (ipmforwarding && ip_mrouter[ifp->if_rdomain] &&
 			    (flags & IP_FORWARDING) == 0) {
 				KERNEL_LOCK();
 				rv = ip_mforward(m, ifp);
@@ -843,10 +845,9 @@ ip_optcopy(struct ip *ip, struct ip *jp)
  */
 int
 ip_ctloutput(int op, struct socket *so, int level, int optname,
-    struct mbuf **mp)
+    struct mbuf *m)
 {
 	struct inpcb *inp = sotoinpcb(so);
-	struct mbuf *m = *mp;
 	int optval = 0;
 	struct proc *p = curproc; /* XXX */
 	int error = 0;
@@ -855,7 +856,7 @@ ip_ctloutput(int op, struct socket *so, int level, int optname,
 	if (level != IPPROTO_IP) {
 		error = EINVAL;
 		if (op == PRCO_SETOPT)
-			(void) m_free(*mp);
+			(void) m_free(m);
 	} else switch (op) {
 	case PRCO_SETOPT:
 		switch (optname) {
@@ -1072,15 +1073,13 @@ ip_ctloutput(int op, struct socket *so, int level, int optname,
 			error = ENOPROTOOPT;
 			break;
 		}
-		if (m)
-			(void)m_free(m);
+		m_free(m);
 		break;
 
 	case PRCO_GETOPT:
 		switch (optname) {
 		case IP_OPTIONS:
 		case IP_RETOPTS:
-			*mp = m = m_get(M_WAIT, MT_SOOPTS);
 			if (inp->inp_options) {
 				m->m_len = inp->inp_options->m_len;
 				memcpy(mtod(m, caddr_t),
@@ -1101,7 +1100,6 @@ ip_ctloutput(int op, struct socket *so, int level, int optname,
 		case IP_RECVRTABLE:
 		case IP_IPSECFLOWINFO:
 		case IP_IPDEFTTL:
-			*mp = m = m_get(M_WAIT, MT_SOOPTS);
 			m->m_len = sizeof(int);
 			switch (optname) {
 
@@ -1158,11 +1156,10 @@ ip_ctloutput(int op, struct socket *so, int level, int optname,
 		case IP_MULTICAST_LOOP:
 		case IP_ADD_MEMBERSHIP:
 		case IP_DROP_MEMBERSHIP:
-			error = ip_getmoptions(optname, inp->inp_moptions, mp);
+			error = ip_getmoptions(optname, inp->inp_moptions, m);
 			break;
 
 		case IP_PORTRANGE:
-			*mp = m = m_get(M_WAIT, MT_SOOPTS);
 			m->m_len = sizeof(int);
 
 			if (inp->inp_flags & INP_HIGHPORT)
@@ -1179,7 +1176,6 @@ ip_ctloutput(int op, struct socket *so, int level, int optname,
 		case IP_ESP_TRANS_LEVEL:
 		case IP_ESP_NETWORK_LEVEL:
 		case IP_IPCOMP_LEVEL:
-			*mp = m = m_get(M_WAIT, MT_SOOPTS);
 #ifndef IPSEC
 			m->m_len = sizeof(int);
 			*mtod(m, int *) = IPSEC_LEVEL_NONE;
@@ -1209,12 +1205,10 @@ ip_ctloutput(int op, struct socket *so, int level, int optname,
 			error = EOPNOTSUPP;
 			break;
 		case SO_RTABLE:
-			*mp = m = m_get(M_WAIT, MT_SOOPTS);
 			m->m_len = sizeof(u_int);
 			*mtod(m, u_int *) = inp->inp_rtableid;
 			break;
 		case IP_PIPEX:
-			*mp = m = m_get(M_WAIT, MT_SOOPTS);
 			m->m_len = sizeof(int);
 			*mtod(m, int *) = inp->inp_pipex;
 			break;
@@ -1240,15 +1234,13 @@ ip_pcbopts(struct mbuf **pcbopt, struct mbuf *m)
 	u_char opt;
 
 	/* turn off any old options */
-	if (*pcbopt)
-		(void)m_free(*pcbopt);
+	m_free(*pcbopt);
 	*pcbopt = 0;
 	if (m == NULL || m->m_len == 0) {
 		/*
 		 * Only turning off any previous options.
 		 */
-		if (m)
-			(void)m_free(m);
+		m_free(m);
 		return (0);
 	}
 
@@ -1625,7 +1617,7 @@ ip_setmoptions(int optname, struct ip_moptions **imop, struct mbuf *m,
  * Return the IP multicast options in response to user getsockopt().
  */
 int
-ip_getmoptions(int optname, struct ip_moptions *imo, struct mbuf **mp)
+ip_getmoptions(int optname, struct ip_moptions *imo, struct mbuf *m)
 {
 	u_char *ttl;
 	u_char *loop;
@@ -1633,13 +1625,11 @@ ip_getmoptions(int optname, struct ip_moptions *imo, struct mbuf **mp)
 	struct in_ifaddr *ia;
 	struct ifnet *ifp;
 
-	*mp = m_get(M_WAIT, MT_SOOPTS);
-
 	switch (optname) {
 
 	case IP_MULTICAST_IF:
-		addr = mtod(*mp, struct in_addr *);
-		(*mp)->m_len = sizeof(struct in_addr);
+		addr = mtod(m, struct in_addr *);
+		m->m_len = sizeof(struct in_addr);
 		if (imo == NULL || (ifp = if_get(imo->imo_ifidx)) == NULL)
 			addr->s_addr = INADDR_ANY;
 		else {
@@ -1651,15 +1641,15 @@ ip_getmoptions(int optname, struct ip_moptions *imo, struct mbuf **mp)
 		return (0);
 
 	case IP_MULTICAST_TTL:
-		ttl = mtod(*mp, u_char *);
-		(*mp)->m_len = 1;
+		ttl = mtod(m, u_char *);
+		m->m_len = 1;
 		*ttl = (imo == NULL) ? IP_DEFAULT_MULTICAST_TTL
 				     : imo->imo_ttl;
 		return (0);
 
 	case IP_MULTICAST_LOOP:
-		loop = mtod(*mp, u_char *);
-		(*mp)->m_len = 1;
+		loop = mtod(m, u_char *);
+		m->m_len = 1;
 		*loop = (imo == NULL) ? IP_DEFAULT_MULTICAST_LOOP
 				      : imo->imo_loop;
 		return (0);

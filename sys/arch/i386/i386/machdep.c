@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.593 2016/10/21 06:20:58 mlarkin Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.595 2017/01/13 17:15:27 mikeb Exp $	*/
 /*	$NetBSD: machdep.c,v 1.214 1996/11/10 03:16:17 thorpej Exp $	*/
 
 /*-
@@ -2026,6 +2026,25 @@ identifycpu(struct cpu_info *ci)
 		}
 	}
 
+	/*
+	 * Attempt to disable Silicon Debug and lock the configuration
+	 * if it's enabled and unlocked.
+	 */
+	if (!strcmp(cpu_vendor, "GenuineIntel") &&
+	    (cpu_ecxfeature & CPUIDECX_SDBG)) {
+		uint64_t msr;
+
+		msr = rdmsr(IA32_DEBUG_INTERFACE);
+		if ((msr & IA32_DEBUG_INTERFACE_ENABLE) &&
+		    (msr & IA32_DEBUG_INTERFACE_LOCK) == 0) {
+			msr &= IA32_DEBUG_INTERFACE_MASK;
+			msr |= IA32_DEBUG_INTERFACE_LOCK;
+			wrmsr(IA32_DEBUG_INTERFACE, msr);
+		} else if (msr & IA32_DEBUG_INTERFACE_ENABLE)
+			printf("%s: cannot disable silicon debug\n",
+			    cpu_device);
+	}
+
 	if (ci->ci_flags & CPUF_PRIMARY) {
 		if (cpu_ecxfeature & CPUIDECX_RDRAND)
 			has_rdrand = 1;
@@ -4003,6 +4022,8 @@ cpu_check_vmm_cap(struct cpu_info *ci)
 		else {
 			if (msr & IA32_FEATURE_CONTROL_VMX_EN)
 				ci->ci_vmm_flags |= CI_VMM_VMX;
+			else
+				ci->ci_vmm_flags |= CI_VMM_DIS;
 		}
 	}
 

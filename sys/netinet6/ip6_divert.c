@@ -1,4 +1,4 @@
-/*      $OpenBSD: ip6_divert.c,v 1.42 2016/11/21 09:09:06 mpi Exp $ */
+/*      $OpenBSD: ip6_divert.c,v 1.44 2017/01/29 19:58:47 bluhm Exp $ */
 
 /*
  * Copyright (c) 2009 Michele Marchetto <michele@openbsd.org>
@@ -71,14 +71,6 @@ void
 divert6_init(void)
 {
 	in_pcbinit(&divb6table, divb6hashsize);
-}
-
-int
-divert6_input(struct mbuf **mp, int *offp, int proto)
-{
-	m_freem(*mp);
-
-	return (0);
 }
 
 int
@@ -251,7 +243,7 @@ divert6_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *addr,
 	struct inpcb *inp = sotoinpcb(so);
 	int error = 0;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	if (req == PRU_CONTROL) {
 		return (in6_control(so, (u_long)m, (caddr_t)addr,

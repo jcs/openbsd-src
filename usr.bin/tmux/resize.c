@@ -1,4 +1,4 @@
-/* $OpenBSD: resize.c,v 1.20 2016/10/16 22:06:40 nicm Exp $ */
+/* $OpenBSD: resize.c,v 1.22 2017/02/08 13:53:32 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -84,11 +84,13 @@ recalculate_sizes(void)
 		if (s->sx == ssx && s->sy == ssy)
 			continue;
 
-		log_debug("session size %u,%u (was %u,%u)", ssx, ssy, s->sx,
-		    s->sy);
+		log_debug("session $%u size %u,%u (was %u,%u)", s->id, ssx, ssy,
+		    s->sx, s->sy);
 
 		s->sx = ssx;
 		s->sy = ssy;
+
+		status_update_saved(s);
 	}
 
 	RB_FOREACH(w, windows, &windows) {
@@ -128,8 +130,8 @@ recalculate_sizes(void)
 
 		if (w->sx == ssx && w->sy == ssy)
 			continue;
-		log_debug("window size %u,%u (was %u,%u)", ssx, ssy, w->sx,
-		    w->sy);
+		log_debug("window @%u size %u,%u (was %u,%u)", w->id, ssx, ssy,
+		    w->sx, w->sy);
 
 		w->flags &= ~(WINDOW_FORCEWIDTH|WINDOW_FORCEHEIGHT);
 		w->flags |= forced;

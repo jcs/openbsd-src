@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_fork.c,v 1.192 2016/11/07 00:26:32 guenther Exp $	*/
+/*	$OpenBSD: kern_fork.c,v 1.194 2017/02/08 20:58:30 guenther Exp $	*/
 /*	$NetBSD: kern_fork.c,v 1.29 1996/02/09 18:59:34 christos Exp $	*/
 
 /*
@@ -395,12 +395,6 @@ fork1(struct proc *curp, int flags, void *stack, pid_t *tidptr,
 	if (flags & FORK_THREAD)
 		sigstkinit(&p->p_sigstk);
 
-	/*
-	 * If emulation has thread fork hook, call it now.
-	 */
-	if (pr->ps_emul->e_proc_fork)
-		(*pr->ps_emul->e_proc_fork)(p, curp);
-
 	p->p_addr = (struct user *)uaddr;
 
 	/*
@@ -559,7 +553,7 @@ alloctid(void)
 	do {
 		/* (0 .. TID_MASK+1] */
 		tid = 1 + (arc4random() & TID_MASK);
-	} while (pfind(tid) != NULL);
+	} while (tfind(tid) != NULL);
 
 	return (tid);
 }

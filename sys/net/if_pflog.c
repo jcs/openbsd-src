@@ -1,10 +1,10 @@
-/*	$OpenBSD: if_pflog.c,v 1.76 2016/11/22 19:29:54 procter Exp $	*/
+/*	$OpenBSD: if_pflog.c,v 1.78 2017/01/24 10:08:30 krw Exp $	*/
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
- * Angelos D. Keromytis (kermit@csd.uch.gr) and 
+ * Angelos D. Keromytis (kermit@csd.uch.gr) and
  * Niels Provos (provos@physnet.uni-hamburg.de).
  *
- * This code was written by John Ioannidis for BSD/OS in Athens, Greece, 
+ * This code was written by John Ioannidis for BSD/OS in Athens, Greece,
  * in November 1995.
  *
  * Ported to OpenBSD and NetBSD, with additional transforms, in December 1996,
@@ -21,7 +21,7 @@
  * Permission to use, copy, and modify this software with or without fee
  * is hereby granted, provided that this entire notice is included in
  * all copies of any software which is or includes a copy or
- * modification of this software. 
+ * modification of this software.
  * You may use this code under the GNU public license if you so wish. Please
  * contribute changes back to the authors under this freer than GPL license
  * so that we may further the use of strong encryption without limitations to
@@ -76,7 +76,7 @@
 void	pflogattach(int);
 int	pflogifs_resize(size_t);
 int	pflogoutput(struct ifnet *, struct mbuf *, struct sockaddr *,
-	    	       struct rtentry *);
+		       struct rtentry *);
 int	pflogioctl(struct ifnet *, u_long, caddr_t);
 void	pflogstart(struct ifnet *);
 int	pflog_clone_create(struct if_clone *, int);
@@ -150,6 +150,7 @@ pflog_clone_create(struct if_clone *ifc, int unit)
 	ifp->if_ioctl = pflogioctl;
 	ifp->if_output = pflogoutput;
 	ifp->if_start = pflogstart;
+	ifp->if_xflags = IFXF_CLONED;
 	ifp->if_type = IFT_PFLOG;
 	IFQ_SET_MAXLEN(&ifp->if_snd, IFQ_MAXLEN);
 	ifp->if_hdrlen = PFLOG_HDRLEN;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.63 2016/01/26 18:35:01 mmcc Exp $ */
+/*	$OpenBSD: config.c,v 1.65 2017/01/24 04:22:42 benno Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -33,6 +33,7 @@
 
 #include "bgpd.h"
 #include "session.h"
+#include "log.h"
 
 u_int32_t	get_bgpid(void);
 int		host_v4(const char *, struct bgpd_addr *, u_int8_t *);
@@ -179,7 +180,7 @@ merge_config(struct bgpd_config *xconf, struct bgpd_config *conf,
 
 	/* clear all current filters and take over the new ones */
 	filterlist_free(xconf->filters);
-	xconf->filters = conf->filters;	
+	xconf->filters = conf->filters;
 	conf->filters = NULL;
 
 	/* switch the network statements, but first remove the old ones */

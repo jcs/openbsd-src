@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtio.c,v 1.26 2016/12/05 09:28:11 reyk Exp $	*/
+/*	$OpenBSD: virtio.c,v 1.31 2017/01/21 11:36:54 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -22,8 +22,8 @@
 #include <machine/vmmvar.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcidevs.h>
-#include <dev/pci/virtioreg.h>
-#include <dev/pci/vioblkreg.h>
+#include <dev/pv/virtioreg.h>
+#include <dev/pv/vioblkreg.h>
 
 #include <net/if.h>
 #include <netinet/in.h>
@@ -48,6 +48,7 @@ extern char *__progname;
 struct viornd_dev viornd;
 struct vioblk_dev *vioblk;
 struct vionet_dev *vionet;
+struct vmmci_dev vmmci;
 
 int nr_vionet;
 
@@ -55,6 +56,7 @@ int nr_vionet;
 
 #define VIRTIO_NET_F_MAC	(1<<5)
 
+#define VMMCI_F_TIMESYNC	(1<<0)
 
 const char *
 vioblk_cmd_name(uint32_t type)
@@ -110,6 +112,8 @@ virtio_reg_name(uint8_t reg)
 	case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI: return "device config 0";
 	case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 4: return "device config 1";
 	case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 8: return "device config 2";
+	case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 12: return "device config 3";
+	case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 16: return "device config 4";
 	default: return "unknown";
 	}
 }
@@ -1180,6 +1184,112 @@ out:
 	return (ret);
 }
 
+int
+vmmci_ctl(unsigned int cmd)
+{
+	if ((vmmci.cfg.device_status &
+	    VIRTIO_CONFIG_DEVICE_STATUS_DRIVER_OK) == 0)
+		return (-1);
+
+	if (cmd == vmmci.cmd)
+		return (0);
+
+	switch (cmd) {
+	case VMMCI_NONE:
+	case VMMCI_SHUTDOWN:
+	case VMMCI_REBOOT:
+		/* Update command */
+		vmmci.cmd = cmd;
+
+		/* Trigger interrupt */
+		vmmci.cfg.isr_status = VIRTIO_CONFIG_ISR_CONFIG_CHANGE;
+		vcpu_assert_pic_irq(vmmci.vm_id, 0, vmmci.irq);
+		break;
+	default:
+		fatalx("invalid vmmci command: %d", cmd);
+	}
+
+	return (0);
+}
+
+int
+vmmci_io(int dir, uint16_t reg, uint32_t *data, uint8_t *intr,
+    void *unused)
+{
+	*intr = 0xFF;
+
+	if (dir == 0) {
+		switch (reg) {
+		case VIRTIO_CONFIG_DEVICE_FEATURES:
+		case VIRTIO_CONFIG_QUEUE_SIZE:
+		case VIRTIO_CONFIG_ISR_STATUS:
+			log_warnx("%s: illegal write %x to %s",
+			    __progname, *data, virtio_reg_name(reg));
+			break;
+		case VIRTIO_CONFIG_GUEST_FEATURES:
+			vmmci.cfg.guest_feature = *data;
+			break;
+		case VIRTIO_CONFIG_QUEUE_ADDRESS:
+			vmmci.cfg.queue_address = *data;
+			break;
+		case VIRTIO_CONFIG_QUEUE_SELECT:
+			vmmci.cfg.queue_select = *data;
+			break;
+		case VIRTIO_CONFIG_QUEUE_NOTIFY:
+			vmmci.cfg.queue_notify = *data;
+			break;
+		case VIRTIO_CONFIG_DEVICE_STATUS:
+			vmmci.cfg.device_status = *data;
+			break;
+		}
+	} else {
+		switch (reg) {
+		case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI:
+			*data = vmmci.cmd;
+			break;
+		case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 4:
+			/* Update time once when reading the first register */
+			gettimeofday(&vmmci.time, NULL);
+			*data = (uint64_t)vmmci.time.tv_sec;
+			break;
+		case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 8:
+			*data = (uint64_t)vmmci.time.tv_sec << 32;
+			break;
+		case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 12:
+			*data = (uint64_t)vmmci.time.tv_usec;
+			break;
+		case VIRTIO_CONFIG_DEVICE_CONFIG_NOMSI + 16:
+			*data = (uint64_t)vmmci.time.tv_usec << 32;
+			break;
+		case VIRTIO_CONFIG_DEVICE_FEATURES:
+			*data = vmmci.cfg.device_feature;
+			break;
+		case VIRTIO_CONFIG_GUEST_FEATURES:
+			*data = vmmci.cfg.guest_feature;
+			break;
+		case VIRTIO_CONFIG_QUEUE_ADDRESS:
+			*data = vmmci.cfg.queue_address;
+			break;
+		case VIRTIO_CONFIG_QUEUE_SIZE:
+			*data = vmmci.cfg.queue_size;
+			break;
+		case VIRTIO_CONFIG_QUEUE_SELECT:
+			*data = vmmci.cfg.queue_select;
+			break;
+		case VIRTIO_CONFIG_QUEUE_NOTIFY:
+			*data = vmmci.cfg.queue_notify;
+			break;
+		case VIRTIO_CONFIG_DEVICE_STATUS:
+			*data = vmmci.cfg.device_status;
+			break;
+		case VIRTIO_CONFIG_ISR_STATUS:
+			*data = vmmci.cfg.isr_status;
+			break;
+		}
+	}
+	return (0);
+}
+
 void
 virtio_init(struct vm_create_params *vcp, int *child_disks, int *child_taps)
 {
@@ -1327,9 +1437,9 @@ virtio_init(struct vm_create_params *vcp, int *child_disks, int *child_taps)
 			} else {
 				/*
 				 * If the address is zero, always randomize
-				 * it in vmd(8) because we cannot rely on 
+				 * it in vmd(8) because we cannot rely on
 				 * the guest OS to do the right thing like
-			 	 * OpenBSD does.  Based on ether_fakeaddr()
+				 * OpenBSD does.  Based on ether_fakeaddr()
 				 * from the kernel, incremented by one to
 				 * differentiate the source.
 				 */
@@ -1347,4 +1457,26 @@ virtio_init(struct vm_create_params *vcp, int *child_disks, int *child_taps)
 			    ether_ntoa((void *)vionet[i].mac));
 		}
 	}
+
+	/* virtio control device */
+	if (pci_add_device(&id, PCI_VENDOR_OPENBSD,
+	    PCI_PRODUCT_OPENBSD_CONTROL,
+	    PCI_CLASS_COMMUNICATIONS,
+	    PCI_SUBCLASS_COMMUNICATIONS_MISC,
+	    PCI_VENDOR_OPENBSD,
+	    PCI_PRODUCT_VIRTIO_VMMCI, 1, NULL)) {
+		log_warnx("%s: can't add PCI vmm control device",
+		    __progname);
+		return;
+	}
+
+	if (pci_add_bar(id, PCI_MAPREG_TYPE_IO, vmmci_io, NULL)) {
+		log_warnx("%s: can't add bar for vmm control device",
+		    __progname);
+		return;
+	}
+
+	vmmci.cfg.device_feature = VMMCI_F_TIMESYNC;
+	vmmci.vm_id = vcp->vcp_id;
+	vmmci.irq = pci_get_dev_irq(id);
 }

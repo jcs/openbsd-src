@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpfdesc.h,v 1.31 2016/08/22 10:40:36 mpi Exp $	*/
+/*	$OpenBSD: bpfdesc.h,v 1.35 2017/01/24 10:08:30 krw Exp $	*/
 /*	$NetBSD: bpfdesc.h,v 1.11 1995/09/27 18:30:42 thorpej Exp $	*/
 
 /*
@@ -56,19 +56,21 @@ struct bpf_d {
 	 *   fbuf (free) - When read is done, put cluster here.
 	 * On receiving, if sbuf is full and fbuf is 0, packet is dropped.
 	 */
+	struct mutex	bd_mtx;		/* protect buffer slots below */
 	caddr_t		bd_sbuf;	/* store slot */
 	caddr_t		bd_hbuf;	/* hold slot */
 	caddr_t		bd_fbuf;	/* free slot */
 	int		bd_slen;	/* current length of store buffer */
 	int		bd_hlen;	/* current length of hold buffer */
-
 	int		bd_bufsize;	/* absolute length of buffers */
 
-	struct bpf_if *	bd_bif;		/* interface descriptor */
+	int		bd_in_uiomove;	/* for debugging purpose */
+
+	struct bpf_if  *bd_bif;		/* interface descriptor */
 	u_long		bd_rtout;	/* Read timeout in 'ticks' */
 	u_long		bd_rdStart;	/* when the read started */
 	struct srp	bd_rfilter;	/* read filter code */
-	struct srp	bd_wfilter; 	/* write filter code */
+	struct srp	bd_wfilter;	/* write filter code */
 	u_long		bd_rcount;	/* number of packets received */
 	u_long		bd_dcount;	/* number of packets dropped */
 

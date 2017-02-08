@@ -1,5 +1,4 @@
-#	$OpenBSD: install.md,v 1.42 2016/09/04 10:06:11 jsg Exp $
-#
+#	$OpenBSD: install.md,v 1.45 2017/01/24 05:29:22 jsg Exp $
 #
 # Copyright (c) 1996 The NetBSD Foundation, Inc.
 # All rights reserved.
@@ -73,6 +72,14 @@ md_installboot() {
 		;;
 	nitrogen)
 		cp $_mdec/*.dtb /mnt/mnt/
+		cat > /tmp/i/boot.cmd<<-__EOT
+			setenv fdtfile imx6q-sabrelite.dtb ;
+			load ${dtype} ${disk}:1 ${fdtaddr} ${fdtfile} ;
+			load ${dtype} ${disk}:1 ${loadaddr} efi/boot/bootarm.efi ;
+			bootefi ${loadaddr} ${fdtaddr} ;
+		__EOT
+		mkuboot -t script -a arm -o linux /tmp/i/boot.cmd \
+		    /mnt/mnt/6x_bootscript
 		;;
 	cubie)
 		cp $_mdec/*.dtb /mnt/mnt/

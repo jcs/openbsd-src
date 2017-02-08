@@ -1,4 +1,4 @@
-/*	$OpenBSD: iked.h,v 1.98 2016/09/04 10:26:02 vgross Exp $	*/
+/*	$OpenBSD: iked.h,v 1.102 2017/02/03 08:23:46 guenther Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -19,8 +19,11 @@
 #include <sys/types.h>
 #include <sys/tree.h>
 #include <sys/queue.h>
+#include <arpa/inet.h>
 #include <limits.h>
 #include <imsg.h>
+
+#include <openssl/evp.h>
 
 #include "types.h"
 #include "dh.h"
@@ -668,6 +671,8 @@ int	 config_setcompile(struct iked *, enum privsep_procid);
 int	 config_getcompile(struct iked *, struct imsg *);
 int	 config_setocsp(struct iked *);
 int	 config_getocsp(struct iked *, struct imsg *);
+int	 config_setkeys(struct iked *);
+int	 config_getkey(struct iked *, struct imsg *);
 
 /* policy.c */
 void	 policy_init(struct iked *);
@@ -851,6 +856,9 @@ int	 ca_setcert(struct iked *, struct iked_sahdr *, struct iked_id *,
 	    uint8_t, uint8_t *, size_t, enum privsep_procid);
 int	 ca_setauth(struct iked *, struct iked_sa *,
 	    struct ibuf *, enum privsep_procid);
+void	 ca_getkey(struct privsep *, struct iked_id *, enum imsg_type);
+int	 ca_privkey_serialize(EVP_PKEY *, struct iked_id *);
+int	 ca_pubkey_serialize(EVP_PKEY *, struct iked_id *);
 void	 ca_sslinit(void);
 void	 ca_sslerror(const char *);
 char	*ca_asn1_name(uint8_t *, size_t);
@@ -933,7 +941,7 @@ void	 print_verbose(const char *, ...)
 
 /* imsg_util.c */
 struct ibuf *
-	 ibuf_new(void *, size_t);
+	 ibuf_new(const void *, size_t);
 struct ibuf *
 	 ibuf_static(void);
 int	 ibuf_cat(struct ibuf *, struct ibuf *);
@@ -956,7 +964,8 @@ void	 ibuf_zero(struct ibuf *);
 /* log.c */
 void	log_init(int, int);
 void	log_procinit(const char *);
-void	log_verbose(int);
+void	log_setverbose(int);
+int	log_getverbose(void);
 void	log_warn(const char *, ...)
 	    __attribute__((__format__ (printf, 1, 2)));
 void	log_warnx(const char *, ...)

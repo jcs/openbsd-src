@@ -1,4 +1,4 @@
-/*	$Id: base64.c,v 1.6 2016/09/13 20:09:54 tedu Exp $ */
+/*	$Id: base64.c,v 1.9 2017/01/24 13:32:55 jsing Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -30,7 +30,7 @@ size_t
 base64len(size_t len)
 {
 
-	return (((len + 2) / 3 * 4) + 1);
+	return (len + 2) / 3 * 4 + 1;
 }
 
 /*
@@ -45,8 +45,8 @@ base64buf_url(const char *data, size_t len)
 	char	*buf;
 
 	sz = base64len(len);
-	if (NULL == (buf = malloc(sz)))
-		return (NULL);
+	if ((buf = malloc(sz)) == NULL)
+		return NULL;
 
 	b64_ntop(data, len, buf, sz);
 
@@ -63,5 +63,5 @@ base64buf_url(const char *data, size_t len)
 			break;
 		}
 
-	return (buf);
+	return buf;
 }

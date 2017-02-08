@@ -1,4 +1,4 @@
-/*	$OpenBSD: control.c,v 1.5 2016/10/12 19:07:42 reyk Exp $	*/
+/*	$OpenBSD: control.c,v 1.8 2017/01/17 22:10:56 krw Exp $	*/
 
 /*
  * Copyright (c) 2010-2016 Reyk Floeter <reyk@openbsd.org>
@@ -69,7 +69,7 @@ control_run(struct privsep *ps, struct privsep_proc *p, void *arg)
 {
 	/*
 	 * pledge in the control process:
- 	 * stdio - for malloc and basic I/O including events.
+	 * stdio - for malloc and basic I/O including events.
 	 * cpath - for managing the control socket.
 	 * unix - for the control socket.
 	 * recvfd - for the proc fd exchange.
@@ -262,9 +262,10 @@ control_connbyfd(int fd)
 {
 	struct ctl_conn	*c;
 
-	for (c = TAILQ_FIRST(&ctl_conns); c != NULL && c->iev.ibuf.fd != fd;
-	    c = TAILQ_NEXT(c, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(c, &ctl_conns, entry) {
+		if (c->iev.ibuf.fd == fd)
+			break;
+	}
 
 	return (c);
 }
@@ -360,7 +361,7 @@ control_dispatch_imsg(int fd, short event, void *arg)
 			IMSG_SIZE_CHECK(&imsg, &v);
 
 			memcpy(&v, imsg.data, sizeof(v));
-			log_verbose(v);
+			log_setverbose(v);
 
 			proc_forward_imsg(&env->sc_ps, &imsg, PROC_PARENT, -1);
 			proc_forward_imsg(&env->sc_ps, &imsg, PROC_OFP, -1);

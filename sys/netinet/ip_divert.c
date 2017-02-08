@@ -1,4 +1,4 @@
-/*      $OpenBSD: ip_divert.c,v 1.40 2016/11/21 09:09:06 mpi Exp $ */
+/*      $OpenBSD: ip_divert.c,v 1.43 2017/01/29 19:58:47 bluhm Exp $ */
 
 /*
  * Copyright (c) 2009 Michele Marchetto <michele@openbsd.org>
@@ -69,12 +69,6 @@ void
 divert_init(void)
 {
 	in_pcbinit(&divbtable, divbhashsize);
-}
-
-void
-divert_input(struct mbuf *m, ...)
-{
-	m_freem(m);
 }
 
 int
@@ -248,7 +242,7 @@ divert_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *addr,
 	struct inpcb *inp = sotoinpcb(so);
 	int error = 0;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	if (req == PRU_CONTROL) {
 		return (in_control(so, (u_long)m, (caddr_t)addr,

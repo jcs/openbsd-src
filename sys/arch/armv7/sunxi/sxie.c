@@ -1,4 +1,4 @@
-/*	$OpenBSD: sxie.c,v 1.23 2016/10/22 11:00:02 jsg Exp $	*/
+/*	$OpenBSD: sxie.c,v 1.25 2017/01/22 10:17:37 dlg Exp $	*/
 /*
  * Copyright (c) 2012-2013 Patrick Wildt <patrick@blueri.se>
  * Copyright (c) 2013 Artturi Alm
@@ -46,7 +46,7 @@
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
 
-#include <armv7/sunxi/sunxireg.h>
+#include <dev/fdt/sunxireg.h>
 
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_clock.h>
@@ -440,10 +440,6 @@ sxie_intr(void *arg)
 
 	if (pending & (SXIE_TX_FIFO0 | SXIE_TX_FIFO1)) {
 		ifq_clr_oactive(&ifp->if_snd);
-		if (pending & SXIE_TX_FIFO0)
-			ifp->if_opackets++;
-		if (pending & SXIE_TX_FIFO1)
-			ifp->if_opackets++;
 		sc->txf_inuse &= ~pending;
 		if (sc->txf_inuse == 0)
 			ifp->if_timer = 0;

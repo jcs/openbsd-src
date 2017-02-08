@@ -1,4 +1,4 @@
-/*	$OpenBSD: r92creg.h,v 1.3 2016/03/07 19:41:49 stsp Exp $	*/
+/*	$OpenBSD: r92creg.h,v 1.6 2017/02/01 12:46:40 stsp Exp $	*/
 
 /*-
  * Copyright (c) 2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -95,9 +95,9 @@
 #define R92C_MBIST_START		0x174
 #define R92C_MBIST_DONE			0x178
 #define R92C_MBIST_FAIL			0x17c
-#define R92C_C2HEVT_MSG_NORMAL		0x1a0
+#define R92C_C2HEVT_MSG			0x1a0
+#define R92C_C2HEVT_CLEAR		0x1af
 #define R92C_C2HEVT_MSG_TEST		0x1b8
-#define R92C_C2HEVT_CLEAR		0x1bf
 #define R92C_MCUTST_1			0x1c0
 #define R92C_FMETHR			0x1c8
 #define R92C_HMETFR			0x1cc
@@ -218,8 +218,8 @@
 #define R92C_BSSID			0x618
 #define R92C_MAR			0x620
 #define R92C_MAC_SPEC_SIFS		0x63a
-#define R92C_R2T_SIFS			0x63c
-#define R92C_T2T_SIFS			0x63e
+#define R92C_RESP_SIFS_CCK		0x63c
+#define R92C_RESP_SIFS_OFDM		0x63e
 #define R92C_ACKTO			0x640
 #define R92C_CAMCMD			0x670
 #define R92C_CAMWRITE			0x674
@@ -505,6 +505,15 @@
 #define R92C_EDCA_PARAM_ECWMAX_S	12
 #define R92C_EDCA_PARAM_TXOP_M		0xffff0000
 #define R92C_EDCA_PARAM_TXOP_S		16
+
+/* Bits for R92C_ACMHWCTRL */
+#define R92C_ACMHW_HWEN			0x01
+#define R92C_ACMHW_BEQEN		0x02
+#define R92C_ACMHW_VIQEN		0x04
+#define R92C_ACMHW_VOQEN		0x08
+#define R92C_ACMHW_BEQSTATUS		0x10
+#define R92C_ACMHW_VIQSTATUS		0x20
+#define R92C_ACMHW_VOQSTATUS		0x40
 
 /* Bits for R92C_TXPAUSE. */
 #define R92C_TXPAUSE_AC_VO		0x01
@@ -1056,6 +1065,35 @@ struct r92c_rx_cck {
 	uint8_t		agc_rpt;
 } __packed;
 
+/* Tx report (type 1). */
+struct r88e_tx_rpt_ccx {
+	uint8_t		rptb0;
+#define R88E_RPTB6_PKT_NUM_M	0x0e
+#define R88E_RPTB6_PKT_NUM_S	1
+#define R88E_RPTB0_INT_CCX	0x80
+
+	uint8_t		rptb1;
+#define R88E_RPTB1_MACID_M	0x3f
+#define R88E_RPTB1_MACID_S	0
+#define R88E_RPTB1_PKT_OK	0x40
+#define R88E_RPTB1_BMC		0x80
+
+	uint8_t		rptb2;
+#define R88E_RPTB2_RETRY_CNT_M	0x3f
+#define R88E_RPTB2_RETRY_CNT_S	0
+#define R88E_RPTB2_LIFE_EXPIRE	0x40
+#define R88E_RPTB2_RETRY_OVER	0x80
+
+	uint8_t		queue_time_low;
+	uint8_t		queue_time_high;
+	uint8_t		final_rate;
+	uint8_t		rptb6;
+#define R88E_RPTB6_QSEL_M	0xf0
+#define R88E_RPTB6_QSEL_S	4
+
+	uint8_t		rptb7;
+} __packed;
+
 struct r88e_rx_cck {
 	uint8_t		path_agc[2];
 	uint8_t		sig_qual;
@@ -1155,6 +1193,9 @@ struct r92c_tx_desc_usb {
 	uint16_t	pad;
 } __packed __attribute__((aligned(4)));
 
+#define R88E_TX_RPT_CTRL	0x4ec
+#define R88E_TX_RPT1_ENA	0x01
+
 #define R92C_TXDW0_PKTLEN_M	0x0000ffff
 #define R92C_TXDW0_PKTLEN_S	0
 #define R92C_TXDW0_OFFSET_M	0x00ff0000
@@ -1191,6 +1232,14 @@ struct r92c_tx_desc_usb {
 #define R92C_TXDW1_PKTOFF_S	26
 
 #define R88E_TXDW2_AGGBK	0x00010000
+#define R92C_TXDW2_CCX_RPT	0x00080000
+
+#define R88E_RXDW3_RPT_M	0x0000c000
+#define R88E_RXDW3_RPT_S	14
+#define R88E_RXDW3_RPT_RX	0
+#define R88E_RXDW3_RPT_TX1	1
+#define R88E_RXDW3_RPT_TX2	2
+#define R88E_RXDW3_RPT_HIS	3
 
 #define R92C_TXDW4_RTSRATE_M	0x0000003f
 #define R92C_TXDW4_RTSRATE_S	0
@@ -1205,6 +1254,7 @@ struct r92c_tx_desc_usb {
 #define R92C_TXDW4_SCO_SCA	1
 #define R92C_TXDW4_SCO_SCB	2
 #define R92C_TXDW4_40MHZ	0x02000000
+#define R92C_TXDW4_RTS_SHORT	0x04000000
 
 #define R92C_TXDW5_DATARATE_M		0x0000003f
 #define R92C_TXDW5_DATARATE_S		0
@@ -1218,6 +1268,71 @@ struct r92c_tx_desc_usb {
 #define R92C_TXDW5_DATA_RETRY_LIMIT_S	18
 #define R92C_TXDW5_AGGNUM_M		0xff000000
 #define R92C_TXDW5_AGGNUM_S		24
+
+/*
+ * C2H event structure.
+ */
+#define R92C_C2H_MSG_MAX_LEN		16
+
+struct r92c_c2h_evt {
+	uint8_t		evtb0;
+#define R92C_C2H_EVTB0_ID_M		0x0f
+#define R92C_C2H_EVTB0_ID_S		0
+#define R92C_C2H_EVTB0_LEN_M		0xf0
+#define R92C_C2H_EVTB0_LEN_S		4
+
+	uint8_t		seq;
+
+	/* Followed by payload (see below). */
+} __packed;
+
+/* Bits for R92C_C2HEVT_CLEAR. */
+#define R92C_C2HEVT_HOST_CLOSE		0x00
+#define R92C_C2HEVT_FW_CLOSE		0xff
+
+/*
+ * C2H event types.
+ */
+#define R92C_C2HEVT_DEBUG		0
+#define R92C_C2HEVT_TX_REPORT		3
+#define R92C_C2HEVT_EXT_RA_RPT		6
+
+/* Structure for R92C_C2H_EVT_TX_REPORT event. */
+struct r92c_c2h_tx_rpt {
+	uint8_t		rptb0;
+#define R92C_RPTB0_RETRY_CNT_M		0x3f
+#define R92C_RPTB0_RETRY_CNT_S		0
+
+	uint8_t		rptb1;		/* XXX junk */
+#define R92C_RPTB1_RTS_RETRY_CNT_M	0x3f
+#define R92C_RPTB1_RTS_RETRY_CNT_S	0
+
+	uint8_t		queue_time_low;
+	uint8_t		queue_time_high;
+	uint8_t		rptb4;
+#define R92C_RPTB4_MISSED_PKT_NUM_M	0x1f
+#define R92C_RPTB4_MISSED_PKT_NUM_S	0
+
+	uint8_t		rptb5;
+#define R92C_RPTB5_MACID_M		0x1f
+#define R92C_RPTB5_MACID_S		0
+#define R92C_RPTB5_DES1_FRAGSSN_M	0xe0
+#define R92C_RPTB5_DES1_FRAGSSN_S	5
+
+	uint8_t		rptb6;
+#define R92C_RPTB6_RPT_PKT_NUM_M	0x1f
+#define R92C_RPTB6_RPT_PKT_NUM_S	0
+#define R92C_RPTB6_PKT_DROP		0x20
+#define R92C_RPTB6_LIFE_EXPIRE		0x40
+#define R92C_RPTB6_RETRY_OVER		0x80
+
+	uint8_t		rptb7;
+#define R92C_RPTB7_EDCA_M		0x0f
+#define R92C_RPTB7_EDCA_S		0
+#define R92C_RPTB7_BMC			0x20
+#define R92C_RPTB7_PKT_OK		0x40
+#define R92C_RPTB7_INT_CCX		0x80
+} __packed;
 
 /*
  * MAC initialization values.

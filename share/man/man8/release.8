@@ -1,6 +1,7 @@
-.\"	$OpenBSD: release.8,v 1.82 2016/11/27 16:49:17 tb Exp $
+.\"	$OpenBSD: release.8,v 1.86 2017/01/24 14:08:53 tb Exp $
 .\"
 .\"	Copyright (c) 2000 Marco S. Hyman
+.\"	Copyright (c) 2016 Theo Buehler <tb@openbsd.org>
 .\"
 .\"	Permission to copy all or part of this material for any purpose is
 .\"	granted provided that the above copyright notice and this paragraph
@@ -9,14 +10,14 @@
 .\"	LIMITATION, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
 .\"	FOR A PARTICULAR PURPOSE.
 .\"
-.Dd $Mdocdate: November 27 2016 $
+.Dd $Mdocdate: January 24 2017 $
 .Dt RELEASE 8
 .Os
 .Sh NAME
 .Nm release
 .Nd building an OpenBSD release
 .Sh DESCRIPTION
-There are several steps necessary to build a system release:
+There are several steps necessary to build a release:
 .Pp
 .Bl -enum -compact -offset indent
 .It
@@ -24,13 +25,13 @@ Update sources.
 .It
 Build and install a new kernel.
 .It
-Build a new system.
+Build a new base system.
 .It
-Make and validate the system release.
+Make and validate the base system release.
 .It
-Build and install xenocara.
+Build and install Xenocara.
 .It
-Make and validate the xenocara release.
+Make and validate the Xenocara release.
 .It
 Make the third party packages.
 .It
@@ -69,11 +70,13 @@ tag.
 There are two families of tags:
 .Bl -tag -width OPENBSD_x_y_BASE
 .It OPENBSD_x_y_BASE
-This tag marks the source for the
+The sources for the
 .Ox x.y
 release.
 .It OPENBSD_x_y
-This tag marks the sources that belong to the stable branch.
+The sources for the
+.Ox x.y
+stable branch.
 It contains the patches described in
 .Lk https://www.openbsd.org/stable.html .
 .El
@@ -122,7 +125,7 @@ The current kernel is copied to
 and the new kernel to
 .Pa /bsd .
 Reboot.
-.Ss 3. Build a new system
+.Ss 3. Build a new base system
 The build process will place the object files in a tree under
 .Pa /usr/obj .
 This directory should be empty and owned by build:wobj with mode 770.
@@ -143,10 +146,10 @@ using
 and
 .Xr MAKEDEV 8 .
 .Pp
-At this point, the system is up-to-date and running the code that will be
-made into a release.
-.Ss 4. Make and validate the system release
-The system release consists of at least one generic kernel,
+At this point, the base system is up to date and running the code
+that will be made into a release.
+.Ss 4. Make and validate the base system release
+The base system release consists of at least one generic kernel,
 some installation media, the release tarballs,
 installation instructions, and checksum files.
 .Pp
@@ -191,28 +194,25 @@ Make the release and check the contents of the release tarballs:
 # cd /usr/src/distrib/sets && sh checkflist
 # unset RELEASEDIR DESTDIR
 .Ed
-.Ss 5. Build and install xenocara
+.Ss 5. Build and install Xenocara
 Xenocara is based on the X.Org modular build system.
 Its sources are supposed to be in
 .Pa /usr/xenocara .
 The
 .Pa /usr/src
-tree is also needed while building xenocara.
+tree is also needed while building Xenocara.
 The object directory
 .Pa /usr/xobj
-should be empty and owned by build:wobj with permissions 770.
+should be empty and owned by build:wobj with mode 770.
 .Pp
-The following steps will build and install xenocara.
+The following steps will build and install Xenocara.
 .Bd -literal -offset indent
 # cd /usr/xenocara
 # make bootstrap
 # make obj
 # make build
 .Ed
-.Pp
-The X Window System is created and installed in
-.Pa /usr/X11R6 .
-.Ss 6. Make and validate the xenocara release
+.Ss 6. Make and validate the Xenocara release
 Xenocara uses
 .Va DESTDIR
 and
@@ -220,12 +220,12 @@ and
 as described above.
 Use a different
 .Va DESTDIR
-for the xenocara release than for the base release,
+for the Xenocara release than for the base release,
 as the contents of
 .Va DESTDIR
 will be removed.
 .Pp
-The steps to build and validate the xenocara release are:
+The steps to build and validate the Xenocara release are:
 .Bd -literal -offset indent
 # export DESTDIR=your-destdir; export RELEASEDIR=your-releasedir
 # make release
@@ -235,7 +235,7 @@ The steps to build and validate the xenocara release are:
 .Pp
 At this point,
 .Ox
-system and X Window System tarballs are in
+base system and X Window System tarballs are in
 .Va RELEASEDIR .
 .Ss 7. Make the third party packages
 The ports subsystem of contributed applications is capable of producing
@@ -244,9 +244,9 @@ This is described in
 .Xr ports 7 .
 .Ss 8. Create boot and installation disk images
 The disk images
-.No install${ Ns Ar VERSION Ns }.fs
+.No install${ Ns Va VERSION Ns }.fs
 and
-.No install${ Ns Ar VERSION Ns }.iso
+.No install${ Ns Va VERSION Ns }.iso
 are suitable for installs without network connectivity.
 They contain the tarballs and ports built in the previous steps.
 .Bd -literal -offset indent

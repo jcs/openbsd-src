@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_input.c,v 1.288 2016/11/28 23:15:31 bluhm Exp $	*/
+/*	$OpenBSD: ip_input.c,v 1.295 2017/02/05 16:23:38 jca Exp $	*/
 /*	$NetBSD: ip_input.c,v 1.30 1996/03/16 23:53:58 christos Exp $	*/
 
 /*
@@ -167,7 +167,7 @@ ip_init(void)
 	const u_int16_t defrootonlyports_tcp[] = DEFROOTONLYPORTS_TCP;
 	const u_int16_t defrootonlyports_udp[] = DEFROOTONLYPORTS_UDP;
 
-	ipcounters = counters_alloc(ips_ncounters, M_COUNTERS);
+	ipcounters = counters_alloc(ips_ncounters);
 
 	pool_init(&ipqent_pool, sizeof(struct ipqent), 0,
 	    IPL_SOFTNET, 0, "ipqe",  NULL);
@@ -376,7 +376,7 @@ ipv4_input(struct mbuf *m)
 		m->m_flags |= M_MCAST;
 
 #ifdef MROUTING
-		if (ipmforwarding && ip_mrouter) {
+		if (ipmforwarding && ip_mrouter[ifp->if_rdomain]) {
 			if (m->m_flags & M_EXT) {
 				if ((m = m_pullup(m, hlen)) == NULL) {
 					ipstat_inc(ips_toosmall);
@@ -584,7 +584,7 @@ found:
 	 * Switch out to protocol's input routine.
 	 */
 	ipstat_inc(ips_delivered);
-	(*inetsw[ip_protox[ip->ip_p]].pr_input)(m, hlen, NULL, 0);
+	(*inetsw[ip_protox[ip->ip_p]].pr_input)(&m, &hlen, ip->ip_p);
 	return;
 bad:
 	m_freem(m);
@@ -1557,11 +1557,13 @@ int
 ip_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
     size_t newlen) 
 {
-	int s, error;
+	int error;
 #ifdef MROUTING
 	extern int ip_mrtproto;
 	extern struct mrtstat mrtstat;
 #endif
+
+	NET_ASSERT_LOCKED();
 
 	/* Almost all sysctl names at this level are terminal. */
 	if (namelen != 1 && name[0] != IPCTL_IFQUEUE)
@@ -1587,21 +1589,16 @@ ip_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 			ip_mtudisc_timeout_q =
 			    rt_timer_queue_create(ip_mtudisc_timeout);
 		} else if (ip_mtudisc == 0 && ip_mtudisc_timeout_q != NULL) {
-			s = splsoftnet();
 			rt_timer_queue_destroy(ip_mtudisc_timeout_q);
 			ip_mtudisc_timeout_q = NULL;
-			splx(s);
 		}
 		return error;
 	case IPCTL_MTUDISCTIMEOUT:
 		error = sysctl_int(oldp, oldlenp, newp, newlen,
 		   &ip_mtudisc_timeout);
-		if (ip_mtudisc_timeout_q != NULL) {
-			s = splsoftnet();
+		if (ip_mtudisc_timeout_q != NULL)
 			rt_timer_queue_change(ip_mtudisc_timeout_q,
 					      ip_mtudisc_timeout);
-			splx(s);
-		}
 		return (error);
 	case IPCTL_IPSEC_ENC_ALGORITHM:
 	        return (sysctl_tstring(oldp, oldlenp, newp, newlen,
@@ -1657,7 +1654,7 @@ ip_sysctl_ipstat(void *oldp, size_t *oldlenp, void *newp)
 	u_long *words = (u_long *)&ipstat;
 	int i;
 
-	KASSERT(sizeof(ipstat) == (nitems(counters) * sizeof(u_long)));
+	CTASSERT(sizeof(ipstat) == (nitems(counters) * sizeof(u_long)));
 
 	counters_read(ipcounters, counters, nitems(counters));
 
@@ -1758,12 +1755,15 @@ ip_send_dispatch(void *xmq)
 	int s;
 
 	mq_delist(mq, &ml);
+	if (ml_empty(&ml))
+		return;
+
 	KERNEL_LOCK();
-	s = splsoftnet();
+	NET_LOCK(s);
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		ip_output(m, NULL, NULL, 0, NULL, NULL, 0);
 	}
-	splx(s);
+	NET_UNLOCK(s);
 	KERNEL_UNLOCK();
 }
 

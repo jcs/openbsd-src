@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfvar.h,v 1.445 2016/11/22 19:29:54 procter Exp $ */
+/*	$OpenBSD: pfvar.h,v 1.448 2017/01/30 17:41:34 benno Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -61,7 +61,7 @@ struct ip6_hdr;
 typedef struct refcnt	pf_refcnt_t;
 #define	PF_REF_INIT(_x)	refcnt_init(&(_x))
 #define	PF_REF_TAKE(_x)	refcnt_take(&(_x))
-#define	PF_REF_RELE(_x)	refcnt_rele(&(_x)) 
+#define	PF_REF_RELE(_x)	refcnt_rele(&(_x))
 
 enum	{ PF_INOUT, PF_IN, PF_OUT, PF_FWD };
 enum	{ PF_PASS, PF_DROP, PF_SCRUB, PF_NOSCRUB, PF_NAT, PF_NONAT,
@@ -1614,9 +1614,9 @@ extern void			 pf_tbladdr_remove(struct pf_addr_wrap *);
 extern void			 pf_tbladdr_copyout(struct pf_addr_wrap *);
 extern void			 pf_calc_skip_steps(struct pf_rulequeue *);
 extern void			 pf_purge_thread(void *);
-extern void			 pf_purge_expired_src_nodes(int);
+extern void			 pf_purge_expired_src_nodes();
 extern void			 pf_purge_expired_states(u_int32_t);
-extern void			 pf_purge_expired_rules(int);
+extern void			 pf_purge_expired_rules();
 extern void			 pf_remove_state(struct pf_state *);
 extern void			 pf_remove_divert_state(struct pf_state_key *);
 extern void			 pf_free_state(struct pf_state *);
@@ -1681,7 +1681,7 @@ int	pf_match_uid(u_int8_t, uid_t, uid_t, uid_t);
 int	pf_match_gid(u_int8_t, gid_t, gid_t, gid_t);
 
 int	pf_refragment6(struct mbuf **, struct m_tag *mtag,
-	    struct sockaddr_in6 *, struct ifnet *);
+	    struct sockaddr_in6 *, struct ifnet *, struct rtentry *);
 void	pf_normalize_init(void);
 int	pf_normalize_ip(struct pf_pdesc *, u_short *);
 int	pf_normalize_ip6(struct pf_pdesc *, u_short *);
@@ -1790,7 +1790,6 @@ int		 pf_addr_compare(struct pf_addr *, struct pf_addr *,
 
 extern struct pf_status	pf_status;
 extern struct pool	pf_frent_pl, pf_frag_pl;
-extern struct rwlock	pf_consistency_lock;
 
 struct pf_pool_limit {
 	void		*pp;

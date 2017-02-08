@@ -1,8 +1,9 @@
-# $OpenBSD: Makefile,v 1.74 2016/12/11 18:06:09 schwarze Exp $
+# $OpenBSD: Makefile,v 1.114 2017/01/31 05:40:26 schwarze Exp $
 
 .include <bsd.own.mk>
 
 MAN=	\
+	ACCESS_DESCRIPTION_new.3 \
 	ASN1_OBJECT_new.3 \
 	ASN1_STRING_length.3 \
 	ASN1_STRING_new.3 \
@@ -10,7 +11,11 @@ MAN=	\
 	ASN1_TIME_set.3 \
 	ASN1_TYPE_get.3 \
 	ASN1_generate_nconf.3 \
+	ASN1_item_d2i.3 \
+	ASN1_item_new.3 \
 	ASN1_time_parse.3 \
+	AUTHORITY_KEYID_new.3 \
+	BASIC_CONSTRAINTS_new.3 \
 	BF_set_key.3 \
 	BIO_ctrl.3 \
 	BIO_f_base64.3 \
@@ -50,6 +55,7 @@ MAN=	\
 	BN_num_bytes.3 \
 	BN_rand.3 \
 	BN_set_bit.3 \
+	BN_set_flags.3 \
 	BN_set_negative.3 \
 	BN_swap.3 \
 	BN_zero.3 \
@@ -66,6 +72,7 @@ MAN=	\
 	DH_new.3 \
 	DH_set_method.3 \
 	DH_size.3 \
+	DIST_POINT_new.3 \
 	DSA_SIG_new.3 \
 	DSA_do_sign.3 \
 	DSA_dup_DH.3 \
@@ -94,6 +101,7 @@ MAN=	\
 	ERR_put_error.3 \
 	ERR_remove_state.3 \
 	ERR_set_mark.3 \
+	ESS_SIGNING_CERT_new.3 \
 	EVP_AEAD_CTX_init.3 \
 	EVP_BytesToKey.3 \
 	EVP_DigestInit.3 \
@@ -119,10 +127,15 @@ MAN=	\
 	EVP_SealInit.3 \
 	EVP_SignInit.3 \
 	EVP_VerifyInit.3 \
+	EXTENDED_KEY_USAGE_new.3 \
+	GENERAL_NAME_new.3 \
 	HMAC.3 \
 	MD5.3 \
+	NAME_CONSTRAINTS_new.3 \
 	OBJ_nid2obj.3 \
+	OCSP_CRLID_new.3 \
 	OCSP_REQUEST_new.3 \
+	OCSP_SERVICELOC_new.3 \
 	OCSP_cert_to_id.3 \
 	OCSP_request_add1_nonce.3 \
 	OCSP_resp_find_status.3 \
@@ -138,20 +151,28 @@ MAN=	\
 	PEM_read_bio_PrivateKey.3 \
 	PEM_write_bio_PKCS7_stream.3 \
 	PKCS12_create.3 \
+	PKCS12_new.3 \
 	PKCS12_newpass.3 \
 	PKCS12_parse.3 \
+	PKCS12_SAFEBAG_new.3 \
 	PKCS5_PBKDF2_HMAC.3 \
 	PKCS7_decrypt.3 \
 	PKCS7_encrypt.3 \
+	PKCS7_new.3 \
 	PKCS7_sign.3 \
 	PKCS7_sign_add_signer.3 \
 	PKCS7_verify.3 \
+	PKCS8_PRIV_KEY_INFO_new.3 \
+	PKEY_USAGE_PERIOD_new.3 \
+	POLICYINFO_new.3 \
+	PROXY_POLICY_new.3 \
 	RAND_add.3 \
 	RAND_bytes.3 \
 	RAND_load_file.3 \
 	RAND_set_rand_method.3 \
 	RC4.3 \
 	RIPEMD160.3 \
+	RSA_PSS_PARAMS_new.3 \
 	RSA_blinding_on.3 \
 	RSA_check_key.3 \
 	RSA_generate_key.3 \
@@ -168,21 +189,31 @@ MAN=	\
 	SHA1.3 \
 	SMIME_read_PKCS7.3 \
 	SMIME_write_PKCS7.3 \
+	SXNET_new.3 \
+	TS_REQ_new.3 \
 	UI_new.3 \
 	X509V3_get_d2i.3 \
 	X509_ALGOR_dup.3 \
+	X509_ATTRIBUTE_new.3 \
+	X509_CINF_new.3 \
 	X509_CRL_get0_by_serial.3 \
+	X509_CRL_new.3 \
 	X509_EXTENSION_set_object.3 \
 	X509_LOOKUP_hash_dir.3 \
 	X509_NAME_ENTRY_get_object.3 \
 	X509_NAME_add_entry_by_txt.3 \
 	X509_NAME_get_index_by_NID.3 \
+	X509_NAME_new.3 \
 	X509_NAME_print_ex.3 \
 	X509_PUBKEY_new.3 \
+	X509_REQ_new.3 \
+	X509_REVOKED_new.3 \
+	X509_SIG_new.3 \
 	X509_STORE_CTX_get_error.3 \
 	X509_STORE_CTX_get_ex_new_index.3 \
 	X509_STORE_CTX_new.3 \
 	X509_STORE_CTX_set_verify_cb.3 \
+	X509_STORE_load_locations.3 \
 	X509_STORE_set_verify_cb_func.3 \
 	X509_STORE_set1_param.3 \
 	X509_VERIFY_PARAM_set_flags.3 \
@@ -197,28 +228,46 @@ MAN=	\
 	X509_sign.3 \
 	X509_verify_cert.3 \
 	X509v3_get_ext_by_NID.3 \
-	bn_dump.3 \
 	crypto.3 \
+	d2i_ASN1_NULL.3 \
 	d2i_ASN1_OBJECT.3 \
+	d2i_ASN1_OCTET_STRING.3 \
+	d2i_ASN1_SEQUENCE_ANY.3 \
+	d2i_AUTHORITY_KEYID.3 \
+	d2i_BASIC_CONSTRAINTS.3 \
 	d2i_DHparams.3 \
+	d2i_DIST_POINT.3 \
 	d2i_DSAPublicKey.3 \
 	d2i_ECPKParameters.3 \
+	d2i_ESS_SIGNING_CERT.3 \
+	d2i_GENERAL_NAME.3 \
+	d2i_OCSP_REQUEST.3 \
+	d2i_OCSP_RESPONSE.3 \
+	d2i_PKCS12.3 \
+	d2i_PKCS7.3 \
+	d2i_PKCS8_PRIV_KEY_INFO.3 \
 	d2i_PKCS8PrivateKey_bio.3 \
+	d2i_PKEY_USAGE_PERIOD.3 \
+	d2i_POLICYINFO.3 \
+	d2i_PROXY_POLICY.3 \
 	d2i_PrivateKey.3 \
 	d2i_RSAPublicKey.3 \
+	d2i_TS_REQ.3 \
 	d2i_X509.3 \
 	d2i_X509_ALGOR.3 \
+	d2i_X509_ATTRIBUTE.3 \
 	d2i_X509_CRL.3 \
+	d2i_X509_EXTENSION.3 \
 	d2i_X509_NAME.3 \
 	d2i_X509_REQ.3 \
 	d2i_X509_SIG.3 \
 	des_read_pw.3 \
 	engine.3 \
 	evp.3 \
+	get_rfc3526_prime_8192.3 \
 	i2d_PKCS7_bio_stream.3 \
 	lh_new.3 \
 	lh_stats.3 \
-	x509.3 \
 	openssl.cnf.5 \
 	x509v3.cnf.5
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: control.c,v 1.9 2016/10/12 19:10:03 reyk Exp $	*/
+/*	$OpenBSD: control.c,v 1.13 2017/01/17 21:51:01 krw Exp $	*/
 
 /*
  * Copyright (c) 2010-2015 Reyk Floeter <reyk@openbsd.org>
@@ -47,12 +47,12 @@ struct ctl_conn
 	*control_connbyfd(int);
 void	 control_close(int, struct control_sock *);
 void	 control_dispatch_imsg(int, short, void *);
-int	 control_dispatch_vmm(int, struct privsep_proc *, struct imsg *);
+int	 control_dispatch_vmd(int, struct privsep_proc *, struct imsg *);
 void	 control_imsg_forward(struct imsg *);
 void	 control_run(struct privsep *, struct privsep_proc *, void *);
 
 static struct privsep_proc procs[] = {
-	{ "parent",	PROC_PARENT,	control_dispatch_vmm }
+	{ "parent",	PROC_PARENT,	control_dispatch_vmd }
 };
 
 void
@@ -66,7 +66,7 @@ control_run(struct privsep *ps, struct privsep_proc *p, void *arg)
 {
 	/*
 	 * pledge in the control process:
- 	 * stdio - for malloc and basic I/O including events.
+	 * stdio - for malloc and basic I/O including events.
 	 * cpath - for managing the control socket.
 	 * unix - for the control socket.
 	 * recvfd - for the proc fd exchange.
@@ -76,7 +76,7 @@ control_run(struct privsep *ps, struct privsep_proc *p, void *arg)
 }
 
 int
-control_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
+control_dispatch_vmd(int fd, struct privsep_proc *p, struct imsg *imsg)
 {
 	struct ctl_conn		*c;
 
@@ -249,9 +249,10 @@ control_connbyfd(int fd)
 {
 	struct ctl_conn	*c;
 
-	for (c = TAILQ_FIRST(&ctl_conns); c != NULL && c->iev.ibuf.fd != fd;
-	    c = TAILQ_NEXT(c, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(c, &ctl_conns, entry) {
+		if (c->iev.ibuf.fd == fd)
+			break;
+	}
 
 	return (c);
 }
@@ -349,7 +350,7 @@ control_dispatch_imsg(int fd, short event, void *arg)
 			IMSG_SIZE_CHECK(&imsg, &v);
 
 			memcpy(&v, imsg.data, sizeof(v));
-			log_verbose(v);
+			log_setverbose(v);
 
 			proc_forward_imsg(ps, &imsg, PROC_PARENT, -1);
 			break;

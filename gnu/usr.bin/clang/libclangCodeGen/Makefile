@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.1 2016/09/05 10:56:50 pascal Exp $
+# $OpenBSD: Makefile,v 1.3 2017/01/24 08:44:47 patrick Exp $
 
 LIB=	clangCodeGen
 NOPIC=
@@ -12,12 +12,14 @@ SRCS=	BackendUtil.cpp \
 	CGBlocks.cpp \
 	CGBuiltin.cpp \
 	CGCUDANV.cpp \
+	CGCUDABuiltin.cpp \
 	CGCUDARuntime.cpp \
 	CGCXX.cpp \
 	CGCXXABI.cpp \
 	CGCall.cpp \
 	CGClass.cpp \
 	CGCleanup.cpp \
+	CGCoroutine.cpp \
 	CGDebugInfo.cpp \
 	CGDecl.cpp \
 	CGDeclCXX.cpp \
@@ -35,6 +37,7 @@ SRCS=	BackendUtil.cpp \
 	CGObjCRuntime.cpp \
 	CGOpenCLRuntime.cpp \
 	CGOpenMPRuntime.cpp \
+	CGOpenMPRuntimeNVPTX.cpp \
 	CGRecordLayoutBuilder.cpp \
 	CGStmt.cpp \
 	CGStmtOpenMP.cpp \
@@ -53,7 +56,9 @@ SRCS=	BackendUtil.cpp \
 	ModuleBuilder.cpp \
 	ObjectFilePCHContainerOperations.cpp \
 	SanitizerMetadata.cpp \
-	TargetInfo.cpp
+	SwiftCallingConv.cpp \
+	TargetInfo.cpp \
+	VarBypassDetector.cpp
 
 .PATH:	${.CURDIR}/../../../llvm/tools/clang/lib/CodeGen
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_domain.c,v 1.46 2016/11/22 10:32:31 mpi Exp $	*/
+/*	$OpenBSD: uipc_domain.c,v 1.48 2016/12/20 21:15:36 mpi Exp $	*/
 /*	$NetBSD: uipc_domain.c,v 1.14 1996/02/09 19:00:44 christos Exp $	*/
 
 /*
@@ -99,8 +99,8 @@ domaininit(void)
 		max_linkhdr = 64;
 
 	max_hdr = max_linkhdr + max_protohdr;
-	timeout_set(&pffast_timeout, pffasttimo, &pffast_timeout);
-	timeout_set(&pfslow_timeout, pfslowtimo, &pfslow_timeout);
+	timeout_set_proc(&pffast_timeout, pffasttimo, &pffast_timeout);
+	timeout_set_proc(&pfslow_timeout, pfslowtimo, &pfslow_timeout);
 	timeout_add(&pffast_timeout, 1);
 	timeout_add(&pfslow_timeout, 1);
 }
@@ -165,7 +165,7 @@ net_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 {
 	struct domain *dp;
 	struct protosw *pr;
-	int family, protocol;
+	int s, error, family, protocol;
 
 	/*
 	 * All sysctl names at this level are nonterminal.
@@ -199,18 +199,26 @@ net_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 #ifdef MPLS
 	/* XXX WARNING: big fat ugly hack */
 	/* stupid net.mpls is special as it does not have a protocol */
-	if (family == PF_MPLS)
-		return (dp->dom_protosw[0].pr_sysctl(name + 1, namelen - 1,
-		    oldp, oldlenp, newp, newlen));
+	if (family == PF_MPLS) {
+		NET_LOCK(s);
+		error = (dp->dom_protosw[0].pr_sysctl)(name + 1, namelen - 1,
+		    oldp, oldlenp, newp, newlen);
+		NET_UNLOCK(s);
+		return (error);
+	}
 #endif
 
 	if (namelen < 3)
 		return (EISDIR);		/* overloaded */
 	protocol = name[1];
 	for (pr = dp->dom_protosw; pr < dp->dom_protoswNPROTOSW; pr++)
-		if (pr->pr_protocol == protocol && pr->pr_sysctl)
-			return ((*pr->pr_sysctl)(name + 2, namelen - 2,
-			    oldp, oldlenp, newp, newlen));
+		if (pr->pr_protocol == protocol && pr->pr_sysctl) {
+			NET_LOCK(s);
+			error = (*pr->pr_sysctl)(name + 2, namelen - 2,
+			    oldp, oldlenp, newp, newlen);
+			NET_UNLOCK(s);
+			return (error);
+		}
 	return (ENOPROTOOPT);
 }
 
@@ -238,13 +246,13 @@ pfslowtimo(void *arg)
 	struct protosw *pr;
 	int i, s;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 	for (i = 0; (dp = domains[i]) != NULL; i++) {
 		for (pr = dp->dom_protosw; pr < dp->dom_protoswNPROTOSW; pr++)
 			if (pr->pr_slowtimo)
 				(*pr->pr_slowtimo)();
 	}
-	splx(s);
+	NET_UNLOCK(s);
 	timeout_add_msec(to, 500);
 }
 
@@ -256,12 +264,12 @@ pffasttimo(void *arg)
 	struct protosw *pr;
 	int i, s;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 	for (i = 0; (dp = domains[i]) != NULL; i++) {
 		for (pr = dp->dom_protosw; pr < dp->dom_protoswNPROTOSW; pr++)
 			if (pr->pr_fasttimo)
 				(*pr->pr_fasttimo)();
 	}
-	splx(s);
+	NET_UNLOCK(s);
 	timeout_add_msec(to, 200);
 }

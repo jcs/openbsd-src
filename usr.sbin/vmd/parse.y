@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.16 2016/11/22 11:31:38 edd Exp $	*/
+/*	$OpenBSD: parse.y,v 1.20 2017/01/13 19:21:16 edd Exp $	*/
 
 /*
  * Copyright (c) 2007-2016 Reyk Floeter <reyk@openbsd.org>
@@ -288,6 +288,7 @@ vm		: VM string			{
 					    vcp->vcp_name,
 					    vcp_disable ? "disabled" : "enabled");
 				}
+				vm->vm_from_config = 1;
 			}
 		}
 		;
@@ -306,6 +307,7 @@ vm_opts		: disable			{
 				YYERROR;
 			}
 			free($2);
+			vmc.vmc_flags |= VMOP_CREATE_DISK;
 		}
 		| INTERFACE optstring iface_opts_o {
 			unsigned int	i;
@@ -337,6 +339,7 @@ vm_opts		: disable			{
 				}
 			}
 			free($2);
+			vmc.vmc_flags |= VMOP_CREATE_NETWORK;
 		}
 		| KERNEL string			{
 			if (vcp->vcp_kernel[0] != '\0') {
@@ -353,6 +356,7 @@ vm_opts		: disable			{
 				YYERROR;
 			}
 			free($2);
+			vmc.vmc_flags |= VMOP_CREATE_KERNEL;
 		}
 		| NIFS NUMBER			{
 			if (vcp->vcp_nnics != 0) {
@@ -364,6 +368,7 @@ vm_opts		: disable			{
 				YYERROR;
 			}
 			vcp->vcp_nnics = (size_t)$2;
+			vmc.vmc_flags |= VMOP_CREATE_NETWORK;
 		}
 		| MEMORY NUMBER			{
 			ssize_t	 res;
@@ -376,6 +381,7 @@ vm_opts		: disable			{
 				YYERROR;
 			}
 			vcp->vcp_memranges[0].vmr_size = (size_t)res;
+			vmc.vmc_flags |= VMOP_CREATE_MEMORY;
 		}
 		| MEMORY STRING			{
 			ssize_t	 res;
@@ -390,6 +396,7 @@ vm_opts		: disable			{
 				YYERROR;
 			}
 			vcp->vcp_memranges[0].vmr_size = (size_t)res;
+			vmc.vmc_flags |= VMOP_CREATE_MEMORY;
 		}
 		;
 
@@ -866,8 +873,7 @@ parse_config(const char *filename)
 	endservent();
 
 	/* Free macros and check which have not been used. */
-	for (sym = TAILQ_FIRST(&symhead); sym != NULL; sym = next) {
-		next = TAILQ_NEXT(sym, entry);
+	TAILQ_FOREACH_SAFE(sym, &symhead, entry, next) {
 		if (!sym->used)
 			fprintf(stderr, "warning: macro '%s' not "
 			    "used\n", sym->nam);
@@ -890,9 +896,10 @@ symset(const char *nam, const char *val, int persist)
 {
 	struct sym	*sym;
 
-	for (sym = TAILQ_FIRST(&symhead); sym && strcmp(nam, sym->nam);
-	    sym = TAILQ_NEXT(sym, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(sym, &symhead, entry) {
+		if (strcmp(nam, sym->nam) == 0)
+			break;
+	}
 
 	if (sym != NULL) {
 		if (sym->persist == 1)
@@ -951,11 +958,12 @@ symget(const char *nam)
 {
 	struct sym	*sym;
 
-	TAILQ_FOREACH(sym, &symhead, entry)
+	TAILQ_FOREACH(sym, &symhead, entry) {
 		if (strcmp(nam, sym->nam) == 0) {
 			sym->used = 1;
 			return (sym->val);
 		}
+	}
 	return (NULL);
 }
 

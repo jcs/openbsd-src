@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.212 2016/09/26 16:25:16 reyk Exp $	*/
+/*	$OpenBSD: parse.y,v 1.214 2017/01/05 13:53:09 krw Exp $	*/
 
 /*
  * Copyright (c) 2007 - 2014 Reyk Floeter <reyk@openbsd.org>
@@ -2606,8 +2606,7 @@ parse_config(const char *filename, struct relayd *x_conf)
 	endprotoent();
 
 	/* Free macros */
-	for (sym = TAILQ_FIRST(&symhead); sym != NULL; sym = next) {
-		next = TAILQ_NEXT(sym, entry);
+	TAILQ_FOREACH_SAFE(sym, &symhead, entry, next) {
 		if (!sym->persist) {
 			free(sym->nam);
 			free(sym->val);
@@ -2752,9 +2751,10 @@ symset(const char *nam, const char *val, int persist)
 {
 	struct sym	*sym;
 
-	for (sym = TAILQ_FIRST(&symhead); sym && strcmp(nam, sym->nam);
-	    sym = TAILQ_NEXT(sym, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(sym, &symhead, entry) {
+		if (strcmp(nam, sym->nam) == 0)
+			break;
+	}
 
 	if (sym != NULL) {
 		if (sym->persist == 1)
@@ -2813,11 +2813,12 @@ symget(const char *nam)
 {
 	struct sym	*sym;
 
-	TAILQ_FOREACH(sym, &symhead, entry)
+	TAILQ_FOREACH(sym, &symhead, entry) {
 		if (strcmp(nam, sym->nam) == 0) {
 			sym->used = 1;
 			return (sym->val);
 		}
+	}
 	return (NULL);
 }
 

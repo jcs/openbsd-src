@@ -1,4 +1,4 @@
-/*	$OpenBSD: pci.c,v 1.10 2016/10/12 06:56:54 mlarkin Exp $	*/
+/*	$OpenBSD: pci.c,v 1.13 2017/01/21 12:45:41 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -20,7 +20,7 @@
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcidevs.h>
-#include <dev/pci/virtioreg.h>
+#include <dev/pv/virtioreg.h>
 #include <machine/vmmvar.h>
 
 #include <string.h>
@@ -32,7 +32,7 @@ struct pci pci;
 extern char *__progname;
 
 /* PIC IRQs, assigned to devices in order */
-const uint8_t pci_pic_irqs[PCI_MAX_PIC_IRQS] = {3, 5, 7, 9, 10, 11, 14};
+const uint8_t pci_pic_irqs[PCI_MAX_PIC_IRQS] = {3, 5, 7, 9, 10, 11, 14, 15};
 
 /*
  * pci_add_bar
@@ -40,7 +40,7 @@ const uint8_t pci_pic_irqs[PCI_MAX_PIC_IRQS] = {3, 5, 7, 9, 10, 11, 14};
  * Adds a BAR for the PCI device 'id'. On access, 'barfn' will be
  * called, and passed 'cookie' as an identifier.
  *
- * BARs are fixed size, meaning all I/O BARs requested have the 
+ * BARs are fixed size, meaning all I/O BARs requested have the
  * same size and all MMIO BARs have the same size.
  *
  * Parameters:
@@ -267,7 +267,7 @@ pci_handle_io(struct vm_run_params *vrp)
 		    __progname, (uint64_t)reg);
 		/* Reads from undefined ports return 0xFF */
 		if (dir == 1)
-			vei->vei.vei_data = 0xFFFFFFFF;	
+			vei->vei.vei_data = 0xFFFFFFFF;
 	}
 
 	if (intr != 0xFF) {

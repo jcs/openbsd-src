@@ -1,4 +1,4 @@
-.\"	$OpenBSD: pf.conf.5,v 1.554 2016/09/24 10:10:58 sthen Exp $
+.\"	$OpenBSD: pf.conf.5,v 1.557 2017/01/17 21:08:34 jmc Exp $
 .\"
 .\" Copyright (c) 2002, Daniel Hartmeier
 .\" Copyright (c) 2003 - 2013 Henning Brauer <henning@openbsd.org>
@@ -28,7 +28,7 @@
 .\" ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: September 24 2016 $
+.Dd $Mdocdate: January 17 2017 $
 .Dt PF.CONF 5
 .Os
 .Sh NAME
@@ -368,7 +368,7 @@ Translates to the point-to-point interface's peer address(es).
 .Pp
 Host names may also have the
 .Cm :0
-modfier appended to restrict the name resolution to the first of each
+modifier appended to restrict the name resolution to the first of each
 v4 and v6 address found.
 .Pp
 Host name resolution and interface to address translation are done at
@@ -1481,7 +1481,7 @@ using the
 keyword.
 Similarly, a minimum (reserved) bandwidth can be specified.
 .Bd -literal -offset indent
-queue ssh parent std bandwidth 10M, min 5M, max 25M
+queue ssh parent std bandwidth 10M min 5M max 25M
 .Ed
 .Pp
 For each of these 3 bandwidth specifications an additional burst bandwidth and
@@ -2641,7 +2641,7 @@ option         = "set" ( [ "timeout" ( timeout | "{" timeout-list "}" ) ] |
 pf-rule        = action [ ( "in" | "out" ) ]
                  [ "log" [ "(" logopts ")"] ] [ "quick" ]
                  [ "on" ( ifspec | "rdomain" number ) ] [ af ]
-                 [ protospec ] hosts [ filteropts ]
+                 [ protospec ] [ hosts ] [ filteropts ]
 
 logopts        = logopt [ [ "," ] logopts ]
 logopt         = "all" | "matches" | "user" | "to" interface-name

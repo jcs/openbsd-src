@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-source-file.c,v 1.30 2016/10/16 19:04:05 nicm Exp $ */
+/* $OpenBSD: cmd-source-file.c,v 1.33 2017/01/29 22:10:55 nicm Exp $ */
 
 /*
  * Copyright (c) 2008 Tiago Cunha <me@tiagocunha.org>
@@ -18,7 +18,10 @@
 
 #include <sys/types.h>
 
+#include <errno.h>
+#include <glob.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "tmux.h"
 
@@ -48,23 +51,30 @@ cmd_source_file_exec(struct cmd *self, struct cmdq_item *item)
 	struct client		*c = item->client;
 	int			 quiet;
 	struct cmdq_item	*new_item;
+	enum cmd_retval		 retval;
+	glob_t			 g;
+	u_int			 i;
 
 	quiet = args_has(args, 'q');
-	switch (load_cfg(args->argv[0], c, item, quiet)) {
-	case -1:
-		if (cfg_finished)
-			cfg_print_causes(item);
+	if (glob(args->argv[0], 0, NULL, &g) != 0) {
+		if (quiet && errno == ENOENT)
+			return (CMD_RETURN_NORMAL);
+		cmdq_error(item, "%s: %s", args->argv[0], strerror(errno));
 		return (CMD_RETURN_ERROR);
-	case 0:
-		if (cfg_finished)
-			cfg_print_causes(item);
-		return (CMD_RETURN_NORMAL);
+	}
+
+	retval = CMD_RETURN_NORMAL;
+	for (i = 0; i < (u_int)g.gl_pathc; i++) {
+		if (load_cfg(g.gl_pathv[i], c, item, quiet) != 0)
+			retval = CMD_RETURN_ERROR;
 	}
 	if (cfg_finished) {
 		new_item = cmdq_get_callback(cmd_source_file_done, NULL);
 		cmdq_insert_after(item, new_item);
 	}
-	return (CMD_RETURN_NORMAL);
+
+	globfree(&g);
+	return (retval);
 }
 
 static enum cmd_retval

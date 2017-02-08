@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd.c,v 1.128 2016/11/02 13:35:36 nicm Exp $ */
+/* $OpenBSD: cmd.c,v 1.136 2017/01/24 19:59:19 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -93,7 +93,6 @@ extern const struct cmd_entry cmd_select_pane_entry;
 extern const struct cmd_entry cmd_select_window_entry;
 extern const struct cmd_entry cmd_send_keys_entry;
 extern const struct cmd_entry cmd_send_prefix_entry;
-extern const struct cmd_entry cmd_server_info_entry;
 extern const struct cmd_entry cmd_set_buffer_entry;
 extern const struct cmd_entry cmd_set_environment_entry;
 extern const struct cmd_entry cmd_set_hook_entry;
@@ -182,7 +181,6 @@ const struct cmd_entry *cmd_table[] = {
 	&cmd_select_window_entry,
 	&cmd_send_keys_entry,
 	&cmd_send_prefix_entry,
-	&cmd_server_info_entry,
 	&cmd_set_buffer_entry,
 	&cmd_set_environment_entry,
 	&cmd_set_hook_entry,
@@ -308,21 +306,74 @@ cmd_stringify_argv(int argc, char **argv)
 	return (buf);
 }
 
+static int
+cmd_try_alias(int *argc, char ***argv)
+{
+	struct options_entry	 *o;
+	int			  old_argc = *argc, new_argc;
+	char			**old_argv = *argv, **new_argv;
+	u_int			  size, idx;
+	int			  i;
+	size_t			  wanted;
+	const char		 *s, *cp = NULL;
+
+	o = options_get_only(global_options, "command-alias");
+	if (o == NULL || options_array_size(o, &size) == -1 || size == 0)
+		return (-1);
+
+	wanted = strlen(old_argv[0]);
+	for (idx = 0; idx < size; idx++) {
+		s = options_array_get(o, idx);
+		if (s == NULL)
+			continue;
+
+		cp = strchr(s, '=');
+		if (cp == NULL || (size_t)(cp - s) != wanted)
+			continue;
+		if (strncmp(old_argv[0], s, wanted) == 0)
+			break;
+	}
+	if (idx == size)
+		return (-1);
+
+	if (cmd_string_split(cp + 1, &new_argc, &new_argv) != 0)
+		return (-1);
+
+	*argc = new_argc + old_argc - 1;
+	*argv = xcalloc((*argc) + 1, sizeof **argv);
+
+	for (i = 0; i < new_argc; i++)
+		(*argv)[i] = xstrdup(new_argv[i]);
+	for (i = 1; i < old_argc; i++)
+		(*argv)[new_argc + i - 1] = xstrdup(old_argv[i]);
+
+	log_debug("alias: %s=%s", old_argv[0], cp + 1);
+	for (i = 0; i < *argc; i++)
+		log_debug("alias: argv[%d] = %s", i, (*argv)[i]);
+
+	cmd_free_argv(new_argc, new_argv);
+	return (0);
+}
+
 struct cmd *
 cmd_parse(int argc, char **argv, const char *file, u_int line, char **cause)
 {
+	const char		*name;
 	const struct cmd_entry **entryp, *entry;
 	struct cmd		*cmd;
 	struct args		*args;
 	char			 s[BUFSIZ];
-	int			 ambiguous = 0;
+	int			 ambiguous, allocated = 0;
 
 	*cause = NULL;
 	if (argc == 0) {
 		xasprintf(cause, "no command");
 		return (NULL);
 	}
+	name = argv[0];
 
+retry:
+	ambiguous = 0;
 	entry = NULL;
 	for (entryp = cmd_table; *entryp != NULL; entryp++) {
 		if ((*entryp)->alias != NULL &&
@@ -342,10 +393,17 @@ cmd_parse(int argc, char **argv, const char *file, u_int line, char **cause)
 		if (strcmp(entry->name, argv[0]) == 0)
 			break;
 	}
+	if ((ambiguous || entry == NULL) &&
+	    server_proc != NULL &&
+	    !allocated &&
+	    cmd_try_alias(&argc, &argv) == 0) {
+		allocated = 1;
+		goto retry;
+	}
 	if (ambiguous)
 		goto ambiguous;
 	if (entry == NULL) {
-		xasprintf(cause, "unknown command: %s", argv[0]);
+		xasprintf(cause, "unknown command: %s", name);
 		return (NULL);
 	}
 
@@ -365,6 +423,8 @@ cmd_parse(int argc, char **argv, const char *file, u_int line, char **cause)
 		cmd->file = xstrdup(file);
 	cmd->line = line;
 
+	if (allocated)
+		cmd_free_argv(argc, argv);
 	return (cmd);
 
 ambiguous:
@@ -378,7 +438,7 @@ ambiguous:
 			break;
 	}
 	s[strlen(s) - 2] = '\0';
-	xasprintf(cause, "ambiguous command: %s, could be: %s", argv[0], s);
+	xasprintf(cause, "ambiguous command: %s, could be: %s", name, s);
 	return (NULL);
 
 usage:
@@ -410,7 +470,7 @@ cmd_prepare_state_flag(char c, const char *target, enum cmd_entry_flag flag,
 		if (target != NULL && target[strcspn(target, ":.")] != '\0')
 			flag = CMD_PANE;
 		else
-			flag = CMD_SESSION;
+			flag = CMD_SESSION_PREFERUNATTACHED;
 	}
 
 	targetflags = 0;
@@ -418,6 +478,7 @@ cmd_prepare_state_flag(char c, const char *target, enum cmd_entry_flag flag,
 	case CMD_SESSION:
 	case CMD_SESSION_CANFAIL:
 	case CMD_SESSION_PREFERUNATTACHED:
+	case CMD_SESSION_WITHPANE:
 		if (flag == CMD_SESSION_CANFAIL)
 			targetflags |= CMD_FIND_QUIET;
 		if (flag == CMD_SESSION_PREFERUNATTACHED)
@@ -662,7 +723,7 @@ char *
 cmd_template_replace(const char *template, const char *s, int idx)
 {
 	char		 ch, *buf;
-	const char	*ptr, *cp;
+	const char	*ptr, *cp, quote[] = "\"\\$";
 	int		 replaced, quoted;
 	size_t		 len;
 
@@ -689,10 +750,14 @@ cmd_template_replace(const char *template, const char *s, int idx)
 			if (quoted)
 				ptr++;
 
-			buf = xrealloc(buf, len + (strlen(s) * 2) + 1);
+			buf = xrealloc(buf, len + (strlen(s) * 3) + 1);
 			for (cp = s; *cp != '\0'; cp++) {
-				if (quoted && *cp == '"')
+				if (quoted && strchr(quote, *cp) != NULL)
 					buf[len++] = '\\';
+				if (quoted && *cp == ';') {
+					buf[len++] = '\\';
+					buf[len++] = '\\';
+				}
 				buf[len++] = *cp;
 			}
 			buf[len] = '\0';

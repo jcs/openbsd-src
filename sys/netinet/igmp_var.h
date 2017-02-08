@@ -1,4 +1,4 @@
-/*	$OpenBSD: igmp_var.h,v 1.9 2008/04/18 06:42:20 djm Exp $	*/
+/*	$OpenBSD: igmp_var.h,v 1.12 2017/01/29 19:58:47 bluhm Exp $	*/
 /*	$NetBSD: igmp_var.h,v 1.9 1996/02/13 23:41:31 christos Exp $	*/
 
 /*
@@ -78,7 +78,29 @@ struct igmpstat {
 }
 
 #ifdef _KERNEL
-extern struct igmpstat igmpstat;
+
+#include <sys/percpu.h>
+
+enum igmpstat_counters {
+	igps_rcv_total,		/* total IGMP messages received */
+	igps_rcv_tooshort,	/* received with too few bytes */
+	igps_rcv_badsum,	/* received with bad checksum */
+	igps_rcv_queries,	/* received membership queries */
+	igps_rcv_badqueries,	/* received invalid queries */
+	igps_rcv_reports,	/* received membership reports */
+	igps_rcv_badreports,	/* received invalid reports */
+	igps_rcv_ourreports,	/* received reports for our groups */
+	igps_snd_reports,	/* sent membership reports */
+	igps_ncounters
+};
+
+extern struct cpumem *igmpcounters;
+
+static inline void
+igmpstat_inc(enum igmpstat_counters c)
+{
+	counters_inc(igmpcounters, c);
+}
 
 /*
  * Macro to compute a random timer value between 1 and (IGMP_MAX_REPORTING_
@@ -88,7 +110,7 @@ extern struct igmpstat igmpstat;
 #define	IGMP_RANDOM_DELAY(X)	(arc4random_uniform(X) + 1)
 
 void	igmp_init(void);
-void	igmp_input(struct mbuf *, ...);
+int	igmp_input(struct mbuf **, int *, int);
 void	igmp_joingroup(struct in_multi *);
 void	igmp_leavegroup(struct in_multi *);
 void	igmp_fasttimo(void);

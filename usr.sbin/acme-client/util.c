@@ -1,4 +1,4 @@
-/*	$Id: util.c,v 1.5 2016/09/13 17:13:37 deraadt Exp $ */
+/*	$Id: util.c,v 1.9 2017/01/24 13:32:55 jsing Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -93,14 +93,14 @@ readop(int fd, enum comm comm)
 	ssz = read(fd, &op, sizeof(long));
 	if (ssz < 0) {
 		warn("read: %s", comms[comm]);
-		return (LONG_MAX);
+		return LONG_MAX;
 	} else if (ssz && ssz != sizeof(long)) {
 		warnx("short read: %s", comms[comm]);
-		return (LONG_MAX);
-	} else if (0 == ssz)
-		return (0);
+		return LONG_MAX;
+	} else if (ssz == 0)
+		return 0;
 
-	return (op);
+	return op;
 }
 
 char *
@@ -108,14 +108,14 @@ readstr(int fd, enum comm comm)
 {
 	size_t	 sz;
 
-	return (readbuf(fd, comm, &sz));
+	return readbuf(fd, comm, &sz);
 }
 
 /*
  * Read a buffer from the sender.
  * This consists of two parts: the lenght of the buffer, and the buffer
  * itself.
- * We allow the buffer to be binary, but nil-terminate it anyway.
+ * We allow the buffer to be binary, but NUL-terminate it anyway.
  */
 char *
 readbuf(int fd, enum comm comm, size_t *sz)
@@ -126,16 +126,16 @@ readbuf(int fd, enum comm comm, size_t *sz)
 
 	if ((ssz = read(fd, sz, sizeof(size_t))) < 0) {
 		warn("read: %s length", comms[comm]);
-		return (NULL);
+		return NULL;
 	} else if ((size_t)ssz != sizeof(size_t)) {
 		warnx("short read: %s length", comms[comm]);
-		return (NULL);
+		return NULL;
 	} else if (*sz > SIZE_MAX - 1) {
 		warnx("integer overflow");
-		return (NULL);
-	} else if (NULL == (p = calloc(1, *sz + 1))) {
+		return NULL;
+	} else if ((p = calloc(1, *sz + 1)) == NULL) {
 		warn("malloc");
-		return (NULL);
+		return NULL;
 	}
 
 	/* Catch this over several reads. */
@@ -156,10 +156,10 @@ readbuf(int fd, enum comm comm, size_t *sz)
 	if (lsz) {
 		warnx("couldn't read buffer: %s", comms[comm]);
 		free(p);
-		return (NULL);
+		return NULL;
 	}
 
-	return (p);
+	return p;
 }
 
 /*
@@ -176,20 +176,20 @@ writeop(int fd, enum comm comm, long op)
 	sigfp = signal(SIGPIPE, sigpipe);
 
 	if ((ssz = write(fd, &op, sizeof(long))) < 0) {
-		if (EPIPE != (er = errno))
+		if ((er = errno) != EPIPE)
 			warn("write: %s", comms[comm]);
 		signal(SIGPIPE, sigfp);
-		return (EPIPE == er ? 0 : -1);
+		return er == EPIPE ? 0 : -1;
 	}
 
 	signal(SIGPIPE, sigfp);
 
 	if ((size_t)ssz != sizeof(long)) {
 		warnx("short write: %s", comms[comm]);
-		return (-1);
+		return -1;
 	}
 
-	return (1);
+	return 1;
 }
 
 /*
@@ -213,10 +213,10 @@ writebuf(int fd, enum comm comm, const void *v, size_t sz)
 	sigfp = signal(SIGPIPE, sigpipe);
 
 	if ((ssz = write(fd, &sz, sizeof(size_t))) < 0) {
-		if (EPIPE != (er = errno))
+		if ((er = errno) != EPIPE)
 			warn("write: %s length", comms[comm]);
 		signal(SIGPIPE, sigfp);
-		return (EPIPE == er ? 0 : -1);
+		return er == EPIPE ? 0 : -1;
 	}
 
 	/* Now write errors cause us to bail. */
@@ -225,20 +225,20 @@ writebuf(int fd, enum comm comm, const void *v, size_t sz)
 		warnx("short write: %s length", comms[comm]);
 	else if ((ssz = write(fd, v, sz)) < 0)
 		warn("write: %s", comms[comm]);
-	else if ((size_t)ssz != sz)
+	else if (sz != (size_t)ssz)
 		warnx("short write: %s", comms[comm]);
 	else
 		rc = 1;
 
 	signal(SIGPIPE, sigfp);
-	return (rc);
+	return rc;
 }
 
 int
 writestr(int fd, enum comm comm, const char *v)
 {
 
-	return (writebuf(fd, comm, v, strlen(v)));
+	return writebuf(fd, comm, v, strlen(v));
 }
 
 /*
@@ -252,23 +252,23 @@ checkexit(pid_t pid, enum comp comp)
 	int		 c, cc;
 	const char	*cp;
 
-	if (-1 == waitpid(pid, &c, 0)) {
+	if (waitpid(pid, &c, 0) == -1) {
 		warn("waitpid");
-		return (0);
+		return 0;
 	} else if (!WIFEXITED(c) && WIFSIGNALED(c)) {
 		cp = strsignal(WTERMSIG(c));
 		warnx("signal: %s(%u): %s", comps[comp], pid, cp);
-		return (0);
+		return 0;
 	} else if (!WIFEXITED(c)) {
 		warnx("did not exit: %s(%u)", comps[comp], pid);
-		return (0);
-	} else if (EXIT_SUCCESS != WEXITSTATUS(c)) {
+		return 0;
+	} else if (WEXITSTATUS(c) != EXIT_SUCCESS) {
 		cc = WEXITSTATUS(c);
 		dodbg("bad exit: %s(%u): %d", comps[comp], pid, cc);
-		return (0);
+		return 0;
 	}
 
-	return (1);
+	return 1;
 }
 
 /*
@@ -285,25 +285,25 @@ checkexit_ext(int *rc, pid_t pid, enum comp comp)
 
 	*rc = EXIT_FAILURE;
 
-	if (-1 == waitpid(pid, &c, 0)) {
+	if (waitpid(pid, &c, 0) == -1) {
 		warn("waitpid");
-		return (0);
+		return 0;
 	}
 
 	if (!WIFEXITED(c) && WIFSIGNALED(c)) {
 		cp = strsignal(WTERMSIG(c));
 		warnx("signal: %s(%u): %s", comps[comp], pid, cp);
-		return (0);
+		return 0;
 	} else if (!WIFEXITED(c)) {
 		warnx("did not exit: %s(%u)", comps[comp], pid);
-		return (0);
+		return 0;
 	}
 
 	/* Now check extended status. */
 
-	if (EXIT_SUCCESS != (*rc = WEXITSTATUS(c)) && 2 != *rc) {
+	if ((*rc = WEXITSTATUS(c)) != EXIT_SUCCESS && *rc != 2) {
 		dodbg("bad exit: %s(%u): %d", comps[comp], pid, *rc);
-		return (0);
+		return 0;
 	}
-	return (1);
+	return 1;
 }

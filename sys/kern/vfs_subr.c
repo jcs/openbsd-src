@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_subr.c,v 1.254 2016/09/28 22:22:52 kettenis Exp $	*/
+/*	$OpenBSD: vfs_subr.c,v 1.257 2017/01/15 23:18:05 bluhm Exp $	*/
 /*	$NetBSD: vfs_subr.c,v 1.53 1996/04/22 01:39:13 christos Exp $	*/
 
 /*
@@ -380,8 +380,7 @@ getnewvnode(enum vtagtype tag, struct mount *mp, struct vops *vops,
 		TAILQ_INIT(&vp->v_cache_dst);
 		numvnodes++;
 	} else {
-		for (vp = TAILQ_FIRST(listhd); vp != NULLVP;
-		    vp = TAILQ_NEXT(vp, v_freelist)) {
+		TAILQ_FOREACH(vp, listhd, v_freelist) {
 			if (VOP_ISLOCKED(vp) == 0)
 				break;
 		}
@@ -836,10 +835,9 @@ vfs_mount_foreach_vnode(struct mount *mp,
 	int error = 0;
 
 loop:
-	for (vp = LIST_FIRST(&mp->mnt_vnodelist); vp != NULL; vp = nvp) {
+	LIST_FOREACH_SAFE(vp , &mp->mnt_vnodelist, v_mntvnodes, nvp) {
 		if (vp->v_mount != mp)
 			goto loop;
-		nvp = LIST_NEXT(vp, v_mntvnodes);
 
 		error = func(vp, arg);
 
@@ -1253,12 +1251,12 @@ vprint(char *label, struct vnode *vp)
 void
 printlockedvnodes(void)
 {
-	struct mount *mp, *nmp;
+	struct mount *mp;
 	struct vnode *vp;
 
 	printf("Locked vnodes\n");
 
-	TAILQ_FOREACH_SAFE(mp, &mountlist, mnt_list, nmp) {
+	TAILQ_FOREACH(mp, &mountlist, mnt_list) {
 		if (vfs_busy(mp, VB_READ|VB_NOWAIT))
 			continue;
 		LIST_FOREACH(vp, &mp->mnt_vnodelist, v_mntvnodes) {
@@ -1576,9 +1574,10 @@ vfs_unmountall(void)
  retry:
 	allerror = 0;
 	TAILQ_FOREACH_REVERSE_SAFE(mp, &mountlist, mntlist, mnt_list, nmp) {
-		if ((vfs_busy(mp, VB_WRITE|VB_NOWAIT)) != 0)
+		if (vfs_busy(mp, VB_WRITE|VB_NOWAIT))
 			continue;
-		if ((error = dounmount(mp, MNT_FORCE, curproc, NULL)) != 0) {
+		/* XXX Here is a race, the next pointer is not locked. */
+		if ((error = dounmount(mp, MNT_FORCE, curproc)) != 0) {
 			printf("unmount of %s failed with error %d\n",
 			    mp->mnt_stat.f_mntonname, error);
 			allerror = 1;
@@ -1873,8 +1872,7 @@ vflushbuf(struct vnode *vp, int sync)
 
 loop:
 	s = splbio();
-	for (bp = LIST_FIRST(&vp->v_dirtyblkhd); bp != NULL; bp = nbp) {
-		nbp = LIST_NEXT(bp, b_vnbufs);
+	LIST_FOREACH_SAFE(bp, &vp->v_dirtyblkhd, b_vnbufs, nbp) {
 		if ((bp->b_flags & B_BUSY))
 			continue;
 		if ((bp->b_flags & B_DELWRI) == 0)

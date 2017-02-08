@@ -1,4 +1,4 @@
-/* $OpenBSD: client.c,v 1.114 2016/10/03 22:52:11 nicm Exp $ */
+/* $OpenBSD: client.c,v 1.120 2017/01/24 19:53:37 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -51,6 +51,8 @@ static enum {
 static int		 client_exitval;
 static enum msgtype	 client_exittype;
 static const char	*client_exitsession;
+static const char	*client_execshell;
+static const char	*client_execcmd;
 static int		 client_attached;
 
 static __dead void	 client_exec(const char *,const char *);
@@ -250,16 +252,13 @@ client_main(struct event_base *base, int argc, char **argv, int flags,
 		 * flag.
 		 */
 		cmdlist = cmd_list_parse(argc, argv, NULL, 0, &cause);
-		if (cmdlist == NULL) {
-			fprintf(stderr, "%s\n", cause);
-			return (1);
+		if (cmdlist != NULL) {
+			TAILQ_FOREACH(cmd, &cmdlist->list, qentry) {
+				if (cmd->entry->flags & CMD_STARTSERVER)
+					cmdflags |= CMD_STARTSERVER;
+			}
+			cmd_list_free(cmdlist);
 		}
-		cmdflags &= ~CMD_STARTSERVER;
-		TAILQ_FOREACH(cmd, &cmdlist->list, qentry) {
-			if (cmd->entry->flags & CMD_STARTSERVER)
-				cmdflags |= CMD_STARTSERVER;
-		}
-		cmd_list_free(cmdlist);
 	}
 
 	/* Create client process structure (starts logging). */
@@ -301,6 +300,8 @@ client_main(struct event_base *base, int argc, char **argv, int flags,
 		fatal("pledge failed");
 
 	/* Free stuff that is not used in the client. */
+	if (ptm_fd != -1)
+		close(ptm_fd);
 	options_free(global_options);
 	options_free(global_s_options);
 	options_free(global_w_options);
@@ -311,8 +312,11 @@ client_main(struct event_base *base, int argc, char **argv, int flags,
 	event_set(&client_stdin, STDIN_FILENO, EV_READ|EV_PERSIST,
 	    client_stdin_callback, NULL);
 	if (client_flags & CLIENT_CONTROLCONTROL) {
-		if (tcgetattr(STDIN_FILENO, &saved_tio) != 0)
-			fatal("tcgetattr failed");
+		if (tcgetattr(STDIN_FILENO, &saved_tio) != 0) {
+			fprintf(stderr, "tcgetattr failed: %s\n",
+			    strerror(errno));
+			return (1);
+		}
 		cfmakeraw(&tio);
 		tio.c_iflag = ICRNL|IXANY;
 		tio.c_oflag = OPOST|ONLCR;
@@ -357,6 +361,14 @@ client_main(struct event_base *base, int argc, char **argv, int flags,
 
 	/* Start main loop. */
 	proc_loop(client_proc, NULL);
+
+	/* Run command if user requested exec, instead of exiting. */
+	if (client_exittype == MSG_EXEC) {
+		if (client_flags & CLIENT_CONTROLCONTROL)
+			tcsetattr(STDOUT_FILENO, TCSAFLUSH, &saved_tio);
+		clear_signals(0);
+		client_exec(client_execshell, client_execcmd);
+	}
 
 	/* Print the exit message, if any, and exit. */
 	if (client_attached) {
@@ -653,6 +665,16 @@ client_dispatch_attached(struct imsg *imsg)
 			client_exitreason = CLIENT_EXIT_DETACHED_HUP;
 		else
 			client_exitreason = CLIENT_EXIT_DETACHED;
+		proc_send(client_peer, MSG_EXITING, -1, NULL, 0);
+		break;
+	case MSG_EXEC:
+		if (datalen == 0 || data[datalen - 1] != '\0' ||
+		    strlen(data) + 1 == (size_t)datalen)
+			fatalx("bad MSG_EXEC string");
+		client_execcmd = xstrdup(data);
+		client_execshell = xstrdup(data + strlen(data) + 1);
+
+		client_exittype = imsg->hdr.type;
 		proc_send(client_peer, MSG_EXITING, -1, NULL, 0);
 		break;
 	case MSG_EXIT:

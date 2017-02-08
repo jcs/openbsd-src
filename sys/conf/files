@@ -1,4 +1,4 @@
-#	$OpenBSD: files,v 1.635 2016/11/30 14:26:12 stsp Exp $
+#	$OpenBSD: files,v 1.639 2017/02/08 05:09:25 guenther Exp $
 #	$NetBSD: files,v 1.87 1996/05/19 17:17:50 jonathan Exp $
 
 #	@(#)files.newconf	7.5 (Berkeley) 5/10/93
@@ -41,7 +41,6 @@ attach	midi at midibus
 
 # raster operations attributes
 define	rasops1
-define	rasops2
 define	rasops4
 define	rasops8
 define	rasops15
@@ -444,6 +443,7 @@ define	pcmciaslot {[slot = -1]}	# PCMCIA slot itself
 define	sdmmcbus {}			# SD/MMC attachment
 define	btbus {}			# Bluetooth host controller
 define	agpbus {}			# AGP bridge
+device	virtio {}			# VirtIO
 
 # UHCI USB controller
 device	uhci: usbus
@@ -644,8 +644,7 @@ file isofs/udf/udf_vfsops.c		udf
 file isofs/udf/udf_vnops.c		udf
 file kern/clock_subr.c
 file kern/exec_conf.c
-file kern/exec_elf32.c
-file kern/exec_elf64.c
+file kern/exec_elf.c
 file kern/exec_script.c
 file kern/exec_subr.c
 file kern/init_main.c
@@ -809,7 +808,7 @@ file net80211/ieee80211_crypto_tkip.c	wlan
 file net80211/ieee80211_crypto_wep.c	wlan
 file net80211/ieee80211_input.c		wlan
 file net80211/ieee80211_ioctl.c		wlan
-file net80211/ieee80211_mira.c		wlan & (iwm | iwn)
+file net80211/ieee80211_mira.c		wlan
 file net80211/ieee80211_node.c		wlan
 file net80211/ieee80211_output.c	wlan
 file net80211/ieee80211_pae_input.c	wlan

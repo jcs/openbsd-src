@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.188 2016/11/13 00:40:09 tb Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.192 2017/01/23 05:49:24 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -235,8 +235,7 @@ const uint64_t pledge_syscalls[SYS_MAXSYSCALL] = {
 
 	/*
 	 * FIONREAD/FIONBIO for "stdio"
-	 * A few non-tty ioctl available using "ioctl"
-	 * tty-centric ioctl available using "tty"
+	 * Other ioctl are selectively allowed based upon other pledges.
 	 */
 	[SYS_ioctl] = PLEDGE_STDIO,
 
@@ -360,6 +359,7 @@ static const struct {
 	uint64_t flags;
 } pledgereq[] = {
 	{ "audio",		PLEDGE_AUDIO },
+	{ "bpf",		PLEDGE_BPF },
 	{ "chown",		PLEDGE_CHOWN | PLEDGE_CHOWNUID },
 	{ "cpath",		PLEDGE_CPATH },
 	{ "disklabel",		PLEDGE_DISKLABEL },
@@ -372,7 +372,7 @@ static const struct {
 	{ "getpw",		PLEDGE_GETPW },
 	{ "id",			PLEDGE_ID },
 	{ "inet",		PLEDGE_INET },
-	{ "ioctl",		PLEDGE_IOCTL },
+	{ "ioctl",		PLEDGE_TAPE },		/* Remove Feb 1 2017 */
 	{ "mcast",		PLEDGE_MCAST },
 	{ "pf",			PLEDGE_PF },
 	{ "proc",		PLEDGE_PROC },
@@ -384,6 +384,7 @@ static const struct {
 	{ "sendfd",		PLEDGE_SENDFD },
 	{ "settime",		PLEDGE_SETTIME },
 	{ "stdio",		PLEDGE_STDIO },
+	{ "tape",		PLEDGE_TAPE },
 	{ "tmppath",		PLEDGE_TMPPATH },
 	{ "tty",		PLEDGE_TTY },
 	{ "unix",		PLEDGE_UNIX },
@@ -525,7 +526,7 @@ sys_pledge(struct proc *p, void *v, register_t *retval)
 
 #ifdef DEBUG_PLEDGE
 		/* print paths registered as whilelisted (viewed as without chroot) */
-		DNPRINTF(1, "pledge: %s(%d): paths loaded:\n", p->p_comm,
+		DNPRINTF(1, "pledge: %s(%d): paths loaded:\n", pr->ps_comm,
 		    pr->ps_pid);
 		for (i = 0; i < wl->wl_count; i++)
 			if (wl->wl_paths[i].name)
@@ -576,7 +577,7 @@ pledge_fail(struct proc *p, int error, uint64_t code)
 			codes = pledgenames[i].name;
 			break;
 		}
-	printf("%s(%d): syscall %d \"%s\"\n", p->p_comm, p->p_p->ps_pid,
+	printf("%s(%d): syscall %d \"%s\"\n", p->p_p->ps_comm, p->p_p->ps_pid,
 	    p->p_pledge_syscall, codes);
 #ifdef KTRACE
 	if (KTRPOINT(p, KTR_PLEDGE))
@@ -824,7 +825,7 @@ pledge_namei_wlpath(struct proc *p, struct nameidata *ni)
 	if (error == ENOENT)
 		/* print the path that is reported as ENOENT */
 		DNPRINTF(1, "pledge: %s(%d): wl_path ENOENT: \"%s\"\n",
-		    p->p_comm, p->p_p->ps_pid, resolved);
+		    p->p_p->ps_comm, p->p_p->ps_pid, resolved);
 #endif
 
 	free(resolved, M_TEMP, resolvedlen);
@@ -1051,7 +1052,7 @@ pledge_sysctl(struct proc *p, int miblen, int *mib, void *new)
 		return (0);
 
 	printf("%s(%d): sysctl %d: %d %d %d %d %d %d\n",
-	    p->p_comm, p->p_p->ps_pid, miblen, mib[0], mib[1],
+	    p->p_p->ps_comm, p->p_p->ps_pid, miblen, mib[0], mib[1],
 	    mib[2], mib[3], mib[4], mib[5]);
 	return pledge_fail(p, EINVAL, 0);
 }
@@ -1127,33 +1128,32 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			return (ENOTTY);
 	}
 
-	/*
-	 * Further sets of ioctl become available, but are checked a
-	 * bit more carefully against the vnode.
-	 */
-	if ((p->p_p->ps_pledge & PLEDGE_IOCTL)) {
+	if ((p->p_p->ps_pledge & PLEDGE_INET)) {
 		switch (com) {
-		case TIOCGETA:
-		case TIOCGPGRP:
-		case TIOCGWINSZ:	/* ENOTTY return for non-tty */
-			if (fp->f_type == DTYPE_VNODE && (vp->v_flag & VISTTY))
+		case SIOCGIFGROUP:
+			if (fp->f_type == DTYPE_SOCKET)
 				return (0);
-			return (ENOTTY);
+			break;
+		}
+	}
+
+	if ((p->p_p->ps_pledge & PLEDGE_BPF)) {
+		switch (com) {
 		case BIOCGSTATS:	/* bpf: tcpdump privsep on ^C */
 			if (fp->f_type == DTYPE_VNODE &&
 			    fp->f_ops->fo_ioctl == vn_ioctl)
 				return (0);
 			break;
+		}
+	}
+
+	if ((p->p_p->ps_pledge & PLEDGE_TAPE)) {
+		switch (com) {
 		case MTIOCGET:
 		case MTIOCTOP:
 			/* for pax(1) and such, checking tapes... */
 			if (fp->f_type == DTYPE_VNODE &&
 			    (vp->v_type == VCHR || vp->v_type == VBLK))
-				return (0);
-			break;
-		case SIOCGIFGROUP:
-			if ((p->p_p->ps_pledge & PLEDGE_INET) &&
-			    fp->f_type == DTYPE_SOCKET)
 				return (0);
 			break;
 		}
@@ -1314,7 +1314,7 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 #endif
 	}
 
-	return pledge_fail(p, error, PLEDGE_IOCTL);
+	return pledge_fail(p, error, PLEDGE_TTY);
 }
 
 int
@@ -1601,11 +1601,11 @@ canonpath(const char *input, char *buf, size_t bufsize)
 			*q++ = *p++;
 		}
 	}
-        if ((*p == '\0') && (q - buf < bufsize)) {
-                *q = 0;
-                return 0;
-        } else
-                return ENAMETOOLONG;
+	if ((*p == '\0') && (q - buf < bufsize)) {
+		*q = 0;
+		return 0;
+	} else
+		return ENAMETOOLONG;
 }
 
 int

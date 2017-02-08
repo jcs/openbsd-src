@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mpw.c,v 1.15 2016/09/21 07:41:49 mpi Exp $ */
+/*	$OpenBSD: if_mpw.c,v 1.19 2017/01/24 10:08:30 krw Exp $ */
 
 /*
  * Copyright (c) 2015 Rafael Zalamena <rzalamena@openbsd.org>
@@ -92,6 +92,7 @@ mpw_clone_create(struct if_clone *ifc, int unit)
 	ifp->if_softc = sc;
 	ifp->if_mtu = ETHERMTU;
 	ifp->if_flags = IFF_POINTOPOINT;
+	ifp->if_xflags = IFXF_CLONED;
 	ifp->if_ioctl = mpw_ioctl;
 	ifp->if_output = mpw_output;
 	ifp->if_start = mpw_start;
@@ -152,7 +153,6 @@ mpw_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	struct sockaddr_in *sin;
 	struct sockaddr_in *sin_nexthop;
 	int error = 0;
-	int s;
 	struct ifmpwreq imr;
 
 	switch (cmd) {
@@ -183,11 +183,9 @@ mpw_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		/* Teardown all configuration if got no nexthop */
 		sin = (struct sockaddr_in *) &imr.imr_nexthop;
 		if (sin->sin_addr.s_addr == 0) {
-			s = splsoftnet();
 			if (rt_ifa_del(&sc->sc_ifa, RTF_MPLS,
 			    smplstosa(&sc->sc_smpls)) == 0)
 				sc->sc_smpls.smpls_label = 0;
-			splx(s);
 
 			memset(&sc->sc_rshim, 0, sizeof(sc->sc_rshim));
 			memset(&sc->sc_nexthop, 0, sizeof(sc->sc_nexthop));
@@ -213,7 +211,6 @@ mpw_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		    htonl(imr.imr_rshim.shim_label << MPLS_LABEL_OFFSET);
 
 		if (sc->sc_smpls.smpls_label != imr.imr_lshim.shim_label) {
-			s = splsoftnet();
 			if (sc->sc_smpls.smpls_label)
 				rt_ifa_del(&sc->sc_ifa, RTF_MPLS,
 				    smplstosa(&sc->sc_smpls));
@@ -221,7 +218,6 @@ mpw_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			sc->sc_smpls.smpls_label = imr.imr_lshim.shim_label;
 			error = rt_ifa_add(&sc->sc_ifa, RTF_MPLS,
 			    smplstosa(&sc->sc_smpls));
-			splx(s);
 			if (error != 0) {
 				sc->sc_smpls.smpls_label = 0;
 				break;
@@ -337,7 +333,7 @@ mpw_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *sa,
 }
 
 #if NVLAN > 0
-extern void vlan_start(struct ifnet *ifp);
+extern void vlan_start(struct ifqueue *);
 
 /*
  * This routine handles VLAN tag reinsertion in packets flowing through
@@ -349,17 +345,17 @@ mpw_vlan_handle(struct mbuf *m, struct mpw_softc *sc)
 {
 	struct ifnet *ifp;
 	struct ifvlan *ifv;
- 
+
 	uint16_t type = ETHERTYPE_QINQ;
 	uint16_t tag = 0;
- 
+
 	ifp = if_get(m->m_pkthdr.ph_ifidx);
-	if (ifp != NULL && ifp->if_start == vlan_start &&
+	if (ifp != NULL && ifp->if_qstart == vlan_start &&
 	    ISSET(ifp->if_flags, IFF_RUNNING)) {
- 		ifv = ifp->if_softc;
+		ifv = ifp->if_softc;
 		type = ifv->ifv_type;
 		tag = ifv->ifv_tag;
- 	}
+	}
 	if_put(ifp);
 
 	return (vlan_inject(m, type, tag));
@@ -417,12 +413,12 @@ mpw_start(struct ifnet *ifp)
 			}
  #else
 			/* Ethernet tagged doesn't work without VLANs'*/
- 			m_freem(m);
- 			continue;
+			m_freem(m);
+			continue;
  #endif /* NVLAN */
 		}
- 
- 		if (sc->sc_flags & IMR_FLAG_CONTROLWORD) {
+
+		if (sc->sc_flags & IMR_FLAG_CONTROLWORD) {
 			M_PREPEND(m, sizeof(*shim), M_NOWAIT);
 			if (m == NULL)
 				continue;

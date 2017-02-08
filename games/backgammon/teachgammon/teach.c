@@ -1,4 +1,4 @@
-/*	$OpenBSD: teach.c,v 1.16 2015/12/02 20:05:01 tb Exp $	*/
+/*	$OpenBSD: teach.c,v 1.18 2017/01/21 08:22:57 krw Exp $	*/
 
 /*
  * Copyright (c) 1980, 1993
@@ -76,35 +76,35 @@ main(int argc, char *argv[])
 			wrboard();
 			if ((i = text(intro2)))
 				break;
-		
+
 		case 3:
 			if ((i = text(moves)))
 				break;
-		
+
 		case 4:
 			if ((i = text(removepiece)))
 				break;
-		
+
 		case 5:
 			if ((i = text(hits)))
 				break;
-		
+
 		case 6:
 			if ((i = text(endgame)))
 				break;
-		
+
 		case 7:
 			if ((i = text(doubl)))
 				break;
-		
+
 		case 8:
 			if ((i = text(stragy)))
 				break;
-		
+
 		case 9:
 			if ((i = text(prog)))
 				break;
-		
+
 		case 10:
 			if ((i = text(lastch)))
 				break;
@@ -113,7 +113,7 @@ main(int argc, char *argv[])
 	/* NOT REACHED */
 }
 
-void
+__dead void
 leave(void)
 {
 	clear();

@@ -1,8 +1,8 @@
-#	$OpenBSD: Makefile,v 1.646 2016/12/07 15:53:05 mikeb Exp $
+#	$OpenBSD: Makefile,v 1.650 2017/01/13 14:40:19 reyk Exp $
 
 MAN=	aac.4 ac97.4 acphy.4 \
 	acpi.4 acpiac.4 acpials.4 acpiasus.4 acpibat.4 \
-	acpibtn.4 acpicbkbd.4 acpicpu.4 acpidock.4 \
+	acpibtn.4 acpicbkbd.4 acpicpu.4 acpidock.4 acpihve.4 \
 	acpiec.4 acpihpet.4 acpimadt.4 acpimcfg.4 acpiprt.4 acpipwrres.4 \
 	acpisony.4 acpithinkpad.4 acpitoshiba.4 acpitimer.4 acpivideo.4 \
 	acpivout.4 acpitz.4 \
@@ -46,7 +46,7 @@ MAN=	aac.4 ac97.4 acphy.4 \
 	pair.4 pcagpio.4 pcaled.4 pcdisplay.4 pchb.4 pchtemp.4 pci.4 pcib.4 \
 	pcfadc.4 pcfiic.4 pcfrtc.4 pciide.4 pckbc.4 pckbd.4 pcmcia.4 pcn.4 \
 	pcppi.4 \
-	pcscp.4 pf.4 pflog.4 pflow.4 pfsync.4 pgt.4 piixpm.4 pim.4 pipex.4 \
+	pcscp.4 pf.4 pflog.4 pflow.4 pfsync.4 pgt.4 piixpm.4 pipex.4 \
 	pms.4 ppb.4 ppp.4 pppoe.4 pppx.4 pty.4 puc.4 pvbus.4 pwdog.4 \
 	qla.4 qle.4 qlw.4 qsphy.4 radio.4 \
 	ral.4 random.4 rdomain.4 rd.4 rdac.4 re.4 rdcphy.4 rgephy.4 ricohrtc.4 \
@@ -54,7 +54,7 @@ MAN=	aac.4 ac97.4 acphy.4 \
 	rtfps.4 rtw.4 rtwn.4 safe.4 safte.4 sbus.4 schsio.4 \
 	scsi.4 sd.4 \
 	sdmmc.4 sdhc.4 se.4 ses.4 \
-	sf.4 sili.4 siop.4 sis.4 sk.4 sli.4 \
+	sf.4 sili.4 simplefb.4 siop.4 sis.4 sk.4 sli.4 \
 	sm.4 smsc.4 softraid.4 spdmem.4 sdtemp.4 speaker.4 sppp.4 sqphy.4 \
 	st.4 ste.4 stge.4 sti.4 \
 	stp.4 sv.4 switch.4 sym.4 tcic.4 tcp.4 termios.4 tht.4 ti.4 tl.4 \
@@ -74,7 +74,7 @@ MAN=	aac.4 ac97.4 acphy.4 \
 	vether.4 vga.4 vgafb.4 vge.4 \
 	viapm.4 viasio.4 vic.4 video.4 vio.4 \
 	vioblk.4 viocon.4 viomb.4 viornd.4 vioscsi.4 virtio.4 vlan.4 \
-	vmt.4 vmwpvs.4 vmx.4 vnd.4 vr.4 \
+	vmmci.4 vmt.4 vmwpvs.4 vmx.4 vnd.4 vr.4 \
 	vscsi.4 vte.4 vxlan.4 \
 	watchdog.4 wb.4 wbenv.4 wbng.4 wbsd.4 wbsio.4 wd.4 wdc.4 wdsc.4 we.4 \
 	wi.4 wpi.4 wscons.4 wsdisplay.4 wskbd.4 wsmouse.4 wsmux.4 \

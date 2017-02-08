@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_proto.c,v 1.69 2016/09/15 03:32:48 dlg Exp $	*/
+/*	$OpenBSD: ieee80211_proto.c,v 1.72 2017/02/07 15:07:14 stsp Exp $	*/
 /*	$NetBSD: ieee80211_proto.c,v 1.8 2004/04/30 23:58:20 dyoung Exp $	*/
 
 /*-
@@ -309,26 +309,24 @@ void
 ieee80211_reset_erp(struct ieee80211com *ic)
 {
 	ic->ic_flags &= ~IEEE80211_F_USEPROT;
-	ic->ic_nonerpsta = 0;
-	ic->ic_longslotsta = 0;
 
-	/*
-	 * Enable short slot time iff:
-	 * - we're operating in 802.11a or
-	 * - we're operating in 802.11g and we're not in IBSS mode and
-	 *   the device supports short slot time
-	 */
 	ieee80211_set_shortslottime(ic,
-	    ic->ic_curmode == IEEE80211_MODE_11A
+	    ic->ic_curmode == IEEE80211_MODE_11A ||
+	    (ic->ic_curmode == IEEE80211_MODE_11N &&
+	    IEEE80211_IS_CHAN_5GHZ(ic->ic_ibss_chan))
 #ifndef IEEE80211_STA_ONLY
 	    ||
-	    (ic->ic_curmode == IEEE80211_MODE_11G &&
+	    ((ic->ic_curmode == IEEE80211_MODE_11G ||
+	    (ic->ic_curmode == IEEE80211_MODE_11N &&
+	    IEEE80211_IS_CHAN_2GHZ(ic->ic_ibss_chan))) &&
 	     ic->ic_opmode == IEEE80211_M_HOSTAP &&
 	     (ic->ic_caps & IEEE80211_C_SHSLOT))
 #endif
 	);
 
 	if (ic->ic_curmode == IEEE80211_MODE_11A ||
+	    (ic->ic_curmode == IEEE80211_MODE_11N &&
+	    IEEE80211_IS_CHAN_5GHZ(ic->ic_ibss_chan)) ||
 	    (ic->ic_caps & IEEE80211_C_SHPREAMBLE))
 		ic->ic_flags |= IEEE80211_F_SHPREAMBLE;
 	else
@@ -421,8 +419,6 @@ ieee80211_node_gtk_rekey(void *arg, struct ieee80211_node *ni)
 	ni->ni_flags |= IEEE80211_NODE_REKEY;
 	if (ieee80211_send_group_msg1(ic, ni) != 0)
 		ni->ni_flags &= ~IEEE80211_NODE_REKEY;
-	else
-		ic->ic_rsn_keydonesta++;
 }
 
 /*
@@ -457,7 +453,6 @@ ieee80211_setkeys(struct ieee80211com *ic)
 		arc4random_buf(k->k_key, k->k_len);
 	}
 
-	ic->ic_rsn_keydonesta = 0;
 	ieee80211_iterate_nodes(ic, ieee80211_node_gtk_rekey, ic);
 }
 
@@ -555,8 +550,12 @@ ieee80211_ht_negotiate(struct ieee80211com *ic, struct ieee80211_node *ni)
 	if ((ic->ic_flags & IEEE80211_F_HTON) == 0)
 		return;
 
-	/* Check if the peer supports HT. MCS 0-7 are mandatory. */
-	if (ni->ni_rxmcs[0] != 0xff) {
+	/* 
+	 * Check if the peer supports HT.
+	 * Require at least one of the mandatory MCS.
+	 * MCS 0-7 are mandatory but some APs have particular MCS disabled.
+	 */
+	if ((ni->ni_rxmcs[0] & 0xff) == 0) {
 		ic->ic_stats.is_ht_nego_no_mandatory_mcs++;
 		return;
 	}

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pax.c,v 1.47 2016/08/26 04:11:16 guenther Exp $	*/
+/*	$OpenBSD: pax.c,v 1.49 2017/01/23 12:46:13 deraadt Exp $	*/
 /*	$NetBSD: pax.c,v 1.5 1996/03/26 23:54:20 mrg Exp $	*/
 
 /*-
@@ -261,7 +261,7 @@ main(int argc, char **argv)
 	 * so can't pledge at all then.
 	 */
 	if (pmode == 0 || (act != EXTRACT && act != COPY)) {
-		if (pledge("stdio rpath wpath cpath fattr dpath getpw ioctl proc exec",
+		if (pledge("stdio rpath wpath cpath fattr dpath getpw proc exec ioctl",
 		    NULL) == -1)
 			err(1, "pledge");
 

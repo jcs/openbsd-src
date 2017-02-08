@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_ipip.c,v 1.69 2016/03/07 18:44:00 naddy Exp $ */
+/*	$OpenBSD: ip_ipip.c,v 1.71 2017/01/29 19:58:47 bluhm Exp $ */
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -86,51 +86,21 @@ int ipip_allow = 0;
 
 struct ipipstat ipipstat;
 
-#ifdef INET6
 /*
- * Really only a wrapper for ipip_input(), for use with IPv6.
+ * Really only a wrapper for ipip_input(), for use with pr_input.
  */
 int
-ip4_input6(struct mbuf **mp, int *offp, int proto)
+ip4_input(struct mbuf **mp, int *offp, int proto)
 {
 	/* If we do not accept IP-in-IP explicitly, drop.  */
 	if (!ipip_allow && ((*mp)->m_flags & (M_AUTH|M_CONF)) == 0) {
-		DPRINTF(("ip4_input6(): dropped due to policy\n"));
+		DPRINTF(("ip4_input(): dropped due to policy\n"));
 		ipipstat.ipips_pdrops++;
 		m_freem(*mp);
 		return IPPROTO_DONE;
 	}
 
-	ipip_input(*mp, *offp, NULL, proto);
-	return IPPROTO_DONE;
-}
-#endif /* INET6 */
-
-/*
- * Really only a wrapper for ipip_input(), for use with IPv4.
- */
-void
-ip4_input(struct mbuf *m, ...)
-{
-	struct ip *ip;
-	va_list ap;
-	int iphlen;
-
-	/* If we do not accept IP-in-IP explicitly, drop.  */
-	if (!ipip_allow && (m->m_flags & (M_AUTH|M_CONF)) == 0) {
-		DPRINTF(("ip4_input(): dropped due to policy\n"));
-		ipipstat.ipips_pdrops++;
-		m_freem(m);
-		return;
-	}
-
-	va_start(ap, m);
-	iphlen = va_arg(ap, int);
-	va_end(ap);
-
-	ip = mtod(m, struct ip *);
-
-	ipip_input(m, iphlen, NULL, ip->ip_p);
+	return ipip_input(mp, offp, NULL, proto);
 }
 
 /*
@@ -141,9 +111,11 @@ ip4_input(struct mbuf *m, ...)
  * tunnel.
  */
 
-void
-ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
+int
+ipip_input(struct mbuf **mp, int *offp, struct ifnet *gifp, int proto)
 {
+	struct mbuf *m = *mp;
+	int iphlen = *offp;
 	struct sockaddr_in *sin;
 	struct ifnet *ifp;
 	struct niqueue *ifq = NULL;
@@ -173,7 +145,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 	default:
 		ipipstat.ipips_family++;
 		m_freem(m);
-		return /* EAFNOSUPPORT */;
+		return IPPROTO_DONE;
 	}
 
 	/* Bring the IP header in the first mbuf, if not there already */
@@ -181,7 +153,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 		if ((m = m_pullup(m, hlen)) == NULL) {
 			DPRINTF(("ipip_input(): m_pullup() failed\n"));
 			ipipstat.ipips_hdrops++;
-			return;
+			return IPPROTO_DONE;
 		}
 	}
 
@@ -209,7 +181,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 	if (m->m_pkthdr.len < sizeof(struct ip)) {
 		ipipstat.ipips_hdrops++;
 		m_freem(m);
-		return;
+		return IPPROTO_DONE;
 	}
 
 	switch (proto) {
@@ -225,7 +197,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 	default:
 		ipipstat.ipips_family++;
 		m_freem(m);
-		return; /* EAFNOSUPPORT */
+		return IPPROTO_DONE;
 	}
 
 	/*
@@ -235,7 +207,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 		if ((m = m_pullup(m, hlen)) == NULL) {
 			DPRINTF(("ipip_input(): m_pullup() failed\n"));
 			ipipstat.ipips_hdrops++;
-			return;
+			return IPPROTO_DONE;
 		}
 	}
 
@@ -259,7 +231,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 			DPRINTF(("ipip_input(): ip_ecn_egress() failed"));
 			ipipstat.ipips_pdrops++;
 			m_freem(m);
-			return;
+			return IPPROTO_DONE;
 		}
 		/* re-calculate the checksum if ip_tos was changed */
 		if (itos != ipo->ip_tos) {
@@ -279,7 +251,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 			DPRINTF(("ipip_input(): ip_ecn_egress() failed"));
 			ipipstat.ipips_pdrops++;
 			m_freem(m);
-			return;
+			return IPPROTO_DONE;
 		}
 		ip6->ip6_flow &= ~htonl(0xff << 20);
 		ip6->ip6_flow |= htonl((u_int32_t) itos << 20);
@@ -322,7 +294,7 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 			ipipstat.ipips_spoof++;
 			m_freem(m);
 			rtfree(rt);
-			return;
+			return IPPROTO_DONE;
  		}
 		rtfree(rt);
  	} else {
@@ -367,8 +339,8 @@ ipip_input(struct mbuf *m, int iphlen, struct ifnet *gifp, int proto)
 		ipipstat.ipips_qfull++;
 		DPRINTF(("ipip_input(): packet dropped because of full "
 		    "queue\n"));
-		return;
 	}
+	return IPPROTO_DONE;
 }
 
 int
@@ -611,7 +583,7 @@ ipe4_zeroize(struct tdb *tdbp)
 }
 
 void
-ipe4_input(struct mbuf *m, ...)
+ipe4_input(struct mbuf *m, int hlen, int proto)
 {
 	/* This is a rather serious mistake, so no conditional printing. */
 	printf("ipe4_input(): should never be called\n");

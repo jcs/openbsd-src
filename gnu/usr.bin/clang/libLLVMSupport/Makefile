@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.1 2016/09/05 10:56:49 pascal Exp $
+# $OpenBSD: Makefile,v 1.3 2017/01/24 08:44:47 patrick Exp $
 
 LIB=	LLVMSupport
 NOPIC=
@@ -17,27 +17,28 @@ SRCS=	APFloat.cpp \
 	BranchProbability.cpp \
 	circular_raw_ostream.cpp \
 	COM.cpp \
+	Chrono.cpp \
 	CommandLine.cpp \
 	Compression.cpp \
-	ConvertUTF.c \
+	ConvertUTF.cpp \
 	ConvertUTFWrapper.cpp \
 	CrashRecoveryContext.cpp \
 	DataExtractor.cpp \
-	DataStream.cpp \
 	Debug.cpp \
 	DeltaAlgorithm.cpp \
 	DAGDeltaAlgorithm.cpp \
 	Dwarf.cpp \
+	Error.cpp \
 	ErrorHandling.cpp \
 	FileUtilities.cpp \
 	FileOutputBuffer.cpp \
 	FoldingSet.cpp \
 	FormattedStream.cpp \
+	GlobPattern.cpp \
 	GraphWriter.cpp \
 	Hashing.cpp \
 	IntEqClasses.cpp \
 	IntervalMap.cpp \
-	IntrusiveRefCntPtr.cpp \
 	JamCRC.cpp \
 	LEB128.cpp \
 	LineIterator.cpp \
@@ -46,30 +47,33 @@ SRCS=	APFloat.cpp \
 	ManagedStatic.cpp \
 	MathExtras.cpp \
 	MemoryBuffer.cpp \
-	MemoryObject.cpp \
 	MD5.cpp \
+	NativeFormatting.cpp \
 	Options.cpp \
 	PluginLoader.cpp \
 	PrettyStackTrace.cpp \
 	RandomNumberGenerator.cpp \
 	Regex.cpp \
 	ScaledNumber.cpp \
+	ScopedPrinter.cpp \
+	SHA1.cpp \
 	SmallPtrSet.cpp \
 	SmallVector.cpp \
 	SourceMgr.cpp \
 	SpecialCaseList.cpp \
 	Statistic.cpp \
-	StreamingMemoryObject.cpp \
 	StringExtras.cpp \
 	StringMap.cpp \
 	StringPool.cpp \
 	StringSaver.cpp \
 	StringRef.cpp \
 	SystemUtils.cpp \
+	TarWriter.cpp \
 	TargetParser.cpp \
 	ThreadPool.cpp \
 	Timer.cpp \
 	ToolOutputFile.cpp \
+	TrigramIndex.cpp \
 	Triple.cpp \
 	Twine.cpp \
 	Unicode.cpp \
@@ -97,9 +101,9 @@ SRCS=	APFloat.cpp \
 	TargetRegistry.cpp \
 	ThreadLocal.cpp \
 	Threading.cpp \
-	TimeValue.cpp \
 	Valgrind.cpp \
-	Watchdog.cpp
+	Watchdog.cpp \
+	xxhash.cpp
 
 .PATH:	${.CURDIR}/../../../llvm/lib/Support
 

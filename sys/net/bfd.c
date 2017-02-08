@@ -1,4 +1,4 @@
-/*	$OpenBSD: bfd.c,v 1.41 2016/09/24 19:29:55 phessler Exp $	*/
+/*	$OpenBSD: bfd.c,v 1.58 2017/01/24 10:08:30 krw Exp $	*/
 
 /*
  * Copyright (c) 2016 Peter Hessler <phessler@openbsd.org>
@@ -157,6 +157,7 @@ void	 bfd_send_control(void *);
 
 void	 bfd_start_task(void *);
 void	 bfd_send_task(void *);
+void	 bfd_error(struct bfd_config *);
 void	 bfd_timeout_rx(void *);
 void	 bfd_timeout_tx(void *);
 
@@ -234,6 +235,7 @@ bfdclear(struct rtentry *rt)
 	if (rtisvalid(bfd->bc_rt))
 		bfd_senddown(bfd);
 
+	rt->rt_flags &= ~RTF_BFD;
 	if (bfd->bc_so) {
 		/* remove upcall before calling soclose or it will be called */
 		bfd->bc_so->so_upcall = NULL;
@@ -247,6 +249,7 @@ bfdclear(struct rtentry *rt)
 		soclose(bfd->bc_sosend);
 
 	rtfree(bfd->bc_rt);
+	bfd->bc_rt = NULL;
 
 	pool_put(&bfd_pool_time, bfd->bc_time);
 	pool_put(&bfd_pool_neigh, bfd->bc_neighbor);
@@ -273,7 +276,7 @@ bfdinit(void)
 	TAILQ_INIT(&bfd_queue);
 }
 
-/* 
+/*
  * Destroy all bfd sessions and remove the tasks
  *
  */
@@ -281,15 +284,12 @@ void
 bfddestroy(void)
 {
 	struct bfd_config	*bfd;
-	int s;
 
 	/* inform our neighbor we are rebooting */
-	s = splsoftnet();
 	while ((bfd = TAILQ_FIRST(&bfd_queue))) {
 		bfd->bc_neighbor->bn_ldiag = BFD_DIAG_FIB_RESET;
 		bfdclear(bfd->bc_rt);
 	}
-	splx(s);
 
 	taskq_destroy(bfdtq);
 	pool_destroy(&bfd_pool_time);
@@ -310,6 +310,41 @@ bfd_lookup(struct rtentry *rt)
 			return (bfd);
 	}
 	return (NULL);
+}
+
+struct sockaddr *
+bfd2sa(struct rtentry *rt, struct sockaddr_bfd *sa_bfd)
+{
+	struct bfd_config *bfd;
+
+	bfd = bfd_lookup(rt);
+
+	if (bfd == NULL)
+		return (NULL);
+
+	memset(sa_bfd, 0, sizeof(*sa_bfd));
+	sa_bfd->bs_len = sizeof(*sa_bfd);
+	sa_bfd->bs_family = bfd->bc_rt->rt_dest->sa_family;
+
+	sa_bfd->bs_mode = bfd->bc_mode;
+	sa_bfd->bs_mintx = bfd->bc_mintx;
+	sa_bfd->bs_minrx = bfd->bc_minrx;
+	sa_bfd->bs_minecho = bfd->bc_minecho;
+	sa_bfd->bs_multiplier = bfd->bc_multiplier;
+
+	sa_bfd->bs_uptime = bfd->bc_time->tv_sec;
+	sa_bfd->bs_lastuptime = bfd->bc_lastuptime;
+	sa_bfd->bs_state = bfd->bc_state;
+	sa_bfd->bs_remotestate = bfd->bc_neighbor->bn_rstate;
+	sa_bfd->bs_laststate = bfd->bc_laststate;
+	sa_bfd->bs_error = bfd->bc_error;
+
+	sa_bfd->bs_localdiscr = bfd->bc_neighbor->bn_ldiscr;
+	sa_bfd->bs_localdiag = bfd->bc_neighbor->bn_ldiag;
+	sa_bfd->bs_remotediscr = bfd->bc_neighbor->bn_rdiscr;
+	sa_bfd->bs_remotediag = bfd->bc_neighbor->bn_rdiag;
+
+	return ((struct sockaddr *)sa_bfd);
 }
 
 /*
@@ -340,7 +375,7 @@ bfd_start_task(void *arg)
 	bfd->bc_sosend = bfd_sender(bfd, BFD_UDP_PORT_CONTROL);
 	if (bfd->bc_sosend) {
 		task_set(&bfd->bc_bfd_send_task, bfd_send_task, bfd);
-		task_add(bfdtq, &bfd->bc_bfd_send_task);	
+		task_add(bfdtq, &bfd->bc_bfd_send_task);
 	}
 
 	return;
@@ -351,21 +386,18 @@ bfd_send_task(void *arg)
 {
 	struct bfd_config	*bfd = (struct bfd_config *)arg;
 	struct rtentry		*rt = bfd->bc_rt;
-	int s;
 
 	if (ISSET(rt->rt_flags, RTF_UP)) {
 		bfd_send_control(bfd);
 	} else {
-		bfd->bc_error++;
 		if (bfd->bc_neighbor->bn_lstate > BFD_STATE_DOWN) {
+			bfd->bc_error++;
 			bfd->bc_neighbor->bn_ldiag = BFD_DIAG_PATH_DOWN;
 			bfd_reset(bfd);
 			bfd_set_state(bfd, BFD_STATE_DOWN);
 		}
 	}
-s = splsoftnet();
 //rt_bfdmsg(bfd);
-splx(s);
 
 	/* re-add 70%-90% jitter to our transmits, rfc 5880 6.8.7 */
 	timeout_add_usec(&bfd->bc_timo_tx,
@@ -452,7 +484,7 @@ bfd_listener(struct bfd_config *bfd, unsigned int port)
 struct socket *
 bfd_sender(struct bfd_config *bfd, unsigned int port)
 {
-	struct socket 		*so;
+	struct socket		*so;
 	struct rtentry		*rt = bfd->bc_rt;
 	struct proc		*p = curproc;
 	struct mbuf		*m = NULL, *mopt = NULL;
@@ -488,6 +520,17 @@ bfd_sender(struct bfd_config *bfd, unsigned int port)
 	ip = mtod(mopt, int *);
 	*ip = MAXTTL;
 	error = sosetopt(so, IPPROTO_IP, IP_TTL, mopt);
+	if (error) {
+		printf("%s: sosetopt error %d\n",
+		    __func__, error);
+		goto close;
+	}
+
+	MGET(mopt, M_WAIT, MT_SOOPTS);
+	mopt->m_len = sizeof(int);
+	ip = mtod(mopt, int *);
+	*ip = IPTOS_PREC_INTERNETCONTROL;
+	error = sosetopt(so, IPPROTO_IP, IP_TOS, mopt);
 	if (error) {
 		printf("%s: sosetopt error %d\n",
 		    __func__, error);
@@ -563,26 +606,39 @@ bfd_upcall(struct socket *so, caddr_t arg, int waitflag)
 
 	uio.uio_procp = NULL;
 	do {
-		uio.uio_resid = 1000000000;
+		uio.uio_resid = so->so_rcv.sb_cc;
 		flags = MSG_DONTWAIT;
 		error = soreceive(so, NULL, &uio, &m, NULL, &flags, 0);
 		if (error && error != EAGAIN) {
-			bfd->bc_error++;
+			bfd_error(bfd);
 			return;
 		}
 		if (m != NULL)
 			bfd_input(bfd, m);
-	} while (m != NULL);
+	} while (so->so_rcv.sb_cc);
 
 	return;
 }
 
+void
+bfd_error(struct bfd_config *bfd)
+{
+	if (bfd->bc_state <= BFD_STATE_DOWN)
+		return;
+
+	if (++bfd->bc_error >= bfd->bc_neighbor->bn_mult) {
+		bfd->bc_neighbor->bn_ldiag = BFD_DIAG_EXPIRED;
+		bfd_reset(bfd);
+		if (bfd->bc_state > BFD_STATE_DOWN)
+			bfd_set_state(bfd, BFD_STATE_DOWN);
+	}
+}
 
 void
 bfd_timeout_tx(void *v)
 {
 	struct bfd_config *bfd = v;
-	task_add(bfdtq, &bfd->bc_bfd_send_task);	
+	task_add(bfdtq, &bfd->bc_bfd_send_task);
 }
 
 /*
@@ -592,20 +648,11 @@ void
 bfd_timeout_rx(void *v)
 {
 	struct bfd_config *bfd = v;
-	int s;
 
-	if (++bfd->bc_error >= bfd->bc_neighbor->bn_mult) {
-		bfd->bc_neighbor->bn_ldiag = BFD_DIAG_EXPIRED;
-		bfd_reset(bfd);
-		if (bfd->bc_state > BFD_STATE_DOWN)
-			bfd_set_state(bfd, BFD_STATE_DOWN);
-
-		return;
+	if (bfd->bc_state > BFD_STATE_DOWN) {
+		bfd_error(bfd);
+		rt_bfdmsg(bfd);
 	}
-
-	s = splsoftnet();
-	rt_bfdmsg(bfd);
-	splx(s);
 
 	timeout_add_usec(&bfd->bc_timo_rx, bfd->bc_minrx);
 }
@@ -657,7 +704,7 @@ bfd_reset(struct bfd_config *bfd)
 	bfd->bc_neighbor->bn_mult = 3;
 
 	bfd->bc_mintx = bfd->bc_neighbor->bn_mintx;
-	bfd->bc_minrx = bfd->bc_neighbor->bn_rminrx;
+	bfd->bc_minrx = bfd->bc_neighbor->bn_req_minrx;
 	bfd->bc_multiplier = bfd->bc_neighbor->bn_mult;
 	bfd->bc_minecho = 0;	//XXX - BFD_SECOND;
 
@@ -672,7 +719,7 @@ bfd_input(struct bfd_config *bfd, struct mbuf *m)
 	struct bfd_header	*peer;
 	struct bfd_auth_header	*auth;
 	struct mbuf		*mp, *mp0;
-	unsigned int		 ver, diag, state, flags;
+	unsigned int		 ver, diag = BFD_DIAG_NONE, state, flags;
 	int			 offp;
 
 	mp = m_pulldown(m, 0, sizeof(*peer), &offp);
@@ -707,7 +754,7 @@ bfd_input(struct bfd_config *bfd, struct mbuf *m)
 	if ((ntohl(peer->bfd_your_discriminator) != 0) &&
 	    (ntohl(peer->bfd_your_discriminator) !=
 	    bfd->bc_neighbor->bn_ldiscr)) {
-		bfd->bc_error++;
+		bfd_error(bfd);
 		goto discard;
 	}
 
@@ -811,7 +858,6 @@ bfd_set_state(struct bfd_config *bfd, int state)
 {
 	struct ifnet	*ifp;
 	struct rtentry	*rt = bfd->bc_rt;
-	int s;
 
 	ifp = if_get(rt->rt_ifidx);
 	if (ifp == NULL) {
@@ -827,7 +873,7 @@ bfd_set_state(struct bfd_config *bfd, int state)
 		bfd->bc_neighbor->bn_ldiag = 0;
 
 	if (!rtisvalid(rt))
-		bfd->bc_neighbor->bn_lstate = BFD_STATE_ADMINDOWN;
+		bfd->bc_neighbor->bn_lstate = BFD_STATE_DOWN;
 
 	switch (state) {
 	case BFD_STATE_ADMINDOWN:
@@ -851,9 +897,7 @@ bfd_set_state(struct bfd_config *bfd, int state)
 	}
 
 	bfd->bc_state = state;
-	s = splsoftnet();
 	rt_bfdmsg(bfd);
-	splx(s);
 	if_put(ifp);
 
 	return;
@@ -875,12 +919,13 @@ bfd_send_control(void *x)
 	struct bfd_config	*bfd = x;
 	struct mbuf		*m;
 	struct bfd_header	*h;
-	int error;
+	int error, len;
 
 	MGETHDR(m, M_WAIT, MT_DATA);
 	MCLGET(m, M_WAIT);
 
-	m->m_len = m->m_pkthdr.len = sizeof(*bfd);
+	len = BFD_HDRLEN;
+	m->m_len = m->m_pkthdr.len = len;
 	h = mtod(m, struct bfd_header *);
 
 	memset(h, 0xff, sizeof(*h));	/* canary */
@@ -901,6 +946,7 @@ bfd_send_control(void *x)
 	error = bfd_send(bfd, m);
 
 	if (error) {
+		bfd_error(bfd);
 		if (!(error == EHOSTDOWN || error == ECONNREFUSED)) {
 			printf("%s: %u\n", __func__, error);
 		}
@@ -912,7 +958,7 @@ bfd_send(struct bfd_config *bfd, struct mbuf *m)
 {
 	struct rtentry *rt = bfd->bc_rt;
 
-	if (!rtisvalid(rt) || !ISSET(rt->rt_flags, RTF_UP)) {
+	if (!rtisvalid(rt) || !ISSET(rt->rt_flags, RTF_BFD)) {
 		m_freem(m);
 		return (EHOSTDOWN);
 	}

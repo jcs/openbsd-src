@@ -1,4 +1,4 @@
-/* $OpenBSD: window.c,v 1.176 2016/11/16 09:22:16 nicm Exp $ */
+/* $OpenBSD: window.c,v 1.183 2017/02/08 08:25:12 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -65,8 +65,6 @@ static void	window_destroy(struct window *);
 static struct window_pane *window_pane_create(struct window *, u_int, u_int,
 		    u_int);
 static void	window_pane_destroy(struct window_pane *);
-
-static void	window_pane_set_watermark(struct window_pane *, size_t);
 
 static void	window_pane_read_callback(struct bufferevent *, void *);
 static void	window_pane_error_callback(struct bufferevent *, short, void *);
@@ -447,24 +445,30 @@ window_set_active_pane(struct window *w, struct window_pane *wp)
 void
 window_redraw_active_switch(struct window *w, struct window_pane *wp)
 {
-	const struct grid_cell	*agc, *wgc;
+	const struct grid_cell	*gc;
 
 	if (wp == w->active)
 		return;
 
 	/*
 	 * If window-style and window-active-style are the same, we don't need
-	 * to redraw panes when switching active panes. Otherwise, if the
-	 * active or inactive pane do not have a custom style, they will need
-	 * to be redrawn.
+	 * to redraw panes when switching active panes.
 	 */
-	agc = options_get_style(w->options, "window-active-style");
-	wgc = options_get_style(w->options, "window-style");
-	if (style_equal(agc, wgc))
+	gc = options_get_style(w->options, "window-active-style");
+	if (style_equal(gc, options_get_style(w->options, "window-style")))
 		return;
-	if (style_equal(&grid_default_cell, &w->active->colgc))
+
+	/*
+	 * If the now active or inactive pane do not have a custom style or if
+	 * the palette is different, they need to be redrawn.
+	 */
+	if (window_pane_get_palette(w->active, w->active->colgc.fg) != -1 ||
+	    window_pane_get_palette(w->active, w->active->colgc.bg) != -1 ||
+	    style_equal(&grid_default_cell, &w->active->colgc))
 		w->active->flags |= PANE_REDRAW;
-	if (style_equal(&grid_default_cell, &wp->colgc))
+	if (window_pane_get_palette(wp, wp->colgc.fg) != -1 ||
+	    window_pane_get_palette(wp, wp->colgc.bg) != -1 ||
+	    style_equal(&grid_default_cell, &wp->colgc))
 		wp->flags |= PANE_REDRAW;
 }
 
@@ -829,15 +833,8 @@ window_pane_destroy(struct window_pane *wp)
 	free((void *)wp->cwd);
 	free(wp->shell);
 	cmd_free_argv(wp->argc, wp->argv);
+	free(wp->palette);
 	free(wp);
-}
-
-static void
-window_pane_set_watermark(struct window_pane *wp, size_t size)
-{
-	wp->wmark_hits = 0;
-	wp->wmark_size = size;
-	bufferevent_setwatermark(wp->event, EV_READ, 0, size);
 }
 
 int
@@ -879,7 +876,8 @@ window_pane_spawn(struct window_pane *wp, int argc, char **argv,
 	ws.ws_col = screen_size_x(&wp->base);
 	ws.ws_row = screen_size_y(&wp->base);
 
-	switch (wp->pid = forkpty(&wp->fd, wp->tty, NULL, &ws)) {
+	wp->pid = pty_fork(ptm_fd, &wp->fd, wp->tty, sizeof wp->tty, &ws);
+	switch (wp->pid) {
 	case -1:
 		wp->fd = -1;
 		xasprintf(cause, "%s: %s", cmd, strerror(errno));
@@ -946,7 +944,7 @@ window_pane_spawn(struct window_pane *wp, int argc, char **argv,
 	wp->event = bufferevent_new(wp->fd, window_pane_read_callback, NULL,
 	    window_pane_error_callback, wp);
 
-	window_pane_set_watermark(wp, READ_FAST_SIZE);
+	bufferevent_setwatermark(wp->event, EV_READ, 0, READ_SIZE);
 	bufferevent_enable(wp->event, EV_READ|EV_WRITE);
 
 	free(cmd);
@@ -962,26 +960,13 @@ window_pane_read_callback(__unused struct bufferevent *bufev, void *data)
 	char			*new_data;
 	size_t			 new_size;
 
-	if (wp->wmark_size == READ_FAST_SIZE) {
-		if (size > READ_FULL_SIZE)
-			wp->wmark_hits++;
-		if (wp->wmark_hits == READ_CHANGE_HITS)
-			window_pane_set_watermark(wp, READ_SLOW_SIZE);
-	} else if (wp->wmark_size == READ_SLOW_SIZE) {
-		if (size < READ_EMPTY_SIZE)
-			wp->wmark_hits++;
-		if (wp->wmark_hits == READ_CHANGE_HITS)
-			window_pane_set_watermark(wp, READ_FAST_SIZE);
-	}
-	log_debug("%%%u has %zu bytes (of %u, %u hits)", wp->id, size,
-	    wp->wmark_size, wp->wmark_hits);
-
 	new_size = size - wp->pipe_off;
 	if (wp->pipe_fd != -1 && new_size > 0) {
 		new_data = EVBUFFER_DATA(evb) + wp->pipe_off;
 		bufferevent_write(wp->pipe_event, new_data, new_size);
 	}
 
+	log_debug("%%%u has %zu bytes", wp->id, size);
 	input_parse(wp);
 
 	wp->pipe_off = EVBUFFER_LENGTH(evb);
@@ -1090,6 +1075,60 @@ window_pane_alternate_off(struct window_pane *wp, struct grid_cell *gc,
 	wp->saved_grid = NULL;
 
 	wp->flags |= PANE_REDRAW;
+}
+
+void
+window_pane_set_palette(struct window_pane *wp, u_int n, int colour)
+{
+	if (n > 0xff)
+		return;
+
+	if (wp->palette == NULL)
+		wp->palette = xcalloc(0x100, sizeof *wp->palette);
+
+	wp->palette[n] = colour;
+	wp->flags |= PANE_REDRAW;
+}
+
+void
+window_pane_unset_palette(struct window_pane *wp, u_int n)
+{
+	if (n > 0xff || wp->palette == NULL)
+		return;
+
+	wp->palette[n] = 0;
+	wp->flags |= PANE_REDRAW;
+}
+
+void
+window_pane_reset_palette(struct window_pane *wp)
+{
+	if (wp->palette == NULL)
+		return;
+
+	free(wp->palette);
+	wp->palette = NULL;
+	wp->flags |= PANE_REDRAW;
+}
+
+int
+window_pane_get_palette(const struct window_pane *wp, int c)
+{
+	int	new;
+
+	if (wp == NULL || wp->palette == NULL)
+		return (-1);
+
+	new = -1;
+	if (c < 8)
+		new = wp->palette[c];
+	else if (c >= 90 && c <= 97)
+		new = wp->palette[8 + c - 90];
+	else if (c & COLOUR_FLAG_256)
+		new = wp->palette[c & ~COLOUR_FLAG_256];
+	if (new == 0)
+		return (-1);
+	return (new);
 }
 
 static void

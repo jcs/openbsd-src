@@ -1,4 +1,4 @@
-/*      $OpenBSD: if_gre.c,v 1.81 2016/11/16 14:50:13 mpi Exp $ */
+/*      $OpenBSD: if_gre.c,v 1.84 2017/01/24 10:08:30 krw Exp $ */
 /*	$NetBSD: if_gre.c,v 1.9 1999/10/25 19:18:11 drochner Exp $ */
 
 /*
@@ -100,7 +100,7 @@ struct if_clone mobileip_cloner =
  * control acceptance of WCCPv1-style GRE packets through the
  * net.inet.gre.wccp value, but be aware it depends upon normal GRE being
  * allowed as well.
- * 
+ *
  */
 int gre_allow = 0;
 int gre_wccp = 0;
@@ -136,6 +136,7 @@ gre_clone_create(struct if_clone *ifc, int unit)
 	sc->sc_if.if_hdrlen = 24; /* IP + GRE */
 	sc->sc_if.if_mtu = GREMTU;
 	sc->sc_if.if_flags = IFF_POINTOPOINT|IFF_MULTICAST;
+	sc->sc_if.if_xflags = IFXF_CLONED;
 	sc->sc_if.if_output = gre_output;
 	sc->sc_if.if_ioctl = gre_ioctl;
 	sc->sc_if.if_rtrequest = p2p_rtrequest;
@@ -148,7 +149,7 @@ gre_clone_create(struct if_clone *ifc, int unit)
 	sc->sc_ka_state = GRE_STATE_UKNWN;
 
 	if (strcmp("gre", ifc->ifc_name) == 0) {
-		/* GRE encapsulation */	
+		/* GRE encapsulation */
 		sc->g_proto = IPPROTO_GRE;
 	} else {
 		/* Mobile IP encapsulation */
@@ -662,10 +663,10 @@ gre_send_keepalive(void *arg)
 	bzero(&dst, sizeof(dst));
 	dst.sa_family = AF_INET;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 	/* should we care about the error? */
 	gre_output(&sc->sc_if, m, &dst, NULL);
-	splx(s);
+	NET_UNLOCK(s);
 }
 
 void

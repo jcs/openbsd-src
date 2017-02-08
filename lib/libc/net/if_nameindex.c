@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_nameindex.c,v 1.11 2015/10/23 13:09:19 claudio Exp $	*/
+/*	$OpenBSD: if_nameindex.c,v 1.13 2016/12/16 17:44:59 krw Exp $	*/
 /*	$KAME: if_nameindex.c,v 1.7 2000/11/24 08:17:20 itojun Exp $	*/
 
 /*-
@@ -78,10 +78,10 @@
 struct if_nameindex *
 if_nameindex(void)
 {
-	struct if_nameindex_msg *ifnm = NULL;	
+	struct if_nameindex_msg *ifnm = NULL;
 	struct if_nameindex *ifni = NULL, *ifni2;
 	char *cp;
-	size_t nbytes, needed;
+	size_t needed;
 	unsigned int ni, i;
 	int mib[6];
 
@@ -92,7 +92,7 @@ if_nameindex(void)
 	mib[4] = NET_RT_IFNAMES;
 	mib[5] = 0;		/* no flags */
 	while (1) {
-		struct if_nameindex_msg *buf = NULL;	
+		struct if_nameindex_msg *buf = NULL;
 
 		if (sysctl(mib, 6, NULL, &needed, NULL, 0) == -1)
 			goto out;

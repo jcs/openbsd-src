@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpctl.c,v 1.190 2016/10/14 16:05:35 phessler Exp $ */
+/*	$OpenBSD: bgpctl.c,v 1.193 2017/01/23 23:38:51 claudio Exp $ */
 
 /*
  * Copyright (c) 2003 Henning Brauer <henning@openbsd.org>
@@ -38,7 +38,6 @@
 #include "bgpd.h"
 #include "session.h"
 #include "rde.h"
-#include "log.h"
 #include "parser.h"
 #include "irrfilter.h"
 #include "mrtparser.h"
@@ -162,6 +161,7 @@ main(int argc, char *argv[])
 
 	memcpy(&neighbor.addr, &res->peeraddr, sizeof(neighbor.addr));
 	strlcpy(neighbor.descr, res->peerdesc, sizeof(neighbor.descr));
+	strlcpy(neighbor.shutcomm, res->shutcomm, sizeof(neighbor.shutcomm));
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
 		err(1, "control_init: socket");
@@ -722,6 +722,13 @@ show_neighbor_msg(struct imsg *imsg, enum neighbor_views nv)
 		    inet_ntoa(ina));
 		printf("%s\n", print_auth_method(p->auth.method));
 		printf("  BGP state = %s", statenames[p->state]);
+		if (p->conf.down) {
+			printf(", marked down");
+			if (*(p->conf.shutcomm)) {
+				printf(" with shutdown reason \"%s\"",
+				    log_shutcomm(p->conf.shutcomm));
+			}
+		}
 		if (p->stats.last_updown != 0)
 			printf(", %s for %s",
 			    p->state == STATE_ESTABLISHED ? "up" : "down",
@@ -756,6 +763,10 @@ show_neighbor_msg(struct imsg *imsg, enum neighbor_views nv)
 			break;
 		print_neighbor_msgstats(p);
 		printf("\n");
+		if (*(p->stats.last_shutcomm)) {
+			printf("  Last received shutdown reason: \"%s\"\n",
+			    log_shutcomm(p->stats.last_shutcomm));
+		}
 		if (p->state == STATE_IDLE) {
 			static const char	*errstr;
 
@@ -2001,41 +2012,4 @@ msg_type(u_int8_t type)
 	if (type >= sizeof(msgtypenames)/sizeof(msgtypenames[0]))
 		return "BAD";
 	return (msgtypenames[type]);
-}
-
-/* following functions are necessary for the imsg framework */
-void
-log_warnx(const char *emsg, ...)
-{
-	va_list	 ap;
-
-	va_start(ap, emsg);
-	vwarnx(emsg, ap);
-	va_end(ap);
-}
-
-void
-log_warn(const char *emsg, ...)
-{
-	va_list	 ap;
-
-	va_start(ap, emsg);
-	vwarn(emsg, ap);
-	va_end(ap);
-}
-
-void
-fatal(const char *emsg, ...)
-{
-	va_list	 ap;
-
-	va_start(ap, emsg);
-	verr(1, emsg, ap);
-	va_end(ap);
-}
-
-void
-fatalx(const char *emsg)
-{
-	errx(1, "%s", emsg);
 }

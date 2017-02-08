@@ -1,4 +1,4 @@
-/* $OpenBSD: input.c,v 1.106 2016/12/09 21:39:27 nicm Exp $ */
+/* $OpenBSD: input.c,v 1.115 2017/02/08 17:31:09 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -18,6 +18,9 @@
 
 #include <sys/types.h>
 
+#include <netinet/in.h>
+
+#include <resolv.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -84,6 +87,7 @@ struct input_ctx {
 	struct utf8_data	utf8data;
 
 	int			ch;
+
 	int			flags;
 #define INPUT_DISCARD 0x1
 
@@ -104,6 +108,10 @@ static void printflike(2, 3) input_reply(struct input_ctx *, const char *, ...);
 static void	input_set_state(struct window_pane *,
 		    const struct input_transition *);
 static void	input_reset_cell(struct input_ctx *);
+
+static void	input_osc_4(struct window_pane *, const char *);
+static void	input_osc_52(struct window_pane *, const char *);
+static void	input_osc_104(struct window_pane *, const char *);
 
 /* Transition entry/exit handlers. */
 static void	input_clear(struct input_ctx *);
@@ -162,6 +170,7 @@ enum input_esc_type {
 	INPUT_ESC_SCSG0_ON,
 	INPUT_ESC_SCSG1_OFF,
 	INPUT_ESC_SCSG1_ON,
+	INPUT_ESC_ST,
 };
 
 /* Escape command table. */
@@ -179,6 +188,7 @@ static const struct input_table_entry input_esc_table[] = {
 	{ 'E', "",  INPUT_ESC_NEL },
 	{ 'H', "",  INPUT_ESC_HTS },
 	{ 'M', "",  INPUT_ESC_RI },
+	{ '\\', "", INPUT_ESC_ST },
 	{ 'c', "",  INPUT_ESC_RIS },
 };
 
@@ -212,6 +222,7 @@ enum input_csi_type {
 	INPUT_CSI_SGR,
 	INPUT_CSI_SM,
 	INPUT_CSI_SM_PRIVATE,
+	INPUT_CSI_SU,
 	INPUT_CSI_TBC,
 	INPUT_CSI_VPA,
 	INPUT_CSI_WINOPS,
@@ -233,6 +244,7 @@ static const struct input_table_entry input_csi_table[] = {
 	{ 'L', "",  INPUT_CSI_IL },
 	{ 'M', "",  INPUT_CSI_DL },
 	{ 'P', "",  INPUT_CSI_DCH },
+	{ 'S', "",  INPUT_CSI_SU },
 	{ 'X', "",  INPUT_CSI_ECH },
 	{ 'Z', "",  INPUT_CSI_CBT },
 	{ 'c', "",  INPUT_CSI_DA },
@@ -862,8 +874,9 @@ input_parse(struct window_pane *wp)
 
 	buf = EVBUFFER_DATA(evb);
 	len = EVBUFFER_LENGTH(evb);
-	notify_input(wp, evb);
 	off = 0;
+
+	notify_input(wp, evb);
 
 	log_debug("%s: %%%u %s, %zu bytes: %.*s", __func__, wp->id,
 	    ictx->state->name, len, (int)len, buf);
@@ -883,6 +896,16 @@ input_parse(struct window_pane *wp)
 			/* No transition? Eh? */
 			fatalx("no transition from state");
 		}
+
+		/*
+		 * Any state except print stops the current collection. This is
+		 * an optimization to avoid checking if the attributes have
+		 * changed for every character. It will stop unnecessarily for
+		 * sequences that don't make a terminal change, but they should
+		 * be the minority.
+		 */
+		if (itr->handler != input_print)
+			screen_write_collect_end(&ictx->ctx);
 
 		/*
 		 * Execute the handler, if any. Don't switch state if it
@@ -909,7 +932,6 @@ input_parse(struct window_pane *wp)
 /* Split the parameter list (if any). */
 static int
 input_split(struct input_ctx *ictx)
-
 {
 	const char	*errstr;
 	char		*ptr, *out;
@@ -1010,7 +1032,7 @@ input_print(struct input_ctx *ictx)
 		ictx->cell.cell.attr &= ~GRID_ATTR_CHARSET;
 
 	utf8_set(&ictx->cell.cell.data, ictx->ch);
-	screen_write_cell(&ictx->ctx, &ictx->cell.cell);
+	screen_write_collect_add(&ictx->ctx, &ictx->cell.cell);
 
 	ictx->cell.cell.attr &= ~GRID_ATTR_CHARSET;
 
@@ -1141,6 +1163,7 @@ input_esc_dispatch(struct input_ctx *ictx)
 
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
+		window_pane_reset_palette(ictx->wp);
 		input_reset_cell(ictx);
 		screen_write_reset(sctx);
 		break;
@@ -1188,6 +1211,9 @@ input_esc_dispatch(struct input_ctx *ictx)
 	case INPUT_ESC_SCSG1_OFF:
 		ictx->cell.g1set = 0;
 		break;
+	case INPUT_ESC_ST:
+		/* ST terminates OSC but the state transition already did it. */
+		break;
 	}
 
 	return (0);
@@ -1205,10 +1231,12 @@ input_csi_dispatch(struct input_ctx *ictx)
 
 	if (ictx->flags & INPUT_DISCARD)
 		return (0);
-	if (input_split(ictx) != 0)
-		return (0);
+
 	log_debug("%s: '%c' \"%s\" \"%s\"",
 	    __func__, ictx->ch, ictx->interm_buf, ictx->param_buf);
+
+	if (input_split(ictx) != 0)
+		return (0);
 
 	entry = bsearch(ictx, input_csi_table, nitems(input_csi_table),
 	    sizeof input_csi_table[0], input_table_compare);
@@ -1314,7 +1342,7 @@ input_csi_dispatch(struct input_ctx *ictx)
 			screen_write_clearendofscreen(sctx, ictx->cell.cell.bg);
 			break;
 		case 1:
-			screen_write_clearstartofscreen(sctx);
+			screen_write_clearstartofscreen(sctx, ictx->cell.cell.bg);
 			break;
 		case 2:
 			screen_write_clearscreen(sctx, ictx->cell.cell.bg);
@@ -1386,6 +1414,9 @@ input_csi_dispatch(struct input_ctx *ictx)
 		break;
 	case INPUT_CSI_SM_PRIVATE:
 		input_csi_dispatch_sm_private(ictx);
+		break;
+	case INPUT_CSI_SU:
+		screen_write_scrollup(sctx, input_get(ictx, 0, 1, 1));
 		break;
 	case INPUT_CSI_TBC:
 		switch (input_get(ictx, 0, 0, 0)) {
@@ -1464,6 +1495,7 @@ input_csi_dispatch_rm_private(struct input_ctx *ictx)
 		case 1000:
 		case 1001:
 		case 1002:
+		case 1003:
 			screen_write_mode_clear(&ictx->ctx, ALL_MOUSE_MODES);
 			break;
 		case 1004:
@@ -1546,6 +1578,10 @@ input_csi_dispatch_sm_private(struct input_ctx *ictx)
 		case 1002:
 			screen_write_mode_clear(&ictx->ctx, ALL_MOUSE_MODES);
 			screen_write_mode_set(&ictx->ctx, MODE_MOUSE_BUTTON);
+			break;
+		case 1003:
+			screen_write_mode_clear(&ictx->ctx, ALL_MOUSE_MODES);
+			screen_write_mode_set(&ictx->ctx, MODE_MOUSE_ALL);
 			break;
 		case 1004:
 			if (ictx->ctx.s->mode & MODE_FOCUSON)
@@ -1850,9 +1886,18 @@ input_exit_osc(struct input_ctx *ictx)
 		screen_set_title(ictx->ctx.s, p);
 		server_status_window(ictx->wp->window);
 		break;
+	case 4:
+		input_osc_4(ictx->wp, p);
+		break;
+	case 52:
+		input_osc_52(ictx->wp, p);
+		break;
 	case 12:
 		if (*p != '?') /* ? is colour request */
 			screen_set_cursor_colour(ictx->ctx.s, p);
+		break;
+	case 104:
+		input_osc_104(ictx->wp, p);
 		break;
 	case 112:
 		if (*p == '\0') /* no arguments allowed */
@@ -1960,4 +2005,104 @@ input_utf8_close(struct input_ctx *ictx)
 	screen_write_cell(&ictx->ctx, &ictx->cell.cell);
 
 	return (0);
+}
+
+/* Handle the OSC 4 sequence for setting (multiple) palette entries. */
+static void
+input_osc_4(struct window_pane *wp, const char *p)
+{
+	char	*copy, *s, *next = NULL;
+	long	 idx;
+	u_int	 r, g, b;
+
+	copy = s = xstrdup(p);
+	while (s != NULL && *s != '\0') {
+		idx = strtol(s, &next, 10);
+		if (*next++ != ';')
+			goto bad;
+		if (idx < 0 || idx >= 0x100)
+			goto bad;
+
+		s = strsep(&next, ";");
+		if (sscanf(s, "rgb:%2x/%2x/%2x", &r, &g, &b) != 3) {
+			s = next;
+			continue;
+		}
+
+		window_pane_set_palette(wp, idx, colour_join_rgb(r, g, b));
+		s = next;
+	}
+
+	free(copy);
+	return;
+
+bad:
+	log_debug("bad OSC 4: %s", p);
+	free(copy);
+}
+
+/* Handle the OSC 52 sequence for setting the clipboard. */
+static void
+input_osc_52(struct window_pane *wp, const char *p)
+{
+	char			*end;
+	size_t			 len;
+	u_char			*out;
+	int			 outlen;
+	struct screen_write_ctx	 ctx;
+
+	if ((end = strchr(p, ';')) == NULL)
+		return;
+	end++;
+	if (*end == '\0')
+		return;
+
+	len = (strlen(end) / 4) * 3;
+	if (len == 0)
+		return;
+
+	out = xmalloc(len);
+	if ((outlen = b64_pton(end, out, len)) == -1) {
+		free(out);
+		return;
+	}
+
+	if (options_get_number(global_options, "set-clipboard")) {
+		screen_write_start(&ctx, wp, NULL);
+		screen_write_setselection(&ctx, out, outlen);
+		screen_write_stop(&ctx);
+	}
+	paste_add(out, outlen);
+}
+
+/* Handle the OSC 104 sequence for unsetting (multiple) palette entries. */
+static void
+input_osc_104(struct window_pane *wp, const char *p)
+{
+	char	*copy, *s;
+	long	idx;
+
+	if (*p == '\0') {
+		window_pane_reset_palette(wp);
+		return;
+	}
+
+	copy = s = xstrdup(p);
+	while (*s != '\0') {
+		idx = strtol(s, &s, 10);
+		if (*s != '\0' && *s != ';')
+			goto bad;
+		if (idx < 0 || idx >= 0x100)
+			goto bad;
+
+		window_pane_unset_palette(wp, idx);
+		if (*s == ';')
+			s++;
+	}
+	free(copy);
+	return;
+
+bad:
+	log_debug("bad OSC 104: %s", p);
+	free(copy);
 }

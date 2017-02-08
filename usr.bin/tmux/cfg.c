@@ -1,4 +1,4 @@
-/* $OpenBSD: cfg.c,v 1.50 2016/10/16 19:04:05 nicm Exp $ */
+/* $OpenBSD: cfg.c,v 1.54 2017/02/03 11:57:27 nicm Exp $ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -28,11 +28,11 @@
 
 #include "tmux.h"
 
-char			 *cfg_file;
-int			  cfg_finished;
-static char		**cfg_causes;
-static u_int		  cfg_ncauses;
-struct client		 *cfg_client;
+char		 *cfg_file;
+int		  cfg_finished;
+static char	**cfg_causes;
+static u_int	  cfg_ncauses;
+struct client	 *cfg_client;
 
 static enum cmd_retval
 cfg_done(__unused struct cmdq_item *item, __unused void *data)
@@ -82,12 +82,14 @@ int
 load_cfg(const char *path, struct client *c, struct cmdq_item *item, int quiet)
 {
 	FILE			*f;
-	char			 delim[3] = { '\\', '\\', '\0' };
-	u_int			 found;
+	const char		 delim[3] = { '\\', '\\', '\0' };
+	u_int			 found = 0;
 	size_t			 line = 0;
-	char			*buf, *cause1, *p;
+	char			*buf, *cause1, *p, *q, *s;
 	struct cmd_list		*cmdlist;
 	struct cmdq_item	*new_item;
+	int			 condition = 0;
+	struct format_tree	*ft;
 
 	log_debug("loading %s", path);
 	if ((f = fopen(path, "rb")) == NULL) {
@@ -97,21 +99,50 @@ load_cfg(const char *path, struct client *c, struct cmdq_item *item, int quiet)
 		return (-1);
 	}
 
-	found = 0;
 	while ((buf = fparseln(f, NULL, &line, delim, 0)) != NULL) {
 		log_debug("%s: %s", path, buf);
 
-		/* Skip empty lines. */
 		p = buf;
-		while (isspace((u_char) *p))
+		while (isspace((u_char)*p))
 			p++;
 		if (*p == '\0') {
 			free(buf);
 			continue;
 		}
+		q = p + strlen(p) - 1;
+		while (q != p && isspace((u_char)*q))
+			*q-- = '\0';
 
-		/* Parse and run the command. */
-		if (cmd_string_parse(p, &cmdlist, path, line, &cause1) != 0) {
+		if (condition != 0 && strcmp(p, "%endif") == 0) {
+			condition = 0;
+			continue;
+		}
+		if (strncmp(p, "%if ", 4) == 0) {
+			if (condition != 0) {
+				cfg_add_cause("%s:%zu: nested %%if", path,
+				    line);
+				continue;
+			}
+			ft = format_create(NULL, FORMAT_NONE, FORMAT_NOJOBS);
+
+			s = p + 3;
+			while (isspace((u_char)*s))
+				s++;
+			s = format_expand(ft, s);
+			if (*s != '\0' && (s[0] != '0' || s[1] != '\0'))
+				condition = 1;
+			else
+				condition = -1;
+			free(s);
+
+			format_free(ft);
+			continue;
+		}
+		if (condition == -1)
+			continue;
+
+		cmdlist = cmd_string_parse(p, path, line, &cause1);
+		if (cmdlist == NULL) {
 			free(buf);
 			if (cause1 == NULL)
 				continue;

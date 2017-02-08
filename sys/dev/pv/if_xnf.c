@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_xnf.c,v 1.43 2016/12/02 15:12:41 mikeb Exp $	*/
+/*	$OpenBSD: if_xnf.c,v 1.50 2017/02/08 16:17:31 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2015, 2016 Mike Belopuhov
@@ -53,6 +53,13 @@
 #include <net/bpf.h>
 #endif
 
+/* #define XNF_DEBUG */
+
+#ifdef XNF_DEBUG
+#define DPRINTF(x...)		printf(x)
+#else
+#define DPRINTF(x...)
+#endif
 
 /*
  * Rx ring
@@ -191,6 +198,7 @@ struct xnf_softc {
 
 int	xnf_match(struct device *, void *, void *);
 void	xnf_attach(struct device *, struct device *, void *);
+int	xnf_detach(struct device *, int);
 int	xnf_lladdr(struct xnf_softc *);
 int	xnf_ioctl(struct ifnet *, u_long, caddr_t);
 int	xnf_media_change(struct ifnet *);
@@ -198,7 +206,7 @@ void	xnf_media_status(struct ifnet *, struct ifmediareq *);
 int	xnf_iff(struct xnf_softc *);
 void	xnf_init(struct xnf_softc *);
 void	xnf_stop(struct xnf_softc *);
-void	xnf_start(struct ifnet *);
+void	xnf_start(struct ifqueue *);
 int	xnf_encap(struct xnf_softc *, struct mbuf *, uint32_t *);
 void	xnf_intr(void *);
 void	xnf_watchdog(struct ifnet *);
@@ -219,7 +227,7 @@ struct cfdriver xnf_cd = {
 };
 
 const struct cfattach xnf_ca = {
-	sizeof(struct xnf_softc), xnf_match, xnf_attach
+	sizeof(struct xnf_softc), xnf_match, xnf_attach, xnf_detach
 };
 
 int
@@ -261,7 +269,7 @@ xnf_attach(struct device *parent, struct device *self, void *aux)
 	}
 	xen_intr_mask(sc->sc_xih);
 
-	printf(": backend %d, event channel %u, address %s\n", sc->sc_domid,
+	printf(" backend %d chan %u: address %s\n", sc->sc_domid,
 	    sc->sc_xih, ether_sprintf(sc->sc_ac.ac_enaddr));
 
 	if (xnf_capabilities(sc)) {
@@ -291,7 +299,7 @@ xnf_attach(struct device *parent, struct device *self, void *aux)
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 	ifp->if_xflags = IFXF_MPSAFE;
 	ifp->if_ioctl = xnf_ioctl;
-	ifp->if_start = xnf_start;
+	ifp->if_qstart = xnf_start;
 	ifp->if_watchdog = xnf_watchdog;
 	ifp->if_softc = sc;
 
@@ -313,6 +321,27 @@ xnf_attach(struct device *parent, struct device *self, void *aux)
 
 	/* Kick out emulated em's and re's */
 	xen_unplug_emulated(parent, XEN_UNPLUG_NIC);
+}
+
+int
+xnf_detach(struct device *self, int flags)
+{
+	struct xnf_softc *sc = (struct xnf_softc *)self;
+	struct ifnet *ifp = &sc->sc_ac.ac_if;
+
+	xnf_stop(sc);
+
+	ether_ifdetach(ifp);
+	if_detach(ifp);
+
+	xen_intr_disestablish(sc->sc_xih);
+
+	if (sc->sc_tx_ring)
+		xnf_tx_ring_destroy(sc);
+	if (sc->sc_rx_ring)
+		xnf_rx_ring_destroy(sc);
+
+	return (0);
 }
 
 static int
@@ -444,7 +473,7 @@ xnf_stop(struct xnf_softc *sc)
 	ifp->if_timer = 0;
 
 	ifq_barrier(&ifp->if_snd);
-	intr_barrier(&sc->sc_xih);
+	xen_intr_barrier(sc->sc_xih);
 
 	ifq_clr_oactive(&ifp->if_snd);
 
@@ -455,16 +484,14 @@ xnf_stop(struct xnf_softc *sc)
 }
 
 void
-xnf_start(struct ifnet *ifp)
+xnf_start(struct ifqueue *ifq)
 {
+	struct ifnet *ifp = ifq->ifq_if;
 	struct xnf_softc *sc = ifp->if_softc;
 	struct xnf_tx_ring *txr = sc->sc_tx_ring;
 	struct mbuf *m;
 	int pkts = 0;
 	uint32_t prod, oprod;
-
-	if (!(ifp->if_flags & IFF_RUNNING) || ifq_is_oactive(&ifp->if_snd))
-		return;
 
 	bus_dmamap_sync(sc->sc_dmat, sc->sc_tx_rmap, 0, 0,
 	    BUS_DMASYNC_POSTREAD);
@@ -475,10 +502,11 @@ xnf_start(struct ifnet *ifp)
 		if ((XNF_TX_DESC - (prod - sc->sc_tx_cons)) <
 		    sc->sc_tx_frags) {
 			/* transient */
-			ifq_set_oactive(&ifp->if_snd);
+			ifq_set_oactive(ifq);
 			break;
 		}
-		m = ifq_dequeue(&ifp->if_snd);
+
+		m = ifq_dequeue(ifq);
 		if (m == NULL)
 			break;
 
@@ -488,7 +516,6 @@ xnf_start(struct ifnet *ifp)
 			m_freem(m);
 			continue;
 		}
-		ifp->if_opackets++;
 
 #if NBPFILTER > 0
 		if (ifp->if_bpf)
@@ -775,8 +802,7 @@ xnf_rxeof(struct xnf_softc *sc)
 	bus_dmamap_sync(sc->sc_dmat, sc->sc_rx_rmap, 0, 0,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
-	if (!ml_empty(&ml))
-		if_input(ifp, &ml);
+	if_input(ifp, &ml);
 
 	if (xnf_rx_ring_fill(sc) || (sc->sc_rx_cons != rxr->rxr_cons))
 		xen_intr_schedule(sc->sc_xih);
@@ -1042,63 +1068,61 @@ xnf_tx_ring_destroy(struct xnf_softc *sc)
 int
 xnf_capabilities(struct xnf_softc *sc)
 {
+	unsigned long long res;
 	const char *prop;
 	char val[32];
 	int error;
 
 	/* Query scatter-gather capability */
 	prop = "feature-sg";
-	if ((error = xs_getprop(sc->sc_parent, sc->sc_backend, prop, val,
-	    sizeof(val))) == 0) {
-		if (val[0] == '1')
-			sc->sc_caps |= XNF_CAP_SG;
-	} else if (error != ENOENT)
+	if ((error = xs_getnum(sc->sc_parent, sc->sc_backend, prop, &res)) != 0
+	    && error != ENOENT)
 		goto errout;
+	if (error == 0 && res == 1)
+		sc->sc_caps |= XNF_CAP_SG;
 
 	/* Query IPv4 checksum offloading capability, enabled by default */
 	sc->sc_caps |= XNF_CAP_CSUM4;
 	prop = "feature-no-csum-offload";
-	if ((error = xs_getprop(sc->sc_parent, sc->sc_backend, prop, val,
-	    sizeof(val))) == 0) {
-		if (val[0] == '1')
-			sc->sc_caps &= ~XNF_CAP_CSUM4;
-	} else if (error != ENOENT)
+	if ((error = xs_getnum(sc->sc_parent, sc->sc_backend, prop, &res)) != 0
+	    && error != ENOENT)
 		goto errout;
+	if (error == 0 && res == 1)
+		sc->sc_caps &= ~XNF_CAP_CSUM4;
 
 	/* Query IPv6 checksum offloading capability */
 	prop = "feature-ipv6-csum-offload";
-	if ((error = xs_getprop(sc->sc_parent, sc->sc_backend, prop, val,
-	    sizeof(val))) == 0) {
-		if (val[0] == '1')
-			sc->sc_caps |= XNF_CAP_CSUM6;
-	} else if (error != ENOENT)
+	if ((error = xs_getnum(sc->sc_parent, sc->sc_backend, prop, &res)) != 0
+	    && error != ENOENT)
 		goto errout;
+	if (error == 0 && res == 1)
+		sc->sc_caps |= XNF_CAP_CSUM6;
 
 	/* Query multicast traffic contol capability */
 	prop = "feature-multicast-control";
-	if ((error = xs_getprop(sc->sc_parent, sc->sc_backend, prop, val,
-	    sizeof(val))) == 0) {
-		if (val[0] == '1')
-			sc->sc_caps |= XNF_CAP_MCAST;
-	} else if (error != ENOENT)
+	if ((error = xs_getnum(sc->sc_parent, sc->sc_backend, prop, &res)) != 0
+	    && error != ENOENT)
 		goto errout;
+	if (error == 0 && res == 1)
+		sc->sc_caps |= XNF_CAP_MCAST;
 
 	/* Query split Rx/Tx event channel capability */
 	prop = "feature-split-event-channels";
-	if ((error = xs_getprop(sc->sc_parent, sc->sc_backend, prop, val,
-	    sizeof(val))) == 0) {
-		if (val[0] == '1')
-			sc->sc_caps |= XNF_CAP_SPLIT;
-	} else if (error != ENOENT)
+	if ((error = xs_getnum(sc->sc_parent, sc->sc_backend, prop, &res)) != 0
+	    && error != ENOENT)
 		goto errout;
+	if (error == 0 && res == 1)
+		sc->sc_caps |= XNF_CAP_SPLIT;
 
 	/* Query multiqueue capability */
 	prop = "multi-queue-max-queues";
 	if ((error = xs_getprop(sc->sc_parent, sc->sc_backend, prop, val,
 	    sizeof(val))) == 0)
-		sc->sc_caps |= XNF_CAP_MULTIQ;
-	else if (error != ENOENT)
+	if ((error = xs_getnum(sc->sc_parent, sc->sc_backend, prop, &res)) != 0
+	    && error != ENOENT)
 		goto errout;
+	if (error == 0)
+		sc->sc_caps |= XNF_CAP_MULTIQ;
 
 	DPRINTF("%s: capabilities %b\n", sc->sc_dev.dv_xname, sc->sc_caps,
 	    "\20\006MULTIQ\005SPLIT\004MCAST\003CSUM6\002CSUM4\001SG");
@@ -1114,63 +1138,52 @@ int
 xnf_init_backend(struct xnf_softc *sc)
 {
 	const char *prop;
-	char val[32];
 
 	/* Plumb the Rx ring */
 	prop = "rx-ring-ref";
-	snprintf(val, sizeof(val), "%u", sc->sc_rx_ref);
-	if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val, strlen(val)))
+	if (xs_setnum(sc->sc_parent, sc->sc_node, prop, sc->sc_rx_ref))
 		goto errout;
 	/* Enable "copy" mode */
 	prop = "request-rx-copy";
-	snprintf(val, sizeof(val), "%u", 1);
-	if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val, strlen(val)))
+	if (xs_setnum(sc->sc_parent, sc->sc_node, prop, 1))
 		goto errout;
 	/* Enable notify mode */
 	prop = "feature-rx-notify";
-	snprintf(val, sizeof(val), "%u", 1);
-	if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val, strlen(val)))
+	if (xs_setnum(sc->sc_parent, sc->sc_node, prop, 1))
 		goto errout;
 
 	/* Plumb the Tx ring */
 	prop = "tx-ring-ref";
-	snprintf(val, sizeof(val), "%u", sc->sc_tx_ref);
-	if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val, strlen(val)))
+	if (xs_setnum(sc->sc_parent, sc->sc_node, prop, sc->sc_tx_ref))
 		goto errout;
 	/* Enable scatter-gather mode */
 	if (sc->sc_tx_frags > 1) {
 		prop = "feature-sg";
-		snprintf(val, sizeof(val), "%u", 1);
-		if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val,
-		    strlen(val)))
+		if (xs_setnum(sc->sc_parent, sc->sc_node, prop, 1))
 			goto errout;
 	}
 
 	/* Enable IPv6 checksum offloading */
 	if (sc->sc_caps & XNF_CAP_CSUM6) {
 		prop = "feature-ipv6-csum-offload";
-		snprintf(val, sizeof(val), "%u", 1);
-		if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val,
-		    strlen(val)))
+		if (xs_setnum(sc->sc_parent, sc->sc_node, prop, 1))
 			goto errout;
 	}
 
 	/* Plumb the event channel port */
 	prop = "event-channel";
-	snprintf(val, sizeof(val), "%u", sc->sc_xih);
-	if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val, strlen(val)))
+	if (xs_setnum(sc->sc_parent, sc->sc_node, prop, sc->sc_xih))
 		goto errout;
 
 	/* Connect the device */
 	prop = "state";
-	snprintf(val, sizeof(val), "%u", 4);
-	if (xs_setprop(sc->sc_parent, sc->sc_node, prop, val, strlen(val)))
+	if (xs_setprop(sc->sc_parent, sc->sc_node, prop, XEN_STATE_CONNECTED,
+	    strlen(XEN_STATE_CONNECTED)))
 		goto errout;
 
 	return (0);
 
  errout:
-	printf("%s: failed to set \"%s\" property to \"%s\"\n",
-	    sc->sc_dev.dv_xname, prop, val);
+	printf("%s: failed to set \"%s\" property\n", sc->sc_dev.dv_xname, prop);
 	return (-1);
 }

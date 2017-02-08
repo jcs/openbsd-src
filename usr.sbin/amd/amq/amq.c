@@ -32,7 +32,7 @@
  * SUCH DAMAGE.
  *
  *	from: @(#)amq.c	8.1 (Berkeley) 6/7/93
- *	$Id: amq.c,v 1.19 2015/12/11 04:26:01 mmcc Exp $
+ *	$Id: amq.c,v 1.21 2017/01/21 08:33:51 krw Exp $
  */
 
 /*
@@ -131,6 +131,9 @@ show_mti(amq_mount_tree *mt, enum show_opt e, int *mwid, int *dwid,
 		    mt->mt_mountinfo, mt->mt_mountpoint);
 		break;
 	    }
+
+	default:
+		break;
 	}
 }
 
@@ -191,6 +194,8 @@ show_mi(amq_mount_info_list *ml, enum show_opt e, int *mwid,
 		}
 		break;
 	    }
+	default:
+		break;
 	}
 }
 
@@ -285,11 +290,11 @@ main(int argc, char *argv[])
 		if (unmount_flag)
 			errs = 1;
 	}
-	
+
 	if (errs) {
 show_usage:
 		fprintf(stderr, "usage: %s [-fmsuv] [-h hostname] "
-		    "[directory ...]\n", __progname);
+	    "[directory ...]\n", __progname);
 		exit(1);
 	}
 
@@ -518,7 +523,7 @@ show_usage:
 }
 
 /*
- * udpresport creates a datagram socket and attempts to bind it to a 
+ * udpresport creates a datagram socket and attempts to bind it to a
  * secure port.
  * returns: The bound socket, or -1 to indicate an error.
  */

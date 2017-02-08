@@ -1,4 +1,4 @@
-/*	$Id: revokeproc.c,v 1.8 2016/09/13 17:13:37 deraadt Exp $ */
+/*	$Id: revokeproc.c,v 1.12 2017/01/24 13:32:55 jsing Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -57,7 +57,7 @@ X509expires(X509 *x)
 	if (atim->type == V_ASN1_UTCTIME) {
 		if (atim->length <= 2) {
 			warnx("invalid ASN1_TIME");
-			return ((time_t)-1);
+			return (time_t)-1;
 		}
 		t.tm_year = (str[0] - '0') * 10 + (str[1] - '0');
 		if (t.tm_year < 70)
@@ -66,7 +66,7 @@ X509expires(X509 *x)
 	} else if (atim->type == V_ASN1_GENERALIZEDTIME) {
 		if (atim->length <= 4) {
 			warnx("invalid ASN1_TIME");
-			return ((time_t)-1);
+			return (time_t)-1;
 		}
 		t.tm_year = (str[0] - '0') * 1000 + (str[1] - '0') * 100 +
 		    (str[2] - '0') * 10 + (str[3] - '0');
@@ -78,7 +78,7 @@ X509expires(X509 *x)
 
 	if (atim->length <= (int)i + 10) {
 		warnx("invalid ASN1_TIME");
-		return ((time_t)-1);
+		return (time_t)-1;
 	}
 
 	t.tm_mon = ((str[i + 0] - '0') * 10 + (str[i + 1] - '0')) - 1;
@@ -87,12 +87,12 @@ X509expires(X509 *x)
 	t.tm_min  = (str[i + 6] - '0') * 10 + (str[i + 7] - '0');
 	t.tm_sec  = (str[i + 8] - '0') * 10 + (str[i + 9] - '0');
 
-	return (mktime(&t));
+	return mktime(&t);
 }
 
 int
-revokeproc(int fd, const char *certdir, int force, int revocate,
-    const char *const *alts, size_t altsz)
+revokeproc(int fd, const char *certdir, const char *certfile, int force,
+    int revocate, const char *const *alts, size_t altsz)
 {
 	char		*path = NULL, *der = NULL, *dercp, *der64 = NULL;
 	char		*san = NULL, *str, *tok;
@@ -114,10 +114,10 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 	 * We allow "f" to be NULL IFF the cert doesn't exist yet.
 	 */
 
-	if (-1 == asprintf(&path, "%s/%s", certdir, CERT_PEM)) {
+	if (asprintf(&path, "%s/%s", certdir, certfile) == -1) {
 		warn("asprintf");
 		goto out;
-	} else if (NULL == (f = fopen(path, "r")) && ENOENT != errno) {
+	} else if ((f = fopen(path, "r")) == NULL && errno != ENOENT) {
 		warn("%s", path);
 		goto out;
 	}
@@ -139,24 +139,24 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 	 * Ignore if the reader isn't reading in either case.
 	 */
 
-	if (NULL == f && revocate) {
-		warnx("%s/%s: no certificate found", certdir, CERT_PEM);
+	if (f == NULL && revocate) {
+		warnx("%s/%s: no certificate found", certdir, certfile);
 		(void)writeop(fd, COMM_REVOKE_RESP, REVOKE_OK);
 		goto out;
-	} else if (NULL == f && ! revocate) {
+	} else if (f == NULL && !revocate) {
 		if (writeop(fd, COMM_REVOKE_RESP, REVOKE_EXP) >= 0)
 			rc = 1;
 		goto out;
 	}
 
-	if (NULL == (x = PEM_read_X509(f, NULL, NULL, NULL))) {
+	if ((x = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
 		warnx("PEM_read_X509");
 		goto out;
 	}
 
 	/* Read out the expiration date. */
 
-	if ((time_t)-1 == (t = X509expires(x))) {
+	if ((t = X509expires(x)) == (time_t)-1) {
 		warnx("X509expires");
 		goto out;
 	}
@@ -167,32 +167,32 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 	 * comamnd line.
 	 */
 
-	extsz = NULL != x->cert_info->extensions ?
+	extsz = x->cert_info->extensions != NULL ?
 		sk_X509_EXTENSION_num(x->cert_info->extensions) : 0;
 
 	/* Scan til we find the SAN NID. */
 
 	for (i = 0; i < extsz; i++) {
 		ex = sk_X509_EXTENSION_value(x->cert_info->extensions, i);
-		assert(NULL != ex);
+		assert(ex != NULL);
 		obj = X509_EXTENSION_get_object(ex);
-		assert(NULL != obj);
+		assert(obj != NULL);
 		if (NID_subject_alt_name != OBJ_obj2nid(obj))
 			continue;
 
-		if (NULL != san) {
-			warnx("%s/%s: two SAN entries", certdir, CERT_PEM);
+		if (san != NULL) {
+			warnx("%s/%s: two SAN entries", certdir, certfile);
 			goto out;
 		}
 
 		bio = BIO_new(BIO_s_mem());
-		if (NULL == bio) {
+		if (bio == NULL) {
 			warnx("BIO_new");
 			goto out;
 		} else if (!X509V3_EXT_print(bio, ex, 0, 0)) {
 			warnx("X509V3_EXT_print");
 			goto out;
-		} else if (NULL == (san = calloc(1, bio->num_write + 1))) {
+		} else if ((san = calloc(1, bio->num_write + 1)) == NULL) {
 			warn("calloc");
 			goto out;
 		}
@@ -203,14 +203,14 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 		}
 	}
 
-	if (NULL == san) {
-		warnx("%s/%s: does not have a SAN entry", certdir, CERT_PEM);
+	if (san == NULL) {
+		warnx("%s/%s: does not have a SAN entry", certdir, certfile);
 		goto out;
 	}
 
 	/* An array of buckets: the number of entries found. */
 
-	if (NULL == (found = calloc(altsz, sizeof(size_t)))) {
+	if ((found = calloc(altsz, sizeof(size_t))) == NULL) {
 		warn("calloc");
 		goto out;
 	}
@@ -221,8 +221,8 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 	 */
 
 	str = san;
-	while (NULL != (tok = strsep(&str, ","))) {
-		if ('\0' == *tok)
+	while ((tok = strsep(&str, ",")) != NULL) {
+		if (*tok == '\0')
 			continue;
 		while (isspace((int)*tok))
 			tok++;
@@ -230,16 +230,16 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 			continue;
 		tok += 4;
 		for (j = 0; j < altsz; j++)
-			if (0 == strcmp(tok, alts[j]))
+			if (strcmp(tok, alts[j]) == 0)
 				break;
 		if (j == altsz) {
 			warnx("%s/%s: unknown SAN entry: %s",
-			    certdir, CERT_PEM, tok);
+			    certdir, certfile, tok);
 			goto out;
 		}
 		if (found[j]++) {
 			warnx("%s/%s: duplicate SAN entry: %s",
-			    certdir, CERT_PEM, tok);
+			    certdir, certfile, tok);
 			goto out;
 		}
 	}
@@ -248,7 +248,7 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 		if (found[j])
 			continue;
 		warnx("%s/%s: domain not listed: %s",
-		    certdir, CERT_PEM, alts[j]);
+		    certdir, certfile, alts[j]);
 		goto out;
 	}
 
@@ -259,7 +259,7 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 	 */
 
 	if (revocate) {
-		dodbg("%s/%s: revocation", certdir, CERT_PEM);
+		dodbg("%s/%s: revocation", certdir, certfile);
 
 		/*
 		 * First, tell netproc we're online.
@@ -267,7 +267,7 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 		 */
 
 		cc = writeop(fd, COMM_REVOKE_RESP, REVOKE_EXP);
-		if (0 == cc)
+		if (cc == 0)
 			rc = 1;
 		if (cc <= 0)
 			goto out;
@@ -275,13 +275,13 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 		if ((len = i2d_X509(x, NULL)) < 0) {
 			warnx("i2d_X509");
 			goto out;
-		} else if (NULL == (der = dercp = malloc(len))) {
+		} else if ((der = dercp = malloc(len)) == NULL) {
 			warn("malloc");
 			goto out;
 		} else if (len != i2d_X509(x, (u_char **)&dercp)) {
 			warnx("i2d_X509");
 			goto out;
-		} else if (NULL == (der64 = base64buf_url(der, len))) {
+		} else if ((der64 = base64buf_url(der, len)) == NULL) {
 			warnx("base64buf_url");
 			goto out;
 		} else if (writestr(fd, COMM_CSR, der64) >= 0)
@@ -292,17 +292,17 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 
 	rop = time(NULL) >= (t - RENEW_ALLOW) ? REVOKE_EXP : REVOKE_OK;
 
-	if (REVOKE_EXP == rop)
+	if (rop == REVOKE_EXP)
 		dodbg("%s/%s: certificate renewable: %lld days left",
-		    certdir, CERT_PEM,
+		    certdir, certfile,
 		    (long long)(t - time(NULL)) / 24 / 60 / 60);
 	else
 		dodbg("%s/%s: certificate valid: %lld days left",
-		    certdir, CERT_PEM,
+		    certdir, certfile,
 		    (long long)(t - time(NULL)) / 24 / 60 / 60);
 
-	if (REVOKE_OK == rop && force) {
-		warnx("%s/%s: forcing renewal", certdir, CERT_PEM);
+	if (rop == REVOKE_OK && force) {
+		warnx("%s/%s: forcing renewal", certdir, certfile);
 		rop = REVOKE_EXP;
 	}
 
@@ -311,21 +311,21 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 	 * If netproc is down, just exit.
 	 */
 
-	if (0 == (cc = writeop(fd, COMM_REVOKE_RESP, rop)))
+	if ((cc = writeop(fd, COMM_REVOKE_RESP, rop)) == 0)
 		rc = 1;
 	if (cc <= 0)
 		goto out;
 
 	op = REVOKE__MAX;
-	if (0 == (lval = readop(fd, COMM_REVOKE_OP)))
+	if ((lval = readop(fd, COMM_REVOKE_OP)) == 0)
 		op = REVOKE_STOP;
-	else if (REVOKE_CHECK == lval)
+	else if (lval == REVOKE_CHECK)
 		op = lval;
 
-	if (REVOKE__MAX == op) {
+	if (op == REVOKE__MAX) {
 		warnx("unknown operation from netproc");
 		goto out;
-	} else if (REVOKE_STOP == op) {
+	} else if (op == REVOKE_STOP) {
 		rc = 1;
 		goto out;
 	}
@@ -333,11 +333,11 @@ revokeproc(int fd, const char *certdir, int force, int revocate,
 	rc = 1;
 out:
 	close(fd);
-	if (NULL != f)
+	if (f != NULL)
 		fclose(f);
-	if (NULL != x)
+	if (x != NULL)
 		X509_free(x);
-	if (NULL != bio)
+	if (bio != NULL)
 		BIO_free(bio);
 	free(san);
 	free(path);
@@ -346,5 +346,5 @@ out:
 	free(der64);
 	ERR_print_errors_fp(stderr);
 	ERR_free_strings();
-	return (rc);
+	return rc;
 }

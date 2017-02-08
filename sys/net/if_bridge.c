@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bridge.c,v 1.289 2016/11/21 08:27:59 reyk Exp $	*/
+/*	$OpenBSD: if_bridge.c,v 1.294 2017/02/05 16:04:14 jca Exp $	*/
 
 /*
  * Copyright (c) 1999, 2000 Jason L. Wright (jason@thought.net)
@@ -168,7 +168,7 @@ bridge_clone_create(struct if_clone *ifc, int unit)
 
 	sc->sc_brtmax = BRIDGE_RTABLE_MAX;
 	sc->sc_brttimeout = BRIDGE_RTABLE_TIMEOUT;
-	timeout_set(&sc->sc_brtimeout, bridge_timer, sc);
+	timeout_set(&sc->sc_brtimeout, bridge_rtage, sc);
 	TAILQ_INIT(&sc->sc_iflist);
 	TAILQ_INIT(&sc->sc_spanlist);
 	for (i = 0; i < BRIDGE_RTABLE_SIZE; i++)
@@ -181,6 +181,7 @@ bridge_clone_create(struct if_clone *ifc, int unit)
 	ifp->if_mtu = ETHERMTU;
 	ifp->if_ioctl = bridge_ioctl;
 	ifp->if_output = bridge_dummy_output;
+	ifp->if_xflags = IFXF_CLONED;
 	ifp->if_start = NULL;
 	ifp->if_type = IFT_BRIDGE;
 	ifp->if_hdrlen = ETHER_HDR_LEN;
@@ -737,7 +738,7 @@ bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *sa,
 	struct bridge_tunneltag *brtag;
 	int error;
 
-	/* ifp must be a member interface of the bridge. */ 
+	/* ifp must be a member interface of the bridge. */
 	if (ifp->if_bridgeport == NULL) {
 		m_freem(m);
 		return (EINVAL);
@@ -1091,12 +1092,12 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 	eh = mtod(m, struct ether_header *);
 	if (ETHER_IS_MULTICAST(eh->ether_dhost)) {
 		/*
-	 	 * Reserved destination MAC addresses (01:80:C2:00:00:0x)
+		 * Reserved destination MAC addresses (01:80:C2:00:00:0x)
 		 * should not be forwarded to bridge members according to
 		 * section 7.12.6 of the 802.1D-2004 specification.  The
 		 * STP destination address (as stored in bstp_etheraddr)
 		 * is the first of these.
-	 	 */
+		 */
 		if (bcmp(eh->ether_dhost, bstp_etheraddr, ETHER_ADDR_LEN - 1)
 		    == 0) {
 			if (eh->ether_dhost[ETHER_ADDR_LEN - 1] == 0) {
@@ -1115,11 +1116,11 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 		 */
 		if ((ifl->bif_flags & IFBIF_STP) &&
 		    (ifl->bif_state == BSTP_IFSTATE_DISCARDING))
-	    		goto reenqueue;
+			goto reenqueue;
 
 		mc = m_dup_pkt(m, ETHER_ALIGN, M_NOWAIT);
 		if (mc == NULL)
-	    		goto reenqueue;
+			goto reenqueue;
 
 		bridge_ifinput(ifp, mc);
 
@@ -1132,7 +1133,7 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 	 */
 	if ((ifl->bif_flags & IFBIF_STP) &&
 	    (ifl->bif_state == BSTP_IFSTATE_DISCARDING))
-	    	goto reenqueue;
+		goto reenqueue;
 
 	/*
 	 * Unicast, make sure it's not for us.
@@ -1393,7 +1394,7 @@ bridge_ipsec(struct bridge_softc *sc, struct ifnet *ifp,
 	struct tdb *tdb;
 	u_int32_t spi;
 	u_int16_t cpi;
-	int error, off, s;
+	int error, off;
 	u_int8_t proto = 0;
 	struct ip *ip;
 #ifdef INET6
@@ -1478,7 +1479,7 @@ bridge_ipsec(struct bridge_softc *sc, struct ifnet *ifp,
 		if (proto == 0)
 			goto skiplookup;
 
-		s = splsoftnet();
+		splsoftassert(IPL_SOFTNET);
 
 		tdb = gettdb(ifp->if_rdomain, spi, &dst, proto);
 		if (tdb != NULL && (tdb->tdb_flags & TDBF_INVALID) == 0 &&
@@ -1494,10 +1495,8 @@ bridge_ipsec(struct bridge_softc *sc, struct ifnet *ifp,
 			}
 
 			(*(tdb->tdb_xform->xf_input))(m, tdb, hlen, off);
-			splx(s);
 			return (1);
 		} else {
-			splx(s);
  skiplookup:
 			/* XXX do an input policy lookup */
 			return (0);
@@ -1693,7 +1692,7 @@ bridge_ip(struct bridge_softc *sc, int dir, struct ifnet *ifp,
 		if (m->m_len < sizeof(struct ip6_hdr)) {
 			if ((m = m_pullup(m, sizeof(struct ip6_hdr)))
 			    == NULL) {
-				ip6stat.ip6s_toosmall++;
+				ip6stat_inc(ip6s_toosmall);
 				return (NULL);
 			}
 		}
@@ -1701,7 +1700,7 @@ bridge_ip(struct bridge_softc *sc, int dir, struct ifnet *ifp,
 		ip6 = mtod(m, struct ip6_hdr *);
 
 		if ((ip6->ip6_vfc & IPV6_VERSION_MASK) != IPV6_VERSION) {
-			ip6stat.ip6s_badvers++;
+			ip6stat_inc(ip6s_badvers);
 			goto dropit;
 		}
 
@@ -1977,7 +1976,7 @@ bridge_tunnel(struct mbuf *m)
 struct bridge_tunneltag *
 bridge_tunneltag(struct mbuf *m)
 {
-	struct m_tag    	*mtag;
+	struct m_tag	*mtag;
 
 	if ((mtag = m_tag_find(m, PACKET_TAG_TUNNEL, NULL)) == NULL) {
 		mtag = m_tag_get(PACKET_TAG_TUNNEL,

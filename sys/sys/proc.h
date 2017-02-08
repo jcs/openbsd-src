@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.228 2016/11/07 02:50:33 guenther Exp $	*/
+/*	$OpenBSD: proc.h,v 1.233 2017/02/08 20:58:30 guenther Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -48,9 +48,9 @@
 #include <sys/event.h>			/* For struct klist */
 #include <sys/mutex.h>			/* For struct mutex */
 #include <sys/resource.h>		/* For struct rusage */
-#include <machine/atomic.h>
 
 #ifdef _KERNEL
+#include <sys/atomic.h>
 #define __need_process
 #endif
 
@@ -115,10 +115,6 @@ struct	emul {
 	char	*e_esigret;		/* sigaction RET position */
 	int	e_flags;		/* Flags, see below */
 	struct uvm_object *e_sigobject;	/* shared sigcode object */
-					/* Per-process hooks */
-	void	(*e_proc_exec)(struct proc *, struct exec_package *);
-	void	(*e_proc_fork)(struct proc *p, struct proc *parent);
-	void	(*e_proc_exit)(struct proc *);
 };
 /* Flags for e_flags */
 #define	EMUL_ENABLED	0x0001		/* Allow exec to continue */
@@ -207,6 +203,9 @@ struct process {
 	struct	plimit *ps_limit;	/* Process limits. */
 	struct	pgrp *ps_pgrp;		/* Pointer to process group. */
 	struct	emul *ps_emul;		/* Emulation information */
+
+	char	ps_comm[MAXCOMLEN+1];
+
 	vaddr_t	ps_strings;		/* User pointers to argv/env */
 	vaddr_t	ps_stackgap;		/* User pointer to the "stackgap" */
 	vaddr_t	ps_sigcode;		/* User pointer to the signal code */
@@ -321,8 +320,6 @@ struct proc {
 	struct	tusage p_tu;		/* accumulated times. */
 	struct	timespec p_rtime;	/* Real time. */
 
-	void	*p_emuldata;		/* Per-process emulation data, or */
-					/* NULL. Malloc type M_EMULDATA */
 	int	 p_siglist;		/* Signals arrived but not delivered. */
 
 /* End area that is zeroed on creation. */
@@ -334,8 +331,6 @@ struct proc {
 
 	u_char	p_priority;	/* Process priority. */
 	u_char	p_usrpri;	/* User-priority based on p_estcpu and ps_nice. */
-	char	p_comm[MAXCOMLEN+1];
-
 	int	p_pledge_syscall;	/* Cache of current syscall */
 
 #ifndef	__HAVE_MD_TCB
@@ -500,7 +495,7 @@ void	freepid(pid_t);
 
 struct process *prfind(pid_t);	/* Find process by id. */
 struct process *zombiefind(pid_t); /* Find zombie process by id. */
-struct proc *pfind(pid_t);	/* Find thread by id. */
+struct proc *tfind(pid_t);	/* Find thread by id. */
 struct pgrp *pgfind(pid_t);	/* Find process group by id. */
 void	proc_printit(struct proc *p, const char *modif,
     int (*pr)(const char *, ...));

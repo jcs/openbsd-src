@@ -1,4 +1,4 @@
-/*	$OpenBSD: control.c,v 1.83 2016/10/14 16:05:35 phessler Exp $ */
+/*	$OpenBSD: control.c,v 1.86 2017/01/24 04:22:42 benno Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -27,6 +27,7 @@
 
 #include "bgpd.h"
 #include "session.h"
+#include "log.h"
 
 #define	CONTROL_BACKLOG	5
 
@@ -156,9 +157,10 @@ control_connbyfd(int fd)
 {
 	struct ctl_conn	*c;
 
-	for (c = TAILQ_FIRST(&ctl_conns); c != NULL && c->ibuf.fd != fd;
-	    c = TAILQ_NEXT(c, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(c, &ctl_conns, entry) {
+		if (c->ibuf.fd == fd)
+			break;
+	}
 
 	return (c);
 }
@@ -168,9 +170,10 @@ control_connbypid(pid_t pid)
 {
 	struct ctl_conn	*c;
 
-	for (c = TAILQ_FIRST(&ctl_conns); c != NULL && c->ibuf.pid != pid;
-	    c = TAILQ_NEXT(c, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(c, &ctl_conns, entry) {
+		if (c->ibuf.pid == pid)
+			break;
+	}
 
 	return (c);
 }
@@ -338,9 +341,15 @@ control_dispatch_msg(struct pollfd *pfd, u_int *ctl_cnt)
 				switch (imsg.hdr.type) {
 				case IMSG_CTL_NEIGHBOR_UP:
 					bgp_fsm(p, EVNT_START);
+					p->conf.down = 0;
+					p->conf.shutcomm[0] = '\0';
 					control_result(c, CTL_RES_OK);
 					break;
 				case IMSG_CTL_NEIGHBOR_DOWN:
+					p->conf.down = 1;
+					strlcpy(p->conf.shutcomm,
+					    neighbor->shutcomm,
+					    sizeof(neighbor->shutcomm));
 					session_stop(p, ERR_CEASE_ADMIN_DOWN);
 					control_result(c, CTL_RES_OK);
 					break;
@@ -491,7 +500,7 @@ control_dispatch_msg(struct pollfd *pfd, u_int *ctl_cnt)
 			    imsg.data, imsg.hdr.len - IMSG_HEADER_SIZE);
 
 			memcpy(&verbose, imsg.data, sizeof(verbose));
-			log_verbose(verbose);
+			log_setverbose(verbose);
 			break;
 		default:
 			break;

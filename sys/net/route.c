@@ -1,10 +1,10 @@
-/*	$OpenBSD: route.c,v 1.342 2016/12/04 09:46:39 stsp Exp $	*/
+/*	$OpenBSD: route.c,v 1.350 2017/02/05 16:23:38 jca Exp $	*/
 /*	$NetBSD: route.c,v 1.14 1996/02/13 22:00:46 christos Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -16,7 +16,7 @@
  * 3. Neither the name of the project nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -63,11 +63,11 @@
 
 /*
  *	@(#)COPYRIGHT	1.1 (NRL) 17 January 1995
- * 
+ *
  * NRL grants permission for redistribution and use in source and binary
  * forms, with or without modification, of the software and documentation
  * created at NRL provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
@@ -75,14 +75,14 @@
  *    documentation and/or other materials provided with the distribution.
  * 3. All advertising materials mentioning features or use of this software
  *    must display the following acknowledgements:
- * 	This product includes software developed by the University of
- * 	California, Berkeley and its contributors.
- * 	This product includes software developed at the Information
- * 	Technology Division, US Naval Research Laboratory.
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ *	This product includes software developed at the Information
+ *	Technology Division, US Naval Research Laboratory.
  * 4. Neither the name of the NRL nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
- * 
+ *
  * THE SOFTWARE PROVIDED BY NRL IS PROVIDED BY NRL AND CONTRIBUTORS ``AS
  * IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
  * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
@@ -94,7 +94,7 @@
  * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * The views and conclusions contained in the software and documentation
  * are those of the authors and should not be interpreted as representing
  * official policies, either expressed or implied, of the US Naval
@@ -150,7 +150,7 @@ static uint32_t		rt_hashjitter;
 
 extern unsigned int	rtmap_limit;
 
-struct rtstat		rtstat;
+struct cpumem *		rtcounters;
 int			rttrash;	/* routes not in table but not freed */
 int			ifatrash;	/* ifas not in ifp list but not free */
 
@@ -191,6 +191,8 @@ TAILQ_HEAD(rt_labels, rt_label)	rt_labels = TAILQ_HEAD_INITIALIZER(rt_labels);
 void
 route_init(void)
 {
+	rtcounters = counters_alloc(rts_ncounters);
+
 	pool_init(&rtentry_pool, sizeof(struct rtentry), 0, IPL_SOFTNET, 0,
 	    "rtentry", NULL);
 
@@ -216,8 +218,8 @@ rtisvalid(struct rtentry *rt)
 
 	if (ISSET(rt->rt_flags, RTF_GATEWAY)) {
 		KASSERT(rt->rt_gwroute != NULL);
-	    	KASSERT(!ISSET(rt->rt_gwroute->rt_flags, RTF_GATEWAY));
-	    	if (!ISSET(rt->rt_gwroute->rt_flags, RTF_UP))
+		KASSERT(!ISSET(rt->rt_gwroute->rt_flags, RTF_GATEWAY));
+		if (!ISSET(rt->rt_gwroute->rt_flags, RTF_UP))
 			return (0);
 	}
 
@@ -252,8 +254,15 @@ rt_match(struct sockaddr *dst, uint32_t *src, int flags, unsigned int tableid)
 			info.rti_info[RTAX_DST] = dst;
 
 			KERNEL_LOCK();
-			error = rtrequest(RTM_RESOLVE, &info, RTP_DEFAULT,
-			    &rt, tableid);
+			/*
+			 * The priority of cloned route should be different
+			 * to avoid conflict with /32 cloning routes.
+			 *
+			 * It should also be higher to let the ARP layer find
+			 * cloned routes instead of the cloning one.
+			 */
+			error = rtrequest(RTM_RESOLVE, &info,
+			    rt->rt_priority - 1, &rt, tableid);
 			if (error) {
 				rt_missmsg(RTM_MISS, &info, 0, RTP_NONE, 0,
 				    error, tableid);
@@ -266,7 +275,7 @@ rt_match(struct sockaddr *dst, uint32_t *src, int flags, unsigned int tableid)
 		}
 		rt->rt_use++;
 	} else
-		rtstat.rts_unreach++;
+		rtstat_inc(rts_unreach);
 	return (rt);
 }
 
@@ -276,12 +285,12 @@ rt_match(struct sockaddr *dst, uint32_t *src, int flags, unsigned int tableid)
  */
 #define mix(a, b, c) do {						\
 	a -= b; a -= c; a ^= (c >> 13);					\
-	b -= c; b -= a; b ^= (a << 8); 					\
+	b -= c; b -= a; b ^= (a << 8);					\
 	c -= a; c -= b; c ^= (b >> 13);					\
 	a -= b; a -= c; a ^= (c >> 12);					\
 	b -= c; b -= a; b ^= (a << 16);					\
-	c -= a; c -= b; c ^= (b >> 5); 					\
-	a -= b; a -= c; a ^= (c >> 3); 					\
+	c -= a; c -= b; c ^= (b >> 5);					\
+	a -= b; a -= c; a ^= (c >> 3);					\
 	b -= c; b -= a; b ^= (a << 10);					\
 	c -= a; c -= b; c ^= (b >> 15);					\
 } while (0)
@@ -397,7 +406,7 @@ rt_setgwroute(struct rtentry *rt, u_int rtableid)
 	 */
 	if (ISSET(nhrt->rt_flags, RTF_CLONING|RTF_GATEWAY)) {
 		rtfree(nhrt);
-		return (ELOOP);
+		return (ENETUNREACH);
 	}
 
 	/* Next hop is valid so remove possible old cache. */
@@ -538,14 +547,14 @@ rtredirect(struct sockaddr *dst, struct sockaddr *gateway,
 {
 	struct rtentry		*rt;
 	int			 error = 0;
-	u_int32_t		*stat = NULL;
+	enum rtstat_counters	 stat = rts_ncounters;
 	struct rt_addrinfo	 info;
 	struct ifaddr		*ifa;
 	unsigned int		 ifidx = 0;
-	int 			 flags = RTF_GATEWAY|RTF_HOST;
+	int			 flags = RTF_GATEWAY|RTF_HOST;
 	uint8_t			 prio = RTP_NONE;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	/* verify the gateway is directly reachable */
 	rt = rtalloc(gateway, 0, rdomain);
@@ -610,7 +619,7 @@ create:
 				flags = rt->rt_flags;
 				prio = rt->rt_priority;
 			}
-			stat = &rtstat.rts_dynamic;
+			stat = rts_dynamic;
 		} else {
 			/*
 			 * Smash the current notion of the gateway to
@@ -619,7 +628,7 @@ create:
 			rt->rt_flags |= RTF_MODIFIED;
 			flags |= RTF_MODIFIED;
 			prio = rt->rt_priority;
-			stat = &rtstat.rts_newgateway;
+			stat = rts_newgateway;
 			rt_setgate(rt, gateway, rdomain);
 		}
 	} else
@@ -633,9 +642,9 @@ done:
 	}
 out:
 	if (error)
-		rtstat.rts_badredirect++;
-	else if (stat != NULL)
-		(*stat)++;
+		rtstat_inc(rts_badredirect);
+	else if (stat != rts_ncounters)
+		rtstat_inc(stat);
 	bzero((caddr_t)&info, sizeof(info));
 	info.rti_info[RTAX_DST] = dst;
 	info.rti_info[RTAX_GATEWAY] = gateway;
@@ -876,17 +885,17 @@ rtrequest_delete(struct rt_addrinfo *info, u_int8_t prio, struct ifnet *ifp,
 	}
 #endif
 
+#ifdef BFD
+	if (ISSET(rt->rt_flags, RTF_BFD))
+		bfdclear(rt);
+#endif
+
 	error = rtable_delete(tableid, info->rti_info[RTAX_DST],
 	    info->rti_info[RTAX_NETMASK], rt);
 	if (error != 0) {
 		rtfree(rt);
 		return (ESRCH);
 	}
-
-#ifdef BFD
-	if (ISSET(rt->rt_flags, RTF_BFD))
-		bfdclear(rt);
-#endif
 
 	/* Release next hop cache before flushing cloned entries. */
 	rt_putgwroute(rt);
@@ -1011,7 +1020,7 @@ rtrequest(int req, struct rt_addrinfo *info, u_int8_t prio,
 		}
 
 #ifdef MPLS
-		/* We have to allocate additional space for MPLS infos */ 
+		/* We have to allocate additional space for MPLS infos */
 		if (info->rti_flags & RTF_MPLS &&
 		    (info->rti_info[RTAX_SRC] != NULL ||
 		    info->rti_info[RTAX_DST]->sa_family == AF_MPLS)) {
@@ -1046,15 +1055,14 @@ rtrequest(int req, struct rt_addrinfo *info, u_int8_t prio,
 		ifa->ifa_refcnt++;
 		rt->rt_ifa = ifa;
 		rt->rt_ifidx = ifp->if_index;
-		if (rt->rt_flags & RTF_CLONED) {
-			/*
-			 * Copy both metrics and a back pointer to the cloned
-			 * route's parent.
-			 */
-			rt->rt_rmx = (*ret_nrt)->rt_rmx; /* copy metrics */
-			rt->rt_priority = (*ret_nrt)->rt_priority;
-			rt->rt_parent = *ret_nrt;	 /* Back ptr. to parent. */
-			rtref(rt->rt_parent);
+		/*
+		 * Copy metrics and a back pointer from the cloned
+		 * route's parent.
+		 */
+		if (ISSET(rt->rt_flags, RTF_CLONED)) {
+			rtref(*ret_nrt);
+			rt->rt_parent = *ret_nrt;
+			rt->rt_rmx = (*ret_nrt)->rt_rmx;
 		}
 
 		/*
@@ -1441,7 +1449,7 @@ static int			rt_init_done = 0;
 	}							\
 }
 
-/* 
+/*
  * Some subtle order problems with domain initialization mean that
  * we cannot count on this being run from rt_init before various
  * protocol initializations are done.  Therefore, we make sure
@@ -1495,7 +1503,7 @@ rt_timer_queue_destroy(struct rttimer_queue *rtq)
 {
 	struct rttimer	*r;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	while ((r = TAILQ_FIRST(&rtq->rtq_head)) != NULL) {
 		LIST_REMOVE(r, rtt_link);
@@ -1589,7 +1597,7 @@ rt_timer_timer(void *arg)
 
 	current_time = time_uptime;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 	for (rtq = LIST_FIRST(&rttimer_queue_head); rtq != NULL;
 	     rtq = LIST_NEXT(rtq, rtq_link)) {
 		while ((r = TAILQ_FIRST(&rtq->rtq_head)) != NULL &&
@@ -1604,7 +1612,7 @@ rt_timer_timer(void *arg)
 				printf("rt_timer_timer: rtq_count reached 0\n");
 		}
 	}
-	splx(s);
+	NET_UNLOCK(s);
 
 	timeout_add_sec(to, 1);
 }
@@ -1728,7 +1736,7 @@ rt_if_linkstate_change(struct rtentry *rt, void *arg, u_int id)
 	struct sockaddr_in6 sa_mask;
 
 	if (rt->rt_ifidx != ifp->if_index)
-	    	return (0);
+		return (0);
 
 	/* Local routes are always usable. */
 	if (rt->rt_flags & RTF_LOCAL) {
@@ -1752,7 +1760,7 @@ rt_if_linkstate_change(struct rtentry *rt, void *arg, u_int id)
 			 * new routes from a better source.
 			 */
 			if (ISSET(rt->rt_flags, RTF_CLONED|RTF_DYNAMIC) &&
-			    !ISSET(rt->rt_flags, RTF_CACHED)) {
+			    !ISSET(rt->rt_flags, RTF_CACHED|RTF_BFD)) {
 				int error;
 
 				if ((error = rtdeletemsg(rt, ifp, id)))

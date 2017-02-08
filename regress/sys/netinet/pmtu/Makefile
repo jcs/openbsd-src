@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.7 2016/11/09 12:43:36 bluhm Exp $
+#	$OpenBSD: Makefile,v 1.9 2017/01/19 13:41:48 bluhm Exp $
 
 # The following ports must be installed:
 #
@@ -89,8 +89,6 @@ PYTHON =	python2.7 -u ./
 PYTHON =	PYTHONPATH=${.OBJDIR} python2.7 -u ${.CURDIR}/
 .endif
 
-.PHONY: clean-arp
-
 # Clear local and remote path mtu routes, set fake net route
 reset-route:
 	@echo '\n======== $@ ========'
@@ -145,6 +143,17 @@ run-regress-gateway6: run-regress-udp6
 	grep -q 'gateway: ${LOCAL_ADDR6}' pmtu.route
 	grep -q 'flags: <UP,GATEWAY,HOST,DYNAMIC,DONE>' pmtu.route
 	${SUDO} ${PYTHON}udp_echo6.py
+
+TARGETS +=	tcpfrag6 udpfrag6
+run-regress-tcpfrag6: addr.py reset-route6
+	@echo '\n======== $@ ========'
+	@echo Send ICMP6 and try to trigger a short TCP segment
+	${SUDO} ${PYTHON}tcp_atomicfrag6.py
+run-regress-udpfrag6: addr.py reset-route6
+	@echo '\n======== $@ ========'
+	@echo Send ICMP6 and try to trigger an atomic UDP IPv6 fragment
+	${SUDO} ${PYTHON}udp_atomicfrag6.py
+
 
 REGRESS_TARGETS =	${TARGETS:S/^/run-regress-/}
 

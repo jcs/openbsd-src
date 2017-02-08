@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.151 2016/10/27 08:21:58 phessler Exp $ */
+/*	$OpenBSD: rde.h,v 1.160 2017/01/25 03:21:55 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/tree.h>
+#include <stdint.h>
 
 #include "bgpd.h"
 
@@ -42,6 +43,8 @@ LIST_HEAD(rde_peer_head, rde_peer);
 LIST_HEAD(aspath_head, rde_aspath);
 RB_HEAD(uptree_prefix, update_prefix);
 RB_HEAD(uptree_attr, update_attr);
+struct rib_desc;
+struct rib;
 RB_HEAD(rib_tree, rib_entry);
 TAILQ_HEAD(uplist_prefix, update_prefix);
 TAILQ_HEAD(uplist_attr, update_attr);
@@ -73,7 +76,7 @@ struct rde_peer {
 	u_int32_t			 up_nlricnt;
 	u_int32_t			 up_wcnt;
 	enum peer_state			 state;
-	u_int16_t			 ribid;
+	struct rib			*rib;
 	u_int16_t			 short_as;
 	u_int16_t			 mrt_idx;
 	u_int8_t			 reconf_out;	/* out filter changed */
@@ -278,30 +281,31 @@ struct rib_context {
 struct rib_entry {
 	RB_ENTRY(rib_entry)	 rib_e;
 	struct prefix_head	 prefix_h;
-	struct prefix		*active; /* for fast access */
+	struct prefix		*active;	/* for fast access */
 	struct pt_entry		*prefix;
-	u_int16_t		 ribid;
-	u_int16_t		 flags;
+	struct rib		*__rib;		/* mangled pointer with flags */
 };
 
 struct rib {
-	char			name[PEER_DESCR_LEN];
-	struct rib_tree		rib;
-	struct filter_head	*in_rules;
-	struct filter_head	*in_rules_tmp;
+	struct rib_tree		tree;
 	u_int			rtableid;
 	u_int16_t		flags;
 	u_int16_t		id;
-	enum reconf_action 	state;
 };
 
-#define RIB_FAILED		0xffff
+struct rib_desc {
+	char			name[PEER_DESCR_LEN];
+	struct rib		rib;
+	struct filter_head	*in_rules;
+	struct filter_head	*in_rules_tmp;
+	enum reconf_action 	state;
+};
 
 struct prefix {
 	LIST_ENTRY(prefix)		 rib_l, path_l;
 	struct rde_aspath		*aspath;
 	struct pt_entry			*prefix;
-	struct rib_entry		*rib;	/* NULL for Adj-RIB-In */
+	struct rib_entry		*re;
 	time_t				 lastchange;
 };
 
@@ -309,24 +313,24 @@ extern struct rde_memstats rdemem;
 
 /* prototypes */
 /* mrt.c */
-int		 mrt_dump_v2_hdr(struct mrt *, struct bgpd_config *,
+int		mrt_dump_v2_hdr(struct mrt *, struct bgpd_config *,
 		    struct rde_peer_head *);
-void		 mrt_dump_upcall(struct rib_entry *, void *);
-void		 mrt_done(void *);
+void		mrt_dump_upcall(struct rib_entry *, void *);
+void		mrt_done(void *);
 
 /* rde.c */
-void		 rde_send_kroute(struct prefix *, struct prefix *, u_int16_t);
-void		 rde_send_nexthop(struct bgpd_addr *, int);
-void		 rde_send_pftable(u_int16_t, struct bgpd_addr *,
-		     u_int8_t, int);
-void		 rde_send_pftable_commit(void);
+void		rde_send_kroute(struct rib *, struct prefix *, struct prefix *);
+void		rde_send_nexthop(struct bgpd_addr *, int);
+void		rde_send_pftable(u_int16_t, struct bgpd_addr *,
+		    u_int8_t, int);
+void		rde_send_pftable_commit(void);
 
-void		 rde_generate_updates(u_int16_t, struct prefix *,
-		     struct prefix *);
-u_int32_t	 rde_local_as(void);
-int		 rde_noevaluate(void);
-int		 rde_decisionflags(void);
-int		 rde_as4byte(struct rde_peer *);
+void		rde_generate_updates(struct rib *, struct prefix *,
+		    struct prefix *);
+u_int32_t	rde_local_as(void);
+int		rde_noevaluate(void);
+int		rde_decisionflags(void);
+int		rde_as4byte(struct rde_peer *);
 
 /* rde_attr.c */
 int		 attr_write(void *, u_int16_t, u_int8_t, u_int8_t, void *,
@@ -421,10 +425,11 @@ int	 pt_prefix_cmp(const struct pt_entry *, const struct pt_entry *);
 
 /* rde_rib.c */
 extern u_int16_t	 rib_size;
-extern struct rib	*ribs;
+extern struct rib_desc	*ribs;
 
-u_int16_t	 rib_new(char *, u_int, u_int16_t);
-u_int16_t	 rib_find(char *);
+struct rib	*rib_new(char *, u_int, u_int16_t);
+struct rib	*rib_find(char *);
+struct rib_desc	*rib_desc(struct rib *);
 void		 rib_free(struct rib *);
 struct rib_entry *rib_get(struct rib *, struct bgpd_addr *, int);
 struct rib_entry *rib_lookup(struct rib *, struct bgpd_addr *);
@@ -434,6 +439,13 @@ void		 rib_dump_r(struct rib_context *);
 void		 rib_dump_runner(void);
 int		 rib_dump_pending(void);
 
+static inline struct rib *
+re_rib(struct rib_entry *re)
+{
+	return (struct rib *)((intptr_t)re->__rib & ~1);
+}
+
+void		 path_init(u_int32_t);
 void		 path_init(u_int32_t);
 void		 path_shutdown(void);
 int		 path_update(struct rib *, struct rde_peer *,

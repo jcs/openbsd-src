@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_node.c,v 1.105 2016/09/15 03:32:48 dlg Exp $	*/
+/*	$OpenBSD: ieee80211_node.c,v 1.114 2017/02/03 09:32:26 stsp Exp $	*/
 /*	$NetBSD: ieee80211_node.c,v 1.14 2004/05/09 09:18:47 dyoung Exp $	*/
 
 /*-
@@ -208,6 +208,7 @@ ieee80211_node_detach(struct ifnet *ifp)
 		free(ic->ic_tim_bitmap, M_DEVBUF, 0);
 	timeout_del(&ic->ic_inact_timeout);
 	timeout_del(&ic->ic_node_cache_timeout);
+	timeout_del(&ic->ic_tkip_micfail_timeout);
 #endif
 	timeout_del(&ic->ic_rsn_timeout);
 }
@@ -352,6 +353,33 @@ ieee80211_create_ibss(struct ieee80211com* ic, struct ieee80211_channel *chan)
 	ni->ni_capinfo = IEEE80211_CAPINFO_IBSS;
 	if (ic->ic_flags & IEEE80211_F_WEPON)
 		ni->ni_capinfo |= IEEE80211_CAPINFO_PRIVACY;
+	if (ic->ic_flags & IEEE80211_F_HTON) {
+		const struct ieee80211_edca_ac_params *ac_qap;
+		struct ieee80211_edca_ac_params *ac;
+		int aci;
+
+		/* 
+		 * Default to non-member HT protection until we have a way
+		 * of picking up information from the environment (such as
+		 * beacons from other networks) which proves that only HT
+		 * STAs are on the air.
+		 */
+		ni->ni_htop1 = IEEE80211_HTPROT_NONMEMBER;
+		ic->ic_protmode = IEEE80211_PROT_RTSCTS;
+
+		/* Configure QoS EDCA parameters. */
+		for (aci = 0; aci < EDCA_NUM_AC; aci++) {
+			ac = &ic->ic_edca_ac[aci];
+			ac_qap = &ieee80211_qap_edca_table[ic->ic_curmode][aci];
+			ac->ac_acm       = ac_qap->ac_acm;
+			ac->ac_aifsn     = ac_qap->ac_aifsn;
+			ac->ac_ecwmin    = ac_qap->ac_ecwmin;
+			ac->ac_ecwmax    = ac_qap->ac_ecwmax;
+			ac->ac_txoplimit = ac_qap->ac_txoplimit;
+		}
+		if (ic->ic_updateedca)
+			(*ic->ic_updateedca)(ic);
+	}
 	if (ic->ic_flags & IEEE80211_F_RSNON) {
 		struct ieee80211_key *k;
 
@@ -371,6 +399,7 @@ ieee80211_create_ibss(struct ieee80211com* ic, struct ieee80211_channel *chan)
 		}
 
 		ic->ic_def_txkey = 1;
+		ic->ic_flags &= ~IEEE80211_F_COUNTERM;
 		k = &ic->ic_nw_keys[ic->ic_def_txkey];
 		memset(k, 0, sizeof(*k));
 		k->k_id = ic->ic_def_txkey;
@@ -646,6 +675,12 @@ ieee80211_end_scan(struct ifnet *ifp)
 	ni = ic->ic_bss;
 
 	ic->ic_curmode = ieee80211_chan2mode(ic, ni->ni_chan);
+
+	/* Make sure we send valid rates in an association request. */
+	if (ic->ic_opmode == IEEE80211_M_STA)
+		ieee80211_fix_rate(ic, ni,
+		    IEEE80211_F_DOSORT | IEEE80211_F_DOFRATE |
+		    IEEE80211_F_DONEGO | IEEE80211_F_DODEL);
 
 	if (ic->ic_flags & IEEE80211_F_RSNON)
 		ieee80211_choose_rsnparams(ic);
@@ -1321,6 +1356,27 @@ ieee80211_setup_htcaps(struct ieee80211_node *ni, const uint8_t *data,
 	ni->ni_aselcaps = data[25];
 }
 
+#ifndef IEEE80211_STA_ONLY
+/* 
+ * Handle nodes switching from 11n into legacy modes.
+ */
+void
+ieee80211_clear_htcaps(struct ieee80211_node *ni)
+{
+	ni->ni_htcaps = 0;
+	ni->ni_ampdu_param = 0;
+	memset(ni->ni_rxmcs, 0, sizeof(ni->ni_rxmcs));
+	ni->ni_max_rxrate = 0;
+	ni->ni_tx_mcs_set = 0;
+	ni->ni_htxcaps = 0;
+	ni->ni_txbfcaps = 0;
+	ni->ni_aselcaps = 0;
+
+	ni->ni_flags &= ~IEEE80211_NODE_HT;
+
+}
+#endif
+
 /*
  * Install received HT op information in the node's state block.
  */
@@ -1421,7 +1477,14 @@ ieee80211_needs_auth(struct ieee80211com *ic, struct ieee80211_node *ni)
 void
 ieee80211_node_join_ht(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
-	/* TBD */
+	enum ieee80211_htprot;
+
+	/* Update HT protection setting. */
+	if ((ni->ni_flags & IEEE80211_NODE_HT) == 0) {
+		ic->ic_bss->ni_htop1 = IEEE80211_HTPROT_NONHT_MIXED;
+		if (ic->ic_update_htprot)
+			ic->ic_update_htprot(ic, ic->ic_bss);
+	}
 }
 
 /*
@@ -1436,7 +1499,6 @@ ieee80211_node_join_rsn(struct ieee80211com *ic, struct ieee80211_node *ni)
 	    ni->ni_rsngroupcipher));
 
 	ni->ni_rsn_state = RSNA_AUTHENTICATION;
-	ic->ic_rsnsta++;
 
 	ni->ni_key_count = 0;
 	ni->ni_port_valid = 0;
@@ -1463,12 +1525,74 @@ ieee80211_node_join_rsn(struct ieee80211com *ic, struct ieee80211_node *ni)
 	}
 }
 
+void
+ieee80211_count_longslotsta(void *arg, struct ieee80211_node *ni)
+{
+	int *longslotsta = arg;
+
+	if (ni->ni_associd == 0 || ni->ni_state == IEEE80211_STA_COLLECT)
+		return;
+
+	if (!(ni->ni_capinfo & IEEE80211_CAPINFO_SHORT_SLOTTIME))
+		(*longslotsta)++;
+}
+
+void
+ieee80211_count_nonerpsta(void *arg, struct ieee80211_node *ni)
+{
+	int *nonerpsta = arg;
+
+	if (ni->ni_associd == 0 || ni->ni_state == IEEE80211_STA_COLLECT)
+		return;
+
+	if (!ieee80211_iserp_sta(ni))
+		(*nonerpsta)++;
+}
+
+void
+ieee80211_count_nonhtsta(void *arg, struct ieee80211_node *ni)
+{
+	int *nonhtsta = arg;
+
+	if (ni->ni_associd == 0 || ni->ni_state == IEEE80211_STA_COLLECT)
+		return;
+
+	if (!(ni->ni_flags & IEEE80211_NODE_HT))
+		(*nonhtsta)++;
+}
+
+void
+ieee80211_count_pssta(void *arg, struct ieee80211_node *ni)
+{
+	int *pssta = arg;
+
+	if (ni->ni_associd == 0 || ni->ni_state == IEEE80211_STA_COLLECT)
+		return;
+
+ 	if (ni->ni_pwrsave == IEEE80211_PS_DOZE)
+		(*pssta)++;
+}
+
+void
+ieee80211_count_rekeysta(void *arg, struct ieee80211_node *ni)
+{
+	int *rekeysta = arg;
+
+	if (ni->ni_associd == 0 || ni->ni_state == IEEE80211_STA_COLLECT)
+		return;
+
+	if (ni->ni_flags & IEEE80211_NODE_REKEY)
+		(*rekeysta)++;
+}
+
 /*
  * Handle a station joining an 11g network.
  */
 void
 ieee80211_node_join_11g(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
+	int longslotsta = 0, nonerpsta = 0;
+
 	if (!(ni->ni_capinfo & IEEE80211_CAPINFO_SHORT_SLOTTIME)) {
 		/*
 		 * Joining STA doesn't support short slot time.  We must
@@ -1476,24 +1600,25 @@ ieee80211_node_join_11g(struct ieee80211com *ic, struct ieee80211_node *ni)
 		 * STAs and give the driver a chance to reconfigure the
 		 * hardware.
 		 */
-		if (++ic->ic_longslotsta == 1) {
+		ieee80211_iterate_nodes(ic,
+		    ieee80211_count_longslotsta, &longslotsta);
+		if (longslotsta == 1) {
 			if (ic->ic_caps & IEEE80211_C_SHSLOT)
 				ieee80211_set_shortslottime(ic, 0);
 		}
 		DPRINTF(("[%s] station needs long slot time, count %d\n",
-		    ether_sprintf(ni->ni_macaddr), ic->ic_longslotsta));
+		    ether_sprintf(ni->ni_macaddr), longslotsta));
 	}
 
 	if (!ieee80211_iserp_sta(ni)) {
 		/*
 		 * Joining STA is non-ERP.
 		 */
-		ic->ic_nonerpsta++;
-
+		ieee80211_iterate_nodes(ic,
+		    ieee80211_count_nonerpsta, &nonerpsta);
 		DPRINTF(("[%s] station is non-ERP, %d non-ERP "
 		    "stations associated\n", ether_sprintf(ni->ni_macaddr),
-		    ic->ic_nonerpsta));
-
+		    nonerpsta));
 		/* must enable the use of protection */
 		if (ic->ic_protmode != IEEE80211_PROT_NONE) {
 			DPRINTF(("enable use of protection\n"));
@@ -1542,6 +1667,10 @@ ieee80211_node_join(struct ieee80211com *ic, struct ieee80211_node *ni,
 	    ether_sprintf(ni->ni_macaddr), newassoc ? "newly" : "already",
 	    ni->ni_associd & ~0xc000));
 
+	ieee80211_ht_negotiate(ic, ni);
+	if (ic->ic_flags & IEEE80211_F_HTON)
+		ieee80211_node_join_ht(ic, ni);
+
 	/* give driver a chance to setup state like ni_txrate */
 	if (ic->ic_newassoc)
 		(*ic->ic_newassoc)(ic, ni, newassoc);
@@ -1553,10 +1682,6 @@ ieee80211_node_join(struct ieee80211com *ic, struct ieee80211_node *ni,
 		ni->ni_rsncipher = IEEE80211_CIPHER_USEGROUP;
 	} else
 		ieee80211_node_join_rsn(ic, ni);
-
-	ieee80211_ht_negotiate(ic, ni);
-	if (ni->ni_flags & IEEE80211_NODE_HT)
-		ieee80211_node_join_ht(ic, ni);
 
 #if NBRIDGE > 0
 	/*
@@ -1580,6 +1705,7 @@ ieee80211_node_leave_ht(struct ieee80211com *ic, struct ieee80211_node *ni)
 	int i;
 
 	/* free all Block Ack records */
+	ieee80211_ba_del(ni);
 	for (tid = 0; tid < IEEE80211_NUM_TID; tid++) {
 		ba = &ni->ni_rx_ba[tid];
 		if (ba->ba_buf != NULL) {
@@ -1589,6 +1715,8 @@ ieee80211_node_leave_ht(struct ieee80211com *ic, struct ieee80211_node *ni)
 			ba->ba_buf = NULL;
 		}
 	}
+
+	ieee80211_clear_htcaps(ni);
 }
 
 /*
@@ -1597,15 +1725,18 @@ ieee80211_node_leave_ht(struct ieee80211com *ic, struct ieee80211_node *ni)
 void
 ieee80211_node_leave_rsn(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
+	int rekeysta = 0;
+
 	ni->ni_rsn_state = RSNA_DISCONNECTED;
-	ic->ic_rsnsta--;
 
 	ni->ni_rsn_state = RSNA_INITIALIZE;
-	if ((ni->ni_flags & IEEE80211_NODE_REKEY) &&
-	    --ic->ic_rsn_keydonesta == 0)
-		ieee80211_setkeysdone(ic);
-	ni->ni_flags &= ~IEEE80211_NODE_REKEY;
-
+	if (ni->ni_flags & IEEE80211_NODE_REKEY) {
+		ni->ni_flags &= ~IEEE80211_NODE_REKEY;
+		ieee80211_iterate_nodes(ic,
+		    ieee80211_count_rekeysta, &rekeysta);
+		if (rekeysta == 0)
+			ieee80211_setkeysdone(ic);
+	}
 	ni->ni_flags &= ~IEEE80211_NODE_PMK;
 	ni->ni_rsn_gstate = RSNA_IDLE;
 
@@ -1624,15 +1755,13 @@ ieee80211_node_leave_rsn(struct ieee80211com *ic, struct ieee80211_node *ni)
 void
 ieee80211_node_leave_11g(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
+	int longslotsta = 0, nonerpsta = 0;
+
 	if (!(ni->ni_capinfo & IEEE80211_CAPINFO_SHORT_SLOTTIME)) {
-#ifdef DIAGNOSTIC
-		if (ic->ic_longslotsta == 0) {
-			panic("bogus long slot station count %d",
-			    ic->ic_longslotsta);
-		}
-#endif
 		/* leaving STA did not support short slot time */
-		if (--ic->ic_longslotsta == 0) {
+		ieee80211_iterate_nodes(ic,
+		    ieee80211_count_longslotsta, &longslotsta);
+		if (longslotsta == 1) {
 			/*
 			 * All associated STAs now support short slot time, so
 			 * enable this feature and give the driver a chance to
@@ -1644,18 +1773,14 @@ ieee80211_node_leave_11g(struct ieee80211com *ic, struct ieee80211_node *ni)
 				ieee80211_set_shortslottime(ic, 1);
 		}
 		DPRINTF(("[%s] long slot time station leaves, count %d\n",
-		    ether_sprintf(ni->ni_macaddr), ic->ic_longslotsta));
+		    ether_sprintf(ni->ni_macaddr), longslotsta));
 	}
 
 	if (!(ni->ni_flags & IEEE80211_NODE_ERP)) {
-#ifdef DIAGNOSTIC
-		if (ic->ic_nonerpsta == 0) {
-			panic("bogus non-ERP station count %d",
-			    ic->ic_nonerpsta);
-		}
-#endif
 		/* leaving STA was non-ERP */
-		if (--ic->ic_nonerpsta == 0) {
+		ieee80211_iterate_nodes(ic,
+		    ieee80211_count_nonerpsta, &nonerpsta);
+		if (nonerpsta == 1) {
 			/*
 			 * All associated STAs are now ERP capable, disable use
 			 * of protection and re-enable short preamble support.
@@ -1665,7 +1790,7 @@ ieee80211_node_leave_11g(struct ieee80211com *ic, struct ieee80211_node *ni)
 				ic->ic_flags |= IEEE80211_F_SHPREAMBLE;
 		}
 		DPRINTF(("[%s] non-ERP station leaves, count %d\n",
-		    ether_sprintf(ni->ni_macaddr), ic->ic_nonerpsta));
+		    ether_sprintf(ni->ni_macaddr), nonerpsta));
 	}
 }
 
@@ -1678,6 +1803,9 @@ ieee80211_node_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
 	if (ic->ic_opmode != IEEE80211_M_HOSTAP)
 		panic("not in ap mode, mode %u", ic->ic_opmode);
+
+	if (ni->ni_state == IEEE80211_STA_COLLECT)
+		return;
 	/*
 	 * If node wasn't previously associated all we need to do is
 	 * reclaim the reference.
@@ -1687,10 +1815,8 @@ ieee80211_node_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
 		return;
 	}
 
-	if (ni->ni_pwrsave == IEEE80211_PS_DOZE) {
-		ic->ic_pssta--;
+	if (ni->ni_pwrsave == IEEE80211_PS_DOZE)
 		ni->ni_pwrsave = IEEE80211_PS_AWAKE;
-	}
 
 	if (mq_purge(&ni->ni_savedq) > 0) {
 		if (ic->ic_set_tim != NULL)
@@ -1707,6 +1833,17 @@ ieee80211_node_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
 
 	if (ni->ni_flags & IEEE80211_NODE_HT)
 		ieee80211_node_leave_ht(ic, ni);
+	else if (ic->ic_flags & IEEE80211_F_HTON) {
+		int nonhtsta = 0;
+		ieee80211_iterate_nodes(ic,
+		    ieee80211_count_nonhtsta, &nonhtsta);
+		if (nonhtsta == 1) {
+			/* All associated stations now support HT. */
+			ic->ic_bss->ni_htop1 = IEEE80211_HTPROT_NONMEMBER;
+			if (ic->ic_update_htprot)
+				ic->ic_update_htprot(ic, ic->ic_bss);
+		}
+	}
 
 	if (ic->ic_node_leave != NULL)
 		(*ic->ic_node_leave)(ic, ni);

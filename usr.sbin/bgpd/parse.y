@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.290 2016/10/14 16:05:36 phessler Exp $ */
+/*	$OpenBSD: parse.y,v 1.297 2017/01/25 00:11:07 claudio Exp $ */
 
 /*
  * Copyright (c) 2002, 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -44,6 +44,7 @@
 #include "mrt.h"
 #include "session.h"
 #include "rde.h"
+#include "log.h"
 
 TAILQ_HEAD(files, file)		 files = TAILQ_HEAD_INITIALIZER(files);
 static struct file {
@@ -140,7 +141,7 @@ struct filter_rule	*get_rule(enum action_types);
 
 int		 getcommunity(char *);
 int		 parsecommunity(struct filter_community *, char *);
-u_int		 getlargecommunity(char *);
+int64_t 	 getlargecommunity(char *);
 int		 parselargecommunity(struct filter_largecommunity *, char *);
 int		 parsesubtype(char *);
 int		 parseextvalue(char *, u_int32_t *);
@@ -1052,8 +1053,19 @@ peeropts	: REMOTEAS as4number	{
 		| PASSIVE		{
 			curpeer->conf.passive = 1;
 		}
-		| DOWN		{
+		| DOWN			{
 			curpeer->conf.down = 1;
+		}
+		| DOWN STRING		{
+			curpeer->conf.down = 1;
+			if (strlcpy(curpeer->conf.shutcomm, $2,
+				sizeof(curpeer->conf.shutcomm)) >=
+				sizeof(curpeer->conf.shutcomm)) {
+				    yyerror("shutdown reason too long");
+				    free($2);
+				    YYERROR;
+			}
+			free($2);
 		}
 		| RIB STRING	{
 			if (!find_rib($2)) {
@@ -2742,7 +2754,7 @@ parse_config(char *filename, struct bgpd_config *xconf, struct peer **xpeers)
 	netconf = &conf->networks;
 
 	add_rib("Adj-RIB-In", 0, F_RIB_NOFIB | F_RIB_NOEVALUATE);
-	add_rib("Loc-RIB", 0, 0);
+	add_rib("Loc-RIB", 0, F_RIB_LOCAL);
 
 	if ((file = pushfile(filename, 1)) == NULL) {
 		free(conf);
@@ -2755,8 +2767,7 @@ parse_config(char *filename, struct bgpd_config *xconf, struct peer **xpeers)
 	popfile();
 
 	/* Free macros and check which have not been used. */
-	for (sym = TAILQ_FIRST(&symhead); sym != NULL; sym = next) {
-		next = TAILQ_NEXT(sym, entry);
+	TAILQ_FOREACH_SAFE(sym, &symhead, entry, next) {
 		if ((cmd_opts & BGPD_OPT_VERBOSE2) && !sym->used)
 			fprintf(stderr, "warning: macro \"%s\" not "
 			    "used\n", sym->nam);
@@ -2816,9 +2827,10 @@ symset(const char *nam, const char *val, int persist)
 {
 	struct sym	*sym;
 
-	for (sym = TAILQ_FIRST(&symhead); sym && strcmp(nam, sym->nam);
-	    sym = TAILQ_NEXT(sym, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(sym, &symhead, entry) {
+		if (strcmp(nam, sym->nam) == 0)
+			break;
+	}
 
 	if (sym != NULL) {
 		if (sym->persist == 1)
@@ -2877,11 +2889,12 @@ symget(const char *nam)
 {
 	struct sym	*sym;
 
-	TAILQ_FOREACH(sym, &symhead, entry)
+	TAILQ_FOREACH(sym, &symhead, entry) {
 		if (strcmp(nam, sym->nam) == 0) {
 			sym->used = 1;
 			return (sym->val);
 		}
+	}
 	return (NULL);
 }
 
@@ -2954,7 +2967,7 @@ parsecommunity(struct filter_community *c, char *s)
 	return (0);
 }
 
-u_int
+int64_t
 getlargecommunity(char *s)
 {
 	u_int		 val;
@@ -3066,7 +3079,7 @@ parseextvalue(char *s, u_int32_t *v)
 		*v = uval | (uvalh << 16);
 		return (EXT_COMMUNITY_FOUR_AS);
 	} else {
-		/* more then one dot -> IP address */
+		/* more than one dot -> IP address */
 		if (inet_aton(s, &ip) == 0) {
 			yyerror("Bad ext-community %s not parseable", s);
 			return (-1);

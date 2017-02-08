@@ -1,4 +1,4 @@
-.\"	$OpenBSD: X509_NAME_add_entry_by_txt.3,v 1.4 2016/12/05 12:09:32 schwarze Exp $
+.\"	$OpenBSD: X509_NAME_add_entry_by_txt.3,v 1.7 2017/01/06 03:00:56 schwarze Exp $
 .\"	OpenSSL aebb9aac Jul 19 09:27:53 2016 -0400
 .\"
 .\" This file was written by Dr. Stephen Henson <steve@openssl.org>.
@@ -49,7 +49,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 .\" OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: December 5 2016 $
+.Dd $Mdocdate: January 6 2017 $
 .Dt X509_NAME_ADD_ENTRY_BY_TXT 3
 .Os
 .Sh NAME
@@ -170,8 +170,6 @@ is strongly recommended for the
 parameter.
 This allows the internal code to correctly determine the type of the
 field and to apply length checks according to the relevant standards.
-This is done using
-.Xr ASN1_STRING_set_by_NID 3 .
 .Pp
 If instead an ASN.1 type is used, no checks are performed and the supplied
 data in
@@ -197,7 +195,9 @@ can be set to -1 and
 to 0.
 This adds a new entry to the end of
 .Fa name
-as a single valued RelativeDistinguishedName (RDN).
+as a single valued
+.Vt RelativeDistinguishedName
+(RDN).
 .Pp
 .Fa loc
 actually determines the index where the new entry is inserted:
@@ -252,7 +252,9 @@ if (!X509_NAME_add_entry_by_txt(nm, "CN", MBSTRING_ASC,
 .Ed
 .Sh SEE ALSO
 .Xr d2i_X509_NAME 3 ,
-.Xr ERR_get_error 3
+.Xr ERR_get_error 3 ,
+.Xr X509_NAME_get_index_by_NID 3 ,
+.Xr X509_NAME_new 3
 .Sh BUGS
 .Fa type
 can still be set to

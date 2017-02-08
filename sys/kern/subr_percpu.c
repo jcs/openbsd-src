@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_percpu.c,v 1.5 2016/10/27 09:40:20 dlg Exp $ */
+/*	$OpenBSD: subr_percpu.c,v 1.7 2017/02/05 16:23:38 jca Exp $ */
 
 /*
  * Copyright (c) 2016 David Gwynne <dlg@openbsd.org>
@@ -125,7 +125,7 @@ cpumem_next(struct cpumem_iter *i, struct cpumem *cm)
 }
 
 struct cpumem *
-counters_alloc(unsigned int n, int type)
+counters_alloc(unsigned int n)
 {
 	struct cpumem *cm;
 	struct cpumem_iter cmi;
@@ -135,7 +135,7 @@ counters_alloc(unsigned int n, int type)
 	KASSERT(n > 0);
 
 	n++; /* add space for a generation number */
-	cm = cpumem_malloc(n * sizeof(uint64_t), type);
+	cm = cpumem_malloc(n * sizeof(uint64_t), M_COUNTERS);
 
 	CPUMEM_FOREACH(counters, &cmi, cm) {
 		for (i = 0; i < n; i++)
@@ -146,17 +146,17 @@ counters_alloc(unsigned int n, int type)
 }
 
 struct cpumem *
-counters_alloc_ncpus(struct cpumem *cm, unsigned int n, int type)
+counters_alloc_ncpus(struct cpumem *cm, unsigned int n)
 {
 	n++; /* the generation number */
-	return (cpumem_malloc_ncpus(cm, n * sizeof(uint64_t), type));
+	return (cpumem_malloc_ncpus(cm, n * sizeof(uint64_t), M_COUNTERS));
 }
 
 void
-counters_free(struct cpumem *cm, int type, unsigned int n)
+counters_free(struct cpumem *cm, unsigned int n)
 {
 	n++; /* generation number */
-	cpumem_free(cm, type, n * sizeof(uint64_t));
+	cpumem_free(cm, M_COUNTERS, n * sizeof(uint64_t));
 }
 
 void
@@ -181,10 +181,10 @@ counters_read(struct cpumem *cm, uint64_t *output, unsigned int n)
 			/* the generation number is odd during an update */
 			while (enter & 1) {
 				yield();
-				membar_consumer();
 				enter = *gen;
 			}
 
+			membar_consumer();
 			for (i = 0; i < n; i++)
 				temp[i] = counters[i];
 
@@ -213,12 +213,13 @@ counters_zero(struct cpumem *cm, unsigned int n)
 	uint64_t *counters;
 	unsigned int i;
 
-	n++; /* zero the generation numbers too */
-
 	counters = cpumem_first(&cmi, cm);
 	do {
 		for (i = 0; i < n; i++)
 			counters[i] = 0;
+		/* zero the generation numbers too */
+		membar_producer();
+		counters[i] = 0;
 
 		counters = cpumem_next(&cmi, cm);
 	} while (counters != NULL);
@@ -283,24 +284,24 @@ cpumem_next(struct cpumem_iter *i, struct cpumem *cm)
 }
 
 struct cpumem *
-counters_alloc(unsigned int n, int type)
+counters_alloc(unsigned int n)
 {
 	KASSERT(n > 0);
 
-	return (cpumem_malloc(n * sizeof(uint64_t), type));
+	return (cpumem_malloc(n * sizeof(uint64_t), M_COUNTERS));
 }
 
 struct cpumem *
-counters_alloc_ncpus(struct cpumem *cm, unsigned int n, int type)
+counters_alloc_ncpus(struct cpumem *cm, unsigned int n)
 {
 	/* this is unecessary, but symmetrical */
-	return (cpumem_malloc_ncpus(cm, n * sizeof(uint64_t), type));
+	return (cpumem_malloc_ncpus(cm, n * sizeof(uint64_t), M_COUNTERS));
 }
 
 void
-counters_free(struct cpumem *cm, int type, unsigned int n)
+counters_free(struct cpumem *cm, unsigned int n)
 {
-	cpumem_free(cm, type, n * sizeof(uint64_t));
+	cpumem_free(cm, M_COUNTERS, n * sizeof(uint64_t));
 }
 
 void
@@ -334,4 +335,3 @@ counters_zero(struct cpumem *cm, unsigned int n)
 }
 
 #endif /* MULTIPROCESSOR */
-

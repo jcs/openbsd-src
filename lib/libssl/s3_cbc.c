@@ -1,4 +1,4 @@
-/* $OpenBSD: s3_cbc.c,v 1.14 2016/11/08 21:25:01 miod Exp $ */
+/* $OpenBSD: s3_cbc.c,v 1.16 2017/01/23 08:08:06 beck Exp $ */
 /* ====================================================================
  * Copyright (c) 2012 The OpenSSL Project.  All rights reserved.
  *

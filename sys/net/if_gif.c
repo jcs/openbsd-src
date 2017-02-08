@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gif.c,v 1.86 2016/09/13 07:48:45 mpi Exp $	*/
+/*	$OpenBSD: if_gif.c,v 1.91 2017/01/29 19:58:47 bluhm Exp $	*/
 /*	$KAME: if_gif.c,v 1.43 2001/02/20 08:51:07 itojun Exp $	*/
 
 /*
@@ -115,6 +115,7 @@ gif_clone_create(struct if_clone *ifc, int unit)
 	     "%s%d", ifc->ifc_name, unit);
 	sc->gif_if.if_mtu    = GIF_MTU;
 	sc->gif_if.if_flags  = IFF_POINTOPOINT | IFF_MULTICAST;
+	sc->gif_if.if_xflags = IFXF_CLONED;
 	sc->gif_if.if_ioctl  = gif_ioctl;
 	sc->gif_if.if_start  = gif_start;
 	sc->gif_if.if_output = gif_output;
@@ -226,7 +227,6 @@ gif_start(struct ifnet *ifp)
 			m->m_pkthdr.len += offset;
 		}
 #endif
-		ifp->if_opackets++;
 
 		/* XXX we should cache the outgoing route */
 
@@ -715,18 +715,13 @@ in_gif_output(struct ifnet *ifp, int family, struct mbuf **m0)
 	return 0;
 }
 
-void
-in_gif_input(struct mbuf *m, ...)
+int
+in_gif_input(struct mbuf **mp, int *offp, int proto)
 {
-	int off;
+	struct mbuf *m = *mp;
 	struct gif_softc *sc;
 	struct ifnet *gifp = NULL;
 	struct ip *ip;
-	va_list ap;
-
-	va_start(ap, m);
-	off = va_arg(ap, int);
-	va_end(ap);
 
 	/* IP-in-IP header is caused by tunnel mode, so skip gif lookup */
 	if (m->m_flags & M_TUNNEL) {
@@ -762,13 +757,12 @@ in_gif_input(struct mbuf *m, ...)
 		gifp->if_ipackets++;
 		gifp->if_ibytes += m->m_pkthdr.len;
 		/* We have a configured GIF */
-		ipip_input(m, off, gifp, ip->ip_p);
-		return;
+		return ipip_input(mp, offp, gifp, proto);
 	}
 
 inject:
-	ip4_input(m, off); /* No GIF interface was configured */
-	return;
+	/* No GIF interface was configured */
+	return ip4_input(mp, offp, proto);
 }
 
 #ifdef INET6
@@ -796,9 +790,11 @@ in6_gif_output(struct ifnet *ifp, int family, struct mbuf **m0)
 	tdb.tdb_src.sin6.sin6_family = AF_INET6;
 	tdb.tdb_src.sin6.sin6_len = sizeof(struct sockaddr_in6);
 	tdb.tdb_src.sin6.sin6_addr = sin6_src->sin6_addr;
+	tdb.tdb_src.sin6.sin6_scope_id = sin6_src->sin6_scope_id;
 	tdb.tdb_dst.sin6.sin6_family = AF_INET6;
 	tdb.tdb_dst.sin6.sin6_len = sizeof(struct sockaddr_in6);
 	tdb.tdb_dst.sin6.sin6_addr = sin6_dst->sin6_addr;
+	tdb.tdb_src.sin6.sin6_scope_id = sin6_dst->sin6_scope_id;
 	tdb.tdb_xform = &xfs;
 	xfs.xf_type = -1;	/* not XF_IP4 */
 
@@ -849,12 +845,16 @@ int in6_gif_input(struct mbuf **mp, int *offp, int proto)
 	struct gif_softc *sc;
 	struct ifnet *gifp = NULL;
 	struct ip6_hdr *ip6;
+	struct sockaddr_in6 src, dst;
+	struct sockaddr_in6 *psrc, *pdst;
 
 	/* XXX What if we run transport-mode IPsec to protect gif tunnel ? */
 	if (m->m_flags & (M_AUTH | M_CONF))
 	        goto inject;
 
 	ip6 = mtod(m, struct ip6_hdr *);
+	in6_recoverscope(&src, &ip6->ip6_src);
+	in6_recoverscope(&dst, &ip6->ip6_dst);
 
 #define satoin6(sa)	(satosin6(sa)->sin6_addr)
 	LIST_FOREACH(sc, &gif_softc_list, gif_list) {
@@ -867,8 +867,13 @@ int in6_gif_input(struct mbuf **mp, int *offp, int proto)
 		if ((sc->gif_if.if_flags & IFF_UP) == 0)
 			continue;
 
-		if (IN6_ARE_ADDR_EQUAL(&satoin6(sc->gif_psrc), &ip6->ip6_dst) &&
-		    IN6_ARE_ADDR_EQUAL(&satoin6(sc->gif_pdst), &ip6->ip6_src)) {
+		psrc = satosin6(sc->gif_psrc);
+		pdst = satosin6(sc->gif_pdst);
+
+		if (IN6_ARE_ADDR_EQUAL(&psrc->sin6_addr, &dst.sin6_addr) &&
+		    psrc->sin6_scope_id == dst.sin6_scope_id &&
+		    IN6_ARE_ADDR_EQUAL(&pdst->sin6_addr, &src.sin6_addr) &&
+		    pdst->sin6_scope_id == src.sin6_scope_id) {
 			gifp = &sc->gif_if;
 			break;
 		}
@@ -878,13 +883,11 @@ int in6_gif_input(struct mbuf **mp, int *offp, int proto)
 	        m->m_pkthdr.ph_ifidx = gifp->if_index;
 		gifp->if_ipackets++;
 		gifp->if_ibytes += m->m_pkthdr.len;
-		ipip_input(m, *offp, gifp, proto);
-		return IPPROTO_DONE;
+		return ipip_input(mp, offp, gifp, proto);
 	}
 
 inject:
 	/* No GIF tunnel configured */
-	ip4_input6(&m, offp, proto);
-	return IPPROTO_DONE;
+	return ip4_input(mp, offp, proto);
 }
 #endif /* INET6 */

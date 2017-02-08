@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.265 2016/09/10 16:53:30 natano Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.269 2017/01/23 22:34:10 deraadt Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -258,8 +258,8 @@ update:
 		TAILQ_INSERT_TAIL(&mountlist, mp, mnt_list);
 		checkdirs(vp);
 		VOP_UNLOCK(vp, p);
- 		if ((mp->mnt_flag & MNT_RDONLY) == 0)
- 			error = vfs_allocate_syncvnode(mp);
+		if ((mp->mnt_flag & MNT_RDONLY) == 0)
+			error = vfs_allocate_syncvnode(mp);
 		vfs_unbusy(mp);
 		(void) VFS_STATFS(mp, &mp->mnt_stat, p);
 		if ((error = VFS_START(mp, 0, p)) != 0)
@@ -365,34 +365,34 @@ sys_unmount(struct proc *p, void *v, register_t *retval)
 	if (vfs_busy(mp, VB_WRITE|VB_WAIT))
 		return (EBUSY);
 
-	return (dounmount(mp, SCARG(uap, flags) & MNT_FORCE, p, vp));
+	return (dounmount(mp, SCARG(uap, flags) & MNT_FORCE, p));
 }
 
 /*
  * Do the actual file system unmount.
  */
 int
-dounmount(struct mount *mp, int flags, struct proc *p, struct vnode *olddp)
+dounmount(struct mount *mp, int flags, struct proc *p)
 {
 	struct vnode *coveredvp;
 	int error;
 	int hadsyncer = 0;
 
- 	mp->mnt_flag &=~ MNT_ASYNC;
- 	cache_purgevfs(mp);	/* remove cache entries for this file sys */
- 	if (mp->mnt_syncer != NULL) {
+	mp->mnt_flag &=~ MNT_ASYNC;
+	cache_purgevfs(mp);	/* remove cache entries for this file sys */
+	if (mp->mnt_syncer != NULL) {
 		hadsyncer = 1;
- 		vgone(mp->mnt_syncer);
+		vgone(mp->mnt_syncer);
 		mp->mnt_syncer = NULL;
 	}
 	if (((mp->mnt_flag & MNT_RDONLY) ||
 	    (error = VFS_SYNC(mp, MNT_WAIT, p->p_ucred, p)) == 0) ||
- 	    (flags & MNT_FORCE))
- 		error = VFS_UNMOUNT(mp, flags, p);
+	    (flags & MNT_FORCE))
+		error = VFS_UNMOUNT(mp, flags, p);
 
- 	if (error && !(flags & MNT_DOOMED)) {
- 		if ((mp->mnt_flag & MNT_RDONLY) == 0 && hadsyncer)
- 			(void) vfs_allocate_syncvnode(mp);
+	if (error && !(flags & MNT_DOOMED)) {
+		if ((mp->mnt_flag & MNT_RDONLY) == 0 && hadsyncer)
+			(void) vfs_allocate_syncvnode(mp);
 		vfs_unbusy(mp);
 		return (error);
 	}
@@ -400,8 +400,8 @@ dounmount(struct mount *mp, int flags, struct proc *p, struct vnode *olddp)
 	TAILQ_REMOVE(&mountlist, mp, mnt_list);
 	if ((coveredvp = mp->mnt_vnodecovered) != NULLVP) {
 		coveredvp->v_mountedhere = NULL;
- 		vrele(coveredvp);
- 	}
+		vrele(coveredvp);
+	}
 
 	mp->mnt_vfc->vfc_refcount--;
 
@@ -425,10 +425,10 @@ struct ctldebug debug0 = { "syncprt", &syncprt };
 int
 sys_sync(struct proc *p, void *v, register_t *retval)
 {
-	struct mount *mp, *nmp;
+	struct mount *mp;
 	int asyncflag;
 
-	TAILQ_FOREACH_REVERSE_SAFE(mp, &mountlist, mntlist, mnt_list, nmp) {
+	TAILQ_FOREACH_REVERSE(mp, &mountlist, mntlist, mnt_list) {
 		if (vfs_busy(mp, VB_READ|VB_NOWAIT))
 			continue;
 		if ((mp->mnt_flag & MNT_RDONLY) == 0) {
@@ -570,7 +570,7 @@ sys_getfsstat(struct proc *p, void *v, register_t *retval)
 		syscallarg(size_t) bufsize;
 		syscallarg(int) flags;
 	} */ *uap = v;
-	struct mount *mp, *nmp;
+	struct mount *mp;
 	struct statfs *sp;
 	struct statfs *sfsp;
 	size_t count, maxcount;
@@ -580,7 +580,7 @@ sys_getfsstat(struct proc *p, void *v, register_t *retval)
 	sfsp = SCARG(uap, buf);
 	count = 0;
 
-	TAILQ_FOREACH_SAFE(mp, &mountlist, mnt_list, nmp) {
+	TAILQ_FOREACH(mp, &mountlist, mnt_list) {
 		if (vfs_busy(mp, VB_READ|VB_NOWAIT))
 			continue;
 		if (sfsp && count < maxcount) {
@@ -593,7 +593,7 @@ sys_getfsstat(struct proc *p, void *v, register_t *retval)
 			    flags == 0) &&
 			    (error = VFS_STATFS(mp, sp, p))) {
 				vfs_unbusy(mp);
- 				continue;
+				continue;
 			}
 
 			sp->f_flags = mp->mnt_flag & MNT_VISFLAGMASK;
@@ -829,7 +829,7 @@ doopenat(struct proc *p, int fd, const char *path, int oflags, mode_t mode,
 		if (error == ENODEV &&
 		    p->p_dupfd >= 0 &&			/* XXX from fdopen */
 		    (error =
-			dupfdopen(fdp, indx, p->p_dupfd, flags)) == 0) {
+			dupfdopen(p, indx, flags)) == 0) {
 			closef(fp, p);
 			*retval = indx;
 			goto out;
@@ -2966,4 +2966,3 @@ sys_pwritev(struct proc *p, void *v, register_t *retval)
 	return (dofilewritev(p, fd, fp, SCARG(uap, iovp), SCARG(uap, iovcnt),
 	    1, &offset, retval));
 }
-

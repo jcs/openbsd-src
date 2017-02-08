@@ -1,4 +1,4 @@
-/*	$OpenBSD: spamd.c,v 1.147 2016/11/30 07:54:36 mestre Exp $	*/
+/*	$OpenBSD: spamd.c,v 1.150 2017/01/23 09:21:04 beck Exp $	*/
 
 /*
  * Copyright (c) 2015 Henning Brauer <henning@openbsd.org>
@@ -1100,6 +1100,8 @@ handler(struct con *cp)
 		if (n == 0)
 			closecon(cp);
 		else if (n == -1) {
+			if (errno == EAGAIN)
+				return;
 			if (debug > 0)
 				warn("read");
 			closecon(cp);
@@ -1153,6 +1155,8 @@ handlew(struct con *cp, int one)
 				closecon(cp);
 				goto handled;
 			} else if (n == -1) {
+				if (errno == EAGAIN)
+					return;
 				if (debug > 0 && errno != EPIPE)
 					warn("write");
 				closecon(cp);
@@ -1179,6 +1183,8 @@ handlew(struct con *cp, int one)
 		if (n == 0)
 			closecon(cp);
 		else if (n == -1) {
+			if (errno == EAGAIN)
+				return;
 			if (debug > 0 && errno != EPIPE)
 				warn("write");
 			closecon(cp);
@@ -1236,6 +1242,10 @@ main(int argc, char *argv[])
 	const char *errstr;
 	char *sync_iface = NULL;
 	char *sync_baddr = NULL;
+	struct addrinfo hints, *res;
+	char *addr;
+	char portstr[6];
+	int error;
 
 	tzset();
 	openlog_r("spamd", LOG_PID | LOG_NDELAY, LOG_DAEMON, &sdata);
@@ -1426,18 +1436,20 @@ main(int argc, char *argv[])
 	    sizeof(one)) == -1)
 		return (-1);
 
-	memset(&sin, 0, sizeof sin);
-	sin.sin_len = sizeof(sin);
-	if (bind_address) {
-		if (inet_pton(AF_INET, bind_address, &sin.sin_addr) != 1)
-			err(1, "inet_pton");
-	} else
-		sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(port);
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_INET;
+	addr = bind_address;
+	snprintf(portstr, sizeof(portstr), "%hu", port);
 
-	if (bind(smtplisten, (struct sockaddr *)&sin, sizeof sin) == -1)
+	if ((error = getaddrinfo(addr, portstr, &hints, &res)) != 0) {
+		errx(1, "getaddrinfo: %s", gai_strerror(error));
+	}
+
+	if (bind(smtplisten, res->ai_addr, res->ai_addrlen) == -1) {
+		freeaddrinfo(res);
 		err(1, "bind");
+	}
+	freeaddrinfo(res);
 
 	memset(&lin, 0, sizeof sin);
 	lin.sin_len = sizeof(sin);
@@ -1659,7 +1671,8 @@ jail:
 			int s2;
 
 			sinlen = sizeof(sin);
-			s2 = accept(smtplisten, (struct sockaddr *)&sin, &sinlen);
+			s2 = accept4(smtplisten, (struct sockaddr *)&sin, &sinlen,
+			    SOCK_NONBLOCK);
 			if (s2 == -1) {
 				switch (errno) {
 				case EINTR:

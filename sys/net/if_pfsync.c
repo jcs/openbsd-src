@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_pfsync.c,v 1.238 2016/11/22 19:29:54 procter Exp $	*/
+/*	$OpenBSD: if_pfsync.c,v 1.244 2017/01/29 19:58:47 bluhm Exp $	*/
 
 /*
  * Copyright (c) 2002 Michael Shalayeff
@@ -328,6 +328,7 @@ pfsync_clone_create(struct if_clone *ifc, int unit)
 	IFQ_SET_MAXLEN(&ifp->if_snd, IFQ_MAXLEN);
 	ifp->if_hdrlen = sizeof(struct pfsync_header);
 	ifp->if_mtu = ETHERMTU;
+	ifp->if_xflags = IFXF_CLONED;
 	timeout_set_proc(&sc->sc_tmo, pfsync_timeout, sc);
 	timeout_set_proc(&sc->sc_bulk_tmo, pfsync_bulk_update, sc);
 	timeout_set_proc(&sc->sc_bulkfail_tmo, pfsync_bulk_fail, sc);
@@ -633,16 +634,15 @@ pfsync_state_import(struct pfsync_state *sp, int flags)
 	return (error);
 }
 
-void
-pfsync_input(struct mbuf *m, ...)
+int
+pfsync_input(struct mbuf **mp, int *offp, int proto)
 {
+	struct mbuf *n, *m = *mp;
 	struct pfsync_softc *sc = pfsyncif;
 	struct ip *ip = mtod(m, struct ip *);
-	struct mbuf *mp;
 	struct pfsync_header *ph;
 	struct pfsync_subheader subh;
-
-	int offset, offp, len, count, mlen, flags = 0;
+	int offset, noff, len, count, mlen, flags = 0;
 
 	pfsyncstats.pfsyncs_ipackets++;
 
@@ -667,12 +667,12 @@ pfsync_input(struct mbuf *m, ...)
 	}
 
 	offset = ip->ip_hl << 2;
-	mp = m_pulldown(m, offset, sizeof(*ph), &offp);
-	if (mp == NULL) {
+	n = m_pulldown(m, offset, sizeof(*ph), &noff);
+	if (n == NULL) {
 		pfsyncstats.pfsyncs_hdrops++;
-		return;
+		return IPPROTO_DONE;
 	}
-	ph = (struct pfsync_header *)(mp->m_data + offp);
+	ph = (struct pfsync_header *)(n->m_data + noff);
 
 	/* verify the version */
 	if (ph->version != PFSYNC_VERSION) {
@@ -713,13 +713,13 @@ pfsync_input(struct mbuf *m, ...)
 			goto done;
 		}
 
-		mp = m_pulldown(m, offset, mlen * count, &offp);
-		if (mp == NULL) {
+		n = m_pulldown(m, offset, mlen * count, &noff);
+		if (n == NULL) {
 			pfsyncstats.pfsyncs_badlen++;
-			return;
+			return IPPROTO_DONE;
 		}
 
-		if (pfsync_acts[subh.action].in(mp->m_data + offp,
+		if (pfsync_acts[subh.action].in(n->m_data + noff,
 		    mlen, count, flags) != 0)
 			goto done;
 
@@ -728,6 +728,7 @@ pfsync_input(struct mbuf *m, ...)
 
 done:
 	m_freem(m);
+	return IPPROTO_DONE;
 }
 
 int
@@ -1164,7 +1165,8 @@ void
 pfsync_update_net_tdb(struct pfsync_tdb *pt)
 {
 	struct tdb		*tdb;
-	int			 s;
+
+	splsoftassert(IPL_SOFTNET);
 
 	/* check for invalid values */
 	if (ntohl(pt->spi) <= SPI_RESERVED_MAX ||
@@ -1172,7 +1174,6 @@ pfsync_update_net_tdb(struct pfsync_tdb *pt)
 	     pt->dst.sa.sa_family != AF_INET6))
 		goto bad;
 
-	s = splsoftnet();
 	tdb = gettdb(ntohs(pt->rdomain), pt->spi,
 	    (union sockaddr_union *)&pt->dst, pt->sproto);
 	if (tdb) {
@@ -1182,14 +1183,12 @@ pfsync_update_net_tdb(struct pfsync_tdb *pt)
 		/* Neither replay nor byte counter should ever decrease. */
 		if (pt->rpl < tdb->tdb_rpl ||
 		    pt->cur_bytes < tdb->tdb_cur_bytes) {
-			splx(s);
 			goto bad;
 		}
 
 		tdb->tdb_rpl = pt->rpl;
 		tdb->tdb_cur_bytes = pt->cur_bytes;
 	}
-	splx(s);
 	return;
 
  bad:
@@ -1241,7 +1240,6 @@ pfsyncioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	switch (cmd) {
 #if 0
 	case SIOCSIFADDR:
-	case SIOCAIFADDR:
 	case SIOCSIFDSTADDR:
 #endif
 	case SIOCSIFFLAGS:
@@ -1788,9 +1786,9 @@ pfsync_defer_tmo(void *arg)
 {
 	int s;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 	pfsync_undefer(arg, 0);
-	splx(s);
+	NET_UNLOCK(s);
 }
 
 void
@@ -2206,8 +2204,7 @@ pfsync_bulk_update(void *arg)
 	int i = 0;
 	int s;
 
-	s = splsoftnet();
-
+	NET_LOCK(s);
 	st = sc->sc_bulk_next;
 
 	for (;;) {
@@ -2238,8 +2235,7 @@ pfsync_bulk_update(void *arg)
 			break;
 		}
 	}
-
-	splx(s);
+	NET_UNLOCK(s);
 }
 
 void
@@ -2271,7 +2267,7 @@ pfsync_bulk_fail(void *arg)
 	struct pfsync_softc *sc = arg;
 	int s;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 
 	if (sc->sc_bulk_tries++ < PFSYNC_MAX_BULKTRIES) {
 		/* Try again */
@@ -2297,8 +2293,7 @@ pfsync_bulk_fail(void *arg)
 		sc->sc_link_demoted = 0;
 		DPFPRINTF(LOG_ERR, "failed to receive bulk update");
 	}
-
-	splx(s);
+	NET_UNLOCK(s);
 }
 
 void
@@ -2347,9 +2342,9 @@ pfsync_timeout(void *arg)
 {
 	int s;
 
-	s = splsoftnet();
+	NET_LOCK(s);
 	pfsync_sendout();
-	splx(s);
+	NET_UNLOCK(s);
 }
 
 /* this is a softnet/netisr handler */

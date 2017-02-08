@@ -1,4 +1,4 @@
-/*      $OpenBSD: ip_gre.c,v 1.59 2016/03/04 22:38:23 sashan Exp $ */
+/*      $OpenBSD: ip_gre.c,v 1.62 2017/01/29 19:58:47 bluhm Exp $ */
 /*	$NetBSD: ip_gre.c,v 1.9 1999/10/25 19:18:11 drochner Exp $ */
 
 /*
@@ -78,7 +78,7 @@
 #include <net/if_gre.h>
 
 struct gre_softc *gre_lookup(struct mbuf *, u_int8_t);
-int gre_input2(struct mbuf *, int, u_char);
+int gre_input2(struct mbuf *, int, int);
 
 /*
  * Decapsulate.
@@ -90,7 +90,7 @@ int gre_input2(struct mbuf *, int, u_char);
  */
 
 int
-gre_input2(struct mbuf *m, int hlen, u_char proto)
+gre_input2(struct mbuf *m, int hlen, int proto)
 {
 	struct greip *gip;
 	struct niqueue *ifq;
@@ -215,19 +215,16 @@ gre_input2(struct mbuf *m, int hlen, u_char proto)
  * routine is called whenever IP gets a packet with proto type
  * IPPROTO_GRE and a local destination address).
  */
-void
-gre_input(struct mbuf *m, ...)
+int
+gre_input(struct mbuf **mp, int *offp, int proto)
 {
-	int hlen, ret;
-	va_list ap;
-
-	va_start(ap, m);
-	hlen = va_arg(ap, int);
-	va_end(ap);
+	struct mbuf *m = *mp;
+	int hlen = *offp;
+	int ret;
 
 	if (!gre_allow) {
 	        m_freem(m);
-		return;
+		return IPPROTO_DONE;
 	}
 
 #ifdef PIPEX
@@ -236,12 +233,12 @@ gre_input(struct mbuf *m, ...)
 
 		if ((session = pipex_pptp_lookup_session(m)) != NULL) {
 			if (pipex_pptp_input(m, session) == NULL)
-				return;
+				return IPPROTO_DONE;
 		}
 	}
 #endif
 
-	ret = gre_input2(m, hlen, IPPROTO_GRE);
+	ret = gre_input2(m, hlen, proto);
 	/*
 	 * ret == 0: packet not processed, but input from here
 	 * means no matching tunnel that is up is found.
@@ -250,7 +247,8 @@ gre_input(struct mbuf *m, ...)
 	 * but we're not set to accept them.
 	 */
 	if (!ret)
-		rip_input(m, hlen, IPPROTO_GRE);
+		return rip_input(mp, offp, proto);
+	return IPPROTO_DONE;
 }
 
 /*
@@ -260,36 +258,31 @@ gre_input(struct mbuf *m, ...)
  * between IP header and payload.
  */
 
-void
-gre_mobile_input(struct mbuf *m, ...)
+int
+gre_mobile_input(struct mbuf **mp, int *offp, int proto)
 {
+	struct mbuf *m = *mp;
 	struct ip *ip;
 	struct mobip_h *mip;
 	struct gre_softc *sc;
-	int hlen;
-	va_list ap;
 	u_char osrc = 0;
 	int msiz;
 
-	va_start(ap, m);
-	hlen = va_arg(ap, int);
-	va_end(ap);
-
 	if (!ip_mobile_allow) {
 	        m_freem(m);
-		return;
+		return IPPROTO_DONE;
 	}
 
-	if ((sc = gre_lookup(m, IPPROTO_MOBILE)) == NULL) {
+	if ((sc = gre_lookup(m, proto)) == NULL) {
 		/* No matching tunnel or tunnel is down. */
 		m_freem(m);
-		return;
+		return IPPROTO_DONE;
 	}
 
 	if (m->m_len < sizeof(*mip)) {
 		m = m_pullup(m, sizeof(*mip));
 		if (m == NULL)
-			return;
+			return IPPROTO_DONE;
 	}
 	ip = mtod(m, struct ip *);
 	mip = mtod(m, struct mobip_h *);
@@ -309,7 +302,7 @@ gre_mobile_input(struct mbuf *m, ...)
 	if (m->m_len < (ip->ip_hl << 2) + msiz) {
 		m = m_pullup(m, (ip->ip_hl << 2) + msiz);
 		if (m == NULL)
-			return;
+			return IPPROTO_DONE;
 		ip = mtod(m, struct ip *);
 		mip = mtod(m, struct mobip_h *);
 	}
@@ -319,7 +312,7 @@ gre_mobile_input(struct mbuf *m, ...)
 
 	if (gre_in_cksum((u_short *) &mip->mh, msiz) != 0) {
 		m_freem(m);
-		return;
+		return IPPROTO_DONE;
 	}
 
 	memmove(ip + (ip->ip_hl << 2), ip + (ip->ip_hl << 2) + msiz, 
@@ -342,6 +335,7 @@ gre_mobile_input(struct mbuf *m, ...)
 #endif
 
 	niq_enqueue(&ipintrq, m);
+	return IPPROTO_DONE;
 }
 
 /*
@@ -411,12 +405,10 @@ gre_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 	struct inpcb *inp = sotoinpcb(so);
 
 	if (inp != NULL && inp->inp_pipex && req == PRU_SEND) {
-		int s;
 		struct sockaddr_in *sin4;
 		struct in_addr *ina_dst;
 		struct pipex_session *session;
 
-		s = splsoftnet();
 		ina_dst = NULL;
 		if ((so->so_state & SS_ISCONNECTED) != 0) {
 			inp = sotoinpcb(so);
@@ -432,7 +424,6 @@ gre_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 		    (session = pipex_pptp_userland_lookup_session_ipv4(m,
 			    *ina_dst)))
 			m = pipex_pptp_userland_output(m, session);
-		splx(s);
 
 		if (m == NULL)
 			return (ENOMEM);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: mib.c,v 1.81 2016/10/28 08:01:53 rzalamena Exp $	*/
+/*	$OpenBSD: mib.c,v 1.83 2017/01/31 21:31:04 sthen Exp $	*/
 
 /*
  * Copyright (c) 2012 Joel Knight <joel@openbsd.org>
@@ -41,6 +41,7 @@
 #include <net/if.h>
 #include <net/if_types.h>
 #include <net/pfvar.h>
+#include <netinet/ip_ipsp.h>
 #include <net/if_pfsync.h>
 
 #include <stdlib.h>
@@ -2661,7 +2662,7 @@ mib_sensorvalue(struct sensor *s)
 		break;
 	case SENSOR_PERCENT:
 	case SENSOR_HUMIDITY:
-		ret = asprintf(&v, "%.2f%%", s->value / 1000.0);
+		ret = asprintf(&v, "%.2f", s->value / 1000.0);
 		break;
 	case SENSOR_DISTANCE:
 	case SENSOR_PRESSURE:

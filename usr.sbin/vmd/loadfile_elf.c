@@ -1,5 +1,5 @@
 /* $NetBSD: loadfile.c,v 1.10 2000/12/03 02:53:04 tsutsui Exp $ */
-/* $OpenBSD: loadfile_elf.c,v 1.22 2016/11/26 20:03:42 reyk Exp $ */
+/* $OpenBSD: loadfile_elf.c,v 1.24 2017/02/04 07:23:25 mlarkin Exp $ */
 
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.
@@ -124,6 +124,7 @@ static size_t create_bios_memmap(struct vm_create_params *, bios_memmap_t *);
 static uint32_t push_bootargs(bios_memmap_t *, size_t);
 static size_t push_stack(uint32_t, uint32_t, uint32_t, uint32_t);
 static void push_gdt(void);
+static void push_pt(void);
 static size_t mread(FILE *, paddr_t, size_t);
 static void marc4random_buf(paddr_t, int);
 static void mbzero(paddr_t, int);
@@ -233,7 +234,7 @@ push_pt(void)
 	memset(ptes, 0, sizeof(ptes));
 	for (i = 0 ; i < NPTE_PG; i++) {
 		ptes[i] = PG_V | PG_PS | (NBPD * i);
-	}	
+	}
 	write_mem(PML4_PAGE, ptes, PAGE_SIZE);
 #else
 	/* PML3 [0] - first 1GB */

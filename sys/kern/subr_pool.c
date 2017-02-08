@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_pool.c,v 1.204 2016/11/21 01:44:06 dlg Exp $	*/
+/*	$OpenBSD: subr_pool.c,v 1.206 2017/02/08 05:28:30 dlg Exp $	*/
 /*	$NetBSD: subr_pool.c,v 1.61 2001/09/26 07:14:56 chs Exp $	*/
 
 /*-
@@ -513,7 +513,7 @@ pool_get(struct pool *pp, int flags)
 	}
 	mtx_leave(&pp->pr_mtx);
 
-	if (slowdown && ISSET(flags, PR_WAITOK))
+	if ((slowdown || pool_debug == 2) && ISSET(flags, PR_WAITOK))
 		yield();
 
 	if (v == NULL) {
@@ -1446,10 +1446,8 @@ pool_gc_pages(void *null)
 {
 	struct pool *pp;
 	struct pool_page_header *ph, *freeph;
-	int s;
 
 	rw_enter_read(&pool_lock);
-	s = splvm(); /* XXX go to splvm until all pools _setipl properly */
 	SIMPLEQ_FOREACH(pp, &pool_head, pr_poollist) {
 		if (pp->pr_nidle <= pp->pr_minpages || /* guess */
 		    !mtx_enter_try(&pp->pr_mtx)) /* try */
@@ -1469,7 +1467,6 @@ pool_gc_pages(void *null)
 		if (freeph != NULL)
 			pool_p_free(pp, freeph);
 	}
-	splx(s);
 	rw_exit_read(&pool_lock);
 
 	timeout_add_sec(&pool_gc_tick, 1);

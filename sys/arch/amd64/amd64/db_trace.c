@@ -1,4 +1,4 @@
-/*	$OpenBSD: db_trace.c,v 1.23 2016/09/16 19:13:16 jasper Exp $	*/
+/*	$OpenBSD: db_trace.c,v 1.25 2017/02/06 09:13:41 mpi Exp $	*/
 /*	$NetBSD: db_trace.c,v 1.1 2003/04/26 18:39:27 fvdl Exp $	*/
 
 /*
@@ -181,7 +181,7 @@ db_stack_trace_print(db_expr_t addr, boolean_t have_addr, db_expr_t count,
 		callpc = (db_addr_t)ddb_regs.tf_rip;
 	} else {
 		if (trace_proc) {
-			struct proc *p = pfind((pid_t)addr);
+			struct proc *p = tfind((pid_t)addr);
 			if (p == NULL) {
 				(*pr) ("not found\n");
 				return;
@@ -325,9 +325,9 @@ db_stack_trace_print(db_expr_t addr, boolean_t have_addr, db_expr_t count,
 vaddr_t
 db_get_pc(struct trapframe *tf)
 {
-	struct callframe *cf = (struct callframe *)(tf->tf_rsp - 8);
+	struct callframe *cf = (struct callframe *)(tf->tf_rsp - sizeof(long));
 
-	return db_get_value((db_addr_t)&cf->f_retaddr, 8, 0);
+	return db_get_value((db_addr_t)&cf->f_retaddr, sizeof(long), 0);
 }
 
 vaddr_t

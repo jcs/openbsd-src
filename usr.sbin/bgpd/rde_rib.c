@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_rib.c,v 1.143 2016/08/27 01:26:22 guenther Exp $ */
+/*	$OpenBSD: rde_rib.c,v 1.153 2017/01/25 03:21:55 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org>
@@ -26,6 +26,7 @@
 
 #include "bgpd.h"
 #include "rde.h"
+#include "log.h"
 
 /*
  * BGP RIB -- Routing Information Base
@@ -35,7 +36,7 @@
  * This is achieved by heavily linking the different parts together.
  */
 u_int16_t rib_size;
-struct rib *ribs;
+struct rib_desc *ribs;
 
 LIST_HEAD(, rib_context) rib_dump_h = LIST_HEAD_INITIALIZER(rib_dump_h);
 
@@ -48,12 +49,35 @@ struct rib_entry *rib_restart(struct rib_context *);
 RB_PROTOTYPE(rib_tree, rib_entry, rib_e, rib_compare);
 RB_GENERATE(rib_tree, rib_entry, rib_e, rib_compare);
 
+static inline void
+re_lock(struct rib_entry *re)
+{
+	re->__rib = (struct rib *)((intptr_t)re->__rib | 1);
+}
+
+static inline void
+re_unlock(struct rib_entry *re)
+{
+	re->__rib = (struct rib *)((intptr_t)re->__rib & ~1);
+}
+
+static inline int
+re_is_locked(struct rib_entry *re)
+{
+	return ((intptr_t)re->__rib & 1);
+}
+
+static inline struct rib_tree *
+rib_tree(struct rib *rib)
+{
+	return (&rib->tree);
+}
 
 /* RIB specific functions */
-u_int16_t
+struct rib *
 rib_new(char *name, u_int rtableid, u_int16_t flags)
 {
-	struct rib	*xribs;
+	struct rib_desc	*xribs;
 	u_int16_t	id;
 
 	for (id = 0; id < rib_size; id++) {
@@ -61,12 +85,9 @@ rib_new(char *name, u_int rtableid, u_int16_t flags)
 			break;
 	}
 
-	if (id == RIB_FAILED)
-		fatalx("rib_new: trying to use reserved id");
-
 	if (id >= rib_size) {
 		if ((xribs = reallocarray(ribs, id + 1,
-		    sizeof(struct rib))) == NULL) {
+		    sizeof(struct rib_desc))) == NULL) {
 			/* XXX this is not clever */
 			fatal("rib_add");
 		}
@@ -74,42 +95,49 @@ rib_new(char *name, u_int rtableid, u_int16_t flags)
 		rib_size = id + 1;
 	}
 
-	bzero(&ribs[id], sizeof(struct rib));
+	bzero(&ribs[id], sizeof(struct rib_desc));
 	strlcpy(ribs[id].name, name, sizeof(ribs[id].name));
-	RB_INIT(&ribs[id].rib);
+	RB_INIT(rib_tree(&ribs[id].rib));
 	ribs[id].state = RECONF_REINIT;
-	ribs[id].id = id;
-	ribs[id].flags = flags;
-	ribs[id].rtableid = rtableid;
+	ribs[id].rib.id = id;
+	ribs[id].rib.flags = flags;
+	ribs[id].rib.rtableid = rtableid;
 
 	ribs[id].in_rules = calloc(1, sizeof(struct filter_head));
 	if (ribs[id].in_rules == NULL)
 		fatal(NULL);
 	TAILQ_INIT(ribs[id].in_rules);
 
-	return (id);
+	return (&ribs[id].rib);
 }
 
-u_int16_t
+struct rib *
 rib_find(char *name)
 {
 	u_int16_t id;
 
 	if (name == NULL || *name == '\0')
-		return (1);	/* no name returns the Loc-RIB */
+		return (&ribs[1].rib);	/* no name returns the Loc-RIB */
 
 	for (id = 0; id < rib_size; id++) {
 		if (!strcmp(ribs[id].name, name))
-			return (id);
+			return (&ribs[id].rib);
 	}
 
-	return (RIB_FAILED);
+	return (NULL);
+}
+
+struct rib_desc *
+rib_desc(struct rib *rib)
+{
+	return (&ribs[rib->id]);
 }
 
 void
 rib_free(struct rib *rib)
 {
 	struct rib_context *ctx, *next;
+	struct rib_desc *rd;
 	struct rib_entry *re, *xre;
 	struct prefix *p, *np;
 
@@ -118,7 +146,7 @@ rib_free(struct rib *rib)
 		next = LIST_NEXT(ctx, entry);
 		if (ctx->ctx_rib == rib) {
 			re = ctx->ctx_re;
-			re->flags &= ~F_RIB_ENTRYLOCK;
+			re_unlock(re);
 			LIST_REMOVE(ctx, entry);
 			if (ctx->ctx_done)
 				ctx->ctx_done(ctx->ctx_arg);
@@ -127,8 +155,8 @@ rib_free(struct rib *rib)
 		}
 	}
 
-	for (re = RB_MIN(rib_tree, &rib->rib); re != NULL; re = xre) {
-		xre = RB_NEXT(rib_tree,  &rib->rib, re);
+	for (re = RB_MIN(rib_tree, rib_tree(rib)); re != NULL; re = xre) {
+		xre = RB_NEXT(rib_tree, rib_tree(rib), re);
 
 		/*
 		 * Removing the prefixes is tricky because the last one
@@ -151,9 +179,10 @@ rib_free(struct rib *rib)
 				break;
 		}
 	}
-	filterlist_free(rib->in_rules_tmp);
-	filterlist_free(rib->in_rules);
-	bzero(rib, sizeof(struct rib));
+	rd = &ribs[rib->id];
+	filterlist_free(rd->in_rules_tmp);
+	filterlist_free(rd->in_rules);
+	bzero(rib, sizeof(struct rib_desc));
 }
 
 int
@@ -172,7 +201,7 @@ rib_get(struct rib *rib, struct bgpd_addr *prefix, int prefixlen)
 	bzero(&xre, sizeof(xre));
 	xre.prefix = pte;
 
-	return (RB_FIND(rib_tree, &rib->rib, &xre));
+	return (RB_FIND(rib_tree, rib_tree(rib), &xre));
 }
 
 struct rib_entry *
@@ -219,10 +248,9 @@ rib_add(struct rib *rib, struct bgpd_addr *prefix, int prefixlen)
 
 	LIST_INIT(&re->prefix_h);
 	re->prefix = pte;
-	re->flags = rib->flags;
-	re->ribid = rib->id;
+	re->__rib = rib;
 
-        if (RB_INSERT(rib_tree, &rib->rib, re) != NULL) {
+        if (RB_INSERT(rib_tree, rib_tree(rib), re) != NULL) {
 		log_warnx("rib_add: insert failed");
 		free(re);
 		return (NULL);
@@ -241,7 +269,7 @@ rib_remove(struct rib_entry *re)
 	if (!rib_empty(re))
 		fatalx("rib_remove: entry not empty");
 
-	if (re->flags & F_RIB_ENTRYLOCK)
+	if (re_is_locked(re))
 		/* entry is locked, don't free it. */
 		return;
 
@@ -249,7 +277,7 @@ rib_remove(struct rib_entry *re)
 	if (pt_empty(re->prefix))
 		pt_remove(re->prefix);
 
-	if (RB_REMOVE(rib_tree, &ribs[re->ribid].rib, re) == NULL)
+	if (RB_REMOVE(rib_tree, rib_tree(re_rib(re)), re) == NULL)
 		log_warnx("rib_remove: remove failed.");
 
 	free(re);
@@ -284,7 +312,7 @@ rib_dump_r(struct rib_context *ctx)
 	unsigned int		 i;
 
 	if (ctx->ctx_re == NULL) {
-		re = RB_MIN(rib_tree, &ctx->ctx_rib->rib);
+		re = RB_MIN(rib_tree, rib_tree(ctx->ctx_rib));
 		LIST_INSERT_HEAD(&rib_dump_h, ctx, entry);
 	} else
 		re = rib_restart(ctx);
@@ -294,10 +322,10 @@ rib_dump_r(struct rib_context *ctx)
 		    ctx->ctx_aid != re->prefix->aid)
 			continue;
 		if (ctx->ctx_count && i++ >= ctx->ctx_count &&
-		    (re->flags & F_RIB_ENTRYLOCK) == 0) {
+		    re_is_locked(re)) {
 			/* store and lock last element */
 			ctx->ctx_re = re;
-			re->flags |= F_RIB_ENTRYLOCK;
+			re_lock(re);
 			return;
 		}
 		ctx->ctx_upcall(re, ctx->ctx_arg);
@@ -316,7 +344,7 @@ rib_restart(struct rib_context *ctx)
 	struct rib_entry *re;
 
 	re = ctx->ctx_re;
-	re->flags &= ~F_RIB_ENTRYLOCK;
+	re_unlock(re);
 
 	/* find first non empty element */
 	while (re && rib_empty(re))
@@ -545,7 +573,7 @@ path_remove_stale(struct rde_aspath *asp, u_int8_t aid)
 		}
 
 		/* only count Adj-RIB-In */
-		if (p->rib->ribid == 0)
+		if (re_rib(p->re) == &ribs[0].rib)
 			rprefixes++;
 
 		prefix_destroy(p);
@@ -738,7 +766,7 @@ prefix_move(struct rde_aspath *asp, struct prefix *p)
 	np->aspath = asp;
 	/* peer and prefix pointers are still equal */
 	np->prefix = p->prefix;
-	np->rib = p->rib;
+	np->re = p->re;
 	np->lastchange = time(NULL);
 
 	/* add to new as path */
@@ -758,7 +786,7 @@ prefix_move(struct rde_aspath *asp, struct prefix *p)
 	 * is noticed by prefix_evaluate().
 	 */
 	LIST_REMOVE(p, rib_l);
-	prefix_evaluate(np, np->rib);
+	prefix_evaluate(np, np->re);
 
 	/* remove old prefix node */
 	oasp = p->aspath;
@@ -769,7 +797,7 @@ prefix_move(struct rde_aspath *asp, struct prefix *p)
 	/* destroy all references to other objects and free the old prefix */
 	p->aspath = NULL;
 	p->prefix = NULL;
-	p->rib = NULL;
+	p->re = NULL;
 	prefix_free(p);
 
 	/* destroy old path if empty */
@@ -902,7 +930,7 @@ prefix_updateall(struct rde_aspath *asp, enum nexthop_state state,
 		/*
 		 * skip non local-RIBs or RIBs that are flagged as noeval.
 		 */
-		if (p->rib->flags & F_RIB_NOEVALUATE)
+		if (re_rib(p->re)->flags & F_RIB_NOEVALUATE)
 			continue;
 
 		if (oldstate == state && state == NEXTHOP_REACH) {
@@ -912,9 +940,9 @@ prefix_updateall(struct rde_aspath *asp, enum nexthop_state state,
 			 * or other internal infos. This will not change
 			 * the routing decision so shortcut here.
 			 */
-			if ((p->rib->flags & F_RIB_NOFIB) == 0 &&
-			    p == p->rib->active)
-				rde_send_kroute(p, NULL, p->rib->ribid);
+			if ((re_rib(p->re)->flags & F_RIB_NOFIB) == 0 &&
+			    p == p->re->active)
+				rde_send_kroute(re_rib(p->re), p, NULL);
 			continue;
 		}
 
@@ -928,9 +956,9 @@ prefix_updateall(struct rde_aspath *asp, enum nexthop_state state,
 		 * prefix_evaluate() will generate no update because
 		 * the nexthop is unreachable or ineligible.
 		 */
-		if (p == p->rib->active)
-			prefix_evaluate(NULL, p->rib);
-		prefix_evaluate(p, p->rib);
+		if (p == p->re->active)
+			prefix_evaluate(NULL, p->re);
+		prefix_evaluate(p, p->re);
 	}
 }
 
@@ -983,7 +1011,7 @@ prefix_link(struct prefix *pref, struct rib_entry *re, struct rde_aspath *asp)
 	PREFIX_COUNT(asp, 1);
 
 	pref->aspath = asp;
-	pref->rib = re;
+	pref->re = re;
 	pref->prefix = re->prefix;
 	pt_ref(pref->prefix);
 	pref->lastchange = time(NULL);
@@ -998,7 +1026,7 @@ prefix_link(struct prefix *pref, struct rib_entry *re, struct rde_aspath *asp)
 static void
 prefix_unlink(struct prefix *pref)
 {
-	struct rib_entry	*re = pref->rib;
+	struct rib_entry	*re = pref->re;
 
 	/* make route decision */
 	LIST_REMOVE(pref, rib_l);
@@ -1016,7 +1044,7 @@ prefix_unlink(struct prefix *pref)
 	/* destroy all references to other objects */
 	pref->aspath = NULL;
 	pref->prefix = NULL;
-	pref->rib = NULL;
+	pref->re = NULL;
 
 	/*
 	 * It's the caller's duty to remove empty aspath structures.

@@ -1,4 +1,4 @@
-#	$OpenBSD: files.armv7,v 1.28 2016/10/09 23:46:23 jsg Exp $
+#	$OpenBSD: files.armv7,v 1.31 2017/01/25 10:14:40 jsg Exp $
 
 maxpartitions	16
 maxusers	2 8 64
@@ -56,7 +56,10 @@ include "dev/wsfont/files.wsfont"
 # Include USB stuff
 include "dev/usb/files.usb"
 
-# PCI and virtio
+# Paravirtual device bus and virtio
+include "dev/pv/files.pv"
+
+# PCI bus
 include "dev/pci/files.pci"
 
 # Machine-independent GPIO drivers
@@ -64,6 +67,9 @@ include "dev/gpio/files.gpio"
 
 # Machine-independent 1-Wire drivers
 include "dev/onewire/files.onewire"
+
+# Machine-independent FDT drivers
+include "dev/fdt/files.fdt"
 
 # SoC includes
 include "arch/armv7/imx/files.imx"
@@ -82,12 +88,3 @@ file	arch/armv7/dev/com_fdt.c		com_fdt
 device	pluart
 attach	pluart at fdt
 file	arch/armv7/dev/pluart.c			pluart
-
-# ARM PrimeCell PL031 Real-time clock
-device	plrtc
-attach	plrtc at fdt
-file	arch/armv7/dev/plrtc.c			plrtc
-
-device	psci
-attach	psci at fdt
-file	arch/armv7/dev/psci.c			psci

@@ -1,4 +1,4 @@
-/* $OpenBSD: md_init.h,v 1.9 2016/03/20 02:32:39 guenther Exp $ */
+/* $OpenBSD: md_init.h,v 1.11 2017/01/21 01:43:16 guenther Exp $ */
 
 /*
  * Copyright (c) 2003 Dale Rahn. All rights reserved.
@@ -24,6 +24,27 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */  
 
+/*
+ * hppa overrides these because it has different label syntax
+ */
+#define MD_DATA_SECTION_FLAGS_SYMBOL(section, flags, type, symbol)	\
+	extern __dso_hidden type symbol[];				\
+	__asm("	.section "section",\""flags"\",@progbits		\n" \
+	"	.balign 4						\n" \
+	#symbol"							\n" \
+	"	.previous")
+#define MD_DATA_SECTION_SYMBOL_VALUE(section, type, symbol, value)	\
+	extern __dso_hidden type symbol[];				\
+	__asm("	.section "section",\"aw\",@progbits			\n" \
+	"	.balign 4						\n" \
+	#symbol"							\n" \
+	"	.int "#value"						\n" \
+	"	.previous")
+#define MD_DATA_SECTION_FLAGS_VALUE(section, flags, value)		\
+	__asm("	.section "section",\""flags"\",@progbits		\n" \
+	"	.balign 4						\n" \
+	"	.int "#value"						\n" \
+	"	.previous")
 
 #ifdef __PIC__
 #define MD_SECT_CALL_FUNC(section, func)			\
@@ -68,7 +89,7 @@
 	"	.previous")
 
 
-#include <sys/exec.h>		/* for struct psstrings */
+#include <sys/exec.h>		/* for struct ps_strings */
 
 #define	MD_CRT0_START						\
 	__asm(							\

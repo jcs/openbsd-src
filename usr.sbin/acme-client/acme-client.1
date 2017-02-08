@@ -1,4 +1,4 @@
-.\"	$OpenBSD: acme-client.1,v 1.11 2016/09/15 20:44:24 jmc Exp $
+.\"	$OpenBSD: acme-client.1,v 1.20 2017/01/28 17:53:17 jmc Exp $
 .\"
 .\" Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: September 15 2016 $
+.Dd $Mdocdate: January 28 2017 $
 .Dt ACME-CLIENT 1
 .Os
 .Sh NAME
@@ -22,15 +22,9 @@
 .Nd ACME client
 .Sh SYNOPSIS
 .Nm acme-client
-.Op Fl bFmNnrv
-.Op Fl a Ar agreement
-.Op Fl C Ar challengedir
-.Op Fl c Ar certdir
-.Op Fl f Ar accountkey
-.Op Fl k Ar domainkey
-.Op Fl s Ar authority
+.Op Fl ADFnrv
+.Op Fl f Ar configfile
 .Ar domain
-.Op Ar altnames
 .Sh DESCRIPTION
 The
 .Nm
@@ -39,108 +33,47 @@ Automatic Certificate Management Environment (ACME) client.
 .Pp
 The options are as follows:
 .Bl -tag -width Ds
-.It Fl a Ar agreement
-Use an alternative user agreement URL.
-.It Fl b
-Back up all certificates in the certificate directory.
-This only happens if a remove or replace operation is possible.
-The backups are named
-.Pa cert-NNNNN.pem ,
-.Pa chain-NNNNN.pem ,
-and
-.Pa fullchain-NNNNN.pem ,
-where
-.Li NNNNN
-is the current
-.Ux
-Epoch.
-Any given backup uses the same Epoch time for all three certificates.
-If there are no certificates in place, this option does nothing.
-.It Fl C Ar challengedir
-The directory to register challenges.
-.It Fl c Ar certdir
-The directory to store public certificates.
+.It Fl A
+Create a new RSA account key if one does not already exist.
+.It Fl D
+Create a new RSA domain key if one does not already exist.
 .It Fl F
 Force updating the certificate signature even if it's too soon.
-.It Fl f Ar accountkey
-The account private key.
-This was either made with a previous client or with
-.Fl n .
-.It Fl k Ar domainkey
-The private key for the domain.
-This may also be created with
-.Fl N .
-.It Fl m
-Append
-.Ar domain
-to all default paths except the challenge path
-.Pq i.e. those that are overridden by Fl c , k , f .
-Thus,
-.Ar foo.com
-as the initial domain would make the default domain private key into
-.Pa /etc/ssl/acme/private/foo.com/privkey.pem .
-This is useful in setups with multiple domain sets.
-.It Fl N
-Create a new RSA domain key if one does not already exist.
+.It Fl f Ar configfile
+Specify an alternative configuration file.
 .It Fl n
-Create a new RSA account key if one does not already exist.
+No operation: check and print configuration.
 .It Fl r
 Revoke the X509 certificate found in the certificates.
-.It Fl s Ar authority
-ACME
-.Ar authority
-to talk to.
-Currently the following authorities are available:
-.Pp
-.Bl -tag -width "letsencrypt-staging" -compact
-.It Cm letsencrypt
-Let's Encrypt authority
-.It Cm letsencrypt-staging
-Let's Encrypt staging authority
-.El
-.Pp
-The default is
-.Cm letsencrypt .
 .It Fl v
 Verbose operation.
 Specify twice to also trace communication and data transfers.
 .It Ar domain
 The domain name.
-The only difference between this and
-.Ar altnames
-is that it's put into the certificate's
-.Li CN
-field and it uses the
-.Qq main
-domain when specifying
-.Fl m .
-.It Ar altnames
-Alternative names
-.Pq Dq SAN
-for the domain name.
-The number of SAN entries is limited to 100 or so.
 .El
 .Pp
-Public certificates are by default placed in
-.Pa /etc/ssl/acme
-as
-.Pa cert.pem Pq the domain certificate ,
-.Pa chain.pem ,
-and
-.Pa fullchain.pem ,
-respectively.
-.Pa cert.pem
-is checked for its expiration: if more than 30 days from expiry,
 .Nm
-does not attempt to refresh the signature.
+looks in its configuration for a
+.Ar domain
+section corresponding to the domain given as command line argument.
+It then uses that configuration to retrieve a TLS certificate.
+If the certificate already exists and is less than 30 days from expiry,
+.Nm
+will attempt to refresh the signature.
+Before a certificate can be requested, an account key needs to be
+created using the
+.Fl A
+argument.
+The first time a certificate is requested, the RSA key needs to be created with
+.Fl D .
 .Pp
-Challenges are used to verify that the submitter has access to
-the registered domains.
+Challenges are used to verify that the submitter has access to the
+registered domains.
 .Nm
 only implements the
 .Dq http-01
-challenge type, where a file is created within a directory accessible by
-a locally-run web server.
+challenge type, where a file is created within a directory accessible
+by a locally-run web server.
 The default challenge directory
 .Pa /var/www/acme
 can be served by
@@ -154,13 +87,9 @@ location "/.well-known/acme-challenge/*" {
 }
 .Ed
 .Sh FILES
-.Bl -tag -width "/etc/ssl/acme/private/privkey.pem" -compact
-.It Pa /etc/acme/privkey.pem
-Default accountkey.
-.It Pa /etc/ssl/acme
-Default certdir.
-.It Pa /etc/ssl/acme/private/privkey.pem
-Default domainkey.
+.Bl -tag -width "/etc/acme-client.conf" -compact
+.It Pa /etc/acme-client.conf
+Default configuration.
 .It Pa /var/www/acme
 Default challengedir.
 .El
@@ -171,11 +100,9 @@ or 0 if certificates were changed (revoked or updated).
 .Sh EXAMPLES
 To create and submit a new key for a single domain, assuming that the
 web server has already been configured to map the challenge directory
-as in the
-.Sx Challenges
-section:
+as above:
 .Pp
-.Dl # acme-client -vNn foo.com www.foo.com smtp.foo.com
+.Dl # acme-client -vD www.example.com
 .Pp
 A daily
 .Xr cron 8
@@ -183,7 +110,7 @@ job can renew the certificates:
 .Bd -literal -offset indent
 #! /bin/sh
 
-acme-client foo.com www.foo.com smtp.foo.com
+acme-client www.example.com
 
 if [ $? -eq 0 ]
 then
@@ -192,6 +119,7 @@ fi
 .Ed
 .Sh SEE ALSO
 .Xr openssl 1 ,
+.Xr acme-client.conf 5 ,
 .Xr httpd.conf 5
 .Sh STANDARDS
 .Rs

@@ -1,6 +1,6 @@
 #!/bin/ksh
 #
-# $OpenBSD: syspatch.sh,v 1.78 2016/12/08 09:47:37 ajacoutot Exp $
+# $OpenBSD: syspatch.sh,v 1.91 2017/01/30 15:36:20 ajacoutot Exp $
 #
 # Copyright (c) 2016 Antoine Jacoutot <ajacoutot@openbsd.org>
 #
@@ -136,18 +136,13 @@ create_rollback()
 
 fetch_and_verify()
 {
-	local _sig=${_TMP}/SHA256.sig _tgz=$1
+	local _tgz=$1
 	[[ -n ${_tgz} ]]
 
-	[[ -f ${_sig} ]] || \
-		unpriv -f "${_sig}" ${_FETCH} -o "${_sig}" "${_URL}/SHA256.sig"
+	unpriv -f "${_TMP}/${_tgz}" ftp -Vm -D "Get/Verify" -o \
+		"${_TMP}/${_tgz}" "${_MIRROR}/${_tgz}"
 
-	unpriv -f "${_TMP}/${_tgz}" ${_FETCH} -mD "Get/Verify" -o \
-		"${_TMP}/${_tgz}" "${_URL}/${_tgz}"
-
-	(cd ${_TMP} && unpriv signify -qC -p \
-		/etc/signify/openbsd-${_OSrev}-syspatch.pub -x SHA256.sig \
-		${_tgz})
+	(cd ${_TMP} && sha256 -qC ${_TMP}/SHA256 ${_tgz})
 }
 
 install_file()
@@ -183,11 +178,15 @@ ls_installed()
 
 ls_missing()
 {
-	local _c _idx=${_TMP}/idx.txt _l="$(ls_installed)"
+	local _c _l="$(ls_installed)" _sha=${_TMP}/SHA256
 
-	unpriv -f "${_idx}" ${_FETCH} -o "${_idx}" "${_URL}/index.txt"
+	# don't output anything on stdout to prevent corrupting the patch list
+	unpriv -f "${_sha}.sig" ftp -MVo "${_sha}.sig" "${_MIRROR}/SHA256.sig" \
+		>/dev/null
+	unpriv -f "${_sha}" signify -Veq -x ${_sha}.sig -m ${_sha} -p \
+		/etc/signify/openbsd-${_OSrev}-syspatch.pub >/dev/null
 
-	grep -Eo "syspatch${_OSrev}-[[:digit:]]{3}_[[:alnum:]_]+" ${_idx} |
+	grep -Eo "syspatch${_OSrev}-[[:digit:]]{3}_[[:alnum:]_]+" ${_sha} |
 		while read _c; do _c=${_c##syspatch${_OSrev}-} &&
 		[[ -n ${_l} ]] && echo ${_c} | grep -qw -- "${_l}" || echo ${_c}
 	done | sort -V
@@ -250,8 +249,7 @@ sp_cleanup()
 
 unpriv()
 {
-	# XXX use a dedicated user?
-	local _file=$2 _user=_pkgfetch
+	local _file=$2 _user=_syspatch
 
 	if [[ $1 == -f && -n ${_file} ]]; then
 		>${_file}
@@ -264,28 +262,30 @@ unpriv()
 	eval su -s /bin/sh ${_user} -c "'$@'"
 }
 
-# XXX needs a way to match release <=> syspatch
+[[ $@ == @(|-[[:alpha:]]) ]] || usage; [[ $@ == @(|-(c|r)) ]] &&
+	(($(id -u) != 0)) && sp_err "${0##*/}: need root privileges"
+
 # only run on release (not -current nor -stable)
 set -A _KERNV -- $(sysctl -n kern.version |
 	sed 's/^OpenBSD \([0-9]\.[0-9]\)\([^ ]*\).*/\1 \2/;q')
 ((${#_KERNV[*]} > 1)) && sp_err "Unsupported release ${_KERNV[*]}"
 
-[[ $@ == @(|-[[:alpha:]]) ]] || usage; [[ $@ == @(|-(c|r)) ]] &&
-	(($(id -u) != 0)) && sp_err "${0##*/}: need root privileges"
+_OSrev=${_KERNV[0]%.*}${_KERNV[0]#*.}
+[[ -n ${_OSrev} ]]
+
+_MIRROR=$(while read _line; do _line=${_line%%#*}; [[ -n ${_line} ]] &&
+	print -r -- "${_line}"; done </etc/installurl | tail -1)
+[[ -z ${_MIRROR} ]] && sp_err "${0##*/}: no URL configured in /etc/installurl"
+_MIRROR="${_MIRROR}/syspatch/${_KERNV[0]}/$(machine)"
 
 (($(sysctl -n hw.ncpufound) > 1)) && _BSDMP=true || _BSDMP=false
-_FETCH="ftp -MVk ${FTP_KEEPALIVE-0}"
-_OSrev=${_KERNV[0]%\.*}${_KERNV[0]#*\.}
 _PDIR="/var/syspatch"
 _TMP=$(mktemp -d -p /tmp syspatch.XXXXXXXXXX)
-# XXX to be discussed
-_URL=http://syspatch.openbsd.org/pub/OpenBSD/${_KERNV[0]}/syspatch/$(machine)
-readonly _BSDMP _FETCH _OSrev _PDIR _REL _TMP _URL
+
+readonly _BSDMP _KERNV _MIRROR _OSrev _PDIR _TMP
 
 trap 'set +e; rm -rf "${_TMP}"' EXIT
 trap exit HUP INT TERM
-
-[[ -n ${_OSrev} ]]
 
 while getopts clr arg; do
 	case ${arg} in
@@ -295,8 +295,8 @@ while getopts clr arg; do
 		*) usage;;
 	esac
 done
-shift $((OPTIND -1))
-[[ $# -ne 0 ]] && usage
+shift $((OPTIND - 1))
+(($# != 0)) && usage
 
 if ((OPTIND == 1)); then
 	for _PATCH in $(ls_missing); do

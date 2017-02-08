@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.c,v 1.173 2016/12/09 21:39:27 nicm Exp $ */
+/* $OpenBSD: tmux.c,v 1.176 2017/01/23 10:09:43 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -43,6 +43,7 @@ struct hooks	*global_hooks;
 
 struct timeval	 start_time;
 const char	*socket_path;
+int		 ptm_fd = -1;
 
 static __dead void	 usage(void);
 static char		*make_label(const char *);
@@ -188,9 +189,11 @@ find_home(void)
 int
 main(int argc, char **argv)
 {
-	char		*path, *label, **var, tmp[PATH_MAX], *shellcmd = NULL;
-	const char	*s;
-	int		 opt, flags, keys;
+	char					*path, *label, tmp[PATH_MAX];
+	char					*shellcmd = NULL, **var;
+	const char				*s, *shell;
+	int					 opt, flags, keys;
+	const struct options_table_entry	*oe;
 
 	if (setlocale(LC_CTYPE, "en_US.UTF-8") == NULL) {
 		if (setlocale(LC_CTYPE, "") == NULL)
@@ -256,6 +259,8 @@ main(int argc, char **argv)
 	if (shellcmd != NULL && argc != 0)
 		usage();
 
+	if (pty_open(&ptm_fd) != 0)
+		errx(1, "open(\"/dev/ptm\"");
 	if (pledge("stdio rpath wpath cpath flock fattr unix getpw sendfd "
 	    "recvfd proc exec tty ps", NULL) != 0)
 		err(1, "pledge");
@@ -291,14 +296,23 @@ main(int argc, char **argv)
 		environ_set(global_environ, "PWD", "%s", tmp);
 
 	global_options = options_create(NULL);
-	options_table_populate_tree(OPTIONS_TABLE_SERVER, global_options);
-
 	global_s_options = options_create(NULL);
-	options_table_populate_tree(OPTIONS_TABLE_SESSION, global_s_options);
-	options_set_string(global_s_options, "default-shell", "%s", getshell());
-
 	global_w_options = options_create(NULL);
-	options_table_populate_tree(OPTIONS_TABLE_WINDOW, global_w_options);
+	for (oe = options_table; oe->name != NULL; oe++) {
+		if (oe->scope == OPTIONS_TABLE_SERVER)
+			options_default(global_options, oe);
+		if (oe->scope == OPTIONS_TABLE_SESSION)
+			options_default(global_s_options, oe);
+		if (oe->scope == OPTIONS_TABLE_WINDOW)
+			options_default(global_w_options, oe);
+	}
+
+	/*
+	 * The default shell comes from SHELL or from the user's passwd entry
+	 * if available.
+	 */
+	shell = getshell();
+	options_set_string(global_s_options, "default-shell", 0, "%s", shell);
 
 	/* Override keys to vi if VISUAL or EDITOR are set. */
 	if ((s = getenv("VISUAL")) != NULL || (s = getenv("EDITOR")) != NULL) {

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_crypto.c,v 1.66 2015/11/24 13:45:06 mpi Exp $	*/
+/*	$OpenBSD: ieee80211_crypto.c,v 1.68 2016/12/20 13:27:58 stsp Exp $	*/
 
 /*-
  * Copyright (c) 2008 Damien Bergamini <damien.bergamini@free.fr>
@@ -60,16 +60,20 @@ ieee80211_crypto_attach(struct ifnet *ifp)
 
 	TAILQ_INIT(&ic->ic_pmksa);
 	if (ic->ic_caps & IEEE80211_C_RSN) {
-		ic->ic_rsnprotos = IEEE80211_PROTO_WPA | IEEE80211_PROTO_RSN;
+		ic->ic_rsnprotos = IEEE80211_PROTO_RSN;
 		ic->ic_rsnakms = IEEE80211_AKM_PSK;
-		ic->ic_rsnciphers = IEEE80211_CIPHER_TKIP |
-		    IEEE80211_CIPHER_CCMP;
-		ic->ic_rsngroupcipher = IEEE80211_CIPHER_TKIP;
+		ic->ic_rsnciphers = IEEE80211_CIPHER_CCMP;
+		ic->ic_rsngroupcipher = IEEE80211_CIPHER_CCMP;
 		ic->ic_rsngroupmgmtcipher = IEEE80211_CIPHER_BIP;
 	}
 	ic->ic_set_key = ieee80211_set_key;
 	ic->ic_delete_key = ieee80211_delete_key;
+#ifndef IEEE80211_STA_ONLY
+	timeout_set(&ic->ic_tkip_micfail_timeout,
+	    ieee80211_michael_mic_failure_timeout, ic);
+#endif
 }
+
 
 void
 ieee80211_crypto_detach(struct ifnet *ifp)
@@ -95,6 +99,10 @@ ieee80211_crypto_detach(struct ifnet *ifp)
 
 	/* clear pre-shared key from memory */
 	explicit_bzero(ic->ic_psk, IEEE80211_PMK_LEN);
+
+#ifndef IEEE80211_STA_ONLY
+	timeout_del(&ic->ic_tkip_micfail_timeout);
+#endif
 }
 
 /*

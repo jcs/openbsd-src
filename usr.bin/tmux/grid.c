@@ -1,4 +1,4 @@
-/* $OpenBSD: grid.c,v 1.60 2016/10/18 19:52:49 nicm Exp $ */
+/* $OpenBSD: grid.c,v 1.64 2017/02/08 16:45:18 nicm Exp $ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -58,6 +58,25 @@ static size_t	grid_string_cells_fg(const struct grid_cell *, int *);
 static size_t	grid_string_cells_bg(const struct grid_cell *, int *);
 static void	grid_string_cells_code(const struct grid_cell *,
 		    const struct grid_cell *, char *, size_t, int);
+
+/* Store cell in entry. */
+static void
+grid_store_cell(struct grid_cell_entry *gce, const struct grid_cell *gc,
+    u_char c)
+{
+	gce->flags = gc->flags;
+
+	gce->data.fg = gc->fg & 0xff;
+	if (gc->fg & COLOUR_FLAG_256)
+		gce->flags |= GRID_FLAG_FG256;
+
+	gce->data.bg = gc->bg & 0xff;
+	if (gc->bg & COLOUR_FLAG_256)
+		gce->flags |= GRID_FLAG_BG256;
+
+	gce->data.attr = gc->attr;
+	gce->data.data = c;
+}
 
 /* Set cell as extended. */
 static struct grid_cell *
@@ -292,6 +311,13 @@ grid_expand_line(struct grid *gd, u_int py, u_int sx, u_int bg)
 	if (sx <= gl->cellsize)
 		return;
 
+	if (sx < gd->sx / 4)
+		sx = gd->sx / 4;
+	else if (sx < gd->sx / 2)
+		sx = gd->sx / 2;
+	else
+		sx = gd->sx;
+
 	gl->celldata = xreallocarray(gl->celldata, sx, sizeof *gl->celldata);
 	for (xx = gl->cellsize; xx < sx; xx++)
 		grid_clear_cell(gd, xx, py, bg);
@@ -364,11 +390,10 @@ grid_set_cell(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc)
 	grid_expand_line(gd, py, px + 1, 8);
 
 	gl = &gd->linedata[py];
-	gce = &gl->celldata[px];
-
 	if (px + 1 > gl->cellused)
 		gl->cellused = px + 1;
 
+	gce = &gl->celldata[px];
 	extended = (gce->flags & GRID_FLAG_EXTENDED);
 	if (!extended && (gc->data.size != 1 || gc->data.width != 1))
 		extended = 1;
@@ -376,20 +401,40 @@ grid_set_cell(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc)
 		extended = 1;
 	if (!extended && (gc->bg & COLOUR_FLAG_RGB))
 		extended = 1;
-	if (extended) {
+	if (extended)
 		grid_extended_cell(gl, gce, gc);
-		return;
-	}
+	else
+		grid_store_cell(gce, gc, gc->data.data[0]);
+}
 
-	gce->flags = gc->flags;
-	gce->data.attr = gc->attr;
-	gce->data.fg = gc->fg & 0xff;
-	if (gc->fg & COLOUR_FLAG_256)
-		gce->flags |= GRID_FLAG_FG256;
-	gce->data.bg = gc->bg & 0xff;
-	if (gc->bg & COLOUR_FLAG_256)
-		gce->flags |= GRID_FLAG_BG256;
-	gce->data.data = gc->data.data[0];
+/* Set cells at relative position. */
+void
+grid_set_cells(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc,
+    const char *s, size_t slen)
+{
+	struct grid_line	*gl;
+	struct grid_cell_entry	*gce;
+	struct grid_cell	*gcp;
+	u_int			 i;
+
+	if (grid_check_y(gd, py) != 0)
+		return;
+
+	grid_expand_line(gd, py, px + slen, 8);
+
+	gl = &gd->linedata[py];
+	if (px + slen > gl->cellused)
+		gl->cellused = px + slen;
+
+	for (i = 0; i < slen; i++) {
+		gce = &gl->celldata[px + i];
+		if (gce->flags & GRID_FLAG_EXTENDED) {
+			gcp = &gl->extddata[gce->offset];
+			memcpy(gcp, gc, sizeof *gcp);
+			utf8_set(&gcp->data, s[i]);
+		} else
+			grid_store_cell(gce, gc, s[i]);
+	}
 }
 
 /* Clear area. */

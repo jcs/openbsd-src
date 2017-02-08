@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_var.h,v 1.77 2016/11/14 10:32:46 mpi Exp $	*/
+/*	$OpenBSD: if_var.h,v 1.80 2017/01/24 03:57:35 dlg Exp $	*/
 /*	$NetBSD: if.h,v 1.23 1996/05/07 02:40:27 thorpej Exp $	*/
 
 /*
@@ -116,6 +116,7 @@ struct ifnet {				/* and the entries */
 	caddr_t	if_bpf;			/* packet filter structure */
 	caddr_t if_bridgeport;		/* used by bridge ports */
 	caddr_t if_switchport;		/* used by switch ports */
+	caddr_t if_mcast;		/* used by multicast code */
 	caddr_t	if_pf_kif;		/* pf interface abstraction */
 	union {
 		caddr_t	carp_s;		/* carp structure (used by !carp ifs) */
@@ -125,7 +126,7 @@ struct ifnet {				/* and the entries */
 #define if_carpdev	if_carp_ptr.carp_d
 	unsigned int if_index;		/* numeric abbreviation for this if */
 	short	if_timer;		/* time 'til if_watchdog called */
-	short	if_flags;		/* up/down, broadcast, etc. */
+	unsigned short if_flags;	/* up/down, broadcast, etc. */
 	int	if_xflags;		/* extra softnet flags */
 	struct	if_data if_data;	/* stats and other data about if */
 	u_int32_t if_hardmtu;		/* maximum MTU device supports */
@@ -156,7 +157,12 @@ struct ifnet {				/* and the entries */
 					/* timer routine */
 	void	(*if_watchdog)(struct ifnet *);
 	int	(*if_wol)(struct ifnet *, int);
-	struct	ifqueue if_snd;		/* output queue */
+
+	struct	ifqueue if_snd;		/* transmit queue */
+	struct	ifqueue **if_ifqs;	/* pointer to an array of sndqs */
+	void	(*if_qstart)(struct ifqueue *);
+	unsigned int if_nifqs;
+
 	struct sockaddr_dl *if_sadl;	/* pointer to our sockaddr_dl */
 
 	void	*if_afdata[AF_MAX];

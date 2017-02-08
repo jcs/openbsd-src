@@ -1,4 +1,4 @@
-/*	$OpenBSD: smtpd.h,v 1.527 2016/11/30 18:38:32 eric Exp $	*/
+/*	$OpenBSD: smtpd.h,v 1.529 2017/02/03 08:23:46 guenther Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -22,6 +22,7 @@
 #define nitems(_a) (sizeof((_a)) / sizeof((_a)[0]))
 #endif
 
+#include <netinet/in.h>
 #include <event.h>
 
 #include "smtpd-defines.h"
@@ -1018,7 +1019,7 @@ struct msg {
 
 extern enum smtp_proc_type	smtpd_process;
 
-extern int verbose;
+extern int tracing;
 extern int foreground_log;
 extern int profiling;
 

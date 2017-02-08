@@ -109,7 +109,7 @@ history_filename (filename)
 
   if (return_val)
     return (return_val);
-  
+
   home = sh_get_env_value ("HOME");
 
   if (home == 0 || *home == '\0') {
@@ -375,7 +375,9 @@ history_do_write (filename, nelements, overwrite)
   register int i;
   char *output;
   int file, mode, rv;
+#ifdef HAVE_MMAP
   size_t cursize;
+#endif
 
 #ifdef HAVE_MMAP
   mode = overwrite ? O_RDWR|O_CREAT|O_TRUNC|O_BINARY : O_RDWR|O_APPEND|O_BINARY;
@@ -423,11 +425,11 @@ mmap_error:
 	close (file);
 	return rv;
       }
-#else    
+#else
     buffer = (char *)malloc (buffer_size);
     if (buffer == 0)
       {
-      	rv = errno;
+	rv = errno;
 	FREE (output);
 	close (file);
 	return rv;

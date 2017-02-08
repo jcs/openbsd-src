@@ -1,4 +1,4 @@
-/*	$OpenBSD: icmp6.c,v 1.194 2016/11/28 14:14:39 mpi Exp $	*/
+/*	$OpenBSD: icmp6.c,v 1.199 2017/02/05 16:04:14 jca Exp $	*/
 /*	$KAME: icmp6.c,v 1.217 2001/06/20 15:03:29 jinmei Exp $	*/
 
 /*
@@ -216,8 +216,7 @@ icmp6_mtudisc_callback_register(void (*func)(struct sockaddr_in6 *, u_int))
 {
 	struct icmp6_mtudisc_callback *mc;
 
-	for (mc = LIST_FIRST(&icmp6_mtudisc_callbacks); mc != NULL;
-	     mc = LIST_NEXT(mc, mc_list)) {
+	LIST_FOREACH(mc, &icmp6_mtudisc_callbacks, mc_list) {
 		if (mc->mc_func == func)
 			return;
 	}
@@ -981,11 +980,7 @@ icmp6_mtudisc_update(struct ip6ctlparam *ip6cp, int validated)
 	struct rtentry *rt = NULL;
 	struct sockaddr_in6 sin6;
 
-	/*
-	 * The MTU may not be less then the minimal IPv6 MTU except for the
-	 * hack in ip6_output/ip6_setpmtu where we always include a frag header.
-	 */
-	if (mtu < IPV6_MMTU - sizeof(struct ip6_frag))
+	if (mtu < IPV6_MMTU)
 		return;
 
 	/*
@@ -1023,9 +1018,9 @@ icmp6_mtudisc_update(struct ip6ctlparam *ip6cp, int validated)
 	if (rt != NULL && ISSET(rt->rt_flags, RTF_HOST) &&
 	    !(rt->rt_rmx.rmx_locks & RTV_MTU) &&
 	    (rt->rt_rmx.rmx_mtu > mtu || rt->rt_rmx.rmx_mtu == 0)) {
-	    	struct ifnet *ifp;
+		struct ifnet *ifp;
 
-	    	ifp = if_get(rt->rt_ifidx);
+		ifp = if_get(rt->rt_ifidx);
 		if (ifp != NULL && mtu < ifp->if_mtu) {
 			icmp6stat.icp6s_pmtuchg++;
 			rt->rt_rmx.rmx_mtu = mtu;
@@ -1038,8 +1033,7 @@ icmp6_mtudisc_update(struct ip6ctlparam *ip6cp, int validated)
 	 * Notify protocols that the MTU for this destination
 	 * has changed.
 	 */
-	for (mc = LIST_FIRST(&icmp6_mtudisc_callbacks); mc != NULL;
-	     mc = LIST_NEXT(mc, mc_list))
+	LIST_FOREACH(mc, &icmp6_mtudisc_callbacks, mc_list)
 		(*mc->mc_func)(&sin6, m->m_pkthdr.ph_rtableid);
 }
 
@@ -1130,8 +1124,13 @@ icmp6_rip6_input(struct mbuf **mp, int off)
 		} else
 			sorwakeup(last->inp_socket);
 	} else {
+		struct counters_ref ref;
+		uint64_t *counters;
+
 		m_freem(m);
-		ip6stat.ip6s_delivered--;
+		counters = counters_enter(&ref, ip6counters);
+		counters[ip6s_delivered]--;
+		counters_leave(&ref, ip6counters);
 	}
 	return IPPROTO_DONE;
 }
@@ -1808,11 +1807,10 @@ fail:
  */
 int
 icmp6_ctloutput(int op, struct socket *so, int level, int optname,
-    struct mbuf **mp)
+    struct mbuf *m)
 {
 	int error = 0;
 	struct inpcb *in6p = sotoinpcb(so);
-	struct mbuf *m = *mp;
 
 	if (level != IPPROTO_ICMPV6) {
 		if (op == PRCO_SETOPT)
@@ -1859,7 +1857,6 @@ icmp6_ctloutput(int op, struct socket *so, int level, int optname,
 				error = EINVAL;
 				break;
 			}
-			*mp = m = m_get(M_WAIT, MT_SOOPTS);
 			m->m_len = sizeof(struct icmp6_filter);
 			p = mtod(m, struct icmp6_filter *);
 			bcopy(in6p->inp_icmp6filt, p,
@@ -1953,7 +1950,7 @@ icmp6_mtudisc_timeout(struct rtentry *rt, struct rttimer *r)
 {
 	struct ifnet *ifp;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	ifp = if_get(rt->rt_ifidx);
 	if (ifp == NULL)
@@ -1974,7 +1971,7 @@ icmp6_redirect_timeout(struct rtentry *rt, struct rttimer *r)
 {
 	struct ifnet *ifp;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 	ifp = if_get(rt->rt_ifidx);
 	if (ifp == NULL)

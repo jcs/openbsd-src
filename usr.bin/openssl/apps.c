@@ -1,4 +1,4 @@
-/* $OpenBSD: apps.c,v 1.40 2016/09/04 09:00:14 guenther Exp $ */
+/* $OpenBSD: apps.c,v 1.42 2017/01/21 09:29:09 deraadt Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -619,7 +619,7 @@ load_cert(BIO *err, const char *file, int format, const char *pass,
 		x = d2i_X509_bio(cert, NULL);
 	else if (format == FORMAT_NETSCAPE) {
 		NETSCAPE_X509 *nx;
-		nx = ASN1_item_d2i_bio(ASN1_ITEM_rptr(NETSCAPE_X509),
+		nx = ASN1_item_d2i_bio(&NETSCAPE_X509_it,
 		    cert, NULL);
 		if (nx == NULL)
 			goto end;
@@ -1467,7 +1467,7 @@ load_index(char *dbfile, DB_ATTR *db_attr)
 		BIO_printf(bio_err, "attr filename too long\n");
 		goto err;
 	}
-		
+
 	dbattr_conf = NCONF_new(NULL);
 	if (NCONF_load(dbattr_conf, attrpath, &errorline) <= 0) {
 		if (errorline > 0) {

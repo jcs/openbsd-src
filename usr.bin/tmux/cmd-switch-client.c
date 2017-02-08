@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-switch-client.c,v 1.44 2016/10/16 19:04:05 nicm Exp $ */
+/* $OpenBSD: cmd-switch-client.c,v 1.48 2017/02/06 15:00:41 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -53,7 +53,7 @@ cmd_switch_client_exec(struct cmd *self, struct cmdq_item *item)
 	struct client		*c = state->c;
 	struct session		*s = item->state.tflag.s;
 	struct window_pane	*wp;
-	const char		*tablename, *update;
+	const char		*tablename;
 	struct key_table	*table;
 
 	if (args_has(args, 'r'))
@@ -102,15 +102,14 @@ cmd_switch_client_exec(struct cmd *self, struct cmdq_item *item)
 		}
 	}
 
-	if (c != NULL && !args_has(args, 'E')) {
-		update = options_get_string(s->options, "update-environment");
-		environ_update(update, c->environ, s->environ);
-	}
+	if (!args_has(args, 'E'))
+		environ_update(s->options, c->environ, s->environ);
 
 	if (c->session != NULL && c->session != s)
 		c->last_session = c->session;
 	c->session = s;
-	server_client_set_key_table(c, NULL);
+	if (!item->repeat)
+		server_client_set_key_table(c, NULL);
 	status_timer_start(c);
 	session_update_activity(s, NULL);
 	gettimeofday(&s->last_attached_time, NULL);

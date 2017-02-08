@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.85 2016/11/17 14:52:48 jsing Exp $	*/
+/*	$OpenBSD: parse.y,v 1.89 2017/02/07 12:27:42 reyk Exp $	*/
 
 /*
  * Copyright (c) 2007 - 2015 Reyk Floeter <reyk@openbsd.org>
@@ -245,6 +245,8 @@ server		: SERVER optmatch STRING	{
 			s->srv_conf.parent_id = s->srv_conf.id;
 			s->srv_s = -1;
 			s->srv_conf.timeout.tv_sec = SERVER_TIMEOUT;
+			s->srv_conf.requesttimeout.tv_sec =
+			    SERVER_REQUESTTIMEOUT;
 			s->srv_conf.maxrequests = SERVER_MAXREQUESTS;
 			s->srv_conf.maxrequestbody = SERVER_MAXREQUESTBODY;
 			s->srv_conf.flags = SRVFLAG_LOG;
@@ -344,7 +346,7 @@ server		: SERVER optmatch STRING	{
 
 			if (server_tls_load_ocsp(srv) == -1) {
 				yyerror("server \"%s\": failed to load "
-				    "oscp staple", srv->srv_conf.name);
+				    "ocsp staple", srv->srv_conf.name);
 				serverconfig_free(srv_conf);
 				free(srv);
 				YYERROR;
@@ -684,6 +686,10 @@ conflags_l	: conflags optcommanl conflags_l
 
 conflags	: TIMEOUT timeout		{
 			memcpy(&srv_conf->timeout, &$2,
+			    sizeof(struct timeval));
+		}
+		| REQUEST TIMEOUT timeout	{
+			memcpy(&srv_conf->requesttimeout, &$3,
 			    sizeof(struct timeval));
 		}
 		| MAXIMUM REQUESTS NUMBER	{
@@ -1598,8 +1604,7 @@ parse_config(const char *filename, struct httpd *x_conf)
 	endprotoent();
 
 	/* Free macros */
-	for (sym = TAILQ_FIRST(&symhead); sym != NULL; sym = next) {
-		next = TAILQ_NEXT(sym, entry);
+	TAILQ_FOREACH_SAFE(sym, &symhead, entry, next) {
 		if (!sym->persist) {
 			free(sym->nam);
 			free(sym->val);
@@ -1689,9 +1694,10 @@ symset(const char *nam, const char *val, int persist)
 {
 	struct sym	*sym;
 
-	for (sym = TAILQ_FIRST(&symhead); sym && strcmp(nam, sym->nam);
-	    sym = TAILQ_NEXT(sym, entry))
-		;	/* nothing */
+	TAILQ_FOREACH(sym, &symhead, entry) {
+		if (strcmp(nam, sym->nam) == 0)
+			break;
+	}
 
 	if (sym != NULL) {
 		if (sym->persist == 1)
@@ -1750,11 +1756,12 @@ symget(const char *nam)
 {
 	struct sym	*sym;
 
-	TAILQ_FOREACH(sym, &symhead, entry)
+	TAILQ_FOREACH(sym, &symhead, entry) {
 		if (strcmp(nam, sym->nam) == 0) {
 			sym->used = 1;
 			return (sym->val);
 		}
+	}
 	return (NULL);
 }
 
@@ -2068,7 +2075,7 @@ server_inherit(struct server *src, struct server_config *alias,
 	}
 
 	if (server_tls_load_ocsp(dst) == -1) {
-		yyerror("failed to load oscp staple "
+		yyerror("failed to load ocsp staple "
 		    "for server %s", dst->srv_conf.name);
 		serverconfig_free(&dst->srv_conf);
 		free(dst);

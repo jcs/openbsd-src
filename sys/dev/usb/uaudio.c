@@ -1,4 +1,4 @@
-/*	$OpenBSD: uaudio.c,v 1.120 2016/12/05 07:07:43 ratchov Exp $ */
+/*	$OpenBSD: uaudio.c,v 1.123 2017/01/31 13:42:15 jca Exp $ */
 /*	$NetBSD: uaudio.c,v 1.90 2004/10/29 17:12:53 kent Exp $	*/
 
 /*
@@ -32,9 +32,9 @@
  */
 
 /*
- * USB audio specs: http://www.usb.org/developers/devclass_docs/audio10.pdf
- *                  http://www.usb.org/developers/devclass_docs/frmts10.pdf
- *                  http://www.usb.org/developers/devclass_docs/termt10.pdf
+ * USB audio specs: http://www.usb.org/developers/docs/devclass_docs/audio10.pdf
+ *                  http://www.usb.org/developers/docs/devclass_docs/frmts10.pdf
+ *                  http://www.usb.org/developers/docs/devclass_docs/termt10.pdf
  */
 
 #include <sys/param.h>
@@ -1254,10 +1254,8 @@ uaudio_add_processing(struct uaudio_softc *sc, const struct io_terminal *iot, in
 	case CHORUS_PROCESS:
 	case DYN_RANGE_COMP_PROCESS:
 	default:
-#ifdef UAUDIO_DEBUG
-		printf("%s: unit %d, type=%d not impl.\n",
-		       __func__, d->bUnitId, ptype);
-#endif
+		DPRINTF(("%s: unit %d, type=%d not impl.\n",
+		       __func__, d->bUnitId, ptype));
 		break;
 	}
 }
@@ -3015,7 +3013,7 @@ uaudio_chan_init(struct chan *ch, int mode, int altidx,
 		    __func__, altidx));
 		use_maxpkt = 1;
 	}
-	if (mode == AUMODE_RECORD) {
+	else if (mode == AUMODE_RECORD) {
 		DPRINTF(("%s: using maxpktsize packets for record channel\n",
 		    __func__));
 		use_maxpkt = 1;

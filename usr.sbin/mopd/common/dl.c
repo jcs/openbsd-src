@@ -1,4 +1,4 @@
-/*	$OpenBSD: dl.c,v 1.8 2009/10/27 23:59:52 deraadt Exp $ */
+/*	$OpenBSD: dl.c,v 1.10 2017/01/21 08:33:51 krw Exp $ */
 
 /*
  * Copyright (c) 1993-95 Mats O Jansson.  All rights reserved.
@@ -15,9 +15,9 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
  * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
  * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, 
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
  * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
@@ -96,7 +96,7 @@ mopDumpDL(FILE *fd, u_char *pkt, int trans)
 
 		if (moplen > 6) {
 			for (i = 0; i < (moplen - 6); i++) {
-				if ((i % 16) == 0)
+				if ((i % 16) == 0) {
 					if ((i / 16) == 0)
 						fprintf(fd,
 						    "Image Data   : %04x ",
@@ -104,6 +104,7 @@ mopDumpDL(FILE *fd, u_char *pkt, int trans)
 					else
 						fprintf(fd,
 						    "                    ");
+				}
 
 				fprintf(fd, "%02x ", mopGetChar(pkt, &idx));
 				if ((i % 16) == 15)

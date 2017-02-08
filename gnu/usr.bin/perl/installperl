@@ -11,13 +11,21 @@ BEGIN {
 }
 
 use strict;
-use vars qw($Is_VMS $Is_W32 $Is_OS2 $Is_Cygwin $Is_Darwin $Is_NetWare
+use vars qw($Is_VMS $Is_W32 $Is_OS2 $Is_Cygwin $Is_Darwin $Is_NetWare $Is_AmigaOS
 	    %opts $packlist);
 my $versiononly;
 
 BEGIN {
     if ($Is_VMS) { eval 'use VMS::Filespec;' }
 }
+
+# HP-UX (at least) needs to maintain execute permissions
+# on dynamically-loadable libraries. So we do it for all.
+#
+# In AmigaOS, the 0777 means 'rwed' (e = execute, d = delete),
+# (not 'rwx') and having the 'd' makes updates more convenient.
+my $SO_MODE     = $Is_AmigaOS ? 0777 : 0555;
+my $NON_SO_MODE = $Is_AmigaOS ? 0666 : 0444;
 
 my $scr_ext = ($Is_VMS ? '.Com' : $Is_W32 ? '.bat' : '');
 
@@ -116,7 +124,6 @@ my (@scripts, @tolink);
 open SCRIPTS, "utils.lst" or die "Can't open utils.lst: $!";
 while (<SCRIPTS>) {
     next if /^#/;
-    next if /a2p/; # a2p is binary, to be installed separately
     chomp;
     if (/(\S*)\s*#\s*link\s*=\s*(\S*)/) {
 	push @scripts, $1;
@@ -296,9 +303,6 @@ if ($Is_VMS) {
         safe_unlink("$installbin/$ndbg$perl$exe_ext");
         copy("$ndbg$perl$exe_ext", "$installbin/$ndbg$perl$exe_ext");
         chmod(0755, "$installbin/$ndbg$perl$exe_ext");
-	safe_unlink("$installbin/${dbg}a2p$exe_ext");
-	copy("x2p/${dbg}a2p$exe_ext", "$installbin/${dbg}a2p$exe_ext");
-	chmod(0755, "$installbin/${dbg}a2p$exe_ext");
     }
 }
 elsif ($^O ne 'dos') {
@@ -308,12 +312,11 @@ elsif ($^O ne 'dos') {
     else {
 	# If installing onto a NetWare server
         if ($opts{netware}) {
-	    # Copy perl.nlm, echo.nlm, type.nlm, a2p.nlm & cgi2perl.nlm
+	    # Copy perl.nlm, echo.nlm, type.nlm & cgi2perl.nlm
             mkpath($Config{installnwsystem});
 	    copy("netware\\".$ENV{'MAKE_TYPE'}."\\perl.nlm", $Config{installnwsystem});
 	    copy("netware\\testnlm\\echo\\echo.nlm", $Config{installnwsystem});
 	    copy("netware\\testnlm\\type\\type.nlm", $Config{installnwsystem});
-	    copy("x2p\\a2p.nlm", $Config{installnwsystem});
 	    chmod(0755, "$Config{installnwsystem}\\perl.nlm");
             mkpath($Config{installnwlcgi});
 	    copy("lib\\auto\\cgi2perl\\cgi2perl.nlm", $Config{installnwlcgi});
@@ -373,6 +376,8 @@ elsif ($Is_Cygwin) { # On Cygwin symlink it to CORE to make Makefile happy
     ( copy("$installbin/$libperl", $coredll) &&
       push(@corefiles, $instcoredll)
     )
+} elsif ($Is_W32) {
+    @corefiles = <*.h>;
 } else {
     # [als] hard-coded 'libperl' name... not good!
     #@corefiles = <*.h libperl*.* perl*$Config{lib_ext}>;
@@ -382,17 +387,24 @@ elsif ($Is_Cygwin) { # On Cygwin symlink it to CORE to make Makefile happy
     # AIX needs perl.exp installed as well.
     push(@corefiles,'perl.exp') if $^O eq 'aix';
 }
+
+
 foreach my $file (@corefiles) {
-    # HP-UX (at least) needs to maintain execute permissions
-    # on dynamically-loadable libraries. So we do it for all.
     if (copy_if_diff($file,"$installarchlib/CORE/$file")) {
 	if ($file =~ /\.(\Q$so\E|\Q$dlext\E)$/) {
 	    strip("-S", "$installarchlib/CORE/$file") if $^O eq 'darwin';
-	    chmod(0555, "$installarchlib/CORE/$file");
+	    chmod($SO_MODE, "$installarchlib/CORE/$file");
 	} else {
-	    chmod(0444, "$installarchlib/CORE/$file");
+	    chmod($NON_SO_MODE, "$installarchlib/CORE/$file");
 	}
     }
+}
+
+if ($Is_W32) { #linking lib isn't made in root but in CORE on Win32
+    @corefiles = <lib/CORE/libperl*.* lib/CORE/perl*$Config{lib_ext}>;
+    my $dest;
+    copy_if_diff($_,($dest = $installarchlib.substr($_,3))) &&
+	chmod($NON_SO_MODE, $dest) foreach @corefiles;
 }
 
 # Install main perl executables
@@ -405,7 +417,7 @@ if (! $versiononly && ! samepath($installbin, '.') && ($^O ne 'dos') && ! $Is_VM
 	symlink("$installbin/$perl_verbase$ver$exe_ext",
 		"$installbin/$perl$exe_ext");
     } else {
-	link("$installbin/$perl_verbase$ver$exe_ext",
+	safe_rename("$installbin/$perl_verbase$ver$exe_ext",
 		"$installbin/$perl$exe_ext");
     }
 }
@@ -458,21 +470,6 @@ if ($Config{installusrbinperl} && $Config{installusrbinperl} eq 'define' &&
     }
 }
 
-# Make links to ordinary names if installbin directory isn't current directory.
-if (!$Is_NetWare && $dbg eq '') {
-    if (! samepath($installbin, 'x2p')) {
-	my $base = 'a2p';
-	$base .= $ver if $versiononly;
-	safe_unlink("$installbin/$base$exe_ext");
-	copy("x2p/a2p$exe_ext", "$installbin/$base$exe_ext");
-	strip("$installbin/$base$exe_ext");
-	if (defined($opts{uid}) || defined($opts{gid})) {
-	    chown($opts{uid}, $opts{gid}, "$installbin/$base$exe_ext");
-	}
-	chmod(0755, "$installbin/$base$exe_ext");
-    }
-}
-
 # cppstdin is just a script, but it is architecture-dependent, so
 # it can't safely be shared.  Place it in $installbin.
 # Note that Configure doesn't build cppstin if it isn't needed, so
@@ -520,6 +517,10 @@ if ($versiononly) {
 	(my $base = $_) =~ s#.*/##;
 	copy($_, "$installscript/$base");
 	chmod(0755, "$installscript/$base");
+	if ($Is_AmigaOS) {
+            my $amigapath = unixtoamiga("$installscript/$base");
+            amigaprotect($amigapath,"+s");
+        }
     }
 
     for (@tolink) {
@@ -707,14 +708,13 @@ sub installlib {
     # ignore the cpan script in lib/CPAN/bin, the instmodsh and xsubpp
     # scripts in lib/ExtUtils, the prove script in lib/Test/Harness,
     # the corelist script from lib/Module/CoreList/bin and ptar* in
-    # lib/Archive/Tar/bin, the config_data script in lib/Module/Build/scripts
-    # and zipdetails in cpan/IO-Compress/bin
+    # lib/Archive/Tar/bin and zipdetails in cpan/IO-Compress/bin
     # (they're installed later with other utils)
-    return if $name =~ /^(?:cpan|instmodsh|prove|corelist|ptar|ptardiff|ptargrep|config_data|zipdetails)\z/;
+    return if $name =~ /^(?:cpan|instmodsh|prove|corelist|ptar|ptardiff|ptargrep|zipdetails)\z/;
     # ignore the Makefiles
     return if $name =~ /^makefile$/i;
-    # ignore the test extensions
-    return if $dir =~ m{\bXS/(?:APItest|Typemap)\b};
+    # ignore the test extensions, dont install PPPort.so/.dll
+    return if $dir =~ m{\b(?:XS/(?:APItest|Typemap)|Devel/PPPort)\b};
     return if $name =~ m{\b(?:APItest|Typemap)\.pm$};
     # ignore the build support code
     return if $name =~ /\bbuildcustomize\.pl$/;
@@ -757,6 +757,9 @@ sub installlib {
 
     return if $name eq 'ExtUtils/XSSymSet.pm' and !$Is_VMS;
 
+    #blead comes with version, blead isn't 5.8/5.6
+    return if $name eq 'ExtUtils/MakeMaker/version/regex.pm';
+
     my $installlib = $installprivlib;
     if ($dir =~ /^auto\// ||
 	  ($name =~ /^(.*)\.(?:pm|pod)$/ && $archpms{$1}) ||
@@ -789,7 +792,8 @@ sub installlib {
             if (copy_if_diff($_, "$installlib/$name")) {
                 strip("-S", "$installlib/$name")
                     if $^O eq 'darwin' and /\.(?:so|$dlext|a)$/;
-                chmod(/\.(so|$dlext)$/ ? 0555 : 0444, "$installlib/$name");
+                chmod(/\.(so|$dlext)$/ ? $SO_MODE : $NON_SO_MODE,
+                      "$installlib/$name");
             }
 	}
     }
@@ -863,9 +867,4 @@ sub strip
     }
 }
 
-# Local variables:
-# cperl-indent-level: 4
-# indent-tabs-mode: nil
-# End:
-#
 # ex: set ts=8 sts=4 sw=4 et:

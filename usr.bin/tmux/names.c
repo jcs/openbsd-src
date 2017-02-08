@@ -1,4 +1,4 @@
-/* $OpenBSD: names.c,v 1.37 2016/10/11 13:21:59 nicm Exp $ */
+/* $OpenBSD: names.c,v 1.39 2017/02/03 11:57:27 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -121,9 +121,10 @@ static char *
 format_window_name(struct window *w)
 {
 	struct format_tree	*ft;
-	char			*fmt, *name;
+	const char		*fmt;
+	char			*name;
 
-	ft = format_create(NULL, 0);
+	ft = format_create(NULL, FORMAT_WINDOW|w->id, 0);
 	format_defaults_window(ft, w);
 	format_defaults_pane(ft, w->active);
 

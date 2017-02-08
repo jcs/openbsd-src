@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_node.h,v 1.63 2016/09/21 12:21:27 stsp Exp $	*/
+/*	$OpenBSD: ieee80211_node.h,v 1.65 2017/02/02 16:47:53 stsp Exp $	*/
 /*	$NetBSD: ieee80211_node.h,v 1.9 2004/04/30 22:57:32 dyoung Exp $	*/
 
 /*-
@@ -363,12 +363,17 @@ extern	void ieee80211_clean_cached(struct ieee80211com *ic);
 extern	void ieee80211_clean_nodes(struct ieee80211com *, int);
 void ieee80211_setup_htcaps(struct ieee80211_node *, const uint8_t *,
     uint8_t);
+void ieee80211_clear_htcaps(struct ieee80211_node *);
 int ieee80211_setup_htop(struct ieee80211_node *, const uint8_t *,
     uint8_t);
 extern	int ieee80211_setup_rates(struct ieee80211com *,
 	    struct ieee80211_node *, const u_int8_t *, const u_int8_t *, int);
 extern  int ieee80211_iserp_sta(const struct ieee80211_node *);
-
+extern void ieee80211_count_longslotsta(void *, struct ieee80211_node *);
+extern void ieee80211_count_nonerpsta(void *, struct ieee80211_node *);
+extern void ieee80211_count_nonhtsta(void *, struct ieee80211_node *);
+extern void ieee80211_count_pssta(void *, struct ieee80211_node *);
+extern void ieee80211_count_rekeysta(void *, struct ieee80211_node *);
 extern	void ieee80211_node_join(struct ieee80211com *,
 		struct ieee80211_node *, int);
 extern	void ieee80211_node_leave(struct ieee80211com *,

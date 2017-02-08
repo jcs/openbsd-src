@@ -84,6 +84,17 @@
 #include <openssl/x509.h>
 #include <openssl/err.h>
 
+int BN_mod_exp_ct(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
+    const BIGNUM *m, BN_CTX *ctx);
+int BN_mod_exp_nonct(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
+    const BIGNUM *m, BN_CTX *ctx);
+int BN_mod_exp_mont_ct(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
+    const BIGNUM *m, BN_CTX *ctx, BN_MONT_CTX *m_ctx);
+int BN_mod_exp_mont_nonct(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
+    const BIGNUM *m, BN_CTX *ctx, BN_MONT_CTX *m_ctx);
+
+int BN_bntest_rand(BIGNUM *rnd, int bits, int top, int bottom);
+
 const int num0 = 100; /* number of tests */
 const int num1 = 50;  /* additional tests for some functions */
 const int num2 = 5;   /* number of tests for slow functions */
@@ -1035,6 +1046,14 @@ test_mod_exp(BIO *bp, BN_CTX *ctx)
 		fprintf(stderr, "BN_mod_exp with zero modulus succeeded!\n");
 		return (0);
 	}
+	if (BN_mod_exp_ct(d, a, b, c, ctx)) {
+		fprintf(stderr, "BN_mod_exp_ct with zero modulus succeeded!\n");
+		return (0);
+	}
+	if (BN_mod_exp_nonct(d, a, b, c, ctx)) {
+		fprintf(stderr, "BN_mod_exp_nonct with zero modulus succeeded!\n");
+		return (0);
+	}
 
 	BN_bntest_rand(c, 30, 0, 1); /* must be odd for montgomery */
 	for (i = 0; i < num2; i++) {
@@ -1042,6 +1061,70 @@ test_mod_exp(BIO *bp, BN_CTX *ctx)
 		BN_bntest_rand(b, 2 + i, 0, 0);
 
 		if (!BN_mod_exp(d, a, b, c, ctx)) {
+			rc = 0;
+			break;
+		}
+
+		if (bp != NULL) {
+			if (!results) {
+				BN_print(bp, a);
+				BIO_puts(bp, " ^ ");
+				BN_print(bp, b);
+				BIO_puts(bp, " % ");
+				BN_print(bp, c);
+				BIO_puts(bp, " - ");
+			}
+			BN_print(bp, d);
+			BIO_puts(bp, "\n");
+		}
+		BN_exp(e, a, b, ctx);
+		BN_sub(e, e, d);
+		BN_div(a, b, e, c, ctx);
+		if (!BN_is_zero(b)) {
+			fprintf(stderr, "Modulo exponentiation test failed!\n");
+			rc = 0;
+			break;
+		}
+	}
+
+	BN_bntest_rand(c, 30, 0, 1); /* must be odd for montgomery */
+	for (i = 0; i < num2; i++) {
+		BN_bntest_rand(a, 20 + i * 5, 0, 0);
+		BN_bntest_rand(b, 2 + i, 0, 0);
+
+		if (!BN_mod_exp_ct(d, a, b, c, ctx)) {
+			rc = 0;
+			break;
+		}
+
+		if (bp != NULL) {
+			if (!results) {
+				BN_print(bp, a);
+				BIO_puts(bp, " ^ ");
+				BN_print(bp, b);
+				BIO_puts(bp, " % ");
+				BN_print(bp, c);
+				BIO_puts(bp, " - ");
+			}
+			BN_print(bp, d);
+			BIO_puts(bp, "\n");
+		}
+		BN_exp(e, a, b, ctx);
+		BN_sub(e, e, d);
+		BN_div(a, b, e, c, ctx);
+		if (!BN_is_zero(b)) {
+			fprintf(stderr, "Modulo exponentiation test failed!\n");
+			rc = 0;
+			break;
+		}
+	}
+
+	BN_bntest_rand(c, 30, 0, 1); /* must be odd for montgomery */
+	for (i = 0; i < num2; i++) {
+		BN_bntest_rand(a, 20 + i * 5, 0, 0);
+		BN_bntest_rand(b, 2 + i, 0, 0);
+
+		if (!BN_mod_exp_nonct(d, a, b, c, ctx)) {
 			rc = 0;
 			break;
 		}
@@ -1153,7 +1236,7 @@ err:
 int
 test_mod_exp_mont5(BIO *bp, BN_CTX *ctx)
 {
-	BIGNUM *a, *p, *m, *d, *e;
+	BIGNUM *a, *p, *m, *d, *e, *b, *n, *c;
 	int rc = 1;
 	BN_MONT_CTX *mont;
 
@@ -1162,6 +1245,9 @@ test_mod_exp_mont5(BIO *bp, BN_CTX *ctx)
 	m = BN_new();
 	d = BN_new();
 	e = BN_new();
+	b = BN_new();
+	n = BN_new();
+	c = BN_new();
 
 	mont = BN_MONT_CTX_new();
 
@@ -1175,6 +1261,76 @@ test_mod_exp_mont5(BIO *bp, BN_CTX *ctx)
 	}
 	if (!BN_is_one(d)) {
 		fprintf(stderr, "Modular exponentiation test failed!\n");
+		rc = 0;
+		goto err;
+	}
+	/* Regression test for carry bug in mulx4x_mont */
+	BN_hex2bn(&a,
+	    "7878787878787878787878787878787878787878787878787878787878787878"
+	    "7878787878787878787878787878787878787878787878787878787878787878"
+	    "7878787878787878787878787878787878787878787878787878787878787878"
+	    "7878787878787878787878787878787878787878787878787878787878787878");
+	BN_hex2bn(&b,
+	    "095D72C08C097BA488C5E439C655A192EAFB6380073D8C2664668EDDB4060744"
+	    "E16E57FB4EDB9AE10A0CEFCDC28A894F689A128379DB279D48A2E20849D68593"
+	    "9B7803BCF46CEBF5C533FB0DD35B080593DE5472E3FE5DB951B8BFF9B4CB8F03"
+	    "9CC638A5EE8CDD703719F8000E6A9F63BEED5F2FCD52FF293EA05A251BB4AB81");
+	BN_hex2bn(&n,
+	    "D78AF684E71DB0C39CFF4E64FB9DB567132CB9C50CC98009FEB820B26F2DED9B"
+	    "91B9B5E2B83AE0AE4EB4E0523CA726BFBE969B89FD754F674CE99118C3F2D1C5"
+	    "D81FDC7C54E02B60262B241D53C040E99E45826ECA37A804668E690E1AFC1CA4"
+	    "2C9A15D84D4954425F0B7642FC0BD9D7B24E2618D2DCC9B729D944BADACFDDAF");
+	BN_MONT_CTX_set(mont, n, ctx);
+	BN_mod_mul_montgomery(c, a, b, mont, ctx);
+	BN_mod_mul_montgomery(d, b, a, mont, ctx);
+	if (BN_cmp(c, d)) {
+		fprintf(stderr, "Montgomery multiplication test failed:"
+		    " a*b != b*a.\n");
+		rc = 0;
+		goto err;
+	}
+	/* Regression test for carry bug in sqr[x]8x_mont */
+	BN_hex2bn(&n,
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000FFFFFFFF00"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "00000000000000000000000000000000000000000000000000FFFFFFFFFFFFFF");
+	BN_hex2bn(&a,
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000FFFFFFFF0000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "000000000000000000000000000000000000000000FFFFFFFFFFFFFF00000000");
+	b = BN_dup(a);
+	BN_MONT_CTX_set(mont, n, ctx);
+	BN_mod_mul_montgomery(c, a, a, mont, ctx);
+	BN_mod_mul_montgomery(d, a, b, mont, ctx);
+	if (BN_cmp(c, d)) {
+		fprintf(stderr, "Montgomery multiplication test failed:"
+		    " a**2 != a*a.\n");
 		rc = 0;
 		goto err;
 	}
@@ -1235,6 +1391,9 @@ err:
 	BN_free(m);
 	BN_free(d);
 	BN_free(e);
+	BN_free(b);
+	BN_free(n);
+	BN_free(c);
 	return (rc);
 }
 

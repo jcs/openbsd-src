@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.111 2016/08/14 08:23:52 visa Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.113 2016/12/17 11:51:01 visa Exp $	*/
 
 /*-
  * Copyright (c) 1992, 1993
@@ -361,12 +361,14 @@ void	cp0_calibrate(struct cpu_info *);
  */
 #define	CPU_ALLOWAPERTURE	1	/* allow mmap of /dev/xf86 */
 		/*		2	   formerly: keyboard reset */
-#define	CPU_MAXID		3	/* number of valid machdep ids */
+#define	CPU_LIDSUSPEND		3	/* lid close causes a suspend */
+#define	CPU_MAXID		4	/* number of valid machdep ids */
 
 #define	CTL_MACHDEP_NAMES {			\
 	{ 0, 0 },				\
 	{ "allowaperture", CTLTYPE_INT },	\
 	{ 0, 0 },				\
+	{ "lidsuspend", CTLTYPE_INT },		\
 }
 
 /*
@@ -378,7 +380,7 @@ void	cp0_calibrate(struct cpu_info *);
 #define	MIPS_R4000	0x04	/* MIPS R4000/4400 CPU		ISA III	*/
 #define	MIPS_R3LSI	0x05	/* LSI Logic R3000 derivate	ISA I	*/
 #define	MIPS_R6000A	0x06	/* MIPS R6000A CPU		ISA II	*/
-#define MIPS_OCTEON	0x06	/* Cavium OCTEON		MIPS64R2*/
+#define	MIPS_CN50XX	0x06	/* Cavium OCTEON CN50xx		MIPS64R2*/
 #define	MIPS_R3IDT	0x07	/* IDT R3000 derivate		ISA I	*/
 #define	MIPS_R10000	0x09	/* MIPS R10000/T5 CPU		ISA IV  */
 #define	MIPS_R4200	0x0a	/* MIPS R4200 CPU (ICE)		ISA III */
@@ -397,7 +399,8 @@ void	cp0_calibrate(struct cpu_info *);
 #define	MIPS_LOONGSON	0x42	/* STC LoongSon CPU		ISA III */
 #define	MIPS_VR5400	0x54	/* NEC Vr5400 CPU		ISA IV+ */
 #define	MIPS_LOONGSON2	0x63	/* STC LoongSon2/3 CPU		ISA III+ */
-#define MIPS_OCTEON2	0x93	/* Cavium OCTEON II		MIPS64R2 */
+#define	MIPS_CN61XX	0x93	/* Cavium OCTEON II CN6[01]xx	MIPS64R2 */
+#define	MIPS_CN71XX	0x96	/* Cavium OCTEON III CN7[01]xx	MIPS64R2 */
 
 /*
  * MIPS FPU types. Only soft, rest is the same as cpu type.

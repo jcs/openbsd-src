@@ -1,4 +1,4 @@
-/*	$OpenBSD: archdep.h,v 1.17 2015/12/06 23:36:12 guenther Exp $ */
+/*	$OpenBSD: archdep.h,v 1.20 2017/01/24 07:48:37 guenther Exp $ */
 
 /*
  * Copyright (c) 1998 Per Fogelstrom, Opsycon AB
@@ -31,12 +31,7 @@
 
 #define	RELOC_TAG	DT_RELA
 
-#define	DL_MALLOC_ALIGN	8	/* Arch constraint or otherwise */
-
 #define	MACHID	EM_ALPHA_EXP	/* ELF e_machine ID value checked */
-
-#define	RELTYPE	Elf64_Rela
-#define	RELSIZE	sizeof(Elf64_Rela)
 
 #include <elf_abi.h>
 #include <machine/reloc.h>
@@ -58,13 +53,10 @@ RELOC_DYN(Elf64_Rela *r, const Elf64_Sym *s, Elf64_Addr *p, unsigned long v)
 	} else if (ELF64_R_TYPE(r->r_info) == RELOC_GLOB_DAT) {
 		*p = v + s->st_value + r->r_addend;
 	} else {
-		_dl_printf("unknown bootstrap relocation\n");
 		_dl_exit(6);
 	}
 }
 
 #define RELOC_GOT(obj, offs)
-
-#define GOT_PERMS PROT_READ
 
 #endif /* _ALPHA_ARCHDEP_H_ */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: inet.c,v 1.152 2016/11/11 15:01:43 bluhm Exp $	*/
+/*	$OpenBSD: inet.c,v 1.154 2017/02/07 18:18:16 bluhm Exp $	*/
 /*	$NetBSD: inet.c,v 1.14 1995/10/03 21:42:37 thorpej Exp $	*/
 
 /*
@@ -49,7 +49,6 @@
 #include <netinet/icmp_var.h>
 #include <netinet/igmp_var.h>
 #include <netinet/ip_var.h>
-#include <netinet/pim_var.h>
 #include <netinet/tcp.h>
 #include <netinet/tcp_seq.h>
 #define TCPSTATES
@@ -771,44 +770,6 @@ igmp_stats(char *name)
 #undef py
 }
 
-/*
- * Dump PIM statistics structure.
- */
-void
-pim_stats(char *name)
-{
-	struct pimstat pimstat;
-	int mib[] = { CTL_NET, PF_INET, IPPROTO_PIM, PIMCTL_STATS };
-	size_t len = sizeof(pimstat);
-
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]),
-	    &pimstat, &len, NULL, 0) == -1) {
-		if (errno != ENOPROTOOPT)
-			warn("%s", name);
-		return;
-	}
-
-	printf("%s:\n", name);
-#define	p(f, m) if (pimstat.f || sflag <= 1) \
-	printf(m, pimstat.f, plural(pimstat.f))
-#define	py(f, m) if (pimstat.f || sflag <= 1) \
-	printf(m, pimstat.f, pimstat.f != 1 ? "ies" : "y")
-
-	p(pims_rcv_total_msgs, "\t%llu message%s received\n");
-	p(pims_rcv_total_bytes, "\t%llu byte%s received\n");
-	p(pims_rcv_tooshort, "\t%llu message%s received with too few bytes\n");
-	p(pims_rcv_badsum, "\t%llu message%s received with bad checksum\n");
-	p(pims_rcv_badversion, "\t%llu message%s received with bad version\n");
-	p(pims_rcv_registers_msgs, "\t%llu data register message%s received\n");
-	p(pims_rcv_registers_bytes, "\t%llu data register byte%s received\n");
-	p(pims_rcv_registers_wrongiif, "\t%llu data register message%s received on wrong iif\n");
-	p(pims_rcv_badregisters, "\t%llu bad register%s received\n");
-	p(pims_snd_registers_msgs, "\t%llu data register message%s sent\n");
-	p(pims_snd_registers_bytes, "\t%llu data register byte%s sent\n");
-#undef p
-#undef py
-}
-
 struct rpcnams {
 	struct rpcnams *next;
 	in_port_t port;
@@ -993,6 +954,7 @@ ah_stats(char *name)
 	p(ahs_invalid, "\t%u packet%s attempted to use an invalid TDB\n");
 	p(ahs_toobig, "\t%u packet%s got larger than max IP packet size\n");
 	p(ahs_crypto, "\t%u packet%s that failed crypto processing\n");
+	p(ahs_outfail, "\t%u output packet%s could not be sent\n");
 	p(ahs_ibytes, "\t%llu input byte%s\n");
 	p(ahs_obytes, "\t%llu output byte%s\n");
 
@@ -1071,6 +1033,7 @@ esp_stats(char *name)
 	p(esps_invalid, "\t%u packet%s attempted to use an invalid TDB\n");
 	p(esps_toobig, "\t%u packet%s got larger than max IP packet size\n");
 	p(esps_crypto, "\t%u packet%s that failed crypto processing\n");
+	p(esps_outfail, "\t%u output packet%s could not be sent\n");
 	p(esps_udpencin, "\t%u input UDP encapsulated ESP packet%s\n");
 	p(esps_udpencout, "\t%u output UDP encapsulated ESP packet%s\n");
 	p(esps_udpinval, "\t%u UDP packet%s for non-encapsulating TDB received\n");
@@ -1265,6 +1228,7 @@ ipcomp_stats(char *name)
 	p(ipcomps_invalid, "\t%u packet%s attempted to use an invalid TDB\n");
 	p(ipcomps_toobig, "\t%u packet%s got larger than max IP packet size\n");
 	p(ipcomps_crypto, "\t%u packet%s that failed (de)compression processing\n");
+	p(ipcomps_outfail, "\t%u output packet%s could not be sent\n");
 	p(ipcomps_minlen, "\t%u packet%s less than minimum compression length\n");
 	p(ipcomps_ibytes, "\t%llu input byte%s\n");
 	p(ipcomps_obytes, "\t%llu output byte%s\n");

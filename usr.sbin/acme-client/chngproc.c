@@ -1,4 +1,4 @@
-/*	$Id: chngproc.c,v 1.7 2016/09/13 17:13:37 deraadt Exp $ */
+/*	$Id: chngproc.c,v 1.12 2017/01/24 13:32:55 jsing Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -27,7 +27,7 @@
 #include "extern.h"
 
 int
-chngproc(int netsock, const char *root, int remote)
+chngproc(int netsock, const char *root)
 {
 	char		 *tok = NULL, *th = NULL, *fmt = NULL, **fs = NULL;
 	size_t		  i, fsz = 0;
@@ -56,18 +56,18 @@ chngproc(int netsock, const char *root, int remote)
 
 	for (;;) {
 		op = CHNG__MAX;
-		if (0 == (lval = readop(netsock, COMM_CHNG_OP)))
+		if ((lval = readop(netsock, COMM_CHNG_OP)) == 0)
 			op = CHNG_STOP;
-		else if (CHNG_SYN == lval)
+		else if (lval == CHNG_SYN)
 			op = lval;
 
-		if (CHNG__MAX == op) {
+		if (op == CHNG__MAX) {
 			warnx("unknown operation from netproc");
 			goto out;
-		} else if (CHNG_STOP == op)
+		} else if (op == CHNG_STOP)
 			break;
 
-		assert(CHNG_SYN == op);
+		assert(op == CHNG_SYN);
 
 		/*
 		 * Read the thumbprint and token.
@@ -75,15 +75,15 @@ chngproc(int netsock, const char *root, int remote)
 		 * of tokens that we'll later clean up.
 		 */
 
-		if (NULL == (th = readstr(netsock, COMM_THUMB)))
+		if ((th = readstr(netsock, COMM_THUMB)) == NULL)
 			goto out;
-		else if (NULL == (tok = readstr(netsock, COMM_TOK)))
+		else if ((tok = readstr(netsock, COMM_TOK)) == NULL)
 			goto out;
 
 		/* Vector appending... */
 
 		pp = reallocarray(fs, (fsz + 1), sizeof(char *));
-		if (NULL == pp) {
+		if (pp == NULL) {
 			warn("realloc");
 			goto out;
 		}
@@ -92,43 +92,28 @@ chngproc(int netsock, const char *root, int remote)
 		tok = NULL;
 		fsz++;
 
-		if (-1 == asprintf(&fmt, "%s.%s", fs[fsz - 1], th)) {
+		if (asprintf(&fmt, "%s.%s", fs[fsz - 1], th) == -1) {
 			warn("asprintf");
 			goto out;
 		}
 
 		/*
-		 * I use this for testing when letskencrypt is being run
-		 * on machines apart from where I'm hosting the
-		 * challenge directory.
-		 * DON'T DEPEND ON THIS FEATURE.
+		 * Create and write to our challenge file.
+		 * Note: we use file descriptors instead of FILE
+		 * because we want to minimise our pledges.
 		 */
-		if (remote) {
-			puts("RUN THIS IN THE CHALLENGE DIRECTORY");
-			puts("YOU HAVE 20 SECONDS...");
-			printf("doas sh -c \"echo %s > %s\"\n",
-			    fmt, fs[fsz - 1]);
-			sleep(20);
-			puts("TIME'S UP.");
-		} else {
-			/*
-			 * Create and write to our challenge file.
-			 * Note: we use file descriptors instead of FILE
-			 * because we want to minimise our pledges.
-			 */
-			fd = open(fs[fsz - 1], O_WRONLY|O_EXCL|O_CREAT, 0444);
-			if (-1 == fd) {
-				warn("%s", fs[fsz - 1]);
-				goto out;
-			} if (-1 == write(fd, fmt, strlen(fmt))) {
-				warn("%s", fs[fsz - 1]);
-				goto out;
-			} else if (-1 == close(fd)) {
-				warn("%s", fs[fsz - 1]);
-				goto out;
-			}
-			fd = -1;
+		fd = open(fs[fsz - 1], O_WRONLY|O_EXCL|O_CREAT, 0444);
+		if (fd == -1) {
+			warn("%s", fs[fsz - 1]);
+			goto out;
+		} if (write(fd, fmt, strlen(fmt)) == -1) {
+			warn("%s", fs[fsz - 1]);
+			goto out;
+		} else if (close(fd) == -1) {
+			warn("%s", fs[fsz - 1]);
+			goto out;
 		}
+		fd = -1;
 
 		free(th);
 		free(fmt);
@@ -142,7 +127,7 @@ chngproc(int netsock, const char *root, int remote)
 		 */
 
 		cc = writeop(netsock, COMM_CHNG_ACK, CHNG_ACK);
-		if (0 == cc)
+		if (cc == 0)
 			break;
 		if (cc < 0)
 			goto out;
@@ -151,10 +136,10 @@ chngproc(int netsock, const char *root, int remote)
 	rc = 1;
 out:
 	close(netsock);
-	if (-1 != fd)
+	if (fd != -1)
 		close(fd);
 	for (i = 0; i < fsz; i++) {
-		if (-1 == unlink(fs[i]) && ENOENT != errno)
+		if (unlink(fs[i]) == -1 && errno != ENOENT)
 			warn("%s", fs[i]);
 		free(fs[i]);
 	}
@@ -162,5 +147,5 @@ out:
 	free(fmt);
 	free(th);
 	free(tok);
-	return(rc);
+	return rc;
 }

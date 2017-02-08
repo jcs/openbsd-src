@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_mira.c,v 1.4 2016/12/10 14:46:04 stsp Exp $	*/
+/*	$OpenBSD: ieee80211_mira.c,v 1.10 2017/01/28 16:01:36 stsp Exp $	*/
 
 /*
  * Copyright (c) 2016 Stefan Sperling <stsp@openbsd.org>
@@ -64,6 +64,7 @@ int	ieee80211_mira_prev_mcs(struct ieee80211_mira_node *,
 	    struct ieee80211_node *);
 int	ieee80211_mira_probe_valid(struct ieee80211_mira_node *,
 	    struct ieee80211_node *);
+void	ieee80211_mira_probe_done(struct ieee80211_mira_node *);
 int	ieee80211_mira_intra_mode_ra_finished(
 	    struct ieee80211_mira_node *, struct ieee80211_node *);
 void	ieee80211_mira_trigger_next_rateset(struct ieee80211_mira_node *mn,
@@ -82,7 +83,7 @@ void	ieee80211_mira_probe_next_rate(struct ieee80211_mira_node *,
 	    struct ieee80211_node *);
 uint32_t ieee80211_mira_valid_rates(struct ieee80211com *,
 	    struct ieee80211_node *);
-uint32_t ieee80211_mira_mcs_below(int);
+uint32_t ieee80211_mira_mcs_below(struct ieee80211_mira_node *, int);
 
 /* We use fixed point arithmetic with 64 bit integers. */
 #define MIRA_FP_SHIFT	21
@@ -96,8 +97,6 @@ uint32_t ieee80211_mira_mcs_below(int);
 /* Divide two fixed point numbers. */
 #define MIRA_FP_DIV(a, b) \
 	(b == 0 ? (uint64_t)-1 : (((a) << MIRA_FP_SHIFT) / (b)))
-
-#define MIRA_DEBUG
 
 #ifdef MIRA_DEBUG
 #define DPRINTF(x)	do { if (mira_debug > 0) printf x; } while (0)
@@ -136,6 +135,17 @@ mira_fp_sprintf(uint64_t fp)
 		return "ERR";
 
 	return buf;
+}
+
+void
+mira_print_driver_stats(struct ieee80211_mira_node *mn,
+    struct ieee80211_node *ni) {
+	DPRINTF(("%s driver stats:\n", ether_sprintf(ni->ni_macaddr)));
+	DPRINTF(("mn->frames = %u\n", mn->frames));
+	DPRINTF(("mn->retries = %u\n", mn->retries));
+	DPRINTF(("mn->txfail = %u\n", mn->txfail));
+	DPRINTF(("mn->ampdu_size = %u\n", mn->ampdu_size));
+	DPRINTF(("mn->agglen = %u\n", mn->agglen));
 }
 #endif /* MIRA_DEBUG */
 
@@ -429,12 +439,33 @@ ieee80211_mira_update_stats(struct ieee80211_mira_node *mn,
 
 	/* Compute Sub-Frame Error Rate (see section 2.2 in MiRA paper). */
 	sfer = (mn->frames * mn->retries + mn->txfail);
-	if ((sfer >> MIRA_FP_SHIFT) != 0)
-		panic("sfer overflow"); /* bug in wifi driver */
+	if ((sfer >> MIRA_FP_SHIFT) != 0) { /* bug in wifi driver */
+		if (ic->ic_if.if_flags & IFF_DEBUG) {
+#ifdef DIAGNOSTIC
+			printf("%s: mira sfer overflow\n",
+			    ether_sprintf(ni->ni_macaddr));
+#endif
+#ifdef MIRA_DEBUG
+			mira_print_driver_stats(mn, ni);
+#endif
+		}
+		ieee80211_mira_probe_done(mn);
+		return;
+	}
 	sfer <<= MIRA_FP_SHIFT; /* convert to fixed-point */
 	sfer /= ((mn->retries + 1) * mn->frames);
-	if (sfer > MIRA_FP_1)
-		panic("sfer > 1"); /* bug in wifi driver */
+	if (sfer > MIRA_FP_1) { /* bug in wifi driver */
+		if (ic->ic_if.if_flags & IFF_DEBUG) {
+#ifdef DIAGNOSTIC
+			printf("%s: mira sfer > 1\n",
+			    ether_sprintf(ni->ni_macaddr));
+#endif
+#ifdef MIRA_DEBUG
+			mira_print_driver_stats(mn, ni);
+#endif
+		}
+		sfer = MIRA_FP_1; /* round down */
+	}
 
 	/* Store current loss percentage SFER. */
 	g->loss = sfer * 100;
@@ -656,7 +687,8 @@ ieee80211_mira_probe_next_rateset(struct ieee80211_mira_node *mn,
 		  (1 << ieee80211_mira_next_intra_rate(mn, ni));
 	} else if (mn->probing & IEEE80211_MIRA_PROBING_DOWN) {
 #ifdef MIRA_AGGRESSIVE_DOWNWARDS_PROBING
-		mn->candidate_rates |= ieee80211_mira_mcs_below(ni->ni_txmcs);
+		mn->candidate_rates |= ieee80211_mira_mcs_below(mn,
+		    ni->ni_txmcs);
 #else
 		mn->candidate_rates |=
 		    (1 << ieee80211_mira_next_lower_intra_rate(mn, ni));
@@ -705,6 +737,16 @@ ieee80211_mira_probe_valid(struct ieee80211_mira_node *mn,
 
 	return (g->nprobes >= IEEE80211_MIRA_MIN_PROBE_FRAMES ||
 	    g->nprobe_bytes >= IEEE80211_MIRA_MIN_PROBE_BYTES);
+}
+
+void
+ieee80211_mira_probe_done(struct ieee80211_mira_node *mn)
+{
+	ieee80211_mira_cancel_timeouts(mn);
+	ieee80211_mira_reset_driver_stats(mn);
+	mn->probing = IEEE80211_MIRA_NOT_PROBING;
+	mn->probed_rates = 0;
+	mn->candidate_rates = 0;
 }
 
 int
@@ -865,8 +907,9 @@ ieee80211_mira_schedule_probe_timers(struct ieee80211_mira_node *mn,
 	if (mcs != ni->ni_txmcs && !timeout_pending(to) &&
 	    !mn->probe_timer_expired[IEEE80211_MIRA_PROBE_TO_UP]) {
 		timeout_add_msec(to, g->probe_interval);
-		DPRINTFN(3, ("start probing up at MCS %d in at least %d msec\n",
-		    mcs, g->probe_interval));
+		DPRINTFN(3, ("start probing up for node %s at MCS %d in at "
+		    "least %d msec\n",
+		    ether_sprintf(ni->ni_macaddr), mcs, g->probe_interval));
 	}
 
 	mcs = ieee80211_mira_next_lower_intra_rate(mn, ni);
@@ -875,8 +918,9 @@ ieee80211_mira_schedule_probe_timers(struct ieee80211_mira_node *mn,
 	if (mcs != ni->ni_txmcs && !timeout_pending(to) &&
 	    !mn->probe_timer_expired[IEEE80211_MIRA_PROBE_TO_DOWN]) {
 		timeout_add_msec(to, g->probe_interval);
-		DPRINTFN(3, ("start probing down at MCS %d in at "
-		    "least %d msec\n", mcs, g->probe_interval));
+		DPRINTFN(3, ("start probing down for node %s at MCS %d in at "
+		    "least %d msec\n",
+		    ether_sprintf(ni->ni_macaddr), mcs, g->probe_interval));
 	}
 }
 
@@ -963,7 +1007,7 @@ ieee80211_mira_valid_rates(struct ieee80211com *ic, struct ieee80211_node *ni)
 }
 
 uint32_t
-ieee80211_mira_mcs_below(int mcs)
+ieee80211_mira_mcs_below(struct ieee80211_mira_node *mn, int mcs)
 {
 	const struct ieee80211_mira_rateset *rs;
 	uint32_t mcs_mask;
@@ -971,8 +1015,11 @@ ieee80211_mira_mcs_below(int mcs)
 
 	rs = ieee80211_mira_get_rateset(mcs);
 	mcs_mask = (1 << rs->min_mcs);
-	for (i = rs->min_mcs + 1; i < mcs; i++)
+	for (i = rs->min_mcs + 1; i < mcs; i++) {
+		if ((mn->valid_rates & (1 << i)) == 0)
+			continue;
 		mcs_mask |= (1 << i);
+	}
 
 	return mcs_mask;
 }
@@ -989,13 +1036,10 @@ ieee80211_mira_choose(struct ieee80211_mira_node *mn, struct ieee80211com *ic,
 	if (mn->valid_rates == 0)
 		mn->valid_rates = ieee80211_mira_valid_rates(ic, ni);
 
-	DPRINTFN(5, ("%s: driver stats:\n", __func__));
-	DPRINTFN(5, ("mn->frames = %u\n", mn->frames));
-	DPRINTFN(5, ("mn->retries = %u\n", mn->retries));
-	DPRINTFN(5, ("mn->txfail = %u\n", mn->txfail));
-	DPRINTFN(5, ("mn->ampdu_size = %u\n", mn->ampdu_size));
-	DPRINTFN(5, ("mn->agglen = %u\n", mn->agglen));
-
+#ifdef MIRA_DEBUG
+	if (mira_debug >= 5)
+		mira_print_driver_stats(mn, ni);
+#endif
 	ieee80211_mira_update_stats(mn, ic, ni);
 
 	if (mn->probing) {
@@ -1008,8 +1052,6 @@ ieee80211_mira_choose(struct ieee80211_mira_node *mn, struct ieee80211com *ic,
 			DPRINTFN(4, ("probing MCS %d\n", ni->ni_txmcs));
 		} else if (ieee80211_mira_inter_mode_ra_finished(mn, ni)) {
 			int best = ieee80211_mira_best_rate(mn, ni);
-			mn->probing = IEEE80211_MIRA_NOT_PROBING;
-			mn->probed_rates = 0;
 			if (mn->best_mcs != best) {
 				mn->best_mcs = best;
 				ni->ni_txmcs = best;
@@ -1020,7 +1062,7 @@ ieee80211_mira_choose(struct ieee80211_mira_node *mn, struct ieee80211com *ic,
 				mn->g[best].nprobe_bytes = 0;
 			} else
 				ni->ni_txmcs = mn->best_mcs;
-
+			ieee80211_mira_probe_done(mn);
 		}
 
 		splx(s);
@@ -1050,7 +1092,8 @@ ieee80211_mira_choose(struct ieee80211_mira_node *mn, struct ieee80211com *ic,
 		mn->probed_rates = 0;
 #ifdef MIRA_AGGRESSIVE_DOWNWARDS_PROBING
 		/* Allow for probing all the way down within this rateset. */
-		mn->candidate_rates = ieee80211_mira_mcs_below(ni->ni_txmcs);
+		mn->candidate_rates = ieee80211_mira_mcs_below(mn,
+		    ni->ni_txmcs);
 #else
 		/* Probe the lower candidate rate to see if it's any better. */
 		mn->candidate_rates =
@@ -1074,6 +1117,7 @@ ieee80211_mira_choose(struct ieee80211_mira_node *mn, struct ieee80211com *ic,
 		/* Remain at current rate. */
 		mn->probing = IEEE80211_MIRA_NOT_PROBING;
 		mn->probed_rates = 0;
+		mn->candidate_rates = 0;
 	}
 
 	splx(s);
@@ -1093,7 +1137,7 @@ ieee80211_mira_node_init(struct ieee80211_mira_node *mn)
 }
 
 void
-ieee80211_mira_node_destroy(struct ieee80211_mira_node *mn)
+ieee80211_mira_cancel_timeouts(struct ieee80211_mira_node *mn)
 {
 	int t;
 

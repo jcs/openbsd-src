@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.1 2016/09/05 11:02:05 pascal Exp $
+# $OpenBSD: Makefile,v 1.5 2017/01/25 07:29:30 patrick Exp $
 
 .include <bsd.own.mk>
 
@@ -38,8 +38,21 @@ SUBDIR+=libLLVMOption
 SUBDIR+=libLLVMTarget
 SUBDIR+=libLLVMAsmParser
 SUBDIR+=libLLVMProfileData
+SUBDIR+=libLLVMCoverage
+SUBDIR+=libLLVMDebugInfoCodeView
+SUBDIR+=libLLVMDebugInfoDWARF
+SUBDIR+=libLLVMDebugInfoMSF
+SUBDIR+=libLLVMGlobalISel
+SUBDIR+=libLLVMLTO
+SUBDIR+=libLLVMPasses
+SUBDIR+=libLLVMCoroutines
+SUBDIR+=libLLVMDemangle
 
-SUBDIR+=include/llvm/${LLVM_ARCH}
+.for arch in ${LLVM_ARCHS}
+.if "${arch}" == ${LLVM_ARCH} || make(obj)
+SUBDIR+=include/llvm/${arch}
+.endif
+.endfor
 
 .for _l in ${BACKEND_LIBS}
 SUBDIR+=lib${_l}
@@ -64,6 +77,12 @@ SUBDIR+=libclangRewriteFrontend
 SUBDIR+=libclangFrontendTool
 
 SUBDIR+=clang
+
+SUBDIR+=liblldConfig
+SUBDIR+=liblldCore
+SUBDIR+=liblldELF
+
+SUBDIR+=lld
 
 .include <bsd.obj.mk>
 .include <bsd.subdir.mk>

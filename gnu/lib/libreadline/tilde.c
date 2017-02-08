@@ -34,7 +34,7 @@
 #  include <string.h>
 #else /* !HAVE_STRING_H */
 #  include <strings.h>
-#endif /* !HAVE_STRING_H */  
+#endif /* !HAVE_STRING_H */
 
 #if defined (HAVE_STDLIB_H)
 #  include <stdlib.h>
@@ -61,12 +61,12 @@ extern struct passwd *getpwnam PARAMS((const char *));
 #if !defined (savestring)
 #include <stdio.h>
 static char *
-xstrdup(const char *s) 
+xstrdup(const char *s)
 {
 	char * cp;
 	cp = strdup(s);
 	if (cp == NULL) {
-		fprintf (stderr, "xstrdup: out of virtual memory\n"); 
+		fprintf (stderr, "xstrdup: out of virtual memory\n");
 		exit (2);
 	}
 	return(cp);
@@ -202,7 +202,7 @@ tilde_expand (string)
   int result_size, result_index;
 
   result_index = result_size = 0;
-  if (result = strchr (string, '~'))
+  if ((result = strchr (string, '~')))
     result = (char *)xmalloc (result_size = (strlen (string) + 16));
   else
     result = (char *)xmalloc (result_size = (strlen (string) + 1));

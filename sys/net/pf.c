@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1004 2016/12/06 00:01:55 jsg Exp $ */
+/*	$OpenBSD: pf.c,v 1.1014 2017/02/05 16:04:14 jca Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -1002,13 +1002,14 @@ pf_find_state(struct pfi_kif *kif, struct pf_state_key_cmp *key, u_int dir,
 	if (dir == PF_OUT) {
 		/* first if block deals with outbound forwarded packet */
 		pkt_sk = m->m_pkthdr.pf.statekey;
-		if (pf_state_key_isvalid(pkt_sk) &&
-		    pf_state_key_isvalid(pkt_sk->reverse)) {
-			sk = pkt_sk->reverse;
-		} else {
+
+		if (!pf_state_key_isvalid(pkt_sk)) {
 			pf_pkt_unlink_state_key(m);
 			pkt_sk = NULL;
 		}
+
+		if (pkt_sk && pf_state_key_isvalid(pkt_sk->reverse))
+			sk = pkt_sk->reverse;
 
 		if (pkt_sk == NULL) {
 			/* here we deal with local outbound packet */
@@ -1153,26 +1154,20 @@ pf_state_export(struct pfsync_state *sp, struct pf_state *st)
 /* END state table stuff */
 
 void
-pf_purge_expired_rules(int locked)
+pf_purge_expired_rules(void)
 {
 	struct pf_rule	*r;
 
+	NET_ASSERT_LOCKED();
+
 	if (SLIST_EMPTY(&pf_rule_gcl))
 		return;
-
-	if (!locked)
-		rw_enter_write(&pf_consistency_lock);
-	else
-		rw_assert_wrlock(&pf_consistency_lock);
 
 	while ((r = SLIST_FIRST(&pf_rule_gcl)) != NULL) {
 		SLIST_REMOVE(&pf_rule_gcl, r, pf_rule, gcle);
 		KASSERT(r->rule_flag & PFRULE_EXPIRED);
 		pf_purge_rule(r);
 	}
-
-	if (!locked)
-		rw_exit_write(&pf_consistency_lock);
 }
 
 void
@@ -1183,7 +1178,7 @@ pf_purge_thread(void *v)
 	for (;;) {
 		tsleep(pf_purge_thread, PWAIT, "pftm", 1 * hz);
 
-		s = splsoftnet();
+		NET_LOCK(s);
 
 		/* process a fraction of the state table every second */
 		pf_purge_expired_states(1 + (pf_status.states
@@ -1193,11 +1188,11 @@ pf_purge_thread(void *v)
 		if (++nloops >= pf_default_rule.timeout[PFTM_INTERVAL]) {
 			pf_purge_expired_fragments();
 			pf_purge_expired_src_nodes(0);
-			pf_purge_expired_rules(0);
+			pf_purge_expired_rules();
 			nloops = 0;
 		}
 
-		splx(s);
+		NET_UNLOCK(s);
 	}
 }
 
@@ -1240,27 +1235,20 @@ pf_state_expires(const struct pf_state *state)
 }
 
 void
-pf_purge_expired_src_nodes(int waslocked)
+pf_purge_expired_src_nodes(void)
 {
 	struct pf_src_node		*cur, *next;
-	int				 locked = waslocked;
+
+	NET_ASSERT_LOCKED();
 
 	for (cur = RB_MIN(pf_src_tree, &tree_src_tracking); cur; cur = next) {
 	next = RB_NEXT(pf_src_tree, &tree_src_tracking, cur);
 
 		if (cur->states == 0 && cur->expire <= time_uptime) {
-			if (! locked) {
-				rw_enter_write(&pf_consistency_lock);
-				next = RB_NEXT(pf_src_tree,
-				    &tree_src_tracking, cur);
-				locked = 1;
-			}
+			next = RB_NEXT(pf_src_tree, &tree_src_tracking, cur);
 			pf_remove_src_node(cur);
 		}
 	}
-
-	if (locked && !waslocked)
-		rw_exit_write(&pf_consistency_lock);
 }
 
 void
@@ -1304,8 +1292,12 @@ pf_remove_state(struct pf_state *cur)
 	}
 	RB_REMOVE(pf_state_tree_id, &tree_id, cur);
 #if NPFLOW > 0
-	if (cur->state_flags & PFSTATE_PFLOW)
+	if (cur->state_flags & PFSTATE_PFLOW) {
+		/* XXXSMP breaks atomicity */
+		rw_exit_write(&netlock);
 		export_pflow(cur);
+		rw_enter_write(&netlock);
+	}
 #endif	/* NPFLOW > 0 */
 #if NPFSYNC > 0
 	pfsync_delete_state(cur);
@@ -1329,13 +1321,12 @@ pf_remove_divert_state(struct pf_state_key *sk)
 	}
 }
 
-/* callers should hold the write_lock on pf_consistency_lock */
 void
 pf_free_state(struct pf_state *cur)
 {
 	struct pf_rule_item *ri;
 
-	splsoftassert(IPL_SOFTNET);
+	NET_ASSERT_LOCKED();
 
 #if NPFSYNC > 0
 	if (pfsync_state_in_use(cur))
@@ -1370,7 +1361,8 @@ pf_purge_expired_states(u_int32_t maxcheck)
 {
 	static struct pf_state	*cur = NULL;
 	struct pf_state		*next;
-	int			 locked = 0;
+
+	NET_ASSERT_LOCKED();
 
 	while (maxcheck--) {
 		/* wrap to start of list when we hit the end */
@@ -1385,25 +1377,14 @@ pf_purge_expired_states(u_int32_t maxcheck)
 
 		if (cur->timeout == PFTM_UNLINKED) {
 			/* free removed state */
-			if (! locked) {
-				rw_enter_write(&pf_consistency_lock);
-				locked = 1;
-			}
 			pf_free_state(cur);
 		} else if (pf_state_expires(cur) <= time_uptime) {
 			/* remove and free expired state */
 			pf_remove_state(cur);
-			if (! locked) {
-				rw_enter_write(&pf_consistency_lock);
-				locked = 1;
-			}
 			pf_free_state(cur);
 		}
 		cur = next;
 	}
-
-	if (locked)
-		rw_exit_write(&pf_consistency_lock);
 }
 
 int
@@ -1751,12 +1732,12 @@ pf_cksum_fixup(u_int16_t *cksum, u_int16_t was, u_int16_t now,
 	x = (x + (x >> 16)) & 0xffff;
 
 	/* optimise: eliminate a branch when not udp */
- 	if (udp && *cksum == 0x0000)
+	if (udp && *cksum == 0x0000)
 		return;
 	if (udp && x == 0x0000)
 		x = 0xffff;
 
-        *cksum = (u_int16_t)(x);
+	*cksum = (u_int16_t)(x);
 }
 
 /* pre: coverage(cksum) is superset of coverage(covered_cksum) */
@@ -1846,7 +1827,7 @@ pf_cksum_fixup_a(u_int16_t *cksum, const struct pf_addr *a,
 			     o[2] + NEG(n[2]) + o[3] + NEG(n[3]) +\
 			     o[4] + NEG(n[4]) + o[5] + NEG(n[5]) +\
 			     o[6] + NEG(n[6]) + o[7] + NEG(n[7]);
-	        break;
+		break;
 #endif /* INET6 */
 	default:
 		unhandled_af(af);
@@ -2227,7 +2208,7 @@ pf_translate_af(struct pf_pdesc *pd)
 	case IPPROTO_TCP:
 		pf_cksum_fixup_a(pc, pd->src, &zero, pd->af, af_proto);
 		pf_cksum_fixup_a(pc, pd->dst, &zero, pd->af, af_proto);
-                copyback = 1;
+		copyback = 1;
 		break;
 	default:
 		break;	/* assume no pseudo-header */
@@ -3001,7 +2982,7 @@ pf_match_rcvif(struct mbuf *m, struct pf_rule *r)
 
 	if (kif == NULL) {
 		DPFPRINTF(LOG_ERR,
-		    "pf_test_via: kif == NULL, @%d via %s",
+		    "%s: kif == NULL, @%d via %s", __func__,
 		    r->nr, r->rcv_ifname);
 		return (0);
 	}
@@ -3026,7 +3007,7 @@ pf_step_into_anchor(int *depth, struct pf_ruleset **rs,
 
 	if (*depth >= sizeof(pf_anchor_stack) /
 	    sizeof(pf_anchor_stack[0])) {
-		log(LOG_ERR, "pf_step_into_anchor: stack overflow\n");
+		log(LOG_ERR, "pf: anchor stack overflow\n");
 		*r = TAILQ_NEXT(*r, entries);
 		return;
 	} else if (a != NULL)
@@ -3628,8 +3609,8 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 		PF_TEST_ATTRIB((r->rcv_kif && pf_match_rcvif(pd->m, r) ==
 		    r->rcvifnot),
 			TAILQ_NEXT(r, entries));
-		PF_TEST_ATTRIB((r->prio &&
-		    (r->prio == PF_PRIO_ZERO ? 0 : r->prio) != pd->m->m_pkthdr.pf.prio),
+		PF_TEST_ATTRIB((r->prio && (r->prio == PF_PRIO_ZERO ?
+		    0 : r->prio) != pd->m->m_pkthdr.pf.prio),
 			TAILQ_NEXT(r, entries));
 
 		/* FALLTHROUGH */
@@ -3652,7 +3633,7 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 					REASON_SET(reason, PFRES_TRANSLATE);
 					goto cleanup;
 				}
-#if NPFLOG > 0 
+#if NPFLOG > 0
 				if (r->log) {
 					REASON_SET(reason, PFRES_MATCH);
 					PFLOG_PACKET(pd, *reason, r, a, ruleset,
@@ -3959,7 +3940,7 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 		    rewrite)) {
 			/* This really shouldn't happen!!! */
 			DPFPRINTF(LOG_ERR,
-			    "pf_normalize_tcp_stateful failed on first pkt");
+			    "%s: tcp normalize failed on first pkt", __func__);
 			goto csfailed;
 		}
 	}
@@ -4635,10 +4616,10 @@ pf_test_state(struct pf_pdesc *pd, struct pf_state **state, u_short *reason)
 	switch (pd->virtual_proto) {
 	case IPPROTO_TCP:
 		if ((action = pf_synproxy(pd, state, reason)) != PF_PASS)
-			return (action); 
+			return (action);
 		if ((pd->hdr.tcp.th_flags & (TH_SYN|TH_ACK)) == TH_SYN) {
 
-		    	if (dst->state >= TCPS_FIN_WAIT_2 &&
+			if (dst->state >= TCPS_FIN_WAIT_2 &&
 			    src->state >= TCPS_FIN_WAIT_2) {
 				if (pf_status.debug >= LOG_NOTICE) {
 					log(LOG_NOTICE, "pf: state reuse ");
@@ -4655,15 +4636,15 @@ pf_test_state(struct pf_pdesc *pd, struct pf_state **state, u_short *reason)
 				return (PF_DROP);
 			} else if (dst->state >= TCPS_ESTABLISHED &&
 			    src->state >= TCPS_ESTABLISHED) {
-                                /*
-                                 * SYN matches existing state???
+				/*
+				 * SYN matches existing state???
 				 * Typically happens when sender boots up after
 				 * sudden panic. Certain protocols (NFSv3) are
 				 * always using same port numbers. Challenge
 				 * ACK enables all parties (firewall and peers)
 				 * to get in sync again.
-                                 */
-                                pf_send_challenge_ack(pd, *state, src, dst);
+				 */
+				pf_send_challenge_ack(pd, *state, src, dst);
 				return (PF_DROP);
 			}
 		}
@@ -5796,7 +5777,7 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 
 	if (m0->m_len < sizeof(struct ip)) {
 		DPFPRINTF(LOG_ERR,
-		    "pf_route: m0->m_len < sizeof(struct ip)");
+		    "%s: m0->m_len < sizeof(struct ip)", __func__);
 		goto bad;
 	}
 
@@ -5815,7 +5796,7 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		    (struct pf_addr *)&ip->ip_src,
 		    &naddr, NULL, sns, &r->route, PF_SN_ROUTE)) {
 			DPFPRINTF(LOG_ERR,
-			    "pf_route: pf_map_addr() failed.");
+			    "%s: pf_map_addr() failed", __func__);
 			goto bad;
 		}
 
@@ -5832,12 +5813,6 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 	if (ifp == NULL)
 		goto bad;
 
-	rt = rtalloc(sintosa(dst), RT_RESOLVE, rtableid);
-	if (rt == NULL) {
-		ipstat_inc(ips_noroute);
-		goto bad;
-	}
-
 	if (pd->kif->pfik_ifp != ifp) {
 		if (pf_test(AF_INET, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
@@ -5845,13 +5820,19 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 			goto done;
 		if (m0->m_len < sizeof(struct ip)) {
 			DPFPRINTF(LOG_ERR,
-			    "pf_route: m0->m_len < sizeof(struct ip)");
+			    "%s: m0->m_len < sizeof(struct ip)", __func__);
 			goto bad;
 		}
 		ip = mtod(m0, struct ip *);
 	}
 
 	in_proto_cksum_out(m0, ifp);
+
+	rt = rtalloc(sintosa(dst), RT_RESOLVE, rtableid);
+	if (!rtisvalid(rt)) {
+		ipstat_inc(ips_noroute);
+		goto bad;
+	}
 
 	if (ntohs(ip->ip_len) <= ifp->if_mtu) {
 		ip->ip_sum = 0;
@@ -5941,7 +5922,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 
 	if (m0->m_len < sizeof(struct ip6_hdr)) {
 		DPFPRINTF(LOG_ERR,
-		    "pf_route6: m0->m_len < sizeof(struct ip6_hdr)");
+		    "%s: m0->m_len < sizeof(struct ip6_hdr)", __func__);
 		goto bad;
 	}
 	ip6 = mtod(m0, struct ip6_hdr *);
@@ -5958,7 +5939,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		if (pf_map_addr(AF_INET6, r, (struct pf_addr *)&ip6->ip6_src,
 		    &naddr, NULL, sns, &r->route, PF_SN_ROUTE)) {
 			DPFPRINTF(LOG_ERR,
-			    "pf_route6: pf_map_addr() failed.");
+			    "%s: pf_map_addr() failed", __func__);
 			goto bad;
 		}
 		if (!PF_AZERO(&naddr, AF_INET6))
@@ -5981,7 +5962,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 			goto done;
 		if (m0->m_len < sizeof(struct ip6_hdr)) {
 			DPFPRINTF(LOG_ERR,
-			    "pf_route6: m0->m_len < sizeof(struct ip6_hdr)");
+			    "%s: m0->m_len < sizeof(struct ip6_hdr)", __func__);
 			goto bad;
 		}
 	}
@@ -5991,20 +5972,20 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 	if (IN6_IS_SCOPE_EMBED(&dst->sin6_addr))
 		dst->sin6_addr.s6_addr16[1] = htons(ifp->if_index);
 
+	rt = rtalloc(sin6tosa(dst), RT_RESOLVE, rtableid);
+	if (!rtisvalid(rt)) {
+		ip6stat_inc(ip6s_noroute);
+		goto bad;
+	}
+
 	/*
 	 * If packet has been reassembled by PF earlier, we have to
 	 * use pf_refragment6() here to turn it back to fragments.
 	 */
 	if ((mtag = m_tag_find(m0, PACKET_TAG_PF_REASSEMBLED, NULL))) {
-		(void) pf_refragment6(&m0, mtag, dst, ifp);
+		(void) pf_refragment6(&m0, mtag, dst, ifp, rt);
 	} else if ((u_long)m0->m_pkthdr.len <= ifp->if_mtu) {
-		rt = rtalloc(sin6tosa(dst), RT_RESOLVE, rtableid);
-		if (rt == NULL) {
-			ip6stat.ip6s_noroute++;
-			goto bad;
-		}
 		ifp->if_output(ifp, m0, sin6tosa(dst), rt);
-		rtfree(rt);
 	} else {
 		icmp6_error(m0, ICMP6_PACKET_TOO_BIG, 0, ifp->if_mtu);
 	}
@@ -6012,6 +5993,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 done:
 	if (r->rt != PF_DUPTO)
 		pd->m = NULL;
+	rtfree(rt);
 	return;
 
 bad:
@@ -6045,7 +6027,7 @@ pf_check_tcp_cksum(struct mbuf *m, int off, int len, sa_family_t af)
 
 	/* need to do it in software */
 	tcpstat.tcps_inswcsum++;
-	
+
 	switch (af) {
 	case AF_INET:
 		if (m->m_len < sizeof(struct ip))
@@ -6571,7 +6553,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 
 	if (kif == NULL) {
 		DPFPRINTF(LOG_ERR,
-		    "pf_test: kif == NULL, if_xname %s", ifp->if_xname);
+		    "%s: kif == NULL, if_xname %s", __func__, ifp->if_xname);
 		return (PF_DROP);
 	}
 	if (kif->pfik_flags & PFI_IFLAG_SKIP)
@@ -6923,7 +6905,7 @@ done:
 		struct m_tag	*mtag;
 
 		if ((mtag = m_tag_find(pd.m, PACKET_TAG_PF_REASSEMBLED, NULL)))
-			action = pf_refragment6(&pd.m, mtag, NULL, NULL);
+			action = pf_refragment6(&pd.m, mtag, NULL, NULL, NULL);
 	}
 #endif	/* INET6 */
 	if (s && action != PF_DROP) {

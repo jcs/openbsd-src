@@ -13,11 +13,40 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-struct ps_strings;
 
-extern void ___start(int argc, char **argv, char **envp, void (*cleanup)(void),
-    const void *obj, struct ps_strings *ps_strings);
-extern void __init(void);
-extern int main(int argc, char *argv[], char *envp[]);
+void	__init(void) __dso_hidden;
+int	main(int argc, char *argv[], char *envp[]);
 
 typedef void (*init_f)(void);
+
+/*
+ * Provide default implementations of these.  Only archs with weird
+ * ASM stuff (hppa, arm) need to override them
+ */
+#ifndef MD_DATA_SECTION_FLAGS_SYMBOL
+# ifdef __LP64__
+#  define VALUE_ALIGN		".balign 8"
+#  define VALUE_DIRECTIVE	".quad"
+# else
+#  define VALUE_ALIGN		".balign 4"
+#  define VALUE_DIRECTIVE	".int"
+# endif
+# define MD_DATA_SECTION_FLAGS_SYMBOL(section, flags, type, symbol)	\
+	extern __dso_hidden type symbol[];				\
+	__asm("	.section "section",\""flags"\",@progbits		\n" \
+	"	"VALUE_ALIGN"						\n" \
+	#symbol":							\n" \
+	"	.previous")
+# define MD_DATA_SECTION_SYMBOL_VALUE(section, type, symbol, value)	\
+	extern __dso_hidden type symbol[];				\
+	__asm("	.section "section",\"aw\",@progbits			\n" \
+	"	"VALUE_ALIGN"						\n" \
+	#symbol":							\n" \
+	"	"VALUE_DIRECTIVE" "#value"				\n" \
+	"	.previous")
+# define MD_DATA_SECTION_FLAGS_VALUE(section, flags, value)		\
+	__asm("	.section "section",\""flags"\",@progbits		\n" \
+	"	"VALUE_ALIGN"						\n" \
+	"	"VALUE_DIRECTIVE" "#value"				\n" \
+	"	.previous")
+#endif

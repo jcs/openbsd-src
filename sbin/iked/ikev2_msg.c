@@ -1,4 +1,4 @@
-/*	$OpenBSD: ikev2_msg.c,v 1.46 2016/09/04 10:26:02 vgross Exp $	*/
+/*	$OpenBSD: ikev2_msg.c,v 1.48 2017/01/20 14:09:00 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -184,6 +184,11 @@ ikev2_msg_cleanup(struct iked *env, struct iked_message *msg)
 		ibuf_release(msg->msg_id.id_buf);
 		ibuf_release(msg->msg_cert.id_buf);
 
+		msg->msg_nonce = NULL;
+		msg->msg_ke = NULL;
+		msg->msg_auth.id_buf = NULL;
+		msg->msg_id.id_buf = NULL;
+		msg->msg_cert.id_buf = NULL;
 		config_free_proposals(&msg->msg_proposals, 0);
 	}
 
@@ -208,6 +213,8 @@ ikev2_msg_valid_ike_sa(struct iked *env, struct ike_header *oldhdr,
 #endif
 
 	if (msg->msg_sa != NULL && msg->msg_policy != NULL) {
+		if (msg->msg_sa->sa_state == IKEV2_STATE_CLOSED)
+			return (-1);
 		/*
 		 * Only permit informational requests from initiator
 		 * on closing SAs (for DELETE).

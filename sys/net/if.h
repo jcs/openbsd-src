@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.h,v 1.180 2016/10/27 03:00:35 dlg Exp $	*/
+/*	$OpenBSD: if.h,v 1.186 2017/01/24 10:08:30 krw Exp $	*/
 /*	$NetBSD: if.h,v 1.23 1996/05/07 02:40:27 thorpej Exp $	*/
 
 /*
@@ -206,14 +206,15 @@ struct if_status_description {
 	(IFF_BROADCAST|IFF_POINTOPOINT|IFF_RUNNING|IFF_OACTIVE|\
 	    IFF_SIMPLEX|IFF_MULTICAST|IFF_ALLMULTI)
 
-#define IFXF_MPSAFE		0x1		/* if_start is mpsafe */
+#define	IFXF_MPSAFE		0x1		/* if_start is mpsafe */
+#define	IFXF_CLONED		0x2		/* pseudo interface */
 #define	IFXF_INET6_NOPRIVACY	0x4		/* don't autoconf privacy */
 #define	IFXF_MPLS		0x8		/* supports MPLS */
 #define	IFXF_WOL		0x10		/* wake on lan enabled */
 #define	IFXF_AUTOCONF6		0x20		/* v6 autoconf enabled */
 
 #define	IFXF_CANTCHANGE \
-	(IFXF_MPSAFE)
+	(IFXF_MPSAFE|IFXF_CLONED)
 
 /*
  * Some convenience macros used for setting ifi_baudrate.
@@ -400,7 +401,7 @@ struct ifmediareq {
 	uint64_t	ifm_current;		/* get/set current media options */
 	uint64_t	ifm_mask;		/* don't care mask */
 	uint64_t	ifm_status;		/* media status */
-	uint64_t	ifm_active;		/* active options */ 
+	uint64_t	ifm_active;		/* active options */
 	int		ifm_count;		/* # entries in ifm_ulist array */
 	uint64_t	*ifm_ulist;		/* media words */
 };
@@ -456,10 +457,13 @@ struct if_parent {
 #ifdef _KERNEL
 struct socket;
 struct ifnet;
+struct ifq_ops;
 
 void	if_alloc_sadl(struct ifnet *);
 void	if_free_sadl(struct ifnet *);
 void	if_attach(struct ifnet *);
+void	if_attach_queues(struct ifnet *, unsigned int);
+void	if_attach_ifq(struct ifnet *, const struct ifq_ops *, void *);
 void	if_attachtail(struct ifnet *);
 void	if_attachhead(struct ifnet *);
 void	if_deactivate(struct ifnet *);
@@ -467,9 +471,9 @@ void	if_detach(struct ifnet *);
 void	if_down(struct ifnet *);
 void	if_downall(void);
 void	if_link_state_change(struct ifnet *);
-void	if_slowtimo(void *);
 void	if_up(struct ifnet *);
 int	ifconf(u_long, caddr_t);
+void	if_getdata(struct ifnet *, struct if_data *);
 void	ifinit(void);
 int	ifioctl(struct socket *, u_long, caddr_t, struct proc *);
 int	ifpromisc(struct ifnet *, int);
@@ -485,7 +489,6 @@ void	if_congestion(void);
 int	if_congested(void);
 __dead void	unhandled_af(int);
 int	if_setlladdr(struct ifnet *, const uint8_t *);
-int	if_setrdomain(struct ifnet *, int);
 
 #endif /* _KERNEL */
 

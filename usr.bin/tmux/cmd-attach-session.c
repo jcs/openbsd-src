@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-attach-session.c,v 1.65 2016/10/16 22:06:40 nicm Exp $ */
+/* $OpenBSD: cmd-attach-session.c,v 1.69 2017/02/06 15:00:41 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -54,7 +54,6 @@ cmd_attach_session(struct cmdq_item *item, int dflag, int rflag,
 	struct client		*c = item->client, *c_loop;
 	struct winlink		*wl = item->state.tflag.wl;
 	struct window_pane	*wp = item->state.tflag.wp;
-	const char		*update;
 	char			*cause, *cwd;
 	struct format_tree	*ft;
 
@@ -78,7 +77,7 @@ cmd_attach_session(struct cmdq_item *item, int dflag, int rflag,
 	}
 
 	if (cflag != NULL) {
-		ft = format_create(item, 0);
+		ft = format_create(item, FORMAT_NONE, 0);
 		format_defaults(ft, c, s, wl, wp);
 		cwd = format_expand(ft, cflag);
 		format_free(ft);
@@ -95,15 +94,12 @@ cmd_attach_session(struct cmdq_item *item, int dflag, int rflag,
 				server_client_detach(c_loop, MSG_DETACH);
 			}
 		}
-
-		if (!Eflag) {
-			update = options_get_string(s->options,
-			    "update-environment");
-			environ_update(update, c->environ, s->environ);
-		}
+		if (!Eflag)
+			environ_update(s->options, c->environ, s->environ);
 
 		c->session = s;
-		server_client_set_key_table(c, NULL);
+		if (!item->repeat)
+			server_client_set_key_table(c, NULL);
 		status_timer_start(c);
 		notify_client("client-session-changed", c);
 		session_update_activity(s, NULL);
@@ -116,7 +112,6 @@ cmd_attach_session(struct cmdq_item *item, int dflag, int rflag,
 			free(cause);
 			return (CMD_RETURN_ERROR);
 		}
-
 		if (rflag)
 			c->flags |= CLIENT_READONLY;
 
@@ -127,12 +122,8 @@ cmd_attach_session(struct cmdq_item *item, int dflag, int rflag,
 				server_client_detach(c_loop, MSG_DETACH);
 			}
 		}
-
-		if (!Eflag) {
-			update = options_get_string(s->options,
-			    "update-environment");
-			environ_update(update, c->environ, s->environ);
-		}
+		if (!Eflag)
+			environ_update(s->options, c->environ, s->environ);
 
 		c->session = s;
 		server_client_set_key_table(c, NULL);
