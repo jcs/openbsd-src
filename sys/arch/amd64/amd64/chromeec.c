@@ -254,13 +254,9 @@ static const struct chromeec_machine {
 extern char *hw_vendor, *hw_prod;
 
 int
-chromeec_match(struct device *parent, void *cf, void *aux)
+chromeec_probe(void)
 {
-	struct chromeec_attach_args *checaa = aux;
 	const struct chromeec_machine *m;
-
-	if (strcmp(checaa->checaa_name, chromeec_cd.cd_name) != 0)
-		return (0);
 
 	if (hw_vendor == NULL || hw_prod == NULL)
 		return (0);
@@ -272,6 +268,17 @@ chromeec_match(struct device *parent, void *cf, void *aux)
 	}
 
 	return (0);
+}
+
+int
+chromeec_match(struct device *parent, void *cf, void *aux)
+{
+	struct chromeec_attach_args *checaa = aux;
+
+	if (strcmp(checaa->checaa_name, chromeec_cd.cd_name) != 0)
+		return (0);
+
+	return chromeec_probe();
 }
 
 void

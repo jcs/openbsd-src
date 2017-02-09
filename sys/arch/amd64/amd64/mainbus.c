@@ -266,7 +266,7 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 #endif
 
 #if NCHROMEEC > 0
-	{
+	if (chromeec_probe()) {
 		mba.mba_checaa.checaa_name = "chromeec";
 		config_found(self, &mba, mainbus_print);
 	}

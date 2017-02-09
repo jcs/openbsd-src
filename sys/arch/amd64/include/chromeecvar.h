@@ -136,4 +136,6 @@ struct chromeec_lightbar_program {
 
 #define CHROMEEC_IOC_LIGHTBAR_SET_PROGRAM	_IOW('C', 13, struct chromeec_lightbar_program)
 
+int	chromeec_probe(void);
+
 #endif
