@@ -500,6 +500,23 @@ db_vprintf(const char *fmt, va_list ap)
  * normal kernel printf functions: printf, vprintf, snprintf
  */
 
+int printf_newline = 1;
+struct timeval printf_tv;
+char printf_time_buf[KPRINTF_BUFSIZE] = { '\0' };
+
+void
+update_printf_time(void)
+{
+	char msecs[5];
+
+	getmicrouptime(&printf_tv);
+
+	/* truncate msecs which the format won't handle */
+	snprintf(msecs, sizeof(msecs), "%04lld", (long long)printf_tv.tv_usec);
+	snprintf(printf_time_buf, sizeof printf_time_buf,
+	    "[%6lld.%s] ", (long long)printf_tv.tv_sec, msecs);
+}
+
 /*
  * printf: print a message to the console and the log
  */
@@ -508,6 +525,8 @@ printf(const char *fmt, ...)
 {
 	va_list ap;
 	int retval;
+
+	update_printf_time();
 
 	mtx_enter(&kprintf_mutex);
 
@@ -531,6 +550,8 @@ int
 vprintf(const char *fmt, va_list ap)
 {
 	int retval;
+
+	update_printf_time();
 
 	mtx_enter(&kprintf_mutex);
 
@@ -668,7 +689,13 @@ vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
 		} else							\
 			*sbuf++ = chr;					\
 	} else {							\
+		if (printf_newline) {					\
+			char *_zz = printf_time_buf;			\
+			while (*_zz)					\
+				kputchar(*_zz++, oflags, (struct tty *)vp); \
+		}							\
 		kputchar(chr, oflags, (struct tty *)vp);			\
+		printf_newline = (chr == '\n');				\
 	}								\
 } while(0)
 
