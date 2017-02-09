@@ -218,10 +218,8 @@ acpiec_read(struct acpiec_softc *sc, u_int8_t addr, int len, u_int8_t *buffer)
 	 */
 	dnprintf(20, "%s: read %d, %d\n", DEVNAME(sc), (int)addr, len);
 	sc->sc_ecbusy = 1;
-	if (len > 1) {
-		printf("%s: read %d, %d\n", DEVNAME(sc), (int)addr, len);
+	if (len > 1)
 		acpiec_burst_enable(sc);
-	}
 	for (reg = 0; reg < len; reg++)
 		buffer[reg] = acpiec_read_1(sc, addr + reg);
 	if (len > 1)
@@ -241,10 +239,8 @@ acpiec_write(struct acpiec_softc *sc, u_int8_t addr, int len, u_int8_t *buffer)
 	 */
 	dnprintf(20, "%s: write %d, %d\n", DEVNAME(sc), (int)addr, len);
 	sc->sc_ecbusy = 1;
-	if (len > 1) {
-		printf("%s: write %d, %d\n", DEVNAME(sc), (int)addr, len);
+	if (len > 1)
 		acpiec_burst_enable(sc);
-	}
 	for (reg = 0; reg < len; reg++)
 		acpiec_write_1(sc, addr + reg, buffer[reg]);
 	if (len > 1)
