@@ -68,7 +68,9 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 	int width, height, cnt, fs, fb, clr[2];
 	struct rasops_info *ri;
 	int32_t *dp, *rp;
+	uint8_t *rrp;
 	u_char *fr;
+	uint32_t buffer[64];
 
 	ri = (struct rasops_info *)cookie;
 
@@ -81,7 +83,8 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 		return 0;
 #endif
 
-	rp = (int32_t *)(ri->ri_bits + row*ri->ri_yscale + col*ri->ri_xscale);
+	rrp = (ri->ri_bits + row*ri->ri_yscale + col*ri->ri_xscale);
+	rp = (int32_t *)rrp;
 
 	height = ri->ri_font->fontheight;
 	width = ri->ri_font->fontwidth;
@@ -90,12 +93,12 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 	clr[1] = ri->ri_devcmap[(attr >> 24) & 0xf];
 
 	if (uc == ' ') {
+		for (cnt = 0; cnt < width; cnt++)
+			buffer[cnt] = clr[0];
 		while (height--) {
 			dp = rp;
 			DELTA(rp, ri->ri_stride, int32_t *);
-
-			for (cnt = width; cnt; cnt--)
-				*dp++ = clr[0];
+			memcpy(dp, buffer, width << 2);
 		}
 	} else {
 		uc -= ri->ri_font->firstchar;
@@ -104,7 +107,7 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 
 		if (ri->ri_font->stride == width) {
 			/* alpha map */
-			int r, g, b, aval;
+			int r, g, b, aval, x, y;
 			int r1, g1, b1, r0, g0, b0;
 
 			r0 = (clr[0] >> 16) & 0xff;
@@ -114,17 +117,14 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 			b0 =  clr[0] & 0xff;
 			b1 =  clr[1] & 0xff;
 
-			while (height--) {
-				dp = rp;
-				fr += fs;
-				DELTA(rp, ri->ri_stride, int32_t *);
-
-				for (cnt = width; cnt; cnt--) {
+			for (y = 0; y < height; y++) {
+				dp = (uint32_t *)(rrp + ri->ri_stride * y);
+				for (x = 0; x < width; x++) {
 					aval = *fr;
 					if (aval == 0) {
-						*dp++ = clr[0];
+						buffer[x] = clr[0];
 					} else if (aval == 255) {
-						*dp++ = clr[1];
+						buffer[x] = clr[1];
 					} else {
 						r = aval * r1 +
 						    (255 - aval) * r0;
@@ -132,13 +132,13 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 						    (255 - aval) * g0;
 						b = aval * b1 +
 						    (255 - aval) * b0;
-						*dp++ = (r & 0xff00) << 8 |
+						buffer[x] = (r & 0xff00) << 8 |
 						      (g & 0xff00) |
 						      (b & 0xff00) >> 8;
 					}
 					fr++;
 				}
-				fr -= width;
+				memcpy(dp, buffer, width << 2);
 			}
 		} else {
 			/* mono font */
@@ -159,8 +159,8 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 
 	/* Do underline */
 	if ((attr & 1) != 0) {
-		DELTA(rp, -(ri->ri_stride << 1), int32_t *);
-
+		rp = (uint32_t *)rrp;
+		DELTA(rp, (ri->ri_stride * (height - 2)), int32_t *);
 		while (width--)
 			*rp++ = clr[1];
 	}
