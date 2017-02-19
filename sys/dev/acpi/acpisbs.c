@@ -51,7 +51,6 @@ struct acpisbs_battery {
 	int	 units;
 #define	ACPISBS_UNITS_MW 0
 #define	ACPISBS_UNITS_MA 1
-
 	uint16_t at_rate;		/* mAh or mWh */
 	uint16_t temperature;		/* 0.1 degK */
 	uint16_t voltage;		/* mV */
@@ -95,6 +94,9 @@ struct acpisbs_battery_check {
 	int	sensor_type;
 	char	*sensor_desc;
 } acpisbs_battery_checks[] = {
+	/* mode must be checked first */
+	CHECK(WORD, BATTERY_MODE, mode, -1,
+	    "mode flags"),
 	CHECK(WORD, TEMPERATURE, temperature, SENSOR_TEMP,
 	    "internal temperature"),
 	CHECK(WORD, VOLTAGE, voltage, SENSOR_VOLTS_DC,
@@ -262,26 +264,26 @@ acpisbs_read(struct acpisbs_softc *sc)
 	for (i = 0; i < nitems(acpisbs_battery_checks); i++) {
 		struct acpisbs_battery_check check = acpisbs_battery_checks[i];
 		void *p = (void *)&sc->sc_battery + check.offset;
-		uint16_t *ival = (uint16_t *)p;
-		char *cval = (char *)p;
 
 		acpi_smbus_read(sc, check.mode, check.command, check.len, p);
 
 		if (check.mode == SMBUS_READ_BLOCK)
 			DPRINTF(("%s: %s: %s\n", sc->sc_dev.dv_xname,
-			    check.name, cval));
+			    check.name, (char *)p));
 		else
 			DPRINTF(("%s: %s: %u\n", sc->sc_dev.dv_xname,
-			    check.name, *ival));
+			    check.name, *(uint16_t *)p));
 
-		switch (check.command) {
-		case SMBATT_CMD_BATTERY_MODE:
+		if (check.command == SMBATT_CMD_BATTERY_MODE) {
+			uint16_t *ival = (uint16_t *)p;
+			if (*ival == 0)
+				/* battery not present, skip further checks */
+				break;
+
 			if (*ival & SMBATT_BM_CAPACITY_MODE)
 				sc->sc_battery.units = ACPISBS_UNITS_MW;
 			else
 				sc->sc_battery.units = ACPISBS_UNITS_MA;
-
-			break;
 		}
 	}
 }
@@ -334,7 +336,7 @@ acpisbs_refresh_sensors(struct acpisbs_softc *sc)
 		if (check.sensor_type < 0)
 			continue;
 
-		if (1) { /* present */
+		if (sc->sc_battery.mode > 0) {
 			sc->sc_sensors[i].flags = 0;
 			sc->sc_sensors[i].status = SENSOR_S_OK;
 
@@ -392,7 +394,6 @@ acpisbs_notify(struct aml_node *node, int notify_type, void *arg)
 	struct timeval tv;
 
 	DPRINTF(("%s: %s: %d\n", sc->sc_dev.dv_xname, __func__, notify_type));
-	printf("%s: %s: %d\n", sc->sc_dev.dv_xname, __func__, notify_type);
 
 	getmicrotime(&tv);
 
