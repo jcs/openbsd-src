@@ -1113,6 +1113,8 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 			bat = malloc(sizeof(*bat), M_DEVBUF, M_WAITOK | M_ZERO);
 			bat->aba_softc = (struct acpibat_softc *)dev;
 			SLIST_INSERT_HEAD(&sc->sc_bat, bat, aba_link);
+		} else if (!strcmp(dev->dv_cfdata->cf_driver->cd_name, "acpisbs")) {
+			/* TODO */
 		}
 	}
 
@@ -3028,6 +3030,7 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 		}
 
 		/* battery */
+		/* TODO: ask acpisbs if present */
 		pi->battery_state = APM_BATT_UNKNOWN;
 		pi->battery_life = 0;
 		pi->minutes_left = 0;

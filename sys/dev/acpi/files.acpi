@@ -150,3 +150,8 @@ file	dev/acpi/tpm.c			tpm
 device	acpihve
 attach	acpihve at acpi
 file	dev/acpi/acpihve.c		acpihve
+
+# Smart Battery Subsystem
+device	acpisbs
+attach	acpisbs at acpi
+file	dev/acpi/acpisbs.c		acpisbs

@@ -50,6 +50,7 @@ acpicpu*	at acpi?
 acpidock*	at acpi?
 acpiec*		at acpi?
 acpiprt*	at acpi?
+acpisbs*	at acpi?
 acpitz*		at acpi?
 acpimadt0	at acpi?
 acpimcfg*	at acpi?
