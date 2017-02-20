@@ -311,11 +311,12 @@ acpisbs_refresh_sensors(struct acpisbs_softc *sc)
 				sc->sc_sensors[i].value = *ival * 1000;
 				break;
 
+#if 0
 			case SENSOR_STRING:
 				strlcpy(sc->sc_sensors[i].string, (char *)p,
 				    sizeof(sc->sc_sensors[i].string));
 				break;
-
+#endif
 			case SENSOR_TEMP:
 				/* .1 degK */
 				sc->sc_sensors[i].value = (*ival * 10000) +
