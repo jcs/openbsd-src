@@ -388,12 +388,18 @@ acpi_smbus_read(struct acpisbs_softc *sc, uint8_t type, uint8_t cmd, int len,
 		return 1;
 	}
 
+	if (cold)
+		DELAY(1000);
+
 	acpiec_read(sc->sc_ec, sc->sc_ec_base + SMBUS_STS, 1, &val);
 	if (val & SMBUS_STS_MASK) {
 		printf("%s: %s: error reading status: 0x%x\n",
 		    sc->sc_dev.dv_xname, __func__, addr);
 		return 1;
 	}
+
+	if (cold)
+		DELAY(1000);
 
 	switch (type) {
         case SMBUS_READ_WORD: {
