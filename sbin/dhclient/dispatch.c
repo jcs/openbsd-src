@@ -1,4 +1,4 @@
-/*	$OpenBSD: dispatch.c,v 1.112 2017/01/23 04:45:59 deraadt Exp $	*/
+/*	$OpenBSD: dispatch.c,v 1.116 2017/02/14 22:46:53 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -66,6 +66,7 @@
 
 #include "dhcp.h"
 #include "dhcpd.h"
+#include "log.h"
 #include "privsep.h"
 
 
@@ -81,7 +82,7 @@ get_hw_address(struct interface_info *ifi)
 	int found;
 
 	if (getifaddrs(&ifap) != 0)
-		error("getifaddrs failed");
+		fatalx("getifaddrs failed");
 
 	found = 0;
 	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
@@ -107,7 +108,7 @@ get_hw_address(struct interface_info *ifi)
 	}
 
 	if (!found)
-		error("%s: no such interface", ifi->name);
+		fatalx("%s: no such interface", ifi->name);
 
 	freeifaddrs(ifap);
 }
@@ -168,7 +169,7 @@ dispatch(struct interface_info *ifi)
 			if (errno == EAGAIN || errno == EINTR) {
 				continue;
 			} else {
-				warning("poll: %s", strerror(errno));
+				log_warn("poll");
 				quit = INTERNALSIG;
 				continue;
 			}
@@ -189,11 +190,10 @@ dispatch(struct interface_info *ifi)
 	if (quit == SIGHUP) {
 		/* Tell [priv] process that HUP has occurred. */
 		sendhup(client->active);
-		warning("%s; restarting", strsignal(quit));
+		log_warnx("%s; restarting", strsignal(quit));
 		exit (0);
 	} else if (quit != INTERNALSIG) {
-		warning("%s; exiting", strsignal(quit));
-		exit(1);
+		fatalx("%s", strsignal(quit));
 	}
 }
 
@@ -206,13 +206,12 @@ packethandler(struct interface_info *ifi)
 	ssize_t result;
 
 	if ((result = receive_packet(ifi, &from, &hfrom)) == -1) {
-		warning("%s receive_packet failed: %s", ifi->name,
-		    strerror(errno));
 		ifi->errors++;
-		if (ifi->errors > 20) {
-			error("%s too many receive_packet failures; exiting",
+		if (ifi->errors > 20)
+			fatalx("%s too many receive_packet failures",
 			    ifi->name);
-		}
+		else
+			log_warn("%s receive_packet failed", ifi->name);
 		return;
 	}
 	ifi->errors = 0;
@@ -234,23 +233,20 @@ interface_link_forceup(char *ifname)
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	if (ioctl(sock, SIOCGIFFLAGS, (caddr_t)&ifr) == -1) {
-		note("interface_link_forceup: SIOCGIFFLAGS failed (%s)",
-		    strerror(errno));
+		log_warn("interface_link_forceup: SIOCGIFFLAGS failed");
 		return;
 	}
 
 	/* Force it down and up so others notice link state change. */
 	ifr.ifr_flags &= ~IFF_UP;
 	if (ioctl(sock, SIOCSIFFLAGS, (caddr_t)&ifr) == -1) {
-		note("interface_link_forceup: SIOCSIFFLAGS DOWN failed (%s)",
-		    strerror(errno));
+		log_warn("interface_link_forceup: SIOCSIFFLAGS DOWN failed");
 		return;
 	}
 
 	ifr.ifr_flags |= IFF_UP;
 	if (ioctl(sock, SIOCSIFFLAGS, (caddr_t)&ifr) == -1) {
-		note("interface_link_forceup: SIOCSIFFLAGS UP failed (%s)",
-		    strerror(errno));
+		log_warn("interface_link_forceup: SIOCSIFFLAGS UP failed");
 		return;
 	}
 }
@@ -266,8 +262,7 @@ interface_status(struct interface_info *ifi)
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, ifi->name, sizeof(ifr.ifr_name));
 	if (ioctl(sock, SIOCGIFFLAGS, &ifr) == -1) {
-		error("ioctl(SIOCGIFFLAGS) on %s: %s", ifi->name,
-		    strerror(errno));
+		fatal("ioctl(SIOCGIFFLAGS) on %s", ifi->name);
 	}
 
 	if ((ifr.ifr_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING))
@@ -285,8 +280,7 @@ interface_status(struct interface_info *ifi)
 		 */
 #ifdef DEBUG
 		if (errno != EINVAL && errno != ENOTTY)
-			debug("ioctl(SIOCGIFMEDIA) on %s: %s", ifi->name,
-			    strerror(errno));
+			log_debug("ioctl(SIOCGIFMEDIA) on %s", ifi->name);
 #endif
 
 		ifi->flags |= IFI_NOMEDIA;
@@ -338,7 +332,7 @@ get_rdomain(char *name)
 	struct ifreq ifr;
 
 	if ((s = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
-	    error("get_rdomain socket: %s", strerror(errno));
+	    fatal("get_rdomain socket");
 
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));

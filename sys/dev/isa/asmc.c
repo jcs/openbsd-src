@@ -1,4 +1,4 @@
-/*	$OpenBSD: asmc.c,v 1.30 2016/04/22 20:45:53 jung Exp $	*/
+/*	$OpenBSD: asmc.c,v 1.31 2017/02/14 15:47:12 jcs Exp $	*/
 /*
  * Copyright (c) 2015 Joerg Jung <jung@openbsd.org>
  *

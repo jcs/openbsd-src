@@ -1,4 +1,4 @@
-/* $OpenBSD: dsdt.c,v 1.230 2017/01/14 11:32:00 kettenis Exp $ */
+/* $OpenBSD: dsdt.c,v 1.231 2017/02/16 18:02:22 jcs Exp $ */
 /*
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
  *

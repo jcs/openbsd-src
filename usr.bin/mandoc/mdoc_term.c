@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_term.c,v 1.242 2017/02/06 03:41:44 schwarze Exp $ */
+/*	$OpenBSD: mdoc_term.c,v 1.245 2017/02/17 19:14:39 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010, 2012-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -393,14 +393,6 @@ print_mdoc_node(DECL_ARGS)
 		 */
 		if (ENDBODY_NOT != n->end)
 			n->body->flags |= NODE_ENDED;
-
-		/*
-		 * End of line terminating an implicit block
-		 * while an explicit block is still open.
-		 * Continue the explicit block without spacing.
-		 */
-		if (ENDBODY_NOSPACE == n->end)
-			p->flags |= TERMP_NOSPACE;
 		break;
 	}
 
@@ -612,6 +604,7 @@ termp_ll_pre(DECL_ARGS)
 static int
 termp_it_pre(DECL_ARGS)
 {
+	struct roffsu		su;
 	char			buf[24];
 	const struct roff_node *bl, *nn;
 	size_t			ncols, dcol;
@@ -689,9 +682,12 @@ termp_it_pre(DECL_ARGS)
 
 		for (i = 0, nn = n->prev;
 		    nn->prev && i < (int)ncols;
-		    nn = nn->prev, i++)
-			offset += dcol + a2width(p,
-			    bl->norm->Bl.cols[i]);
+		    nn = nn->prev, i++) {
+			SCALE_HS_INIT(&su,
+			    term_strlen(p, bl->norm->Bl.cols[i]));
+			su.scale /= term_strlen(p, "0");
+			offset += term_hspan(p, &su) / 24 + dcol;
+		}
 
 		/*
 		 * When exceeding the declared number of columns, leave
@@ -706,7 +702,9 @@ termp_it_pre(DECL_ARGS)
 		 * Use the declared column widths, extended as explained
 		 * in the preceding paragraph.
 		 */
-		width = a2width(p, bl->norm->Bl.cols[i]) + dcol;
+		SCALE_HS_INIT(&su, term_strlen(p, bl->norm->Bl.cols[i]));
+		su.scale /= term_strlen(p, "0");
+		width = term_hspan(p, &su) / 24 + dcol;
 		break;
 	default:
 		if (NULL == bl->norm->Bl.width)
@@ -1714,6 +1712,8 @@ termp_quote_pre(DECL_ARGS)
 	case MDOC_Bq:
 		term_word(p, "[");
 		break;
+	case MDOC__T:
+		/* FALLTHROUGH */
 	case MDOC_Do:
 	case MDOC_Dq:
 		term_word(p, "\\(Lq");
@@ -1728,7 +1728,6 @@ termp_quote_pre(DECL_ARGS)
 	case MDOC_Pq:
 		term_word(p, "(");
 		break;
-	case MDOC__T:
 	case MDOC_Qo:
 	case MDOC_Qq:
 		term_word(p, "\"");
@@ -1771,6 +1770,8 @@ termp_quote_post(DECL_ARGS)
 	case MDOC_Bq:
 		term_word(p, "]");
 		break;
+	case MDOC__T:
+		/* FALLTHROUGH */
 	case MDOC_Do:
 	case MDOC_Dq:
 		term_word(p, "\\(Rq");
@@ -1787,7 +1788,6 @@ termp_quote_post(DECL_ARGS)
 	case MDOC_Pq:
 		term_word(p, ")");
 		break;
-	case MDOC__T:
 	case MDOC_Qo:
 	case MDOC_Qq:
 		term_word(p, "\"");

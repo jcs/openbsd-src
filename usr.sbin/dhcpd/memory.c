@@ -1,4 +1,4 @@
-/*	$OpenBSD: memory.c,v 1.25 2016/02/07 10:24:04 jsg Exp $ */
+/*	$OpenBSD: memory.c,v 1.28 2017/02/13 23:04:05 krw Exp $ */
 
 /*
  * Copyright (c) 1995, 1996, 1997, 1998 The Internet Software Consortium.
@@ -53,6 +53,7 @@
 #include "dhcp.h"
 #include "tree.h"
 #include "dhcpd.h"
+#include "log.h"
 #include "sync.h"
 
 struct subnet *subnets;
@@ -102,7 +103,8 @@ enter_host(struct host_decl *hd)
 	}
 
 	if (hd->group->options[DHO_DHCP_CLIENT_IDENTIFIER]) {
-		if (!tree_evaluate(hd->group->options[DHO_DHCP_CLIENT_IDENTIFIER]))
+		if (!tree_evaluate(
+		    hd->group->options[DHO_DHCP_CLIENT_IDENTIFIER]))
 			return;
 
 		/* If there's no uid hash, make one; otherwise, see if
@@ -200,7 +202,7 @@ new_address_range(struct iaddr low, struct iaddr high, struct subnet *subnet,
 	/* All subnets should have attached shared network structures. */
 	if (!share) {
 		strlcpy(netbuf, piaddr(subnet->net), sizeof(netbuf));
-		error("No shared network for network %s (%s)",
+		fatalx("No shared network for network %s (%s)",
 		    netbuf, piaddr(subnet->netmask));
 	}
 
@@ -218,7 +220,7 @@ new_address_range(struct iaddr low, struct iaddr high, struct subnet *subnet,
 		strlcpy(lowbuf, piaddr(low), sizeof(lowbuf));
 		strlcpy(highbuf, piaddr(high), sizeof(highbuf));
 		strlcpy(netbuf, piaddr(subnet->netmask), sizeof(netbuf));
-		error("Address range %s to %s, netmask %s spans %s!",
+		fatalx("Address range %s to %s, netmask %s spans %s!",
 		    lowbuf, highbuf, netbuf, "multiple subnets");
 	}
 
@@ -227,7 +229,7 @@ new_address_range(struct iaddr low, struct iaddr high, struct subnet *subnet,
 		strlcpy(lowbuf, piaddr(low), sizeof(lowbuf));
 		strlcpy(highbuf, piaddr(high), sizeof(highbuf));
 		strlcpy(netbuf, piaddr(subnet->netmask), sizeof(netbuf));
-		error("Address range %s to %s not on net %s/%s!",
+		fatalx("Address range %s to %s not on net %s/%s!",
 		    lowbuf, highbuf, piaddr(subnet->net), netbuf);
 	}
 
@@ -246,7 +248,7 @@ new_address_range(struct iaddr low, struct iaddr high, struct subnet *subnet,
 	if (!address_range) {
 		strlcpy(lowbuf, piaddr(low), sizeof(lowbuf));
 		strlcpy(highbuf, piaddr(high), sizeof(highbuf));
-		error("No memory for address range %s-%s.", lowbuf, highbuf);
+		fatalx("No memory for address range %s-%s.", lowbuf, highbuf);
 	}
 	memset(address_range, 0, (sizeof *address_range) * (max - min + 1));
 
@@ -258,7 +260,8 @@ new_address_range(struct iaddr low, struct iaddr high, struct subnet *subnet,
 	for (i = 0; i < max - min + 1; i++) {
 		address_range[i].ip_addr = ip_addr(subnet->net,
 		    subnet->netmask, i + min);
-		address_range[i].starts = address_range[i].timestamp = MIN_TIME;
+		address_range[i].starts = address_range[i].timestamp =
+		    MIN_TIME;
 		address_range[i].ends = MIN_TIME;
 		address_range[i].subnet = subnet;
 		address_range[i].shared_network = share;
@@ -269,11 +272,11 @@ new_address_range(struct iaddr low, struct iaddr high, struct subnet *subnet,
 		if (subnet->group->get_lease_hostnames) {
 			h = gethostbyaddr((char *)&ia, sizeof ia, AF_INET);
 			if (!h)
-				warning("No hostname for %s", inet_ntoa(ia));
+				log_warnx("No hostname for %s", inet_ntoa(ia));
 			else {
 				address_range[i].hostname = strdup(h->h_name);
 				if (address_range[i].hostname == NULL)
-					error("no memory for hostname %s.",
+					fatalx("no memory for hostname %s.",
 					    h->h_name);
 			}
 		}
@@ -361,7 +364,7 @@ subnet_inner_than(struct subnet *subnet, struct subnet *scan, int warnp)
 				break;
 		strlcpy(n1buf, piaddr(subnet->net), sizeof(n1buf));
 		if (warnp)
-			warning("%ssubnet %s/%d conflicts with subnet %s/%d",
+			log_warnx("%ssubnet %s/%d conflicts with subnet %s/%d",
 			    "Warning: ", n1buf, 32 - i,
 			    piaddr(scan->net), 32 - j);
 		if (i < j)
@@ -424,7 +427,7 @@ enter_lease(struct lease *lease)
 	if (!comp) {
 		comp = calloc(1, sizeof(struct lease));
 		if (!comp)
-			error("No memory for lease %s\n",
+			fatalx("No memory for lease %s\n",
 			    piaddr(lease->ip_addr));
 		*comp = *lease;
 		comp->next = dangling_leases;
@@ -448,7 +451,8 @@ hwaddrcmp(struct hardware *a, struct hardware *b)
 static inline int
 uidcmp(struct lease *a, struct lease *b)
 {
-	return (a->uid_len != b->uid_len || memcmp(a->uid, b->uid, b->uid_len));
+	return (a->uid_len != b->uid_len || memcmp(a->uid, b->uid,
+	    b->uid_len));
 }
 
 static inline int
@@ -489,7 +493,7 @@ supersede_lease(struct lease *comp, struct lease *lease, int commit)
 	 */
 	if (!(lease->flags & ABANDONED_LEASE) &&
 	    comp->ends > cur_time && uid_or_hwaddr_cmp(comp, lease)) {
-		warning("Lease conflict at %s", piaddr(comp->ip_addr));
+		log_warnx("Lease conflict at %s", piaddr(comp->ip_addr));
 		return 0;
 	} else {
 		/* If there's a Unique ID, dissociate it from the hash
@@ -520,7 +524,8 @@ supersede_lease(struct lease *comp, struct lease *lease, int commit)
 		comp->starts = lease->starts;
 		if (lease->uid) {
 			if (lease->uid_len <= sizeof (lease->uid_buf)) {
-				memcpy(comp->uid_buf, lease->uid, lease->uid_len);
+				memcpy(comp->uid_buf, lease->uid,
+				    lease->uid_len);
 				comp->uid = &comp->uid_buf[0];
 				comp->uid_max = sizeof comp->uid_buf;
 			} else if (lease->uid != &lease->uid_buf[0]) {
@@ -529,7 +534,7 @@ supersede_lease(struct lease *comp, struct lease *lease, int commit)
 				lease->uid = NULL;
 				lease->uid_max = 0;
 			} else {
-				error("corrupt lease uid."); /* XXX */
+				fatalx("corrupt lease uid."); /* XXX */
 			}
 		} else {
 			comp->uid = NULL;
@@ -639,7 +644,7 @@ release_lease(struct lease *lease)
 	if (lt.ends > cur_time) {
 		lt.ends = cur_time;
 		supersede_lease(lease, &lt, 1);
-		note("Released lease for IP address %s",
+		log_info("Released lease for IP address %s",
 		    piaddr(lease->ip_addr));
 		pfmsg('R', lease);
 	}
@@ -661,7 +666,7 @@ abandon_lease(struct lease *lease, char *message)
 	lease->flags |= ABANDONED_LEASE;
 	lt = *lease;
 	lt.ends = cur_time + abtime;
-	warning("Abandoning IP address %s for %lld seconds: %s",
+	log_warnx("Abandoning IP address %s for %lld seconds: %s",
 	    piaddr(lease->ip_addr), (long long)abtime, message);
 	lt.hardware_addr.htype = 0;
 	lt.hardware_addr.hlen = 0;
@@ -824,7 +829,7 @@ add_class(int type, char *name)
 		user_class_hash = new_hash();
 
 	if (!tname || !class || !vendor_class_hash || !user_class_hash) {
-		warning("No memory for %s.", name);
+		log_warnx("No memory for %s.", name);
 		free(class);
 		free(tname);
 		return NULL;
@@ -856,7 +861,7 @@ clone_group(struct group *group, char *caller)
 
 	g = calloc(1, sizeof(struct group));
 	if (!g)
-		error("%s: can't allocate new group", caller);
+		fatalx("%s: can't allocate new group", caller);
 	*g = *group;
 	return g;
 }
@@ -874,12 +879,12 @@ write_leases(void)
 			if (l->hardware_addr.hlen || l->uid_len ||
 			    (l->flags & ABANDONED_LEASE)) {
 				if (!write_lease(l))
-					error("Can't rewrite lease database");
+					fatalx("Can't rewrite lease database");
 				if (syncsend)
 					sync_lease(l);
 			}
 		}
 	}
 	if (!commit_leases())
-		error("Can't commit leases to new database: %m");
+		fatal("Can't commit leases to new database");
 }

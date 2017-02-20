@@ -1,8 +1,16 @@
-# $OpenBSD: Makefile,v 1.1 2015/06/15 09:23:12 florian Exp $
+# $OpenBSD: Makefile,v 1.3 2017/02/18 18:27:12 tb Exp $
 
 REGRESS_TARGETS=	chmod_abs_0000 chmod_abs_0644
 REGRESS_TARGETS+=	chmod_sym_0644 chmod_sym_0000
 REGRESS_TARGETS+=	chmod_R_0755 chmod_RP_0755 chmod_RH_0755 chmod_RL_0755
+REGRESS_TARGETS+=	chmod_h_abs_0000 chmod_h_abs_0644
+REGRESS_TARGETS+=	chmod_h_sym_0000 chmod_h_sym_0644
+REGRESS_TARGETS+=	chmod_h_go_minus_r chmod_h_go_minus_rx
+REGRESS_TARGETS+=	chmod_h_go_plus_r chmod_h_go_plus_rx
+REGRESS_TARGETS+=	chmod_via_link_abs_0000 chmod_via_link_abs_0644
+REGRESS_TARGETS+=	chmod_via_link_sym_0000 chmod_via_link_sym_0644
+REGRESS_TARGETS+=	chmod_via_link_go_minus_r chmod_via_link_go_minus_rx
+REGRESS_TARGETS+=	chmod_via_link_go_plus_r chmod_via_link_go_plus_rx
 REGRESS_TARGETS+=	chmod_error
 
 REGRESS_TARGETS+=	chgrp_id chgrp_name
@@ -17,6 +25,7 @@ REGRESS_TARGETS+=	chown_error
 
 REGRESS_TARGETS+=	chflags chflags_no
 REGRESS_TARGETS+=	chflags_R chflags_RP chflags_RH chflags_RL
+REGRESS_TARGETS+=	chflags_via_link
 REGRESS_TARGETS+=	chflags_error
 
 prepfile: clean
@@ -24,6 +33,11 @@ prepfile: clean
 	@/usr/bin/touch regress/file
 	@/bin/chmod 000 regress/file
 	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+
+chmod_prepsymlink: prepfile
+	@/bin/ln -s ${.OBJDIR}/regress/file ${.OBJDIR}/regress/link
+	@/bin/chmod -h 755 regress/link
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
 
 prepdir: clean
 	@/bin/mkdir -p regress/dir
@@ -122,6 +136,102 @@ chmod_RL_0755: prepdir
 	@[ `/usr/bin/stat -f '%p' regress/dir/file2` == '100755' ]
 	@[ `/usr/bin/stat -f '%p' regress/dir` == '40755' ]
 	@[ `/usr/bin/stat -f '%p' regress/link_target_file` == '100755' ]
+
+chmod_h_abs_0000: chmod_prepsymlink
+	@echo chmod -h 0000
+	@/bin/chmod -h 0000 regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120000' ]
+
+chmod_h_abs_0644: chmod_prepsymlink
+	@echo chmod -h 0644
+	@/bin/chmod -h 0644 regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120644' ]
+
+chmod_h_sym_0000: chmod_prepsymlink
+	@echo chmod -h sym 0000
+	@/bin/chmod -h a-rwx regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120000' ]
+
+chmod_h_sym_0644: chmod_prepsymlink
+	@echo chmod -h sym 0644
+	@/bin/chmod -h u=rw,go=r regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120644' ]
+
+chmod_h_go_minus_r: chmod_prepsymlink
+	@echo chmod -h go-r
+	@/bin/chmod -h go-r regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120711' ]
+
+chmod_h_go_minus_rx: chmod_prepsymlink
+	@echo chmod -h go-rx
+	@/bin/chmod -h go-rx regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120700' ]
+
+chmod_h_go_plus_r: chmod_prepsymlink
+	@echo chmod -h go+r
+	@/bin/chmod -h go+r regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_h_go_plus_rx: chmod_prepsymlink
+	@echo chmod -h go+rx
+	@/bin/chmod -h go+rx regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_abs_0000: chmod_prepsymlink
+	@echo chmod via symlink 0000
+	@/bin/chmod 0000 regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_abs_0644: chmod_prepsymlink
+	@echo chmod via symlink 0644
+	@/bin/chmod 0644 regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100644' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_sym_0000: chmod_prepsymlink
+	@echo chmod via symlink sym 0000
+	@/bin/chmod a-rwx regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_sym_0644: chmod_prepsymlink
+	@echo chmod via symlink sym 0644
+	@/bin/chmod u=rw,go=r regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100644' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_go_minus_r: chmod_prepsymlink
+	@echo chmod via symlink go-r
+	@/bin/chmod go-r regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_go_minus_rx: chmod_prepsymlink
+	@echo chmod via symlink go-rx
+	@/bin/chmod go-rx regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100000' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_go_plus_r: chmod_prepsymlink
+	@echo chmod via symlink go+r
+	@/bin/chmod go+r regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100044' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
+
+chmod_via_link_go_plus_rx: chmod_prepsymlink
+	@echo chmod via symlink go+rx
+	@/bin/chmod go+rx regress/link
+	@[ `/usr/bin/stat -f '%p' regress/file` == '100055' ]
+	@[ `/usr/bin/stat -f '%p' regress/link` == '120755' ]
 
 chmod_error:
 	@echo chmod error
@@ -349,6 +459,18 @@ chflags_RL: chflags_prepdir
 	@[ `/usr/bin/stat -f '%f' regress/dir/file2` == '1' ]
 	@[ `/usr/bin/stat -f '%f' regress/dir` == '1' ]
 	@[ `/usr/bin/stat -f '%f' regress/link_target_file` == '1' ]
+
+chflags_via_link: chflags_prepfile
+	@echo chflags via link
+	@/bin/ln -s ${.OBJDIR}/regress/file ${.OBJDIR}/regress/link
+	@chflags -h uchg regress/link
+	@chflags nodump regress/link
+	@[ `stat -f '%f' regress/link` == '2' ]
+	@[ `stat -f '%f' regress/file` == '1' ]
+	@chflags -h nouchg regress/link
+	@chflags dump regress/link
+	@[ `stat -f '%f' regress/link` == '0' ]
+	@[ `stat -f '%f' regress/file` == '0' ]
 
 chflags_error:
 	@echo chflags error

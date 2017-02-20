@@ -1,4 +1,4 @@
-/*	$OpenBSD: dispatch.c,v 1.15 2016/12/12 15:41:05 rzalamena Exp $	*/
+/*	$OpenBSD: dispatch.c,v 1.19 2017/02/13 22:49:38 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -62,6 +62,7 @@
 
 #include "dhcp.h"
 #include "dhcpd.h"
+#include "log.h"
 
 struct protocol *protocols;
 struct timeout *timeouts;
@@ -83,14 +84,14 @@ get_interface(const char *ifname, void (*handler)(struct protocol *),
 	int				 found = 0;
 
 	if ((iface = calloc(1, sizeof(*iface))) == NULL)
-		error("failed to allocate memory");
+		fatalx("failed to allocate memory");
 
 	if (strlcpy(iface->name, ifname, sizeof(iface->name)) >=
 	    sizeof(iface->name))
-		error("interface name '%s' too long", ifname);
+		fatalx("interface name '%s' too long", ifname);
 
 	if (getifaddrs(&ifap) != 0)
-		error("getifaddrs failed");
+		fatalx("getifaddrs failed");
 
 	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
 		if ((ifa->ifa_flags & IFF_LOOPBACK) ||
@@ -118,7 +119,7 @@ get_interface(const char *ifname, void (*handler)(struct protocol *),
 			if (ifi->ifi_type == IFT_ENC)
 				iface->hw_address.htype = HTYPE_IPSEC_TUNNEL;
 			else
-				iface->hw_address.htype = HTYPE_ETHER; /* XXX */
+				iface->hw_address.htype = HTYPE_ETHER; /*XXX*/
 			memcpy(iface->hw_address.haddr,
 			    LLADDR(foo), foo->sdl_alen);
 		} else if (ifa->ifa_addr->sa_family == AF_INET) {
@@ -143,7 +144,7 @@ get_interface(const char *ifname, void (*handler)(struct protocol *),
 
 	if (strlcpy(iface->ifr.ifr_name, ifname,
 	    sizeof(iface->ifr.ifr_name)) >= sizeof(iface->ifr.ifr_name))
-		error("interface name '%s' too long", ifname);
+		fatalx("interface name '%s' too long", ifname);
 
 	/* Register the interface... */
 	if_register_receive(iface, isserver);
@@ -173,7 +174,7 @@ dispatch(void)
 
 	fds = calloc(nfds, sizeof(struct pollfd));
 	if (fds == NULL)
-		error("Can't allocate poll structures.");
+		fatalx("Can't allocate poll structures.");
 
 	do {
 		/*
@@ -220,7 +221,7 @@ another:
 		}
 
 		if (i == 0)
-			error("No live interfaces to poll on - exiting.");
+			fatalx("No live interfaces to poll on - exiting.");
 
 		/* Wait for a packet or a timeout... XXX */
 		count = poll(fds, nfds, to_msec);
@@ -232,7 +233,7 @@ another:
 				continue;
 			}
 			else
-				error("poll: %m");
+				fatal("poll");
 		}
 
 		/* Get the current time... */
@@ -275,13 +276,12 @@ got_one(struct protocol *l)
 	memset(&pc, 0, sizeof(pc));
 
 	if ((result = receive_packet(ip, u.packbuf, sizeof(u), &pc)) == -1) {
-		warning("receive_packet failed on %s: %s", ip->name,
-		    strerror(errno));
+		log_warn("receive_packet failed on %s", ip->name);
 		ip->errors++;
 		if ((!interface_status(ip)) ||
 		    (ip->noifmedia && ip->errors > 20)) {
 			/* our interface has gone away. */
-			warning("Interface %s no longer appears valid.",
+			log_warnx("Interface %s no longer appears valid.",
 			    ip->name);
 			ip->dead = 1;
 			interfaces_invalidated = 1;
@@ -310,7 +310,7 @@ interface_status(struct interface_info *ifinfo)
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	if (ioctl(ifsock, SIOCGIFFLAGS, &ifr) == -1) {
-		syslog(LOG_ERR, "ioctl(SIOCGIFFLAGS) on %s: %m", ifname);
+		log_warn("ioctl(SIOCGIFFLAGS) on %s", ifname);
 		goto inactive;
 	}
 	/*
@@ -327,9 +327,7 @@ interface_status(struct interface_info *ifinfo)
 	strlcpy(ifmr.ifm_name, ifname, sizeof(ifmr.ifm_name));
 	if (ioctl(ifsock, SIOCGIFMEDIA, (caddr_t)&ifmr) == -1) {
 		if (errno != EINVAL) {
-			syslog(LOG_DEBUG, "ioctl(SIOCGIFMEDIA) on %s: %m",
-			    ifname);
-
+			log_debug("ioctl(SIOCGIFMEDIA) on %s", ifname);
 			ifinfo->noifmedia = 1;
 			goto active;
 		}
@@ -367,7 +365,7 @@ add_protocol(char *name, int fd, void (*handler)(struct protocol *),
 
 	p = malloc(sizeof(*p));
 	if (!p)
-		error("can't allocate protocol struct for %s", name);
+		fatalx("can't allocate protocol struct for %s", name);
 
 	p->fd = fd;
 	p->handler = handler;

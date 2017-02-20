@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwn.c,v 1.182 2017/01/22 10:17:38 dlg Exp $	*/
+/*	$OpenBSD: if_iwn.c,v 1.184 2017/02/20 15:38:04 krw Exp $	*/
 
 /*-
  * Copyright (c) 2007-2010 Damien Bergamini <damien.bergamini@free.fr>

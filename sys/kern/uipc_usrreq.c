@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_usrreq.c,v 1.113 2017/01/27 20:31:42 bluhm Exp $	*/
+/*	$OpenBSD: uipc_usrreq.c,v 1.116 2017/02/14 09:46:21 mpi Exp $	*/
 /*	$NetBSD: uipc_usrreq.c,v 1.18 1996/02/09 19:00:50 christos Exp $	*/
 
 /*
@@ -121,6 +121,9 @@ uipc_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 		error = EINVAL;
 		goto release;
 	}
+
+	NET_ASSERT_UNLOCKED();
+
 	switch (req) {
 
 	case PRU_ATTACH:
@@ -136,10 +139,7 @@ uipc_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 		break;
 
 	case PRU_BIND:
-		/* XXXSMP breaks atomicity */
-		rw_exit_write(&netlock);
 		error = unp_bind(unp, nam, p);
-		rw_enter_write(&netlock);
 		break;
 
 	case PRU_LISTEN:
@@ -148,10 +148,7 @@ uipc_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 		break;
 
 	case PRU_CONNECT:
-		/* XXXSMP breaks atomicity */
-		rw_exit_write(&netlock);
 		error = unp_connect(so, nam, p);
-		rw_enter_write(&netlock);
 		break;
 
 	case PRU_CONNECT2:
@@ -219,10 +216,7 @@ uipc_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 					error = EISCONN;
 					break;
 				}
-				/* XXXSMP breaks atomicity */
-				rw_exit_write(&netlock);
 				error = unp_connect(so, nam, p);
-				rw_enter_write(&netlock);
 				if (error)
 					break;
 			} else {
@@ -394,7 +388,7 @@ void
 unp_detach(struct unpcb *unp)
 {
 	struct vnode *vp;
-	
+
 	LIST_REMOVE(unp, unp_link);
 	if (unp->unp_vnode) {
 		unp->unp_vnode->v_socket = NULL;
@@ -497,9 +491,7 @@ unp_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 	struct socket *so2, *so3;
 	struct unpcb *unp, *unp2, *unp3;
 	struct nameidata nd;
-	int error, s;
-
-	NET_ASSERT_UNLOCKED();
+	int error;
 
 	if (soun->sun_family != AF_UNIX)
 		return (EAFNOSUPPORT);
@@ -531,12 +523,11 @@ unp_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 		error = EPROTOTYPE;
 		goto bad;
 	}
-	NET_LOCK(s);
 	if (so->so_proto->pr_flags & PR_CONNREQUIRED) {
 		if ((so2->so_options & SO_ACCEPTCONN) == 0 ||
 		    (so3 = sonewconn(so2, 0)) == 0) {
 			error = ECONNREFUSED;
-			goto unlock;
+			goto bad;
 		}
 		unp = sotounpcb(so);
 		unp2 = sotounpcb(so2);
@@ -555,8 +546,6 @@ unp_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 		}
 	}
 	error = unp_connect2(so, so2);
-unlock:
-	NET_UNLOCK(s);
 bad:
 	vput(vp);
 	return (error);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.269 2017/01/23 22:34:10 deraadt Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.271 2017/02/15 03:36:58 guenther Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -280,22 +280,22 @@ update:
  * track of how many were replaced.  That's the number of references
  * the old vnode had that we've replaced, so finish by vrele()'ing
  * it that many times.  This puts off any possible sleeping until
- * we've finished walking the allproc list.
+ * we've finished walking the allprocess list.
  */
 void
 checkdirs(struct vnode *olddp)
 {
 	struct filedesc *fdp;
 	struct vnode *newdp;
-	struct proc *p;
+	struct process *pr;
 	u_int  free_count = 0;
 
 	if (olddp->v_usecount == 1)
 		return;
 	if (VFS_ROOT(olddp->v_mountedhere, &newdp))
 		panic("mount: lost mount");
-	LIST_FOREACH(p, &allproc, p_list) {
-		fdp = p->p_fd;
+	LIST_FOREACH(pr, &allprocess, ps_list) {
+		fdp = pr->ps_fd;
 		if (fdp->fd_cdir == olddp) {
 			free_count++;
 			vref(newdp);
@@ -802,7 +802,8 @@ doopenat(struct proc *p, int fd, const char *path, int oflags, mode_t mode,
 
 	fdplock(fdp);
 
-	if ((error = falloc(p, &fp, &indx)) != 0)
+	if ((error = falloc(p, (oflags & O_CLOEXEC) ? UF_EXCLOSE : 0, &fp,
+	    &indx)) != 0)
 		goto out;
 	flags = FFLAGS(oflags);
 	if (flags & FREAD)
@@ -811,9 +812,6 @@ doopenat(struct proc *p, int fd, const char *path, int oflags, mode_t mode,
 		ni_pledge |= PLEDGE_WPATH;
 	if (oflags & O_CREAT)
 		ni_pledge |= PLEDGE_CPATH;
-
-	if (flags & O_CLOEXEC)
-		fdp->fd_ofileflags[indx] |= UF_EXCLOSE;
 
 	cmode = ((mode &~ fdp->fd_cmask) & ALLPERMS) &~ S_ISTXT;
 	if ((p->p_p->ps_flags & PS_PLEDGE))
@@ -970,12 +968,11 @@ sys_fhopen(struct proc *p, void *v, register_t *retval)
 		return (EINVAL);
 
 	fdplock(fdp);
-	if ((error = falloc(p, &fp, &indx)) != 0) {
+	if ((error = falloc(p, (flags & O_CLOEXEC) ? UF_EXCLOSE : 0, &fp,
+	    &indx)) != 0) {
 		fp = NULL;
 		goto bad;
 	}
-	if (flags & O_CLOEXEC)
-		fdp->fd_ofileflags[indx] |= UF_EXCLOSE;
 
 	if ((error = copyin(SCARG(uap, fhp), &fh, sizeof(fhandle_t))) != 0)
 		goto bad;

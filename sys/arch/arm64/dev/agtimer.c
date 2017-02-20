@@ -1,4 +1,4 @@
-/* $OpenBSD: agtimer.c,v 1.4 2017/02/07 21:51:03 patrick Exp $ */
+/* $OpenBSD: agtimer.c,v 1.7 2017/02/18 00:47:18 patrick Exp $ */
 /*
  * Copyright (c) 2011 Dale Rahn <drahn@openbsd.org>
  * Copyright (c) 2013 Patrick Wildt <patrick@blueri.se>
@@ -95,6 +95,7 @@ agtimer_readcnt64(void)
 {
 	uint64_t val;
 
+	__asm volatile("isb" : : : "memory");
 	__asm volatile("MRS %x0, CNTPCT_EL0" : "=r" (val));
 
 	return (val);
@@ -124,9 +125,7 @@ static inline int
 agtimer_set_ctrl(uint32_t val)
 {
 	__asm volatile("MSR CNTP_CTL_EL0, %x0" : : "r" (val));
-
-	//cpu_drain_writebuf();
-	//isb();
+	__asm volatile("isb" : : : "memory");
 
 	return (0);
 }
@@ -135,9 +134,7 @@ static inline int
 agtimer_set_tval(uint32_t val)
 {
 	__asm volatile("MSR CNTP_TVAL_EL0, %x0" : : "r" (val));
-
-	//cpu_drain_writebuf();
-	//isb();
+	__asm volatile("isb" : : : "memory");
 
 	return (0);
 }
@@ -318,9 +315,9 @@ agtimer_cpu_initclocks()
 void
 agtimer_delay(u_int usecs)
 {
-	u_int32_t		clock, oclock, delta, delaycnt;
+	uint64_t		clock, oclock, delta, delaycnt;
+	uint64_t		csec, usec;
 	volatile int		j;
-	int			csec, usec;
 
 	if (usecs > (0x80000000 / agtimer_frequency)) {
 		csec = usecs / 10000;
@@ -393,10 +390,10 @@ agtimer_startclock(void)
 void
 agtimer_init(void)
 {
-	uint32_t cntfrq = 0;
+	uint64_t cntfrq = 0;
 
 	/* XXX: Check for Generic Timer support. */
-	__asm volatile("MRS %x0, CNTFRQ_EL0" : "=r" (cntfrq));
+	cntfrq = agtimer_get_freq();
 
 	if (cntfrq != 0) {
 		agtimer_frequency = cntfrq;

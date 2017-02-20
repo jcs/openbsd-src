@@ -1,4 +1,4 @@
-/*	$OpenBSD: dwc2.c,v 1.39 2017/02/04 19:22:42 guenther Exp $	*/
+/*	$OpenBSD: dwc2.c,v 1.41 2017/02/16 14:09:00 visa Exp $	*/
 /*	$NetBSD: dwc2.c,v 1.32 2014/09/02 23:26:20 macallan Exp $	*/
 
 /*-
@@ -1436,16 +1436,13 @@ dwc2_worker(struct task *wk, void *priv)
 	}
 }
 
-int dwc2_intr(void *p)
+int
+dwc2_intr(void *p)
 {
 	struct dwc2_softc *sc = p;
-	struct dwc2_hsotg *hsotg;
+	struct dwc2_hsotg *hsotg = sc->sc_hsotg;
 	int ret = 0;
 
-	if (sc == NULL)
-		return 0;
-
-	hsotg = sc->sc_hsotg;
 	mtx_enter(&hsotg->lock);
 
 	if (sc->sc_dying)
@@ -1703,7 +1700,7 @@ void dwc2_host_complete(struct dwc2_hsotg *hsotg, struct dwc2_qtd *qtd,
 	timeout_del(&xfer->timeout_handle);
 	usb_rem_task(xfer->device, &xfer->abort_task);
 
-	KASSERT(mtx_owned(&hsotg->lock));
+	MUTEX_ASSERT_LOCKED(&hsotg->lock);
 
 	TAILQ_INSERT_TAIL(&sc->sc_complete, dxfer, xnext);
 

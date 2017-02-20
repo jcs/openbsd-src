@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.533 2017/02/01 09:55:07 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.538 2017/02/15 08:47:55 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: February 1 2017 $
+.Dd $Mdocdate: February 15 2017 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -812,7 +812,7 @@ Lock all clients attached to
 .Op Fl F Ar format
 .Op Fl n Ar window-name
 .Op Fl s Ar session-name
-.Op Fl t Ar target-session
+.Op Fl t Ar group-name
 .Op Fl x Ar width
 .Op Fl y Ar height
 .Op Ar shell-command
@@ -834,7 +834,7 @@ is used,
 .Fl x
 and
 .Fl y
-specify the size of the initial window (80 by 24 if not given).
+specify the size of the initial window.
 .Pp
 If run from a terminal, any
 .Xr termios 4
@@ -857,16 +857,27 @@ to
 .Pp
 If
 .Fl t
-is given, the new session is
-.Em grouped
-with
-.Ar target-session .
-This means they share the same set of windows - all windows from
-.Ar target-session
-are linked to the new session, any new windows are linked to both sessions and
-any windows closed removed from both sessions.
+is given, it specifies a
+.Ic session group .
+Sessions in the same group share the same set of windows - new windows are
+linked to all sessions in the group and any windows closed removed from all
+sessions.
 The current and previous window and any session options remain independent and
-either session may be killed without affecting the other.
+any session in a group may be killed without affecting the others.
+The
+.Ar group-name
+argument may be:
+.Bl -enum -width Ds
+.It
+the name of an existing group, in which case the new session is added to that
+group;
+.It
+the name of an existing session - the new session is added to the same group
+as that session, creating a new group if necessary;
+.It
+the name for a new group containing only the new session.
+.El
+.Pp
 .Fl n
 and
 .Ar shell-command
@@ -888,6 +899,7 @@ is used, the
 .Ic update-environment
 option will not be applied.
 .It Xo Ic refresh-client
+.Op Fl C Ar width,height
 .Op Fl S
 .Op Fl t Ar target-client
 .Xc
@@ -897,7 +909,10 @@ with
 .Fl t .
 If
 .Fl S
-is specified, only update the client's status bar.
+is specified, only update the client's status line.
+.Pp
+.Fl C
+sets the width and height of a control client.
 .It Xo Ic rename-session
 .Op Fl t Ar target-session
 .Ar new-name
@@ -2744,7 +2759,7 @@ section.
 .Xc
 Show or hide the status line.
 .It Ic status-interval Ar interval
-Update the status bar every
+Update the status line every
 .Ar interval
 seconds.
 By default, updates will occur every 15 seconds.
@@ -2768,7 +2783,7 @@ environment variables are set and contain the string
 .It Ic status-left Ar string
 Display
 .Ar string
-(by default the session name) to the left of the status bar.
+(by default the session name) to the left of the status line.
 .Ar string
 will be passed through
 .Xr strftime 3
@@ -2798,7 +2813,7 @@ The default is
 .It Ic status-left-length Ar length
 Set the maximum
 .Ar length
-of the left component of the status bar.
+of the left component of the status line.
 The default is 10.
 .It Ic status-left-style Ar style
 Set the style of the left part of the status line.
@@ -2814,7 +2829,7 @@ Set the position of the status line.
 .It Ic status-right Ar string
 Display
 .Ar string
-to the right of the status bar.
+to the right of the status line.
 By default, the current window title in double quotes, the date and the time
 are shown.
 As with
@@ -2826,7 +2841,7 @@ and character pairs are replaced.
 .It Ic status-right-length Ar length
 Set the maximum
 .Ar length
-of the right component of the status bar.
+of the right component of the status line.
 The default is 40.
 .It Ic status-right-style Ar style
 Set the style of the right part of the status line.
@@ -3558,7 +3573,7 @@ The following variables are available, where appropriate:
 .It Li "session_activity" Ta "" Ta "Integer time of session last activity"
 .It Li "session_created" Ta "" Ta "Integer time session created"
 .It Li "session_last_attached" Ta "" Ta "Integer time session last attached"
-.It Li "session_group" Ta "" Ta "Number of session group"
+.It Li "session_group" Ta "" Ta "Name of session group"
 .It Li "session_grouped" Ta "" Ta "1 if session in a group"
 .It Li "session_height" Ta "" Ta "Height of session"
 .It Li "session_id" Ta "" Ta "Unique session ID"
@@ -4196,6 +4211,11 @@ For example:
 0: ksh* (1 panes) [80x24] [layout b25f,80x24,0,0,2] @2 (active)
 %end 1363006971 2
 .Ed
+.Pp
+The
+.Ic refresh-client
+.Fl C
+command may be used to set the size of a client in control mode.
 .Pp
 In control mode,
 .Nm

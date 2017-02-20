@@ -1,4 +1,4 @@
-/*	$OpenBSD: res_send_async.c,v 1.29 2015/10/23 00:52:09 deraadt Exp $	*/
+/*	$OpenBSD: res_send_async.c,v 1.32 2017/02/18 22:25:13 eric Exp $	*/
 /*
  * Copyright (c) 2012 Eric Faurot <eric@openbsd.org>
  *
@@ -377,10 +377,14 @@ setup_query(struct asr_query *as, const char *name, const char *dom,
 	if (as->as_ctx->ac_options & RES_RECURSE)
 		h.flags |= RD_MASK;
 	h.qdcount = 1;
+	if (as->as_ctx->ac_options & RES_USE_EDNS0)
+		h.arcount = 1;
 
 	_asr_pack_init(&p, as->as.dns.obuf, as->as.dns.obufsize);
 	_asr_pack_header(&p, &h);
 	_asr_pack_query(&p, type, class, dname);
+	if (as->as_ctx->ac_options & RES_USE_EDNS0)
+		_asr_pack_edns0(&p, MAXPACKETSZ);
 	if (p.err) {
 		DPRINT("error packing query");
 		errno = EINVAL;
@@ -449,7 +453,7 @@ udp_recv(struct asr_query *as)
 	ssize_t		 n;
 	int		 save_errno;
 
-	if (ensure_ibuf(as, PACKETSZ) == -1) {
+	if (ensure_ibuf(as, MAXPACKETSZ) == -1) {
 		save_errno = errno;
 		close(as->as_fd);
 		errno = save_errno;
@@ -711,7 +715,8 @@ validate_packet(struct asr_query *as)
 	}
 
 	/* Check for truncation */
-	if (h.flags & TC_MASK) {
+	if (h.flags & TC_MASK && !(as->as_ctx->ac_options & RES_IGNTC)) {
+		DPRINT("truncated\n");
 		errno = EOVERFLOW;
 		return (-1);
 	}
@@ -720,8 +725,18 @@ validate_packet(struct asr_query *as)
 	for (r = h.ancount + h.nscount + h.arcount; r; r--)
 		_asr_unpack_rr(&p, &rr);
 
-	if (p.err || (p.offset != as->as.dns.ibuflen))
-		goto inval;
+	/* Report any error found when unpacking the RRs. */
+	if (p.err) {
+		DPRINT("unpack: %s\n", strerror(p.err));
+		errno = p.err;
+		return (-1);
+	}
+
+	if (p.offset != as->as.dns.ibuflen) {
+		DPRINT("trailing garbage\n");
+		errno = EMSGSIZE;
+		return (-1);
+	}
 
 	return (0);
 

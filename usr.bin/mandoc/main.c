@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.183 2017/01/27 13:47:17 schwarze Exp $ */
+/*	$OpenBSD: main.c,v 1.186 2017/02/16 10:55:57 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2012, 2014-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -94,7 +94,7 @@ static	void		  parse(struct curparse *, int, const char *);
 static	void		  passthrough(const char *, int, int);
 static	pid_t		  spawn_pager(struct tag_files *);
 static	int		  toptions(struct curparse *, char *);
-static	void		  usage(enum argmode) __attribute__((noreturn));
+static	void		  usage(enum argmode) __attribute__((__noreturn__));
 static	int		  woptions(struct curparse *, char *);
 
 static	const int sec_prios[] = {1, 4, 5, 8, 6, 3, 7, 2, 9};
@@ -107,17 +107,14 @@ int
 main(int argc, char *argv[])
 {
 	struct manconf	 conf;
-	struct curparse	 curp;
 	struct mansearch search;
+	struct curparse	 curp;
 	struct tag_files *tag_files;
-	const char	*progname;
-	char		*auxpaths;
-	char		*defos;
-	unsigned char	*uc;
 	struct manpage	*res, *resp;
-	char		*conf_file, *defpaths;
-	const char	*sec;
-	const char	*thisarg;
+	const char	*progname, *sec, *thisarg;
+	char		*conf_file, *defpaths, *auxpaths;
+	char		*defos, *oarg;
+	unsigned char	*uc;
 	size_t		 i, sz;
 	int		 prio, best_prio;
 	enum outmode	 outmode;
@@ -145,6 +142,7 @@ main(int argc, char *argv[])
 
 	memset(&search, 0, sizeof(struct mansearch));
 	search.outkey = "Nd";
+	oarg = NULL;
 
 	if (strcmp(progname, "man") == 0)
 		search.argmode = ARG_NAME;
@@ -223,15 +221,7 @@ main(int argc, char *argv[])
 			auxpaths = optarg;
 			break;
 		case 'O':
-			search.outkey = optarg;
-			while (optarg != NULL) {
-				thisarg = optarg;
-				if (manconf_output(&conf.output,
-				    strsep(&optarg, ","), 0) == 0)
-					continue;
-				warnx("-O %s: Bad argument", thisarg);
-				return (int)MANDOCLEVEL_BADARG;
-			}
+			oarg = optarg;
 			break;
 		case 'S':
 			search.arch = optarg;
@@ -273,6 +263,21 @@ main(int argc, char *argv[])
 		default:
 			outmode = OUTMODE_LST;
 			break;
+		}
+	}
+
+	if (oarg != NULL) {
+		if (outmode == OUTMODE_LST)
+			search.outkey = oarg;
+		else {
+			while (oarg != NULL) {
+				thisarg = oarg;
+				if (manconf_output(&conf.output,
+				    strsep(&oarg, ","), 0) == 0)
+					continue;
+				warnx("-O %s: Bad argument", thisarg);
+				return (int)MANDOCLEVEL_BADARG;
+			}
 		}
 	}
 
@@ -712,7 +717,8 @@ parse(struct curparse *curp, int fd, const char *file)
 	if (man == NULL)
 		return;
 	if (man->macroset == MACROSET_MDOC) {
-		mdoc_validate(man);
+		if (curp->outtype != OUTT_TREE || !curp->outopts->noval)
+			mdoc_validate(man);
 		switch (curp->outtype) {
 		case OUTT_HTML:
 			html_mdoc(curp->outdata, man);
@@ -735,7 +741,8 @@ parse(struct curparse *curp, int fd, const char *file)
 		}
 	}
 	if (man->macroset == MACROSET_MAN) {
-		man_validate(man);
+		if (curp->outtype != OUTT_TREE || !curp->outopts->noval)
+			man_validate(man);
 		switch (curp->outtype) {
 		case OUTT_HTML:
 			html_man(curp->outdata, man);

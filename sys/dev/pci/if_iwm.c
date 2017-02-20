@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.163 2017/02/07 10:08:21 mpi Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.165 2017/02/20 15:38:04 krw Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>

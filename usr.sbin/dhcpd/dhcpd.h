@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.55 2016/10/06 16:12:43 krw Exp $ */
+/*	$OpenBSD: dhcpd.h,v 1.60 2017/02/16 00:24:43 krw Exp $ */
 
 /*
  * Copyright (c) 1995, 1996, 1997, 1998, 1999
@@ -268,17 +268,17 @@ struct class {
 
 /* DHCP client lease structure... */
 struct client_lease {
-	struct client_lease *next;		/* Next lease in list. */
-	time_t expiry, renewal, rebind;		/* Lease timeouts. */
-	struct iaddr address;			/* Address being leased. */
-	char *server_name;			/* Name of boot server. */
-	char *filename;				/* File to boot. */
-	struct string_list *medium;		/* Network medium. */
+	struct client_lease *next;	/* Next lease in list. */
+	time_t expiry, renewal, rebind;	/* Lease timeouts. */
+	struct iaddr address;		/* Address being leased. */
+	char *server_name;		/* Name of boot server. */
+	char *filename;			/* File to boot. */
+	struct string_list *medium;	/* Network medium. */
 
-	unsigned int is_static : 1;	/* If set, lease is from config file. */
-	unsigned int is_bootp: 1;	/* If set, lease was aquired with BOOTP. */
+	unsigned int is_static : 1;	/* Lease is from config file. */
+	unsigned int is_bootp: 1;	/* Lease was aquired with BOOTP. */
 
-	struct option_data options[256];	/* Options supplied with lease. */
+	struct option_data options[256];/* Options supplied with lease. */
 };
 
 /* privsep message. fixed length for easy parsing */
@@ -445,6 +445,11 @@ typedef unsigned char option_mask[16];
 
 /* External definitions... */
 
+/* parse.c */
+extern int warnings_occurred;
+int	parse_warn(char *, ...) __attribute__ ((__format__ (__printf__, 1,
+	    2)));
+
 /* options.c */
 void	 parse_options(struct packet *);
 void	 parse_option_buffer(struct packet *, unsigned char *, int);
@@ -454,22 +459,12 @@ char	*pretty_print_option(unsigned int, unsigned char *, int, int, int);
 void	 do_packet(struct interface_info *, struct dhcp_packet *, int,
 	    unsigned int, struct iaddr, struct hardware *);
 
-/* errwarn.c */
-extern int warnings_occurred;
-void	error(char *, ...) __attribute__ ((__format__ (__printf__, 1, 2)));
-int	warning(char *, ...) __attribute__ ((__format__ (__printf__, 1, 2)));
-int	note(char *, ...) __attribute__ ((__format__ (__printf__, 1, 2)));
-int	debug(char *, ...) __attribute__ ((__format__ (__printf__, 1, 2)));
-int	parse_warn(char *, ...) __attribute__ ((__format__ (__printf__, 1, 2)));
-
 /* dhcpd.c */
 extern time_t		cur_time;
 extern struct group	root_group;
 
 extern u_int16_t	server_port;
 extern u_int16_t	client_port;
-extern int		log_priority;
-extern int		log_perror;
 
 extern char		*path_dhcpd_conf;
 extern char		*path_dhcpd_db;
@@ -517,8 +512,8 @@ time_t			 parse_timestamp(FILE *);
 struct lease		*parse_lease_declaration(FILE *);
 void			 parse_address_range(FILE *, struct subnet *);
 time_t			 parse_date(FILE *);
-unsigned char		*parse_numeric_aggregate(FILE *, unsigned char *, int *,
-			    int, int, int);
+unsigned char		*parse_numeric_aggregate(FILE *, unsigned char *,
+			    int *, int, int, int);
 void			 convert_num(unsigned char *, char *, int, int);
 
 /* tree.c */
@@ -669,7 +664,6 @@ void pf_kill_state(int, struct in_addr);
 size_t atomicio(ssize_t (*)(int, void *, size_t), int, void *, size_t);
 #define vwrite (ssize_t (*)(int, void *, size_t))write
 void pfmsg(char, struct lease *);
-extern struct syslog_data sdata;
 
 /* udpsock.c */
 void udpsock_startup(struct in_addr);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpf.c,v 1.44 2016/08/31 12:57:31 mpi Exp $	*/
+/*	$OpenBSD: bpf.c,v 1.47 2017/02/12 15:53:15 krw Exp $	*/
 
 /* BPF socket interface code, originally contributed by Archie Cobbs. */
 
@@ -63,6 +63,7 @@
 
 #include "dhcp.h"
 #include "dhcpd.h"
+#include "log.h"
 
 int if_register_bpf(struct interface_info *ifi);
 
@@ -78,13 +79,12 @@ if_register_bpf(struct interface_info *ifi)
 	int sock;
 
 	if ((sock = open("/dev/bpf0", O_RDWR | O_CLOEXEC)) == -1)
-		error("Can't open bpf: %s", strerror(errno));
+		fatal("Can't open bpf");
 
 	/* Set the BPF device to point at this interface. */
 	strlcpy(ifr.ifr_name, ifi->name, IFNAMSIZ);
 	if (ioctl(sock, BIOCSETIF, &ifr) < 0)
-		error("Can't attach interface %s to /dev/bpf0: %s",
-		    ifi->name, strerror(errno));
+		fatal("Can't attach interface %s to /dev/bpf0", ifi->name);
 
 	return (sock);
 }
@@ -98,13 +98,13 @@ if_register_send(struct interface_info *ifi)
 	 * Use raw socket for unicast send.
 	 */
 	if ((sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1)
-		error("socket(SOCK_RAW): %s", strerror(errno));
+		fatal("socket(SOCK_RAW)");
 	if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &on,
 	    sizeof(on)) == -1)
-		error("setsockopt(IP_HDRINCL): %s", strerror(errno));
+		fatal("setsockopt(IP_HDRINCL)");
 	if (setsockopt(sock, IPPROTO_IP, SO_RTABLE, &ifi->rdomain,
 	    sizeof(ifi->rdomain)) == -1)
-		error("setsockopt(SO_RTABLE): %s", strerror(errno));
+		fatal("setsockopt(SO_RTABLE)");
 
 	ifi->ufdesc = sock;
 }
@@ -196,11 +196,12 @@ if_register_receive(struct interface_info *ifi)
 
 	/* Make sure the BPF version is in range. */
 	if (ioctl(ifi->bfdesc, BIOCVERSION, &v) < 0)
-		error("Can't get BPF version: %s", strerror(errno));
+		fatal("Can't get BPF version");
 
 	if (v.bv_major != BPF_MAJOR_VERSION ||
 	    v.bv_minor < BPF_MINOR_VERSION)
-		error("Kernel BPF version out of range - recompile dhclient!");
+		fatalx("Kernel BPF version out of range - recompile "
+		    "dhclient!");
 
 	/*
 	 * Set immediate mode so that reads return as soon as a packet
@@ -208,20 +209,18 @@ if_register_receive(struct interface_info *ifi)
 	 * with packets.
 	 */
 	if (ioctl(ifi->bfdesc, BIOCIMMEDIATE, &flag) < 0)
-		error("Can't set immediate mode on bpf device: %s",
-		    strerror(errno));
+		fatal("Can't set immediate mode on bpf device");
 
 	if (ioctl(ifi->bfdesc, BIOCSFILDROP, &flag) < 0)
-		error("Can't set filter-drop mode on bpf device: %s",
-		    strerror(errno));
+		fatal("Can't set filter-drop mode on bpf device");
 
 	/* Get the required BPF buffer length from the kernel. */
 	if (ioctl(ifi->bfdesc, BIOCGBLEN, &sz) < 0)
-		error("Can't get bpf buffer length: %s", strerror(errno));
+		fatal("Can't get bpf buffer length");
 	ifi->rbuf_max = sz;
 	ifi->rbuf = malloc(ifi->rbuf_max);
 	if (!ifi->rbuf)
-		error("Can't allocate %lu bytes for bpf input buffer.",
+		fatalx("Can't allocate %lu bytes for bpf input buffer.",
 		    (unsigned long)ifi->rbuf_max);
 	ifi->rbuf_offset = 0;
 	ifi->rbuf_len = 0;
@@ -238,8 +237,7 @@ if_register_receive(struct interface_info *ifi)
 	dhcp_bpf_filter[8].k = LOCAL_PORT;
 
 	if (ioctl(ifi->bfdesc, BIOCSETF, &p) < 0)
-		error("Can't install packet filter program: %s",
-		    strerror(errno));
+		fatal("Can't install packet filter program");
 
 	/* Set up the bpf write filter program structure. */
 	p.bf_len = dhcp_bpf_wfilter_len;
@@ -249,11 +247,10 @@ if_register_receive(struct interface_info *ifi)
 		dhcp_bpf_wfilter[7].k = htons(IP_MF|IP_OFFMASK);
 
 	if (ioctl(ifi->bfdesc, BIOCSETWF, &p) < 0)
-		error("Can't install write filter program: %s",
-		    strerror(errno));
+		fatal("Can't install write filter program");
 
 	if (ioctl(ifi->bfdesc, BIOCLOCK, NULL) < 0)
-		error("Cannot lock bpf");
+		fatalx("Cannot lock bpf");
 }
 
 ssize_t
@@ -329,7 +326,7 @@ send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
 	}
 
 	if (result == -1)
-		warning("send_packet: %s", strerror(errno));
+		log_warn("send_packet");
 	return (result);
 }
 

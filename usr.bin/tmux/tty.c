@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.240 2017/02/08 17:31:09 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.249 2017/02/16 12:56:01 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -34,11 +34,6 @@
 
 static int	tty_log_fd = -1;
 
-static void	tty_init_termios(int, struct termios *, struct bufferevent *);
-
-static void	tty_read_callback(struct bufferevent *, void *);
-static void	tty_error_callback(struct bufferevent *, short, void *);
-
 static int	tty_client_ready(struct client *, struct window_pane *);
 
 static void	tty_set_italics(struct tty *);
@@ -46,7 +41,7 @@ static int	tty_try_colour(struct tty *, int, const char *);
 static void	tty_force_cursor_colour(struct tty *, const char *);
 static void	tty_cursor_pane(struct tty *, const struct tty_ctx *, u_int,
 		    u_int);
-
+static void	tty_invalidate(struct tty *);
 static void	tty_colours(struct tty *, const struct grid_cell *);
 static void	tty_check_fg(struct tty *, const struct window_pane *,
 		    struct grid_cell *);
@@ -145,23 +140,7 @@ tty_resize(struct tty *tty)
 	log_debug("%s: %s now %ux%u", __func__, tty->path, sx, sy);
 	if (!tty_set_size(tty, sx, sy))
 		return (0);
-
-	tty->cx = UINT_MAX;
-	tty->cy = UINT_MAX;
-
-	tty->rupper = tty->rleft = UINT_MAX;
-	tty->rlower = tty->rright = UINT_MAX;
-
-	/*
-	 * If the terminal has been started, reset the actual scroll region and
-	 * cursor position, as this may not have happened.
-	 */
-	if (tty->flags & TTY_STARTED) {
-		tty_cursor(tty, 0, 0);
-		tty_region_off(tty);
-		tty_margin_off(tty);
-	}
-
+	tty_invalidate(tty);
 	return (1);
 }
 
@@ -175,6 +154,38 @@ tty_set_size(struct tty *tty, u_int sx, u_int sy)
 	return (1);
 }
 
+static void
+tty_read_callback(__unused int fd, __unused short events, void *data)
+{
+	struct tty	*tty = data;
+	size_t		 size = EVBUFFER_LENGTH(tty->in);
+	int		 nread;
+
+	nread = evbuffer_read(tty->in, tty->fd, -1);
+	if (nread == -1)
+		return;
+	log_debug("%s: read %d bytes (already %zu)", tty->path, nread, size);
+
+	while (tty_keys_next(tty))
+		;
+}
+
+static void
+tty_write_callback(__unused int fd, __unused short events, void *data)
+{
+	struct tty	*tty = data;
+	size_t		 size = EVBUFFER_LENGTH(tty->out);
+	int		 nwrite;
+
+	nwrite = evbuffer_write(tty->out, tty->fd);
+	if (nwrite == -1)
+		return;
+	log_debug("%s: wrote %d bytes (of %zu)", tty->path, nwrite, size);
+
+	if (EVBUFFER_LENGTH(tty->out) != 0)
+		event_add(&tty->event_out, NULL);
+}
+
 int
 tty_open(struct tty *tty, char **cause)
 {
@@ -185,10 +196,14 @@ tty_open(struct tty *tty, char **cause)
 	}
 	tty->flags |= TTY_OPENED;
 
-	tty->flags &= ~(TTY_NOCURSOR|TTY_FREEZE|TTY_TIMER);
+	tty->flags &= ~(TTY_NOCURSOR|TTY_FREEZE);
 
-	tty->event = bufferevent_new(tty->fd, tty_read_callback, NULL,
-	    tty_error_callback, tty);
+	event_set(&tty->event_in, tty->fd, EV_PERSIST|EV_READ,
+	    tty_read_callback, tty);
+	tty->in = evbuffer_new();
+
+	event_set(&tty->event_out, tty->fd, EV_WRITE, tty_write_callback, tty);
+	tty->out = evbuffer_new();
 
 	tty_start_tty(tty);
 
@@ -197,58 +212,28 @@ tty_open(struct tty *tty, char **cause)
 	return (0);
 }
 
-static void
-tty_read_callback(__unused struct bufferevent *bufev, void *data)
-{
-	struct tty	*tty = data;
-
-	while (tty_keys_next(tty))
-		;
-}
-
-static void
-tty_error_callback(__unused struct bufferevent *bufev, __unused short what,
-    __unused void *data)
-{
-}
-
-static void
-tty_init_termios(int fd, struct termios *orig_tio, struct bufferevent *bufev)
-{
-	struct termios	tio;
-
-	if (fd == -1 || tcgetattr(fd, orig_tio) != 0)
-		return;
-
-	setblocking(fd, 0);
-
-	if (bufev != NULL)
-		bufferevent_enable(bufev, EV_READ|EV_WRITE);
-
-	memcpy(&tio, orig_tio, sizeof tio);
-	tio.c_iflag &= ~(IXON|IXOFF|ICRNL|INLCR|IGNCR|IMAXBEL|ISTRIP);
-	tio.c_iflag |= IGNBRK;
-	tio.c_oflag &= ~(OPOST|ONLCR|OCRNL|ONLRET);
-	tio.c_lflag &= ~(IEXTEN|ICANON|ECHO|ECHOE|ECHONL|ECHOCTL|
-	    ECHOPRT|ECHOKE|ISIG);
-	tio.c_cc[VMIN] = 1;
-	tio.c_cc[VTIME] = 0;
-	if (tcsetattr(fd, TCSANOW, &tio) == 0)
-		tcflush(fd, TCIOFLUSH);
-}
-
 void
 tty_start_tty(struct tty *tty)
 {
-	tty_init_termios(tty->fd, &tty->tio, tty->event);
+	struct termios	tio;
+
+	if (tty->fd != -1 && tcgetattr(tty->fd, &tty->tio) == 0) {
+		setblocking(tty->fd, 0);
+		event_add(&tty->event_in, NULL);
+
+		memcpy(&tio, &tty->tio, sizeof tio);
+		tio.c_iflag &= ~(IXON|IXOFF|ICRNL|INLCR|IGNCR|IMAXBEL|ISTRIP);
+		tio.c_iflag |= IGNBRK;
+		tio.c_oflag &= ~(OPOST|ONLCR|OCRNL|ONLRET);
+		tio.c_lflag &= ~(IEXTEN|ICANON|ECHO|ECHOE|ECHONL|ECHOCTL|
+		    ECHOPRT|ECHOKE|ISIG);
+		tio.c_cc[VMIN] = 1;
+		tio.c_cc[VTIME] = 0;
+		if (tcsetattr(tty->fd, TCSANOW, &tio) == 0)
+			tcflush(tty->fd, TCIOFLUSH);
+	}
 
 	tty_putcode(tty, TTYC_SMCUP);
-
-	tty_putcode(tty, TTYC_SGR0);
-	memcpy(&tty->cell, &grid_default_cell, sizeof tty->cell);
-
-	memcpy(&tty->last_cell, &grid_default_cell, sizeof tty->last_cell);
-	tty->last_wp = -1;
 
 	tty_putcode(tty, TTYC_RMKX);
 	if (tty_use_acs(tty))
@@ -267,15 +252,8 @@ tty_start_tty(struct tty *tty)
 		tty_puts(tty, "\033[c");
 	}
 
-	tty->cx = UINT_MAX;
-	tty->cy = UINT_MAX;
-
-	tty->rupper = tty->rleft = UINT_MAX;
-	tty->rlower = tty->rright = UINT_MAX;
-
-	tty->mode = MODE_CURSOR;
-
 	tty->flags |= TTY_STARTED;
+	tty_invalidate(tty);
 
 	tty_force_cursor_colour(tty, "");
 
@@ -293,7 +271,8 @@ tty_stop_tty(struct tty *tty)
 		return;
 	tty->flags &= ~TTY_STARTED;
 
-	bufferevent_disable(tty->event, EV_READ|EV_WRITE);
+	event_del(&tty->event_in);
+	event_del(&tty->event_out);
 
 	/*
 	 * Be flexible about error handling and try not kill the server just
@@ -347,7 +326,10 @@ tty_close(struct tty *tty)
 	tty_stop_tty(tty);
 
 	if (tty->flags & TTY_OPENED) {
-		bufferevent_free(tty->event);
+		evbuffer_free(tty->in);
+		event_del(&tty->event_in);
+		evbuffer_free(tty->out);
+		event_del(&tty->event_out);
 
 		tty_term_free(tty->term);
 		tty_keys_free(tty);
@@ -437,40 +419,38 @@ tty_putcode_ptr2(struct tty *tty, enum tty_code_code code, const void *a,
 		tty_puts(tty, tty_term_ptr2(tty->term, code, a, b));
 }
 
+static void
+tty_add(struct tty *tty, const char *buf, size_t len)
+{
+	evbuffer_add(tty->out, buf, len);
+	log_debug("%s: %.*s", tty->path, (int)len, (const char *)buf);
+
+	if (tty_log_fd != -1)
+		write(tty_log_fd, buf, len);
+	if (tty->flags & TTY_STARTED)
+		event_add(&tty->event_out, NULL);
+}
+
 void
 tty_puts(struct tty *tty, const char *s)
 {
-	size_t	size = EVBUFFER_LENGTH(tty->event->output);
-
-	if (*s == '\0')
-		return;
-
-	bufferevent_write(tty->event, s, strlen(s));
-	log_debug("%s (%zu): %s", tty->path, size, s);
-
-	if (tty_log_fd != -1)
-		write(tty_log_fd, s, strlen(s));
+	if (*s != '\0')
+		tty_add(tty, s, strlen(s));
 }
 
 void
 tty_putc(struct tty *tty, u_char ch)
 {
-	size_t		 size = EVBUFFER_LENGTH(tty->event->output);
 	const char	*acs;
 
 	if (tty->cell.attr & GRID_ATTR_CHARSET) {
 		acs = tty_acs_get(tty, ch);
-		if (acs != NULL) {
-			bufferevent_write(tty->event, acs, strlen(acs));
-			log_debug("%s (%zu): %s", tty->path, size, acs);
-		} else {
-			bufferevent_write(tty->event, &ch, 1);
-			log_debug("%s (%zu): %c", tty->path, size, ch);
-		}
-	} else {
-		bufferevent_write(tty->event, &ch, 1);
-		log_debug("%s (%zu): %c", tty->path, size, ch);
-	}
+		if (acs != NULL)
+			tty_add(tty, acs, strlen(acs));
+		else
+			tty_add(tty, &ch, 1);
+	} else
+		tty_add(tty, &ch, 1);
 
 	if (ch >= 0x20 && ch != 0x7f) {
 		if (tty->cx >= tty->sx) {
@@ -488,22 +468,12 @@ tty_putc(struct tty *tty, u_char ch)
 		} else
 			tty->cx++;
 	}
-
-	if (tty_log_fd != -1)
-		write(tty_log_fd, &ch, 1);
 }
 
 void
 tty_putn(struct tty *tty, const void *buf, size_t len, u_int width)
 {
-	size_t	size = EVBUFFER_LENGTH(tty->event->output);
-
-	bufferevent_write(tty->event, buf, len);
-	log_debug("%s (%zu): %.*s", tty->path, size, (int)len, (char *)buf);
-
-	if (tty_log_fd != -1)
-		write(tty_log_fd, buf, len);
-
+	tty_add(tty, buf, len);
 	tty->cx += width;
 }
 
@@ -773,7 +743,7 @@ tty_client_ready(struct client *c, struct window_pane *wp)
 {
 	if (c->session == NULL || c->tty.term == NULL)
 		return (0);
-	if (c->flags & CLIENT_SUSPENDED)
+	if (c->flags & (CLIENT_REDRAW|CLIENT_SUSPENDED))
 		return (0);
 	if (c->tty.flags & TTY_FREEZE)
 		return (0);
@@ -1040,7 +1010,7 @@ tty_cmd_scrollup(struct tty *tty, const struct tty_ctx *ctx)
 	tty_margin_pane(tty, ctx);
 
 	if (ctx->num == 1 || !tty_term_has(tty->term, TTYC_INDN)) {
-		tty_cursor(tty, tty->rright, ctx->yoff + tty->rlower);
+		tty_cursor(tty, tty->rright, tty->rlower);
 		for (i = 0; i < ctx->num; i++)
 			tty_putc(tty, '\n');
 	} else
@@ -1061,6 +1031,7 @@ tty_cmd_clearendofscreen(struct tty *tty, const struct tty_ctx *ctx)
 	tty_margin_off(tty);
 
 	if (tty_pane_full_width(tty, ctx) &&
+	    ctx->yoff + wp->sy >= tty->sy - 1 &&
 	    status_at_line(tty->client) <= 0 &&
 	    tty_term_has(tty->term, TTYC_ED)) {
 		tty_cursor_pane(tty, ctx, ctx->ocx, ctx->ocy);
@@ -1230,12 +1201,7 @@ tty_cmd_rawstring(struct tty *tty, const struct tty_ctx *ctx)
 
 	for (i = 0; i < ctx->num; i++)
 		tty_putc(tty, str[i]);
-
-	tty->cx = tty->cy = UINT_MAX;
-	tty->rupper = tty->rlower = UINT_MAX;
-
-	tty_attributes(tty, &grid_default_cell, ctx->wp);
-	tty_cursor(tty, 0, 0);
+	tty_invalidate(tty);
 }
 
 static void
@@ -1292,6 +1258,32 @@ tty_reset(struct tty *tty)
 	tty->last_wp = -1;
 }
 
+static void
+tty_invalidate(struct tty *tty)
+{
+	memcpy(&tty->cell, &grid_default_cell, sizeof tty->cell);
+
+	memcpy(&tty->last_cell, &grid_default_cell, sizeof tty->last_cell);
+	tty->last_wp = -1;
+
+	tty->cx = tty->cy = UINT_MAX;
+
+	tty->rupper = tty->rleft = UINT_MAX;
+	tty->rlower = tty->rright = UINT_MAX;
+
+	if (tty->flags & TTY_STARTED) {
+		tty_putcode(tty, TTYC_SGR0);
+
+		tty->mode = ALL_MODES;
+		tty_update_mode(tty, MODE_CURSOR, NULL);
+
+		tty_cursor(tty, 0, 0);
+		tty_region_off(tty);
+		tty_margin_off(tty);
+	} else
+		tty->mode = MODE_CURSOR;
+}
+
 /* Turn off margin. */
 void
 tty_region_off(struct tty *tty)
@@ -1329,7 +1321,7 @@ tty_region(struct tty *tty, u_int rupper, u_int rlower)
 		tty_cursor(tty, 0, tty->cy);
 
 	tty_putcode2(tty, TTYC_CSR, tty->rupper, tty->rlower);
-	tty->cx = tty->cy = 0;
+	tty->cx = tty->cy = UINT_MAX;
 }
 
 /* Turn off margin. */
@@ -1367,7 +1359,7 @@ tty_margin(struct tty *tty, u_int rleft, u_int rright)
 	else
 		snprintf(s, sizeof s, "\033[%u;%us", rleft + 1, rright + 1);
 	tty_puts(tty, s);
-	tty->cx = tty->cy = 0;
+	tty->cx = tty->cy = UINT_MAX;
 }
 
 /* Move cursor inside pane. */

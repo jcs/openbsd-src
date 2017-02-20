@@ -1,4 +1,4 @@
-.\" $OpenBSD: bsd.port.mk.5,v 1.446 2017/01/29 21:37:17 jmc Exp $
+.\" $OpenBSD: bsd.port.mk.5,v 1.455 2017/02/20 14:29:55 espie Exp $
 .\"
 .\" Copyright (c) 2000-2008 Marc Espie
 .\"
@@ -24,7 +24,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: January 29 2017 $
+.Dd $Mdocdate: February 20 2017 $
 .Dt BSD.PORT.MK 5
 .Os
 .Sh NAME
@@ -34,9 +34,27 @@
 .Fd .include <bsd.port.mk>
 .Sh DESCRIPTION
 .Nm
-holds all the standard routines used by the ports tree.
-Some variables and targets are for its internal use only.
-The rest is documented here.
+contains the
+.Xr ports 7
+tree
+.Xr make 1
+framework, in the form of documented public targets,
+variables and paths.
+.Pp
+Identifiers beginning with an underscore
+are internal-use only and likely to change without
+notice.
+.Pp
+This documentation contains sections covering targets, variables,
+diagnostics, and filenames, ordered in alphabetic order, followed
+by a section covering the fake framework, a section
+explaining flavors and multi-packages, and a section covering
+the generation of package information.
+.Pp
+It ends with sections covering obsolete targets, variables and files,
+outlining conversion
+methods from older incarnations of the ports tree or from other
+.Bx variants.
 .Pp
 .Nm
 also uses quite a few helper scripts.
@@ -45,24 +63,6 @@ Those live under
 and they do have manpages under
 .Pa ${PORTSDIR}/infrastructure/man .
 .Pp
-Other
-.Bx
-variants, as well as older versions of
-.Nm ,
-include other targets and variables.
-Conversion methods are outlined here.
-.Pp
-Most variables and targets are documented, with very few exceptions.
-.Pp
-This documentation covers the current targets, variables and paths used by
-.Nm .
-There is a separate section covering the fake framework, a section
-explaining flavors and multi-packages, and a section covering
-the generation of package information.
-.Pp
-It ends with sections on obsolete constructs that a porter may need
-when converting from other ports systems.
-.Pp
 Binary package details are mostly covered in
 .Xr pkg_create 1
 for the packing-list details,
@@ -70,12 +70,14 @@ and in
 .Xr pkg_add 1
 for the installation semantics.
 .Pp
-Selected common user activity such as the building of every package in
+Common usage such as building every package in
 the system is covered by
 .Xr ports 7
-instead.
+and
+.Xr bulk 8
+instead, with
 .Xr packages 7
-provides an overview of the result.
+providing an overview of the result.
 .Sh TARGETS
 .Bl -tag -width Ds
 .It Cm {build,run,all,test}-dir-depends
@@ -119,11 +121,6 @@ Specialization hooks exist for
 .Cm patch ,
 .Cm test .
 See individual targets for exceptions.
-.It Cm addsum
-Complete the ${CHECKSUM_FILE} record of checksums with files that have been
-added since
-.Cm makesum .
-Complain if anything does not match.
 .It Cm all-lib-depends-args
 Process the full
 .Ev LIB_DEPENDS
@@ -139,13 +136,6 @@ Essentially invoke
 env -i ${MAKE_ENV} ${MAKE_PROGRAM} ${MAKE_FLAGS} \e
 	-f ${MAKE_FILE} ${ALL_TARGET}
 .Ed
-.It Cm build-depends
-Verify the ports mentioned in
-.Ev BUILD_DEPENDS ,
-by checking the corresponding packages are actually installed,
-and install the missing ports by recursing through the ports tree.
-Deprecated, see
-.Cm prepare .
 .It Cm check-register
 Introspection target.
 Verify from the ports tree, without building anything, that the current
@@ -164,20 +154,20 @@ Debugging version of the
 target that simulates invoking
 .Xr patch 1 .
 .It Cm checksum
-Check distribution archives and distribution patches control sum against
-the results recorded in ${CHECKSUM_FILE},
-using the message digest (checksum) utilities listed in ${PREFERRED_CIPHERS}.
-All the files needed to recreate a port should be in ${CHECKSUMFILES} and
-checksummed.
-Invoking
+Compute a
+.Xr sha256 1
+digest
+of ${CHECKSUM_FILES} (files listed in DISTFILES and PATCHFILES) and
+check it against ${CHECKSUM_FILE}, normally
+.Pa distinfo .
+In case of a mismatch, running
 .Cm checksum
 with
 .Ev REFETCH Ns = Ns Cm true
-will try to fetch a version with the correct checksum from the
+will fetch alternative versions of files keyed on their checksum
+fron the
 .Ox
-main archive site in the case of a checksum mismatch.
-.Ev NO_CHECKSUM
-can be used to avoid all checksumming steps.
+main archive site.
 .It Cm clean
 Clean ports contents.
 By default, it will clean the work directory.
@@ -227,18 +217,11 @@ Shorthand for
 .Ql make clean=depends .
 .It Cm configure
 Configure the port.
-Might be a void operation.
-Unless overridden,
+By default,
 .Cm configure
 creates the ${WRKBUILD} directory (see SEPARATE_BUILD),
 and runs whatever configuration methods are recorded in
 .Ev CONFIGURE_STYLE .
-.It Cm depends
-Check all the port's dependencies, that is:
-.Cm build-depends ,
-.Cm lib-depends ,
-.Cm run-depends ,
-.Cm test-depends .
 .It Cm describe
 Prints a one-line index entry of the port, suitable for
 .Pa ${PORTSDIR}/INDEX .
@@ -304,55 +287,50 @@ against the list of installed packages and libraries in the ports tree.
 See
 .Cm print-package-args .
 .It Cm fetch
-Fetch the distribution files and patchfiles, using ${FETCH_CMD}.
-Each file of the
+Fetch the list of files in
 .Ev DISTFILES
 and
 .Ev PATCHFILES
-lists is retrieved, if necessary, from the list of sites in
+using ${FETCH_CMD}.
+Files are normally retrieved from the list of sites in
 .Ev MASTER_SITES .
 .Pp
-If a filename ends with a
+Appending
 .Sq :0
 to
 .Sq :9
-extension, it will be retrieved from
+to an entry will let
+${FETCH_CMD} retrieve from
 .Ev MASTER_SITES0
 to
 .Ev MASTER_SITES9
 instead.
-After stripping that extension if necessary,
-if the entry parses as
+If the rest of the entry parses as
 .Sq Ar filename Ns { Ns Ar url Ns } Ns Ar sufx
-it will be fetched as
+${FETCH_CMD} will fetch
 .Ar url Ns Ar sufx
-instead, yet still stored as
+instead, but store the result as
 .Ar filename Ns Ar sufx .
 .Pp
-Transfers in progress will be stored as
-.Ar filenamesufx.part .
+Transfers in progress are stored as
+.Ar filenamesufx.part
+and moved after completion.
 .Pp
 The ports framework uses
 .Pa ${DISTDIR}/${DIST_SUBDIR}
 (aliased to
 .Pa ${FULLDISTDIR} )
-to cache the ports distribution files and patch files.
-Note that this framework is also used by mirroring scripts,
-which will also retrieve
-.Ev SUPDISTFILES ,
-to fill with supplementary distribution files which are not needed for
-every configuration.
+to save the ports distribution files and patch files.
 .Pp
-Note that fetching a significant number of distfiles, or fetching all distfiles
-relevant to a port and dependencies is better accomplished using
-.Xr dpb 1
-with the
-.Fl F
-option.
+If you want to fetch a significant number of distfiles quickly, say
+all files relevant to a port,
+.Cm dpb Fl F
+is more efficient.
 .Pp
 Use of
 .Cm {pre,do,post}-fetch
 hooks is forbidden, as this would make mirroring of distfiles very complicated.
+.Pp
 See
 .Ev CHECKSUMFILES ,
 .Ev CDROM_SITE ,
@@ -371,13 +349,20 @@ See
 .Ev SUPDISTFILES ,
 .Ev REFETCH .
 .It Cm fetch-all
-also fetches
+Like
+.Cm fetch ,
+but also fetches
 .Ev SUPDISTFILES ,
 for use with e.g.,
 .Cm makesum .
 .It Cm index
 Top-level target, see
 .Xr ports 7 .
+.It Cm install-depends
+Before package installation, install and verify dependencies constructed from
+.Ev RUN_DEPENDS , LIB_DEPENDS ,
+and
+.Ev WANTLIB .
 .It Cm install
 Install the package after building.
 See the description of
@@ -387,9 +372,6 @@ for the non-intuitive details of the way
 hooks are actually used by the ports tree.
 .It Cm install-all
 Install all packages in a multi-packages port.
-.It Cm lib-depends
-Verify that the library dependencies a port needs are actually there,
-by checking the library specifications.
 .It Cm lib-depends-args
 Filter
 .Ev LIB_DEPENDS
@@ -432,24 +414,18 @@ Seldom used, see
 .Xr ports 7
 for details.
 .It Cm makesum
-Create the ${CHECKSUM_FILE} list of recorded checksums by running the
-cryptographic fingerprint sha256 on ${MAKESUMFILES}.
-That normally includes ${DISTFILES}, ${SUPDISTFILES} and ${PATCHFILES}.
-.Ev NO_CHECKSUM
-can be used to avoid all checksumming steps.
+Run
+.Xr sha256 1
+on ${MAKESUMFILES}
+that is, files listed in ${DISTFILES}, ${SUPDISTFILES} and ${PATCHFILES},
+and store the result in ${CHECKSUM_FILE}, normally
+.Pa distinfo .
+Also store the lengths of all files for a quick check during
+.Cm fetch .
 .It Cm manpages-check
 Verify that
 .Xr makewhatis 8
 can do a correct job with the port's manpages.
-.It Cm mirror-maker
-Top-level target, see
-.Xr mirroring-ports 7 .
-.It Cm mirror-maker-fetch
-Debug target: generate the
-.Cm mirror-maker
-makefile fragment and use it
-to fetch files, see
-.Xr mirroring-ports 7 .
 .It Cm no-lib-depends-args
 Degenerate form of
 .Cm lib-depends-args
@@ -567,11 +543,11 @@ or installed packages, and writes a list of options suitable for
 See
 .Cm print-package-args .
 .It Cm prepare
-Prepare a port for building, by checking and installing all required
-dependencies, constructed from
+Before port building, install and verify dependencies constructed from
+.Ev BUILD_DEPENDS ,
 .Ev LIB_DEPENDS
 and
-.Ev BUILD_DEPENDS .
+.Ev WANTLIB .
 In
 .Ev MULTI_PACKAGES
 setups,
@@ -687,12 +663,6 @@ Seldom needed, as
 will often do the right thing.
 .It Cm repackage
 Rebuild the packages of a port after removing existing packages.
-.It Cm run-depends
-Verify the ports mentioned in
-.Ev RUN_DEPENDS ,
-by checking the corresponding packages are actually installed,
-and install the missing ports by recursing through the ports tree.
-Invoked right before installing the package.
 .It Cm run-depends-args
 Process
 .Ev RUN_DEPENDS
@@ -761,10 +731,9 @@ testing, define a
 .Sq test
 .Ev FLAVOR .
 .It Cm test-depends
-Verify packages needed for regression tests, using the same scheme as
-.Cm build-depends .
-Only invoked when regression tests are run, or explicitly through
-.Cm depends .
+Before running regression tests, Install and verify dependencies
+constructed from
+.Ev TEST_DEPENDS .
 .It Cm unlink-categories
 Remove symbolic links in other directories that correspond to the port's
 .Ev CATEGORIES .
@@ -1230,7 +1199,6 @@ See also
 .Ev MAKESUMFILES .
 .It Ev CHECKSUM_FILE
 Location for this port's checksums, used by
-.Cm addsum ,
 .Cm checksum ,
 and
 .Cm makesum .
@@ -1780,7 +1748,7 @@ Use with
 and
 .Ev ONLY_FOR_ARCHS .
 .It Ev LIB_DEPENDS
-Libraries this port depends upon.
+List of packages used by a port for its library dependencies.
 Each item has the form
 .Sq [pkgspec:]pkgpath .
 Similar to
@@ -1790,9 +1758,12 @@ and
 but with specific rules:
 .Ev LIB_DEPENDS
 always turn into
-.Ev BUILD_DEPENDS .
+.Ev BUILD_DEPENDS
+.Po
+but see
+.Sx FLAVORS AND MULTI PACKAGES
+.Pc .
 .Pp
-On architectures that use dynamic libraries,
 .Ev LIB_DEPENDS
 is also used as a run-time dependency, and recorded in the package as
 such, if any of the libraries mentioned in
@@ -2049,17 +2020,16 @@ even when
 .Ev USE_CCACHE
 is set.
 .It Ev NO_CHECKSUM
-User settings.
 Set to
 .Sq Yes
+by
+.Xr dpb 1
 to avoid
-.Cm checksum ,
-.Cm makesum ,
-and
-.Cm addsum
-actions entirely.
-Beware of the full implications of this mechanism, namely that it disables
-the basic authentication mechanisms of the ports tree entirely.
+.Cm checksum
+entirely,
+as
+.Xr dpb 1
+already deals with checksums internally.
 .It Ev NO_DEPENDS
 User settings.
 Don't verify build of dependencies.
@@ -2426,11 +2396,6 @@ Controls the behavior of
 .Pa misc/portroach
 as documented in detail at
 .Lk http://jasperla.github.io/portroach/docs/portroach-portconfig.txt .
-.It Ev PREFERRED_CIPHERS
-List of cryptographic ciphers to use, in order of preference.
-Default is
-.Sq sha256 .
-The first cipher that matches in ${CHECKSUM_FILE} is verified.
 .It Ev PREFIX
 Base directory for the current port installation.
 Usually ${LOCALBASE}, though some ports may elect a location under
@@ -2554,9 +2519,6 @@ Location for daemon startup scripts.
 Defaults to
 .Pa /etc/rc.d .
 Do not change.
-.It Ev RECURSIVE_FETCH_LIST
-See
-.Xr mirroring-ports 7 .
 .It Ev REFETCH
 User settings.
 If set to true,
@@ -2956,7 +2918,7 @@ Base location for ports that install stuff outside of
 Defaults to
 .Pa /var .
 .It Ev WANTLIB
-Extra list of library specifications that a package will need.
+List of library specifications that a package will need.
 May include system and X11 libraries.
 See
 .Xr library-specs 7
@@ -3245,7 +3207,8 @@ Cache of all distribution files.
 Checksum file.
 Holds the output of
 .Xr cksum 1 ,
-using ${PREFERRED_CIPHERS},
+using
+.Xr sha256 1
 for the port's ${DISTFILES} and ${PATCHFILES},
 as well as the sizes of these files.
 .It Pa ${DISTDIR}/${CHECKSUMFILES}
@@ -3712,6 +3675,11 @@ situation, where all these files will automatically default to the
 non-flavor version if there is no flavor-specific file around.
 .Sh OBSOLETE TARGETS
 .Bl -tag -width Ds
+.It Cm addsum
+Used for direct fiddling with
+.Pa distinfo ,
+made obsolete by the correct use of
+.Ev SUPDISTFILES .
 .It Cm cdrom-packages , ftp-packages
 Links are now created during the
 .Cm package
@@ -3719,6 +3687,13 @@ target.
 .It Cm depends-list
 Renamed into
 .Cm full-build-depends .
+.It Cm {build,run,lib}-depends
+The dependency mechanism now meshes
+.Ev BUILD_DEPENDS , LIB_DEPENDS , RUN_DEPENDS, WANTLIB
+and
+.Ev MULTI_PACKAGES .
+Refer to
+.Cm prepare , install-depends , test-depends .
 .It Cm {pre,do}-extract
 Don't override.
 Set
@@ -3733,10 +3708,11 @@ There is no port that requires special treatment during packaging,
 as
 .Cm {pre,do,post}-install
 should take care of every necessity.
-.It Cm fetch-list , mirror-distfiles , fetch-makefile
-See
-.Xr mirroring-ports 7
-for more efficient and flexible ways to build mirrors.
+.It Cm fetch-list , mirror-distfiles , fetch-makefile , mirror-maker , mirror-maker-fetch
+Use
+.Cm dpb Fl F
+instead, see
+.Xr mirroring-ports 7 .
 .It Cm obj
 Starting with
 .Ox 3.3 ,
@@ -4027,6 +4003,11 @@ Use SUBST_VARS instead.
 does not allow general substitutions of the form VAR=value, but uses
 only a list of variables instead.
 Most package files gets transformed, instead of only the packing list.
+.It Ev PREFERRED_CIPHERS
+Allowing user change of cryptographic digest is dangerous.
+.It Ev RECURSIVE_FETCH_LIST
+No longer needed with modern
+.Xr mirroring-ports 7 .
 .It Ev RESTRICTED
 Port has cryptographic issues.
 .Ox

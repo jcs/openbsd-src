@@ -1,4 +1,4 @@
-/*	$OpenBSD: rasops32.c,v 1.7 2010/08/28 12:48:14 miod Exp $	*/
+/*	$OpenBSD: rasops32.c,v 1.8 2017/02/20 15:35:05 jcs Exp $	*/
 /*	$NetBSD: rasops32.c,v 1.7 2000/04/12 14:22:29 pk Exp $	*/
 
 /*-
@@ -154,6 +154,7 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 					fb <<= 1;
 				}
 			}
+			memcpy(dp, buffer, width << 2);
 		}
 	}
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: bus_dma.c,v 1.3 2017/02/05 14:07:11 patrick Exp $ */
+/*	$OpenBSD: bus_dma.c,v 1.5 2017/02/18 14:14:19 patrick Exp $ */
 
 /*
  * Copyright (c) 2003-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)
@@ -254,30 +254,85 @@ int
 _dmamap_load_raw(bus_dma_tag_t t, bus_dmamap_t map, bus_dma_segment_t *segs,
     int nsegs, bus_size_t size, int flags)
 {
+	bus_addr_t paddr, baddr, bmask, lastaddr = 0;
+	bus_size_t plen, sgsize, mapsize;
+	vaddr_t vaddr;
+	int first = 1;
+	int i, seg = 0;
+
+	/*
+	 * Make sure that on error condition we return "no valid mappings".
+	 */
+	map->dm_mapsize = 0;
+	map->dm_nsegs = 0;
+
 	if (nsegs > map->_dm_segcnt || size > map->_dm_size)
 		return (EINVAL);
 
-	/*
-	 * Make sure we don't cross any boundaries.
-	 */
-	if (map->_dm_boundary) {
-		bus_addr_t bmask = ~(map->_dm_boundary - 1);
-		int i;
+	mapsize = size;
+	bmask = ~(map->_dm_boundary - 1);
 
-		if (t->_dma_mask != 0)
-			bmask &= t->_dma_mask;
-		for (i = 0; i < nsegs; i++) {
-			if (segs[i].ds_len > map->_dm_maxsegsz)
-				return (EINVAL);
-			if ((segs[i].ds_addr & bmask) !=
-			    ((segs[i].ds_addr + segs[i].ds_len - 1) & bmask))
-				return (EINVAL);
+	for (i = 0; i < nsegs && size > 0; i++) {
+		paddr = segs[i].ds_addr;
+		vaddr = segs[i]._ds_vaddr;
+		plen = MIN(segs[i].ds_len, size);
+
+		while (plen > 0) {
+			/*
+			 * Compute the segment size, and adjust counts.
+			 */
+			sgsize = PAGE_SIZE - ((u_long)paddr & PGOFSET);
+			if (plen < sgsize)
+				sgsize = plen;
+
+			/*
+			 * Make sure we don't cross any boundaries.
+			 */
+			if (map->_dm_boundary > 0) {
+				baddr = (paddr + map->_dm_boundary) & bmask;
+				if (sgsize > (baddr - paddr))
+					sgsize = (baddr - paddr);
+			}
+
+			/*
+			 * Insert chunk into a segment, coalescing with
+			 * previous segment if possible.
+			 */
+			if (first) {
+				map->dm_segs[seg].ds_addr = paddr;
+				map->dm_segs[seg].ds_len = sgsize;
+				map->dm_segs[seg]._ds_paddr = paddr;
+				map->dm_segs[seg]._ds_vaddr = vaddr;
+				first = 0;
+			} else {
+				if (paddr == lastaddr &&
+				    (map->dm_segs[seg].ds_len + sgsize) <=
+				     map->_dm_maxsegsz &&
+				     (map->_dm_boundary == 0 ||
+				     (map->dm_segs[seg].ds_addr & bmask) ==
+				     (paddr & bmask)))
+					map->dm_segs[seg].ds_len += sgsize;
+				else {
+					if (++seg >= map->_dm_segcnt)
+						return (EINVAL);
+					map->dm_segs[seg].ds_addr = paddr;
+					map->dm_segs[seg].ds_len = sgsize;
+					map->dm_segs[seg]._ds_paddr = paddr;
+					map->dm_segs[seg]._ds_vaddr = vaddr;
+				}
+			}
+
+			paddr += sgsize;
+			vaddr += sgsize;
+			plen -= sgsize;
+			size -= sgsize;
+
+			lastaddr = paddr;
 		}
 	}
 
-	bcopy(segs, map->dm_segs, nsegs * sizeof(*segs));
-	map->dm_nsegs = nsegs;
-	map->dm_mapsize = size;
+	map->dm_mapsize = mapsize;
+	map->dm_nsegs = seg + 1;
 	return (0);
 }
 
@@ -306,7 +361,6 @@ _dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t addr,
 {
 	int nsegs;
 	int curseg;
-	//struct cpu_info *ci = curcpu();
 
 	nsegs = map->dm_nsegs;
 	curseg = 0;
@@ -334,13 +388,6 @@ _dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t addr,
 		if (ssize > size)
 			ssize = size;
 
-#if 0
-		if (IS_XKPHYS(vaddr) && XKPHYS_TO_CCA(vaddr) == CCA_NC) {
-			size -= ssize;
-			ssize = 0;
-		}
-#endif
-
 		if (ssize != 0) {
 			/*
 			 * If only PREWRITE is requested, writeback.
@@ -350,27 +397,12 @@ _dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t addr,
 			 */
 			if (op & BUS_DMASYNC_PREWRITE) {
 				if (op & BUS_DMASYNC_PREREAD)
-#if 0
-					Mips_IOSyncDCache(ci, vaddr,
-					    ssize, CACHE_SYNC_X);
-#else
 					; // XXX MUST ADD CACHEFLUSHING
-#endif
 				else
-#if 0
-					Mips_IOSyncDCache(ci, vaddr,
-					    ssize, CACHE_SYNC_W);
-#else
 					; // XXX MUST ADD CACHEFLUSHING
-#endif
 			} else
 			if (op & (BUS_DMASYNC_PREREAD | BUS_DMASYNC_POSTREAD)) {
-#if 0
-				Mips_IOSyncDCache(ci, vaddr,
-				    ssize, CACHE_SYNC_R);
-#else
 				; // XXX MUST ADD CACHEFLUSHING
-#endif
 			}
 			size -= ssize;
 		}
@@ -438,17 +470,6 @@ _dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *segs, int nsegs, size_t size,
 	int curseg, pmap_flags, cache;
 	const struct kmem_dyn_mode *kd;
 
-#if 0
-	if (nsegs == 1) {
-		(void)pmap_extract (pmap_kernel(), segs[0].ds_addr, &pa);
-		if (flags & (BUS_DMA_COHERENT | BUS_DMA_NOCACHE))
-			*kvap = (caddr_t)PHYS_TO_XKPHYS(pa, CCA_NC);
-		else
-			*kvap = (caddr_t)PHYS_TO_XKPHYS(pa, CCA_CACHED);
-		return (0);
-	}
-#endif
-
 	size = round_page(size);
 	kd = flags & BUS_DMA_NOWAIT ? &kd_trylock : &kd_waitok;
 	va = (vaddr_t)km_alloc(size, &kv_any, &kp_none, kd);
@@ -472,21 +493,6 @@ _dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *segs, int nsegs, size_t size,
 			pmap_kenter_cache(va, addr,
 			    PROT_READ | PROT_WRITE | pmap_flags,
 			    cache);
-
-			/*
-			 * This is redundant with what pmap_enter() did
-			 * above, but will take care of forcing other
-			 * mappings of the same page (if any) to be
-			 * uncached.
-			 * If there are no multiple mappings of that
-			 * page, this amounts to a noop.
-			 */
-#if 0
-			// XXX handle ?
-			if (flags & (BUS_DMA_COHERENT | BUS_DMA_NOCACHE))
-				pmap_page_cache(PHYS_TO_VM_PAGE(pa),
-				    PGF_UNCACHED);
-#endif
 		}
 		pmap_update(pmap_kernel());
 	}
@@ -501,11 +507,6 @@ _dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *segs, int nsegs, size_t size,
 void
 _dmamem_unmap(bus_dma_tag_t t, caddr_t kva, size_t size)
 {
-#if 0
-	if (IS_XKPHYS((vaddr_t)kva))
-		return;
-#endif
-
 	km_free(kva, round_page(size), &kv_any, &kp_none);
 }
 

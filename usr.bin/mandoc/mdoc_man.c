@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_man.c,v 1.100 2017/02/06 03:41:44 schwarze Exp $ */
+/*	$OpenBSD: mdoc_man.c,v 1.102 2017/02/17 19:14:39 schwarze Exp $ */
 /*
  * Copyright (c) 2011-2017 Ingo Schwarze <schwarze@openbsd.org>
  *
@@ -637,9 +637,6 @@ print_node(DECL_ARGS)
 
 	if (ENDBODY_NOT != n->end)
 		n->body->flags |= NODE_ENDED;
-
-	if (ENDBODY_NOSPACE == n->end)
-		outflags &= ~(MMAN_spc | MMAN_nl);
 }
 
 static int
@@ -718,8 +715,7 @@ pre__t(DECL_ARGS)
 
 	if (n->parent && MDOC_Rs == n->parent->tok &&
 	    n->parent->norm->Rs.quote_T) {
-		print_word("");
-		putchar('\"');
+		print_word("\\(lq");
 		outflags &= ~MMAN_spc;
 	} else
 		font_push('I');
@@ -733,8 +729,7 @@ post__t(DECL_ARGS)
 	if (n->parent && MDOC_Rs == n->parent->tok &&
 	    n->parent->norm->Rs.quote_T) {
 		outflags &= ~MMAN_spc;
-		print_word("");
-		putchar('\"');
+		print_word("\\(rq");
 	} else
 		font_pop();
 	post_percent(meta, n);

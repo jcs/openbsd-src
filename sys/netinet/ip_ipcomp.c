@@ -1,4 +1,4 @@
-/* $OpenBSD: ip_ipcomp.c,v 1.53 2017/02/07 18:18:16 bluhm Exp $ */
+/* $OpenBSD: ip_ipcomp.c,v 1.55 2017/02/17 14:49:03 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Jean-Jacques Bernard-Gundol (jj@wabbitt.org)
@@ -333,6 +333,7 @@ ipcomp_input_cb(struct cryptop *crp)
 	/* Back to generic IPsec input processing */
 	ipsec_common_input_cb(m, tdb, skip, protoff);
 	NET_UNLOCK(s);
+	return;
 
 baddone:
 	NET_UNLOCK(s);
@@ -410,6 +411,7 @@ ipcomp_output(struct mbuf *m, struct tdb *tdb, struct mbuf **mp, int skip,
 			ipcompstat.ipcomps_toobig++;
 			return EMSGSIZE;
 		}
+		break;
 #endif /* INET6 */
 
 	default:
