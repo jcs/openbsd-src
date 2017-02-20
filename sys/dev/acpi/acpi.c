@@ -1114,7 +1114,11 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 			bat->aba_softc = (struct acpibat_softc *)dev;
 			SLIST_INSERT_HEAD(&sc->sc_bat, bat, aba_link);
 		} else if (!strcmp(dev->dv_cfdata->cf_driver->cd_name, "acpisbs")) {
-			/* TODO */
+			struct acpi_sbs *sbs;
+
+			sbs = malloc(sizeof(*sbs), M_DEVBUF, M_WAITOK | M_ZERO);
+			sbs->asbs_softc = (struct acpisbs_softc *)dev;
+			SLIST_INSERT_HEAD(&sc->sc_sbs, sbs, asbs_link);
 		}
 	}
 
@@ -1761,17 +1765,18 @@ acpi_sleep_task(void *arg0, int sleepmode)
 	struct acpi_softc *sc = arg0;
 	struct acpi_ac *ac;
 	struct acpi_bat *bat;
+	struct acpi_sbs *sbs;
 
 	/* System goes to sleep here.. */
 	acpi_sleep_state(sc, sleepmode);
 
 	/* AC and battery information needs refreshing */
 	SLIST_FOREACH(ac, &sc->sc_ac, aac_link)
-		aml_notify(ac->aac_softc->sc_devnode,
-		    0x80);
+		aml_notify(ac->aac_softc->sc_devnode, 0x80);
 	SLIST_FOREACH(bat, &sc->sc_bat, aba_link)
-		aml_notify(bat->aba_softc->sc_devnode,
-		    0x80);
+		aml_notify(bat->aba_softc->sc_devnode, 0x80);
+	SLIST_FOREACH(sbs, &sc->sc_sbs, asbs_link)
+		aml_notify(sbs->asbs_softc->sc_devnode, 0x80);
 }
 
 #endif /* SMALL_KERNEL */
@@ -2981,6 +2986,7 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 	struct acpi_softc *sc;
 	struct acpi_ac *ac;
 	struct acpi_bat *bat;
+	struct acpi_sbs *sbs;
 	struct apm_power_info *pi = (struct apm_power_info *)data;
 	int bats;
 	unsigned int remaining, rem, minutes, rate;
@@ -3030,7 +3036,6 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 		}
 
 		/* battery */
-		/* TODO: ask acpisbs if present */
 		pi->battery_state = APM_BATT_UNKNOWN;
 		pi->battery_life = 0;
 		pi->minutes_left = 0;
@@ -3058,6 +3063,27 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 				rate = bat->aba_softc->sc_bst.bst_rate;
 
 			minutes += bat->aba_softc->sc_bst.bst_capacity;
+		}
+
+		SLIST_FOREACH(sbs, &sc->sc_sbs, asbs_link) {
+			if (sbs->asbs_softc->sc_batteries_present == 0)
+				continue;
+
+			if (sbs->asbs_softc->sc_battery.rel_charge == 0)
+				continue;
+
+			bats++;
+			rem = sbs->asbs_softc->sc_battery.rel_charge;
+			if (rem > 100)
+				rem = 100;
+			remaining += rem;
+
+			if (sbs->asbs_softc->sc_battery.run_time ==
+			    ACPISBS_VALUE_UNKNOWN)
+				continue;
+
+			rate = 60; /* XXX */
+			minutes += sbs->asbs_softc->sc_battery.run_time;
 		}
 
 		if (bats == 0) {

@@ -28,7 +28,6 @@
 #include <dev/acpi/acpidev.h>
 #include <dev/acpi/amltypes.h>
 #include <dev/acpi/dsdt.h>
-#include <dev/acpi/smbus.h>
 
 #include <sys/sensors.h>
 
@@ -45,39 +44,6 @@
 
 /* number of polls for reading data */
 #define SMBUS_TIMEOUT		50
-
-struct acpisbs_battery {
-	uint16_t mode;			/* bit flags */
-	int	 units;
-#define	ACPISBS_UNITS_MW 0
-#define	ACPISBS_UNITS_MA 1
-	uint16_t at_rate;		/* mAh or mWh */
-	uint16_t temperature;		/* 0.1 degK */
-	uint16_t voltage;		/* mV */
-	uint16_t current;		/* mA */
-	uint16_t avg_current;		/* mA */
-	uint16_t rel_charge;		/* percent of last_capacity */
-	uint16_t abs_charge;		/* percent of design_capacity */
-	uint16_t capacity;		/* mAh */
-	uint16_t full_capacity;		/* mAh, when fully charged */
-	uint16_t run_time;		/* minutes */
-	uint16_t avg_empty_time;	/* minutes */
-	uint16_t avg_full_time;		/* minutes until full */
-	uint16_t charge_current;	/* mA */
-	uint16_t charge_voltage;	/* mV */
-	uint16_t status;		/* bit flags */
-	uint16_t cycle_count;		/* cycles */
-	uint16_t design_capacity;	/* mAh */
-	uint16_t design_voltage;	/* mV */
-	uint16_t spec;			/* formatted */
-	uint16_t manufacture_date;	/* formatted */
-	uint16_t serial;		/* number */
-
-	char	 manufacturer[SMBUS_DATA_SIZE];
-	char	 device_name[SMBUS_DATA_SIZE];
-	char	 device_chemistry[SMBUS_DATA_SIZE];
-	char	 oem_data[SMBUS_DATA_SIZE];
-};
 
 #define CHECK(kind, cmd, val, senst, sens) { \
 	SMBUS_READ_##kind, SMBATT_CMD_##cmd, \
@@ -131,39 +97,23 @@ struct acpisbs_battery_check {
 	    "capacity of new battery"),
 	CHECK(WORD, DESIGN_VOLTAGE, design_voltage, SENSOR_VOLTS_DC,
 	    "voltage of new battery"),
+	CHECK(WORD, SERIAL_NUMBER, serial, -1,
+	    "serial number"),
+
+	CHECK(BLOCK, MANUFACTURER_NAME, manufacturer, -1,
+	    "manufacturer name"),
+	CHECK(BLOCK, DEVICE_NAME, device_name, -1,
+	    "battery model number"),
+	CHECK(BLOCK, DEVICE_CHEMISTRY, device_chemistry, -1,
+	    "battery chemistry"),
 #if 0
 	CHECK(WORD, SPECIFICATION_INFO, spec, -1,
 	    NULL),
-#endif
-	CHECK(WORD, MANUFACTURE_DATE, manufacture_date, SENSOR_STRING,
+	CHECK(WORD, MANUFACTURE_DATE, manufacture_date, -1,
 	    "date battery was manufactured"),
-	CHECK(WORD, SERIAL_NUMBER, serial, SENSOR_STRING,
-	    "serial number"),
-
-	CHECK(BLOCK, MANUFACTURER_NAME, manufacturer, SENSOR_STRING,
-	    "manufacturer name"),
-	CHECK(BLOCK, DEVICE_NAME, device_name, SENSOR_STRING,
-	    "battery model number"),
-	CHECK(BLOCK, DEVICE_CHEMISTRY, device_chemistry, SENSOR_STRING,
-	    "battery chemistry"),
-	CHECK(BLOCK, MANUFACTURER_DATA, oem_data, SENSOR_STRING,
+	CHECK(BLOCK, MANUFACTURER_DATA, oem_data, -1,
 	    "manufacturer-specific data"),
-};
-
-struct acpisbs_softc {
-	struct device		sc_dev;
-
-	struct acpi_softc	*sc_acpi;
-	struct aml_node		*sc_devnode;
-	struct acpiec_softc     *sc_ec;
-	uint8_t			sc_ec_base;
-
-	struct acpisbs_battery	sc_battery;
-
-	struct ksensor		*sc_sensors;
-	struct ksensordev	sc_sensordev;
-	struct sensor_task	*sc_sensor_task;
-	struct timeval		sc_lastpoll;
+#endif
 };
 
 extern void acpiec_read(struct acpiec_softc *, u_int8_t, int, u_int8_t *);
@@ -211,6 +161,7 @@ acpisbs_attach(struct device *parent, struct device *self, void *aux)
 
 	sc->sc_acpi = (struct acpi_softc *)parent;
 	sc->sc_devnode = aa->aaa_node;
+	sc->sc_batteries_present = 0;
 
 	memset(&sc->sc_battery, 0, sizeof(sc->sc_battery));
 
@@ -234,9 +185,10 @@ acpisbs_attach(struct device *parent, struct device *self, void *aux)
 
 	printf(": %s", sc->sc_devnode->name);
 
-	if (sbs > 0) {
+	if (sbs > 0)
 		acpisbs_read(sc);
 
+	if (sc->sc_batteries_present) {
 		if (sc->sc_battery.device_name[0])
 			printf(" model \"%s\"", sc->sc_battery.device_name);
 		if (sc->sc_battery.serial)
@@ -276,9 +228,14 @@ acpisbs_read(struct acpisbs_softc *sc)
 
 		if (check.command == SMBATT_CMD_BATTERY_MODE) {
 			uint16_t *ival = (uint16_t *)p;
-			if (*ival == 0)
+			if (*ival == 0) {
 				/* battery not present, skip further checks */
+				sc->sc_batteries_present = 0;
 				break;
+			}
+
+			/* TODO: support multiple batteries based on _SBS */
+			sc->sc_batteries_present = 1;
 
 			if (*ival & SMBATT_BM_CAPACITY_MODE)
 				sc->sc_battery.units = ACPISBS_UNITS_MW;
@@ -336,7 +293,7 @@ acpisbs_refresh_sensors(struct acpisbs_softc *sc)
 		if (check.sensor_type < 0)
 			continue;
 
-		if (sc->sc_battery.mode > 0) {
+		if (sc->sc_batteries_present) {
 			sc->sc_sensors[i].flags = 0;
 			sc->sc_sensors[i].status = SENSOR_S_OK;
 
@@ -370,7 +327,7 @@ acpisbs_refresh_sensors(struct acpisbs_softc *sc)
 				break;
 
 			default:
-				if (*ival == 65535) {
+				if (*ival == ACPISBS_VALUE_UNKNOWN) {
 					sc->sc_sensors[i].value = 0;
 					sc->sc_sensors[i].status =
 					    SENSOR_S_UNKNOWN;
@@ -445,9 +402,6 @@ acpi_smbus_read(struct acpisbs_softc *sc, uint8_t type, uint8_t cmd, int len,
 
 		*(uint16_t *)buf = (word[1] << 8) | word[0];
 
-		//DPRINTF(("0x%x + 0x%x = 0x%x\n", word[1], word[0],
-		//    *(uint16_t *)buf));
-
 		break;
 	}
 	case SMBUS_READ_BLOCK:
@@ -463,10 +417,7 @@ acpi_smbus_read(struct acpisbs_softc *sc, uint8_t type, uint8_t cmd, int len,
 			acpiec_read(sc->sc_ec, sc->sc_ec_base + SMBUS_DATA + j,
 			    1, &val);
 			((char *)buf)[j] = val;
-
-			//DPRINTF(("0x%x ", val));
 		}
-		//DPRINTF((" = %s\n", (char *)buf));
 		break;
 	default:
 		printf("%s: %s: unknown mode 0x%x\n", sc->sc_dev.dv_xname,
