@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpivar.h,v 1.83 2016/07/28 21:57:56 kettenis Exp $	*/
+/*	$OpenBSD: acpivar.h,v 1.84 2017/02/22 16:39:56 jcs Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  *

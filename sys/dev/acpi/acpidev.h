@@ -1,4 +1,4 @@
-/* $OpenBSD: acpidev.h,v 1.39 2016/10/25 06:55:59 pirofti Exp $ */
+/* $OpenBSD: acpidev.h,v 1.40 2017/02/22 16:39:56 jcs Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
