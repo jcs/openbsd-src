@@ -1,4 +1,4 @@
-/*	$OpenBSD: intr.h,v 1.1 2016/12/17 23:38:33 patrick Exp $ */
+/*	$OpenBSD: intr.h,v 1.4 2017/02/25 16:53:09 patrick Exp $ */
 
 /*
  * Copyright (c) 2001-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)
@@ -85,9 +85,6 @@ void	 splx(int);
 void	 arm_do_pending_intr(int);
 void	 arm_set_intr_handler(int (*raise)(int), int (*lower)(int),
     void (*x)(int), void (*setipl)(int),
-    void *(*intr_establish)(int irqno, int level, int (*func)(void *),
-        void *cookie, char *name),
-    void (*intr_disestablish)(void *cookie),
     void (*intr_handle)(void *));
 
 struct arm_intr_func {
@@ -95,9 +92,6 @@ struct arm_intr_func {
 	int (*lower)(int);
 	void (*x)(int);
 	void (*setipl)(int);
-	void *(*intr_establish)(int irqno, int level, int (*func)(void *),
-	    void *cookie, char *name);
-	void (*intr_disestablish)(void *cookie);
 };
 
 extern struct arm_intr_func arm_intr_func;
@@ -131,10 +125,6 @@ extern uint32_t arm_smask[NIPL];
 
 #include <machine/softintr.h>
 
-void	*arm_intr_establish(int irqno, int level, int (*func)(void *),
-    void *cookie, char *name);
-void	 arm_intr_disestablish(void *cookie);
-
 /* XXX - this is probably the wrong location for this */
 void arm_clock_register(void (*)(void), void (*)(u_int), void (*)(int),
     void (*)(void));
@@ -144,6 +134,8 @@ struct interrupt_controller {
 	void	*ic_cookie;
 	void	*(*ic_establish)(void *, int *, int, int (*)(void *),
 		    void *, char *);
+	void	*(*ic_establish_msi)(void *, uint64_t *, uint64_t *, int,
+		    int (*)(void *), void *, char *);
 	void	 (*ic_disestablish)(void *);
 
 	LIST_ENTRY(interrupt_controller) ic_list;
@@ -157,6 +149,10 @@ void	*arm_intr_establish_fdt(int, int, int (*)(void *),
 	    void *, char *);
 void	*arm_intr_establish_fdt_idx(int, int, int, int (*)(void *),
 	    void *, char *);
+void	*arm_intr_establish_fdt_imap(int, int *, int, int, int, int (*)(void *),
+	    void *, char *);
+void	*arm_intr_establish_fdt_msi(int, uint64_t *, uint64_t *, int ,
+	    int (*)(void *), void *, char *);
 void	 arm_intr_disestablish_fdt(void *);
 
 void	*arm_intr_parent_establish_fdt(void *, int *, int,

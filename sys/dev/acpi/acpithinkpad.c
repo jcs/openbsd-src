@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpithinkpad.c,v 1.54 2017/02/07 05:18:07 jsg Exp $	*/
+/*	$OpenBSD: acpithinkpad.c,v 1.56 2017/02/25 20:09:20 jcs Exp $	*/
 /*
  * Copyright (c) 2008 joshua stein <jcs@openbsd.org>
  *
@@ -181,7 +181,10 @@ struct cfdriver acpithinkpad_cd = {
 };
 
 const char *acpithinkpad_hids[] = {
-	ACPI_DEV_IBM, ACPI_DEV_LENOVO, 0
+	"IBM0068",
+	"LEN0068",
+	"LEN0268",
+	0
 };
 
 int

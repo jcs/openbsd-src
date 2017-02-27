@@ -1,4 +1,4 @@
-/* $OpenBSD: intr.c,v 1.2 2017/02/05 13:21:38 patrick Exp $ */
+/* $OpenBSD: intr.c,v 1.5 2017/02/25 16:53:09 patrick Exp $ */
 /*
  * Copyright (c) 2011 Dale Rahn <drahn@openbsd.org>
  *
@@ -28,6 +28,7 @@
 #include <dev/ofw/openfirm.h>
 
 uint32_t arm_intr_get_parent(int);
+uint32_t arm_intr_msi_get_parent(int);
 
 void *arm_intr_prereg_establish_fdt(void *, int *, int, int (*)(void *),
     void *, char *);
@@ -37,9 +38,6 @@ int arm_dflt_splraise(int);
 int arm_dflt_spllower(int);
 void arm_dflt_splx(int);
 void arm_dflt_setipl(int);
-void *arm_dflt_intr_establish(int irqno, int level, int (*func)(void *),
-    void *cookie, char *name);
-void arm_dflt_intr_disestablish(void *cookie);
 
 void arm_dflt_intr(void *);
 void arm_cpu_intr(void *);
@@ -51,9 +49,7 @@ struct arm_intr_func arm_intr_func = {
 	arm_dflt_splraise,
 	arm_dflt_spllower,
 	arm_dflt_splx,
-	arm_dflt_setipl,
-	arm_dflt_intr_establish,
-	arm_dflt_intr_disestablish
+	arm_dflt_setipl
 };
 
 void (*arm_intr_dispatch)(void *) = arm_dflt_intr;
@@ -70,17 +66,6 @@ arm_dflt_intr(void *frame)
 	panic("arm_dflt_intr() called");
 }
 
-
-void *arm_intr_establish(int irqno, int level, int (*func)(void *),
-    void *cookie, char *name)
-{
-	return arm_intr_func.intr_establish(irqno, level, func, cookie, name);
-}
-void arm_intr_disestablish(void *cookie)
-{
-	arm_intr_func.intr_disestablish(cookie);
-}
-
 /*
  * Find the interrupt parent by walking up the tree.
  */
@@ -91,6 +76,19 @@ arm_intr_get_parent(int node)
 
 	while (node && !phandle) {
 		phandle = OF_getpropint(node, "interrupt-parent", 0);
+		node = OF_parent(node);
+	}
+
+	return phandle;
+}
+
+uint32_t
+arm_intr_msi_get_parent(int node)
+{
+	uint32_t phandle = 0;
+
+	while (node && !phandle) {
+		phandle = OF_getpropint(node, "msi-parent", 0);
 		node = OF_parent(node);
 	}
 
@@ -203,7 +201,7 @@ arm_intr_register_fdt(struct interrupt_controller *ic)
 
 	ic->ic_cells = OF_getpropint(ic->ic_node, "#interrupt-cells", 0);
 	ic->ic_phandle = OF_getpropint(ic->ic_node, "phandle", 0);
-	if (ic->ic_cells == 0 || ic->ic_phandle == 0)
+	if (ic->ic_phandle == 0)
 		return;
 	KASSERT(ic->ic_cells <= MAX_INTERRUPT_CELLS);
 
@@ -303,6 +301,103 @@ arm_intr_establish_fdt_idx(int node, int idx, int level, int (*func)(void *),
 
 	if (val == NULL)
 		return NULL;
+
+	ih = malloc(sizeof(*ih), M_DEVBUF, M_WAITOK);
+	ih->ih_ic = ic;
+	ih->ih_ih = val;
+
+	return ih;
+}
+
+void *
+arm_intr_establish_fdt_imap(int node, int *reg, int nreg, int acells,
+    int level, int (*func)(void *), void *cookie, char *name)
+{
+	struct interrupt_controller *ic;
+	struct arm_intr_handle *ih;
+	uint32_t *cell, phandle;
+	int map_mask[4], *map, map_len;
+	int i, len, ncells;
+	void *val = NULL;
+
+	if (nreg != sizeof(map_mask))
+		return NULL;
+
+	if (OF_getpropintarray(node, "interrupt-map-mask", map_mask,
+	    sizeof(map_mask)) != sizeof(map_mask))
+		return NULL;
+
+	map_len = OF_getproplen(node, "interrupt-map");
+	if (map_len <= 0)
+		return NULL;
+
+	map = malloc(map_len, M_DEVBUF, M_WAITOK);
+	len = OF_getpropintarray(node, "interrupt-map", map, map_len);
+	if (len != map_len) {
+		free(map, M_DEVBUF, map_len);
+		return NULL;
+	}
+
+	cell = map;
+	ncells = map_len / sizeof(uint32_t);
+	for (i = 0; ncells > 0; i++) {
+		LIST_FOREACH(ic, &interrupt_controllers, ic_list) {
+			if (ic->ic_phandle == cell[4])
+				break;
+		}
+
+		if (ic == NULL)
+			break;
+
+		if (ncells >= (5 + acells + ic->ic_cells) &&
+		    (reg[0] & map_mask[0]) == cell[0] &&
+		    (reg[1] & map_mask[1]) == cell[1] &&
+		    (reg[2] & map_mask[2]) == cell[2] &&
+		    (reg[3] & map_mask[3]) == cell[3] &&
+		    ic->ic_establish) {
+			phandle = cell[4];
+			val = ic->ic_establish(ic->ic_cookie, &cell[5 + acells],
+			    level, func, cookie, name);
+			break;
+		}
+
+		cell += (5 + acells + ic->ic_cells);
+		ncells -= (5 + acells + ic->ic_cells);
+	}
+
+	if (val == NULL) {
+		free(map, M_DEVBUF, map_len);
+		return NULL;
+	}
+
+	ih = malloc(sizeof(*ih), M_DEVBUF, M_WAITOK);
+	ih->ih_ic = ic;
+	ih->ih_ih = val;
+
+	free(map, M_DEVBUF, map_len);
+	return ih;
+}
+
+void *
+arm_intr_establish_fdt_msi(int node, uint64_t *addr, uint64_t *data,
+    int level, int (*func)(void *), void *cookie, char *name)
+{
+	struct interrupt_controller *ic;
+	struct arm_intr_handle *ih;
+	uint32_t phandle;
+	void *val = NULL;
+
+	phandle = arm_intr_msi_get_parent(node);
+	LIST_FOREACH(ic, &interrupt_controllers, ic_list) {
+		if (ic->ic_phandle == phandle)
+			break;
+	}
+
+	if (ic == NULL || ic->ic_establish_msi == NULL)
+		return NULL;
+
+	val = ic->ic_establish_msi(ic->ic_cookie, addr, data,
+	    level, func, cookie, name);
 
 	ih = malloc(sizeof(*ih), M_DEVBUF, M_WAITOK);
 	ih->ih_ic = ic;
@@ -411,17 +506,6 @@ arm_dflt_setipl(int newcpl)
 	ci->ci_cpl = newcpl;
 }
 
-void *arm_dflt_intr_establish(int irqno, int level, int (*func)(void *),
-    void *cookie, char *name)
-{
-	panic("arm_dflt_intr_establish called");
-}
-
-void arm_dflt_intr_disestablish(void *cookie)
-{
-	panic("arm_dflt_intr_disestablish called");
-}
-
 void
 arm_do_pending_intr(int pcpl)
 {
@@ -454,17 +538,12 @@ arm_do_pending_intr(int pcpl)
 
 void arm_set_intr_handler(int (*raise)(int), int (*lower)(int),
     void (*x)(int), void (*setipl)(int),
-	void *(*intr_establish)(int irqno, int level, int (*func)(void *),
-	    void *cookie, char *name),
-	void (*intr_disestablish)(void *cookie),
 	void (*intr_handle)(void *))
 {
 	arm_intr_func.raise		= raise;
 	arm_intr_func.lower		= lower;
 	arm_intr_func.x			= x;
 	arm_intr_func.setipl		= setipl;
-	arm_intr_func.intr_establish	= intr_establish;
-	arm_intr_func.intr_disestablish	= intr_disestablish;
 	arm_intr_dispatch		= intr_handle;
 }
 
