@@ -100,6 +100,7 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 			DELTA(rp, ri->ri_stride, int32_t *);
 			memcpy(dp, buffer, width << 2);
 		}
+		DELTA(rp, ri->ri_stride, int32_t *);
 	} else {
 		uc -= ri->ri_font->firstchar;
 		fr = (u_char *)ri->ri_font->data + uc * ri->ri_fontscale;
@@ -160,7 +161,6 @@ rasops32_putchar(void *cookie, int row, int col, u_int uc, long attr)
 
 	/* Do underline */
 	if ((attr & 1) != 0) {
-		rp = (uint32_t *)rrp;
 		DELTA(rp, (ri->ri_stride * (height - 2)), int32_t *);
 		while (width--)
 			*rp++ = clr[1];
