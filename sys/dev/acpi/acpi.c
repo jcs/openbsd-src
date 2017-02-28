@@ -1,4 +1,4 @@
-/* $OpenBSD: acpi.c,v 1.321 2017/02/22 16:39:56 jcs Exp $ */
+/* $OpenBSD: acpi.c,v 1.322 2017/02/28 10:39:07 natano Exp $ */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -2346,21 +2346,23 @@ acpi_indicator(struct acpi_softc *sc, int led_state)
 
 
 int
-acpi_sleep_state(struct acpi_softc *sc, int state)
+acpi_sleep_state(struct acpi_softc *sc, int sleepmode)
 {
 	extern int perflevel;
 	extern int lid_suspend;
 	int error = ENXIO;
 	size_t rndbuflen = 0;
 	char *rndbuf = NULL;
-	int s;
+	int state, s;
 
-	switch (state) {
-	case ACPI_STATE_S0:
-		return (0);
-	case ACPI_STATE_S1:
-		return (EOPNOTSUPP);
-	case ACPI_STATE_S5:	/* only sleep states handled here */
+	switch (sleepmode) {
+	case ACPI_SLEEP_SUSPEND:
+		state = ACPI_STATE_S3;
+		break;
+	case ACPI_SLEEP_HIBERNATE:
+		state = ACPI_STATE_S4;
+		break;
+	default:
 		return (EOPNOTSUPP);
 	}
 
@@ -2389,7 +2391,7 @@ acpi_sleep_state(struct acpi_softc *sc, int state)
 	stop_periodic_resettodr();
 
 #ifdef HIBERNATE
-	if (state == ACPI_STATE_S4) {
+	if (sleepmode == ACPI_SLEEP_HIBERNATE) {
 		uvmpd_hibernate();
 		hibernate_suspend_bufcache();
 		if (hibernate_alloc()) {
@@ -2448,7 +2450,7 @@ acpi_sleep_state(struct acpi_softc *sc, int state)
 	printf("acpi: resumed\n");
 
 #ifdef HIBERNATE
-	if (state == ACPI_STATE_S4) {
+	if (sleepmode == ACPI_SLEEP_HIBERNATE) {
 		uvm_pmr_dirty_everything();
 		hib_getentropy(&rndbuf, &rndbuflen);
 	}
@@ -2485,7 +2487,7 @@ fail_quiesce:
 
 #ifdef HIBERNATE
 fail_alloc:
-	if (state == ACPI_STATE_S4) {
+	if (sleepmode == ACPI_SLEEP_HIBERNATE) {
 		hibernate_free();
 		hibernate_resume_bufcache();
 	}
@@ -2508,7 +2510,7 @@ fail_alloc:
 
 	/* If we woke up but all the lids are closed, go back to sleep */
 	if (acpibtn_numopenlids() == 0 && lid_suspend != 0)
-		acpi_addtask(sc, acpi_sleep_task, sc, state);
+		acpi_addtask(sc, acpi_sleep_task, sc, sleepmode);
 
 fail_tts:
 	return (error);
@@ -3005,7 +3007,7 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 			error = EBADF;
 			break;
 		}
-		acpi_addtask(sc, acpi_sleep_task, sc, ACPI_STATE_S3);
+		acpi_addtask(sc, acpi_sleep_task, sc, ACPI_SLEEP_SUSPEND);
 		acpi_wakeup(sc);
 		break;
 #ifdef HIBERNATE
@@ -3020,7 +3022,7 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 			error = EOPNOTSUPP;
 			break;
 		}
-		acpi_addtask(sc, acpi_sleep_task, sc, ACPI_STATE_S4);
+		acpi_addtask(sc, acpi_sleep_task, sc, ACPI_SLEEP_HIBERNATE);
 		acpi_wakeup(sc);
 		break;
 #endif
