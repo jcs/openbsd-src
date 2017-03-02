@@ -1,4 +1,4 @@
-/* $OpenBSD: am335x.c,v 1.8 2016/07/10 02:55:15 jsg Exp $ */
+/* $OpenBSD: am335x.c,v 1.10 2017/03/01 05:10:05 jsg Exp $ */
 
 /*
  * Copyright (c) 2011 Uwe Stuehler <uwe@openbsd.org>
@@ -50,25 +50,6 @@
 #define DMTIMER6_IRQ	94
 #define DMTIMER7_IRQ	95
 
-#define GPIOx_SIZE	0x200
-#define GPIO0_ADDR	0x44E07000
-#define GPIO1_ADDR	0x4804C000
-#define GPIO2_ADDR	0x481AC000
-#define GPIO3_ADDR	0x481AE000
-#define GPIO0_IRQ	96
-#define GPIO1_IRQ	98
-#define GPIO2_IRQ	32
-#define GPIO3_IRQ	62
-
-#define TPCC_SIZE	0x100000
-#define TPCC_ADDR	0x49000000
-#define TPTC0_ADDR	0x49800000
-#define TPTC1_ADDR	0x49900000
-#define TPTC2_ADDR	0x49a00000
-#define EDMACOMP_IRQ	12
-#define EDMAMPERR_IRQ	13
-#define EDMAERR_IRQ	14
-
 struct armv7_dev am335x_devs[] = {
 
 	/*
@@ -99,15 +80,6 @@ struct armv7_dev am335x_devs[] = {
 	},
 
 	/*
-	 * EDMA Controller
-	 */
-	{ .name = "edma",
-	  .unit = 0,
-	  .mem = { { TPCC_ADDR, TPCC_SIZE } },
-	  .irq = { EDMACOMP_IRQ }
-	},
-
-	/*
 	 * General Purpose Timers
 	 */
 
@@ -121,34 +93,6 @@ struct armv7_dev am335x_devs[] = {
 	  .unit = 1,
 	  .mem = { { DMTIMER3_ADDR, DMTIMERx_SIZE } },
 	  .irq = { DMTIMER3_IRQ }
-	},
-
-	/*
-	 * GPIO 
-	 */
-
-	{ .name = "omgpio",
-	  .unit = 0,
-	  .mem = { { GPIO0_ADDR, GPIOx_SIZE } },
-	  .irq = { GPIO0_IRQ }
-	},
-
-	{ .name = "omgpio",
-	  .unit = 1,
-	  .mem = { { GPIO1_ADDR, GPIOx_SIZE } },
-	  .irq = { GPIO1_IRQ }
-	},
-
-	{ .name = "omgpio",
-	  .unit = 2,
-	  .mem = { { GPIO2_ADDR, GPIOx_SIZE } },
-	  .irq = { GPIO2_IRQ }
-	},
-
-	{ .name = "omgpio",
-	  .unit = 3,
-	  .mem = { { GPIO3_ADDR, GPIOx_SIZE } },
-	  .irq = { GPIO3_IRQ }
 	},
 
 	/* Terminator */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.20 2017/01/11 22:38:10 reyk Exp $	*/
+/*	$OpenBSD: main.c,v 1.23 2017/03/01 21:22:57 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -151,7 +151,7 @@ parse(int argc, char *argv[])
 
 	if (!ctl->has_pledge) {
 		/* pledge(2) default if command doesn't have its own pledge */
-		if (pledge("stdio rpath exec unix", NULL) == -1)
+		if (pledge("stdio rpath exec unix getpw", NULL) == -1)
 			err(1, "pledge");
 	}
 	if (ctl->main(&res, argc, argv) != 0)
@@ -194,7 +194,7 @@ vmmaction(struct parse_result *res)
 
 	switch (res->action) {
 	case CMD_START:
-		ret = start_vm(res->name, res->size, res->nifs, res->nets,
+		ret = vm_start(res->name, res->size, res->nifs, res->nets,
 		    res->ndisks, res->disks, res->path);
 		if (ret) {
 			errno = ret;
@@ -268,7 +268,7 @@ vmmaction(struct parse_result *res)
 			ret = 0;
 			switch (action) {
 			case CMD_START:
-				done = start_vm_complete(&imsg, &ret,
+				done = vm_start_complete(&imsg, &ret,
 				    tty_autoconnect);
 				break;
 			case CMD_STOP:

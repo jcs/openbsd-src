@@ -1,6 +1,13 @@
-#       $OpenBSD: Makefile,v 1.2 2004/05/13 01:22:05 mickey Exp $
+#       $OpenBSD: Makefile,v 1.4 2017/03/01 22:25:52 bluhm Exp $
 
+.if ${MACHINE_ARCH} == "hppa"
 SUBDIR+= probe sfuid
+
+.elif make(regress) || make(all)
+${.TARGETS}:
+	@echo Regress for architecture hppa cannot run on ${MACHINE_ARCH}.
+	@echo SKIPPED
+.endif
 
 install:
 

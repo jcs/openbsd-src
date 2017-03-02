@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.24 2017/02/27 14:37:58 reyk Exp $	*/
+/*	$OpenBSD: config.c,v 1.26 2017/03/02 07:33:37 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -120,7 +120,7 @@ config_getreset(struct vmd *env, struct imsg *imsg)
 }
 
 int
-config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid)
+config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid, uid_t uid)
 {
 	struct vmd_if		*vif;
 	struct vmop_create_params *vmc = &vm->vm_params;
@@ -158,6 +158,7 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid)
 		tapfds[i] = -1;
 
 	vm->vm_peerid = peerid;
+	vm->vm_uid = uid;
 
 	/* Open external kernel for child */
 	if (strlen(vcp->vcp_kernel) &&
@@ -235,7 +236,8 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid)
 		}
 
 		/* Set the interface status */
-		vif->vif_flags = vmc->vmc_ifflags[i] & IFF_UP;
+		vif->vif_flags =
+		    vmc->vmc_ifflags[i] & (VMIFF_UP|VMIFF_OPTMASK);
 	}
 
 	/* Open TTY */
@@ -309,7 +311,7 @@ config_getvm(struct privsep *ps, struct imsg *imsg)
 	memcpy(&vmc, imsg->data, sizeof(vmc));
 
 	errno = 0;
-	if (vm_register(ps, &vmc, &vm, imsg->hdr.peerid) == -1)
+	if (vm_register(ps, &vmc, &vm, imsg->hdr.peerid, 0) == -1)
 		goto fail;
 
 	/* If the fd is -1, the kernel will be searched on the disk */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.20 2017/01/13 19:21:16 edd Exp $	*/
+/*	$OpenBSD: parse.y,v 1.22 2017/03/02 07:33:37 reyk Exp $	*/
 
 /*
  * Copyright (c) 2007-2016 Reyk Floeter <reyk@openbsd.org>
@@ -44,6 +44,8 @@
 #include <util.h>
 #include <errno.h>
 #include <err.h>
+#include <pwd.h>
+#include <grp.h>
 
 #include "proc.h"
 #include "vmd.h"
@@ -101,6 +103,10 @@ typedef struct {
 		uint8_t		 lladdr[ETHER_ADDR_LEN];
 		int64_t		 number;
 		char		*string;
+		struct {
+			uid_t	 uid;
+			int64_t	 gid;
+		}		 owner;
 	} v;
 	int lineno;
 } YYSTYPE;
@@ -110,14 +116,16 @@ typedef struct {
 
 %token	INCLUDE ERROR
 %token	ADD DISK DOWN GROUP INTERFACE NIFS PATH SIZE SWITCH UP VMID
-%token	ENABLE DISABLE VM KERNEL LLADDR MEMORY
+%token	ENABLE DISABLE VM KERNEL LLADDR MEMORY OWNER LOCKED
 %token	<v.string>	STRING
 %token  <v.number>	NUMBER
 %type	<v.number>	disable
+%type	<v.number>	locked
 %type	<v.number>	updown
 %type	<v.lladdr>	lladdr
 %type	<v.string>	string
 %type	<v.string>	optstring
+%type	<v.owner>	owner_id
 
 %%
 
@@ -167,7 +175,7 @@ switch		: SWITCH string			{
 
 			vsw->sw_id = env->vmd_nswitches + 1;
 			vsw->sw_name = $2;
-			vsw->sw_flags = IFF_UP;
+			vsw->sw_flags = VMIFF_UP;
 			snprintf(vsw->sw_ifname, sizeof(vsw->sw_ifname),
 			    "%s%u", vsw_type, vsw_unit++);
 			TAILQ_INIT(&vsw->sw_ifs);
@@ -234,11 +242,14 @@ switch_opts	: disable			{
 			}
 			free($2);
 		}
+		| LOCKED LLADDR			{
+			vsw->sw_flags |= VMIFF_LOCKED;
+		}
 		| updown			{
 			if ($1)
-				vsw->sw_flags |= IFF_UP;
+				vsw->sw_flags |= VMIFF_UP;
 			else
-				vsw->sw_flags &= ~IFF_UP;
+				vsw->sw_flags &= ~VMIFF_UP;
 		}
 		;
 
@@ -260,6 +271,10 @@ vm		: VM string			{
 				yyerror("vm name too long");
 				YYERROR;
 			}
+
+			/* set default user/group permissions */
+			vmc.vmc_uid = 0;
+			vmc.vmc_gid = -1;
 		} '{' optnl vm_opts_l '}'	{
 			int ret;
 
@@ -268,7 +283,8 @@ vm		: VM string			{
 				vcp->vcp_nnics = vcp_nnics;
 
 			if (!env->vmd_noaction) {
-				ret = vm_register(&env->vmd_ps, &vmc, &vm, 0);
+				ret = vm_register(&env->vmd_ps, &vmc,
+				    &vm, 0, 0);
 				if (ret == -1 && errno == EALREADY) {
 					log_debug("%s:%d: vm \"%s\""
 					    " skipped (%s)",
@@ -398,6 +414,57 @@ vm_opts		: disable			{
 			vcp->vcp_memranges[0].vmr_size = (size_t)res;
 			vmc.vmc_flags |= VMOP_CREATE_MEMORY;
 		}
+		| OWNER owner_id		{
+			vmc.vmc_uid = $2.uid;
+			vmc.vmc_gid = $2.gid;
+		}
+		;
+
+owner_id	: /* none */		{
+			$$.uid = 0;
+			$$.gid = -1;
+		}
+		| NUMBER 		{
+			$$.uid = $1;
+			$$.gid = -1;
+		}
+		| STRING		{
+			char		*user, *group;
+			struct passwd	*pw;
+			struct group	*gr;
+
+			$$.uid = 0;
+			$$.gid = -1;
+
+			user = $1;
+			if ((group = strchr(user, ':')) != NULL) {
+				if (group == user)
+					user = NULL;
+				*group++ = '\0';
+			}
+
+			if (user != NULL && *user) {
+				if ((pw = getpwnam(user)) == NULL) {
+					yyerror("failed to get user: %s",
+					    user);
+					free($1);
+					YYERROR;
+				}
+				$$.uid = pw->pw_uid;
+			}
+
+			if (group != NULL && *group) {
+				if ((gr = getgrnam(group)) == NULL) {
+					yyerror("failed to get group: %s",
+					    group);
+					free($1);
+					YYERROR;
+				}
+				$$.gid = gr->gr_gid;
+			}
+
+			free($1);
+		}
 		;
 
 iface_opts_o	: '{' optnl iface_opts_l '}'
@@ -440,14 +507,16 @@ iface_opts	: SWITCH string			{
 			    sizeof(vmc.vmc_ifgroup[i]));
 			free($2);
 		}
-		| LLADDR lladdr			{
-			memcpy(vcp->vcp_macs[vcp_nnics], $2, ETHER_ADDR_LEN);
+		| locked LLADDR lladdr		{
+			if ($1)
+				vmc.vmc_ifflags[vcp_nnics] |= VMIFF_LOCKED;
+			memcpy(vcp->vcp_macs[vcp_nnics], $3, ETHER_ADDR_LEN);
 		}
 		| updown			{
 			if ($1)
-				vmc.vmc_ifflags[vcp_nnics] |= IFF_UP;
+				vmc.vmc_ifflags[vcp_nnics] |= VMIFF_UP;
 			else
-				vmc.vmc_ifflags[vcp_nnics] &= ~IFF_UP;
+				vmc.vmc_ifflags[vcp_nnics] &= ~VMIFF_UP;
 		}
 		;
 
@@ -476,6 +545,10 @@ lladdr		: STRING			{
 
 			memcpy($$, ea, ETHER_ADDR_LEN);
 		}
+		;
+
+locked		: /* empty */			{ $$ = 0; }
+		| LOCKED			{ $$ = 1; }
 		;
 
 updown		: UP				{ $$ = 1; }
@@ -543,7 +616,9 @@ lookup(char *s)
 		{ "interfaces",		NIFS },
 		{ "kernel",		KERNEL },
 		{ "lladdr",		LLADDR },
+		{ "locked",		LOCKED },
 		{ "memory",		MEMORY },
+		{ "owner",		OWNER },
 		{ "size",		SIZE },
 		{ "switch",		SWITCH },
 		{ "up",			UP },
