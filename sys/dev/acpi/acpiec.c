@@ -170,9 +170,6 @@ acpiec_read_1(struct acpiec_softc *sc, u_int8_t addr)
 {
 	u_int8_t		val;
 
-	if ((acpiec_status(sc) & EC_STAT_SCI_EVT) == EC_STAT_SCI_EVT)
-		sc->sc_gotsci = 1;
-
 	acpiec_write_cmd(sc, EC_CMD_RD);
 	acpiec_write_data(sc, addr);
 
@@ -184,9 +181,6 @@ acpiec_read_1(struct acpiec_softc *sc, u_int8_t addr)
 void
 acpiec_write_1(struct acpiec_softc *sc, u_int8_t addr, u_int8_t data)
 {
-	if ((acpiec_status(sc) & EC_STAT_SCI_EVT) == EC_STAT_SCI_EVT)
-		sc->sc_gotsci = 1;
-
 	acpiec_write_cmd(sc, EC_CMD_WR);
 	acpiec_write_data(sc, addr);
 	acpiec_write_data(sc, data);
