@@ -91,7 +91,8 @@ void
 acpiec_wait(struct acpiec_softc *sc, u_int8_t mask, u_int8_t val)
 {
 	static int acpiecnowait;
-	u_int8_t		stat;
+	u_int8_t stat;
+	int tries = 0;
 
 	dnprintf(40, "%s: EC wait_ns for: %b == %02x\n",
 	    DEVNAME(sc), (int)mask,
@@ -100,7 +101,7 @@ acpiec_wait(struct acpiec_softc *sc, u_int8_t mask, u_int8_t val)
 	while (((stat = acpiec_status(sc)) & mask) != val) {
 		if (stat & EC_STAT_SCI_EVT)
 			sc->sc_gotsci = 1;
-		if (cold || (stat & EC_STAT_BURST))
+		if (cold || (stat & EC_STAT_BURST) || tries++ < 100)
 			delay(1);
 		else
 			tsleep(&acpiecnowait, PWAIT, "acpiec", 1);
