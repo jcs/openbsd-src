@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldpe.c,v 1.71 2017/01/20 12:19:18 benno Exp $ */
+/*	$OpenBSD: ldpe.c,v 1.74 2017/03/04 00:21:48 renato Exp $ */
 
 /*
  * Copyright (c) 2013, 2016 Renato Westphal <renato@openbsd.org>
@@ -66,7 +66,7 @@ ldpe_sig_handler(int sig, short event, void *bula)
 
 /* label distribution protocol engine */
 void
-ldpe(int debug, int verbose)
+ldpe(int debug, int verbose, char *sockname)
 {
 	struct passwd		*pw;
 	struct event		 ev_sigint, ev_sigterm;
@@ -81,7 +81,8 @@ ldpe(int debug, int verbose)
 	log_procname = log_procnames[ldpd_process];
 
 	/* create ldpd control socket outside chroot */
-	if (control_init() == -1)
+	global.csock = sockname;
+	if (control_init(global.csock) == -1)
 		fatalx("control socket setup failed");
 
 	LIST_INIT(&global.addr_list);
@@ -170,7 +171,7 @@ ldpe_shutdown(void)
 	msgbuf_clear(&iev_main->ibuf.w);
 	close(iev_main->ibuf.fd);
 
-	control_cleanup();
+	control_cleanup(global.csock);
 	config_clear(leconf);
 
 	if (sysdep.no_pfkey == 0) {
@@ -220,8 +221,8 @@ ldpe_dispatch_main(int fd, short event, void *bula)
 	struct iface		*niface;
 	struct tnbr		*ntnbr;
 	struct nbr_params	*nnbrp;
-	static struct l2vpn	*nl2vpn;
-	struct l2vpn_if		*nlif;
+	static struct l2vpn	*l2vpn, *nl2vpn;
+	struct l2vpn_if		*lif = NULL, *nlif;
 	struct l2vpn_pw		*npw;
 	struct imsg		 imsg;
 	struct imsgev		*iev = bula;
@@ -264,12 +265,24 @@ ldpe_dispatch_main(int fd, short event, void *bula)
 			kif = imsg.data;
 
 			iface = if_lookup(leconf, kif->ifindex);
-			if (!iface)
+			if (iface) {
+				iface->flags = kif->flags;
+				iface->linkstate = kif->link_state;
+				if_update(iface, AF_UNSPEC);
 				break;
+			}
 
-			iface->flags = kif->flags;
-			iface->linkstate = kif->link_state;
-			if_update(iface, AF_UNSPEC);
+			LIST_FOREACH(l2vpn, &leconf->l2vpn_list, entry) {
+				lif = l2vpn_if_find(l2vpn, kif->ifindex);
+				if (lif) {
+					lif->flags = kif->flags;
+					lif->linkstate = kif->link_state;
+					memcpy(lif->mac, kif->mac,
+					    sizeof(lif->mac));
+					l2vpn_if_update(lif);
+					break;
+				}
+			}
 			break;
 		case IMSG_NEWADDR:
 			if (imsg.hdr.len != IMSG_HEADER_SIZE +
@@ -729,8 +742,7 @@ ldpe_iface_af_ctl(struct ctl_conn *c, int af, unsigned int idx)
 				continue;
 
 			ictl = if_to_ctl(ia);
-			imsg_compose_event(&c->iev,
-			     IMSG_CTL_SHOW_INTERFACE,
+			imsg_compose_event(&c->iev, IMSG_CTL_SHOW_INTERFACE,
 			    0, 0, -1, ictl, sizeof(struct ctl_iface));
 		}
 	}

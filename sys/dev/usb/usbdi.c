@@ -1,4 +1,4 @@
-/*	$OpenBSD: usbdi.c,v 1.85 2016/10/04 14:12:05 mpi Exp $ */
+/*	$OpenBSD: usbdi.c,v 1.87 2017/03/06 12:13:58 mpi Exp $ */
 /*	$NetBSD: usbdi.c,v 1.103 2002/09/27 15:37:38 provos Exp $	*/
 /*	$FreeBSD: src/sys/dev/usb/usbdi.c,v 1.28 1999/11/17 22:33:49 n_hibma Exp $	*/
 
@@ -696,7 +696,8 @@ void
 usb_transfer_complete(struct usbd_xfer *xfer)
 {
 	struct usbd_pipe *pipe = xfer->pipe;
-	int polling;
+	int polling = pipe->device->bus->use_polling;
+	int status, flags;
 
 	SPLUSBCHECK;
 
@@ -715,7 +716,6 @@ usb_transfer_complete(struct usbd_xfer *xfer)
 		return;
 	}
 #endif
-	polling = pipe->device->bus->use_polling;
 	/* XXXX */
 	if (polling)
 		pipe->running = 0;
@@ -773,6 +773,13 @@ usb_transfer_complete(struct usbd_xfer *xfer)
 		xfer->status = USBD_SHORT_XFER;
 	}
 
+	/*
+	 * We cannot dereference ``xfer'' after calling the callback as
+	 * it might free it.
+	 */
+	status = xfer->status;
+	flags = xfer->flags;
+
 	if (pipe->repeat) {
 		if (xfer->callback)
 			xfer->callback(xfer, xfer->priv, xfer->status);
@@ -789,17 +796,16 @@ usb_transfer_complete(struct usbd_xfer *xfer)
 	 * a new transfer as it will more likely results in the same
 	 * error.
 	 */
-	if (xfer->status == USBD_IOERROR)
+	if (status == USBD_IOERROR)
 		pipe->repeat = 0;
 
-	if ((xfer->flags & USBD_SYNCHRONOUS) && !polling)
+	if ((flags & USBD_SYNCHRONOUS) && !polling)
 		wakeup(xfer);
 
 	if (!pipe->repeat) {
 		/* XXX should we stop the queue on all errors? */
-		if ((xfer->status == USBD_CANCELLED ||
-		     xfer->status == USBD_IOERROR ||
-		     xfer->status == USBD_TIMEOUT) &&
+		if ((status == USBD_CANCELLED || status == USBD_IOERROR ||
+		     status == USBD_TIMEOUT) &&
 		    pipe->iface != NULL)		/* not control pipe */
 			pipe->running = 0;
 		else

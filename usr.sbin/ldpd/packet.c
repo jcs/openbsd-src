@@ -1,4 +1,4 @@
-/*	$OpenBSD: packet.c,v 1.68 2016/07/16 19:24:30 renato Exp $ */
+/*	$OpenBSD: packet.c,v 1.70 2017/03/04 00:06:10 renato Exp $ */
 
 /*
  * Copyright (c) 2013, 2016 Renato Westphal <renato@openbsd.org>
@@ -518,21 +518,13 @@ session_read(int fd, short event, void *arg)
 					return;
 				}
 				break;
-			case MSG_TYPE_ADDR:
-			case MSG_TYPE_ADDRWITHDRAW:
-			case MSG_TYPE_LABELMAPPING:
-			case MSG_TYPE_LABELREQUEST:
-			case MSG_TYPE_LABELWITHDRAW:
-			case MSG_TYPE_LABELRELEASE:
-			case MSG_TYPE_LABELABORTREQ:
+			default:
 				if (nbr->state != NBR_STA_OPER) {
 					session_shutdown(nbr, S_SHUTDOWN,
 					    msg->id, msg->type);
 					free(buf);
 					return;
 				}
-				break;
-			default:
 				break;
 			}
 
@@ -546,6 +538,9 @@ session_read(int fd, short event, void *arg)
 				break;
 			case MSG_TYPE_KEEPALIVE:
 				ret = recv_keepalive(nbr, pdu, msg_size);
+				break;
+			case MSG_TYPE_CAPABILITY:
+				ret = recv_capability(nbr, pdu, msg_size);
 				break;
 			case MSG_TYPE_ADDR:
 			case MSG_TYPE_ADDRWITHDRAW:
@@ -563,7 +558,7 @@ session_read(int fd, short event, void *arg)
 				log_debug("%s: unknown LDP message from nbr %s",
 				    __func__, inet_ntoa(nbr->id));
 				if (!(ntohs(msg->type) & UNKNOWN_FLAG))
-					send_notification_nbr(nbr,
+					send_notification(nbr->tcp,
 					    S_UNKNOWN_MSG, msg->id, msg->type);
 				/* ignore the message */
 				ret = 0;
@@ -628,7 +623,7 @@ session_shutdown(struct nbr *nbr, uint32_t status, uint32_t msg_id,
 	case NBR_STA_OPER:
 		log_debug("%s: lsr-id %s", __func__, inet_ntoa(nbr->id));
 
-		send_notification_nbr(nbr, status, msg_id, msg_type);
+		send_notification(nbr->tcp, status, msg_id, msg_type);
 
 		nbr_fsm(nbr, NBR_EVT_CLOSE_SESSION);
 		break;
@@ -781,7 +776,7 @@ pending_conn_timeout(int fd, short event, void *arg)
 	 * notification message reliably.
 	 */
 	tcp = tcp_new(pconn->fd, NULL);
-	send_notification(S_NO_HELLO, tcp, 0, 0);
+	send_notification(tcp, S_NO_HELLO, 0, 0);
 	msgbuf_write(&tcp->wbuf.wbuf);
 
 	pending_conn_del(pconn);

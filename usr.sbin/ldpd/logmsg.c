@@ -1,4 +1,4 @@
-/*	$OpenBSD: logmsg.c,v 1.1 2017/01/20 12:19:18 benno Exp $ */
+/*	$OpenBSD: logmsg.c,v 1.6 2017/03/04 00:15:35 renato Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -154,7 +154,7 @@ log_hello_src(const struct hello_source *src)
 const char *
 log_map(const struct map *map)
 {
-	static char	buf[64];
+	static char	buf[128];
 
 	switch (map->type) {
 	case MAP_TYPE_WILDCARD:
@@ -168,10 +168,33 @@ log_map(const struct map *map)
 			return ("???");
 		break;
 	case MAP_TYPE_PWID:
-		if (snprintf(buf, sizeof(buf), "pwid %u (%s)",
-		    map->fec.pwid.pwid,
+		if (snprintf(buf, sizeof(buf), "pw-id %u group-id %u (%s)",
+		    map->fec.pwid.pwid, map->fec.pwid.group_id,
 		    pw_type_name(map->fec.pwid.type)) == -1)
 			return ("???");
+		break;
+	case MAP_TYPE_TYPED_WCARD:
+		if (snprintf(buf, sizeof(buf), "typed wildcard") < 0)
+			return ("???");
+		switch (map->fec.twcard.type) {
+		case MAP_TYPE_PREFIX:
+			if (snprintf(buf + strlen(buf), sizeof(buf) -
+			    strlen(buf), " (prefix, address-family %s)",
+			    af_name(map->fec.twcard.u.prefix_af)) < 0)
+				return ("???");
+			break;
+		case MAP_TYPE_PWID:
+			if (snprintf(buf + strlen(buf), sizeof(buf) -
+			    strlen(buf), " (pwid, type %s)",
+			    pw_type_name(map->fec.twcard.u.pw_type)) < 0)
+				return ("???");
+			break;
+		default:
+			if (snprintf(buf + strlen(buf), sizeof(buf) -
+			    strlen(buf), " (unknown type)") < 0)
+				return ("???");
+			break;
+		}
 		break;
 	default:
 		return ("???");
@@ -303,6 +326,8 @@ msg_name(uint16_t msg)
 		return ("initialization");
 	case MSG_TYPE_KEEPALIVE:
 		return ("keepalive");
+	case MSG_TYPE_CAPABILITY:
+		return ("capability");
 	case MSG_TYPE_ADDR:
 		return ("address");
 	case MSG_TYPE_ADDRWITHDRAW:
@@ -396,6 +421,10 @@ status_code_name(uint32_t status)
 		return ("Generic Misconfiguration Error");
 	case S_WITHDRAW_MTHD:
 		return ("Label Withdraw PW Status Method");
+	case S_UNSSUPORTDCAP:
+		return ("Unsupported Capability");
+	case S_ENDOFLIB:
+		return ("End-of-LIB");
 	case S_TRANS_MISMTCH:
 		return ("Transport Connection Mismatch");
 	case S_DS_NONCMPLNCE:
@@ -416,6 +445,8 @@ pw_type_name(uint16_t pw_type)
 		return ("Eth Tagged");
 	case PW_TYPE_ETHERNET:
 		return ("Ethernet");
+	case PW_TYPE_WILDCARD:
+		return ("Wildcard");
 	default:
 		snprintf(buf, sizeof(buf), "[%0x]", pw_type);
 		return (buf);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: nd6_rtr.c,v 1.155 2017/02/09 15:23:35 jca Exp $	*/
+/*	$OpenBSD: nd6_rtr.c,v 1.157 2017/03/06 08:56:39 mpi Exp $	*/
 /*	$KAME: nd6_rtr.c,v 1.97 2001/02/07 11:09:13 itojun Exp $	*/
 
 /*
@@ -606,7 +606,7 @@ defrouter_addreq(struct nd_defrouter *new)
 	error = rtrequest(RTM_ADD, &info, RTP_DEFAULT, &rt,
 	    new->ifp->if_rdomain);
 	if (error == 0) {
-		rt_sendmsg(rt, RTM_ADD, new->ifp->if_rdomain);
+		rtm_send(rt, RTM_ADD, new->ifp->if_rdomain);
 		rtfree(rt);
 		new->installed = 1;
 	}
@@ -710,7 +710,7 @@ defrouter_delreq(struct nd_defrouter *dr)
 	error = rtrequest(RTM_DELETE, &info, RTP_DEFAULT, &rt,
 	    dr->ifp->if_rdomain);
 	if (error == 0) {
-		rt_sendmsg(rt, RTM_DELETE, dr->ifp->if_rdomain);
+		rtm_send(rt, RTM_DELETE, dr->ifp->if_rdomain);
 		rtfree(rt);
 	}
 
@@ -1519,8 +1519,10 @@ find_pfxlist_reachable_router(struct nd_prefix *pr)
 void
 pfxlist_onlink_check(void)
 {
+	struct ifnet *ifp;
+	struct ifaddr *ifa;
 	struct nd_prefix *pr;
-	struct in6_ifaddr *ia6;
+	struct in6_ifaddr *ia6, *pia6 = NULL;
 	char addr[INET6_ADDRSTRLEN];
 
 	/*
@@ -1624,42 +1626,54 @@ pfxlist_onlink_check(void)
 	 * always be attached.
 	 * The precise detection logic is same as the one for prefixes.
 	 */
-	TAILQ_FOREACH(ia6, &in6_ifaddr, ia_list) {
-		if (!(ia6->ia6_flags & IN6_IFF_AUTOCONF))
-			continue;
+	TAILQ_FOREACH(ifp, &ifnet, if_list) {
+		TAILQ_FOREACH(ifa, &ifp->if_addrlist, ifa_list) {
+			if (ifa->ifa_addr->sa_family != AF_INET6)
+				continue;
 
-		if (ia6->ia6_ndpr == NULL) {
+			ia6 = ifatoia6(ifa);
+			if ((ia6->ia6_flags & IN6_IFF_AUTOCONF) == 0)
+				continue;
+
 			/*
 			 * This can happen when we first configure the address
 			 * (i.e. the address exists, but the prefix does not).
 			 * XXX: complicated relationships...
 			 */
-			continue;
+			if (ia6->ia6_ndpr == NULL)
+				continue;
+
+			if (find_pfxlist_reachable_router(ia6->ia6_ndpr)) {
+				pia6 = ia6;
+				break;
+			}
 		}
 
-		if (find_pfxlist_reachable_router(ia6->ia6_ndpr))
+		if (pia6 != NULL)
 			break;
 	}
-	if (ia6) {
-		TAILQ_FOREACH(ia6, &in6_ifaddr, ia_list) {
+
+	TAILQ_FOREACH(ifp, &ifnet, if_list) {
+		TAILQ_FOREACH(ifa, &ifp->if_addrlist, ifa_list) {
+			if (ifa->ifa_addr->sa_family != AF_INET6)
+				continue;
+
+			ia6 = ifatoia6(ifa);
 			if ((ia6->ia6_flags & IN6_IFF_AUTOCONF) == 0)
 				continue;
 
-			if (ia6->ia6_ndpr == NULL) /* XXX: see above. */
-				continue;
+			if (pia6 != NULL) {
+				/* XXX: see above. */
+				if (ia6->ia6_ndpr == NULL)
+					continue;
 
-			if (find_pfxlist_reachable_router(ia6->ia6_ndpr))
+				if (find_pfxlist_reachable_router(ia6->ia6_ndpr))
+					ia6->ia6_flags &= ~IN6_IFF_DETACHED;
+				else
+					ia6->ia6_flags |= IN6_IFF_DETACHED;
+			} else {
 				ia6->ia6_flags &= ~IN6_IFF_DETACHED;
-			else
-				ia6->ia6_flags |= IN6_IFF_DETACHED;
-		}
-	}
-	else {
-		TAILQ_FOREACH(ia6, &in6_ifaddr, ia_list) {
-			if ((ia6->ia6_flags & IN6_IFF_AUTOCONF) == 0)
-				continue;
-
-			ia6->ia6_flags &= ~IN6_IFF_DETACHED;
+			}
 		}
 	}
 }

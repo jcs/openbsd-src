@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldpd.c,v 1.60 2017/01/20 12:19:18 benno Exp $ */
+/*	$OpenBSD: ldpd.c,v 1.62 2017/03/03 23:36:06 renato Exp $ */
 
 /*
  * Copyright (c) 2013, 2016 Renato Westphal <renato@openbsd.org>
@@ -38,7 +38,8 @@
 static void		 main_sig_handler(int, short, void *);
 static __dead void	 usage(void);
 static __dead void	 ldpd_shutdown(void);
-static pid_t		 start_child(enum ldpd_process, char *, int, int, int);
+static pid_t		 start_child(enum ldpd_process, char *, int, int, int,
+			    char *);
 static void		 main_dispatch_ldpe(int, short, void *);
 static void		 main_dispatch_lde(int, short, void *);
 static int		 main_imsg_compose_both(enum imsg_type, void *,
@@ -96,8 +97,8 @@ usage(void)
 {
 	extern char *__progname;
 
-	fprintf(stderr, "usage: %s [-dnv] [-D macro=value] [-f file]\n",
-	    __progname);
+	fprintf(stderr, "usage: %s [-dnv] [-D macro=value] [-f file]"
+	    " [-s socket]\n", __progname);
 	exit(1);
 }
 
@@ -108,12 +109,14 @@ main(int argc, char *argv[])
 	char			*saved_argv0;
 	int			 ch;
 	int			 debug = 0, lflag = 0, eflag = 0;
+	char			*sockname;
 	int			 pipe_parent2ldpe[2];
 	int			 pipe_parent2lde[2];
 
 	conffile = CONF_FILE;
 	ldpd_process = PROC_MAIN;
 	log_procname = log_procnames[ldpd_process];
+	sockname = LDPD_SOCKET;
 
 	log_init(1);	/* log to stderr until daemonized */
 	log_verbose(1);
@@ -122,7 +125,7 @@ main(int argc, char *argv[])
 	if (saved_argv0 == NULL)
 		saved_argv0 = "ldpd";
 
-	while ((ch = getopt(argc, argv, "dD:f:nvLE")) != -1) {
+	while ((ch = getopt(argc, argv, "dD:f:ns:vLE")) != -1) {
 		switch (ch) {
 		case 'd':
 			debug = 1;
@@ -137,6 +140,9 @@ main(int argc, char *argv[])
 			break;
 		case 'n':
 			global.cmd_opts |= LDPD_OPT_NOACTION;
+			break;
+		case 's':
+			sockname = optarg;
 			break;
 		case 'v':
 			if (global.cmd_opts & LDPD_OPT_VERBOSE)
@@ -163,7 +169,7 @@ main(int argc, char *argv[])
 	if (lflag)
 		lde(debug, global.cmd_opts & LDPD_OPT_VERBOSE);
 	else if (eflag)
-		ldpe(debug, global.cmd_opts & LDPD_OPT_VERBOSE);
+		ldpe(debug, global.cmd_opts & LDPD_OPT_VERBOSE, sockname);
 
 	/* fetch interfaces early */
 	kif_init();
@@ -208,9 +214,11 @@ main(int argc, char *argv[])
 
 	/* start children */
 	lde_pid = start_child(PROC_LDE_ENGINE, saved_argv0,
-	    pipe_parent2lde[1], debug, global.cmd_opts & LDPD_OPT_VERBOSE);
+	    pipe_parent2lde[1], debug, global.cmd_opts & LDPD_OPT_VERBOSE,
+	    NULL);
 	ldpe_pid = start_child(PROC_LDP_ENGINE, saved_argv0,
-	    pipe_parent2ldpe[1], debug, global.cmd_opts & LDPD_OPT_VERBOSE);
+	    pipe_parent2ldpe[1], debug, global.cmd_opts & LDPD_OPT_VERBOSE,
+	    sockname);
 
 	event_init();
 
@@ -247,11 +255,12 @@ main(int argc, char *argv[])
 		fatal("could not establish imsg links");
 	main_imsg_send_config(ldpd_conf);
 
+	if (kr_init(!(ldpd_conf->flags & F_LDPD_NO_FIB_UPDATE),
+	    ldpd_conf->rdomain) == -1)
+		fatalx("kr_init failed");
+
 	/* notify ldpe about existing interfaces and addresses */
 	kif_redistribute(NULL);
-
-	if (kr_init(!(ldpd_conf->flags & F_LDPD_NO_FIB_UPDATE)) == -1)
-		fatalx("kr_init failed");
 
 	if (ldpd_conf->ipv4.flags & F_LDPD_AF_ENABLED)
 		main_imsg_send_net_sockets(AF_INET);
@@ -303,7 +312,8 @@ ldpd_shutdown(void)
 }
 
 static pid_t
-start_child(enum ldpd_process p, char *argv0, int fd, int debug, int verbose)
+start_child(enum ldpd_process p, char *argv0, int fd, int debug, int verbose,
+    char *sockname)
 {
 	char	*argv[5];
 	int	 argc = 0;
@@ -337,6 +347,10 @@ start_child(enum ldpd_process p, char *argv0, int fd, int debug, int verbose)
 		argv[argc++] = "-d";
 	if (verbose)
 		argv[argc++] = "-v";
+	if (sockname) {
+		argv[argc++] = "-s";
+		argv[argc++] = sockname;
+	}
 	argv[argc++] = NULL;
 
 	execvp(argv0, argv);
@@ -758,6 +772,8 @@ merge_global(struct ldpd_conf *conf, struct ldpd_conf *xconf)
 		}
 		conf->rtr_id = xconf->rtr_id;
 	}
+
+	conf->rdomain= xconf->rdomain;
 
 	if (conf->trans_pref != xconf->trans_pref) {
 		if (ldpd_process == PROC_LDP_ENGINE)

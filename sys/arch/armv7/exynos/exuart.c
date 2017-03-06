@@ -1,4 +1,4 @@
-/* $OpenBSD: exuart.c,v 1.7 2016/08/21 06:36:23 jsg Exp $ */
+/* $OpenBSD: exuart.c,v 1.9 2017/03/05 18:56:57 kettenis Exp $ */
 /*
  * Copyright (c) 2005 Dale Rahn <drahn@motorola.com>
  *
@@ -196,6 +196,14 @@ exuartattach(struct device *parent, struct device *self, void *aux)
 
 		printf(": console");
 	}
+
+	/* Clear pending interrupts and mask them all. */
+	bus_space_write_4(sc->sc_iot, sc->sc_ioh, EXUART_UINTP,
+	    EXUART_UINTP_RXD | EXUART_UINTP_ERROR |
+	    EXUART_UINTP_TXD | EXUART_UINTP_MODEM);
+	bus_space_write_4(sc->sc_iot, sc->sc_ioh, EXUART_UINTM,
+	    EXUART_UINTM_RXD | EXUART_UINTM_ERROR |
+	    EXUART_UINTM_TXD | EXUART_UINTM_MODEM);
 
 	timeout_set(&sc->sc_diag_tmo, exuart_diag, sc);
 	timeout_set(&sc->sc_dtr_tmo, exuart_raisedtr, sc);
@@ -883,12 +891,10 @@ exuartcnputc(dev_t dev, int c)
 {
 	int s;
 	s = splhigh();
-	bus_space_write_1(exuartconsiot, exuartconsioh, EXUART_UTXH, (uint8_t)c);
-	while((bus_space_read_2(exuartconsiot, exuartconsioh, EXUART_UTRSTAT) &
-	    EXUART_UTRSTAT_TXBEMPTY) != 0 &&
-	      (bus_space_read_2(exuartconsiot, exuartconsioh, EXUART_UFSTAT) &
-	    (EXUART_UFSTAT_TX_FIFO_CNT_MASK|EXUART_UFSTAT_TX_FIFO_FULL)) != 0)
+	while (bus_space_read_4(exuartconsiot, exuartconsioh, EXUART_UFSTAT) &
+	   EXUART_UFSTAT_TX_FIFO_FULL)
 		;
+	bus_space_write_1(exuartconsiot, exuartconsioh, EXUART_UTXH, c);
 	splx(s);
 }
 

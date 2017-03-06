@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.62 2017/01/20 12:19:18 benno Exp $ */
+/*	$OpenBSD: kroute.c,v 1.65 2017/03/04 00:21:48 renato Exp $ */
 
 /*
  * Copyright (c) 2015, 2016 Renato Westphal <renato@openbsd.org>
@@ -25,6 +25,7 @@
 #include <sys/sysctl.h>
 #include <arpa/inet.h>
 #include <net/if_dl.h>
+#include <net/if_types.h>
 #include <net/route.h>
 #include <netmpls/mpls.h>
 #include <errno.h>
@@ -43,6 +44,7 @@ struct {
 	int			fd;
 	int			ioctl_fd;
 	struct event		ev;
+	unsigned int		rdomain;
 } kr_state;
 
 struct kroute_node {
@@ -143,13 +145,14 @@ kif_init(void)
 }
 
 int
-kr_init(int fs)
+kr_init(int fs, unsigned int rdomain)
 {
 	int		opt = 0, rcvbuf, default_rcvbuf;
 	socklen_t	optlen;
 	unsigned int	rtfilter;
 
 	kr_state.fib_sync = fs;
+	kr_state.rdomain = rdomain;
 
 	if ((kr_state.fd = socket(AF_ROUTE,
 	    SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)) == -1) {
@@ -211,6 +214,9 @@ kif_redistribute(const char *ifname)
 	struct kif_addr		*ka;
 
 	RB_FOREACH(kif, kif_tree, &kit) {
+		if (kif->k.rdomain != kr_state.rdomain)
+			continue;
+
 		if (ifname && strcmp(kif->k.ifname, ifname) != 0)
 			continue;
 
@@ -259,7 +265,7 @@ kr_change(struct kroute *kr)
 
 	return (0);
 
-miss:
+ miss:
 	log_warnx("%s: lost FEC %s/%d nexthop %s", __func__,
 	    log_addr(kr->af, &kr->prefix), kr->prefixlen,
 	    log_addr(kr->af, &kr->nexthop));
@@ -560,7 +566,7 @@ kr_redist_eval(struct kroute *kr)
 	main_imsg_compose_lde(IMSG_NETWORK_ADD, 0, kr, sizeof(*kr));
 	return (1);
 
-dont_redistribute:
+ dont_redistribute:
 	return (0);
 }
 
@@ -749,7 +755,7 @@ kroute_remove(struct kroute *kr)
 
 	return (0);
 
-notfound:
+ notfound:
 	log_warnx("%s failed to find %s/%u", __func__,
 	    log_addr(kr->af, &kr->prefix), kr->prefixlen);
 	return (-1);
@@ -868,9 +874,12 @@ kif_update(unsigned short ifindex, int flags, struct if_data *ifd,
 
 	kif->k.flags = flags;
 	kif->k.link_state = ifd->ifi_link_state;
+	if (sdl)
+		memcpy(kif->k.mac, LLADDR(sdl), sizeof(kif->k.mac));
 	kif->k.if_type = ifd->ifi_type;
 	kif->k.baudrate = ifd->ifi_baudrate;
 	kif->k.mtu = ifd->ifi_mtu;
+	kif->k.rdomain = ifd->ifi_rdomain;
 
 	if (sdl && sdl->sdl_family == AF_LINK) {
 		if (sdl->sdl_nlen >= sizeof(kif->k.ifname))
@@ -1194,6 +1203,7 @@ send_rtmsg_v4(int fd, int action, struct kroute *kr, int family)
 	hdr.rtm_msglen = sizeof(hdr);
 	hdr.rtm_hdrlen = sizeof(struct rt_msghdr);
 	hdr.rtm_priority = kr->priority;
+	hdr.rtm_tableid = kr_state.rdomain;	/* rtableid */
 	/* adjust iovec */
 	iov[iovcnt].iov_base = &hdr;
 	iov[iovcnt++].iov_len = sizeof(hdr);
@@ -1277,7 +1287,7 @@ send_rtmsg_v4(int fd, int action, struct kroute *kr, int family)
 		}
 	}
 
-retry:
+ retry:
 	if (writev(fd, iov, iovcnt) == -1) {
 		if (errno == ESRCH) {
 			if (hdr.rtm_type == RTM_CHANGE && family == AF_MPLS) {
@@ -1318,7 +1328,7 @@ fetchtable(void)
 	mib[3] = 0;
 	mib[4] = NET_RT_DUMP;
 	mib[5] = 0;
-	mib[6] = 0;	/* rtableid */
+	mib[6] = kr_state.rdomain;	/* rtableid */
 
 	if (sysctl(mib, 7, NULL, &len, NULL, 0) == -1) {
 		log_warn("sysctl");
@@ -1426,7 +1436,7 @@ rtmsg_process(char *buf, size_t len)
 			if (rtm->rtm_errno)		/* failed attempts... */
 				continue;
 
-			if (rtm->rtm_tableid != 0)
+			if (rtm->rtm_tableid != kr_state.rdomain)
 				continue;
 
 			if (rtm->rtm_type == RTM_GET &&

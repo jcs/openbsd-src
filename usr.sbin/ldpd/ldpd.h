@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldpd.h,v 1.81 2017/01/20 12:19:18 benno Exp $ */
+/*	$OpenBSD: ldpd.h,v 1.87 2017/03/04 00:21:48 renato Exp $ */
 
 /*
  * Copyright (c) 2013, 2016 Renato Westphal <renato@openbsd.org>
@@ -26,8 +26,10 @@
 #include <sys/socket.h>
 #include <sys/queue.h>
 #include <sys/tree.h>
+#include <net/if_arp.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <netinet/if_ether.h>
 #include <event.h>
 #include <imsg.h>
 
@@ -204,6 +206,13 @@ struct map {
 			uint32_t	group_id;
 			uint16_t	ifmtu;
 		} pwid;
+		struct {
+			uint8_t		type;
+			union {
+				uint16_t	prefix_af;
+				uint16_t	pw_type;
+			} u;
+		} twcard;
 	} fec;
 	struct {
 		uint32_t	status_code;
@@ -228,10 +237,16 @@ struct notify_msg {
 	uint16_t	msg_type;	/* network byte order */
 	uint32_t	pw_status;
 	struct map	fec;
+	struct {
+		uint16_t	 type;
+		uint16_t	 length;
+		char		*data;
+	} rtlvs;
 	uint8_t		flags;
 };
 #define F_NOTIF_PW_STATUS	0x01	/* pseudowire status tlv present */
 #define F_NOTIF_FEC		0x02	/* fec tlv present */
+#define F_NOTIF_RETURNED_TLVS	0x04	/* returned tlvs present */
 
 struct if_addr {
 	LIST_ENTRY(if_addr)	 entry;
@@ -258,6 +273,7 @@ struct iface {
 	LIST_ENTRY(iface)	 entry;
 	char			 name[IF_NAMESIZE];
 	unsigned int		 ifindex;
+	unsigned int		 rdomain;
 	struct if_addr_head	 addr_list;
 	struct in6_addr		 linklocal;
 	enum iface_type		 type;
@@ -313,7 +329,8 @@ struct l2vpn_if {
 	char			 ifname[IF_NAMESIZE];
 	unsigned int		 ifindex;
 	uint16_t		 flags;
-	uint8_t			 link_state;
+	uint8_t			 linkstate;
+	uint8_t			 mac[ETHER_ADDR_LEN];
 };
 
 struct l2vpn_pw {
@@ -388,6 +405,7 @@ struct ldpd_af_conf {
 
 struct ldpd_conf {
 	struct in_addr		 rtr_id;
+	unsigned int		 rdomain;
 	struct ldpd_af_conf	 ipv4;
 	struct ldpd_af_conf	 ipv6;
 	LIST_HEAD(, iface)	 iface_list;
@@ -410,6 +428,7 @@ struct ldpd_af_global {
 
 struct ldpd_global {
 	int			 cmd_opts;
+	char			*csock;
 	time_t			 uptime;
 	struct ldpd_af_global	 ipv4;
 	struct ldpd_af_global	 ipv6;
@@ -458,7 +477,9 @@ struct kif {
 	unsigned short		 ifindex;
 	int			 flags;
 	uint8_t			 link_state;
+	uint8_t			 mac[ETHER_ADDR_LEN];
 	int			 mtu;
+	unsigned int		 rdomain;
 	uint8_t			 if_type;
 	uint64_t		 baudrate;
 };
@@ -532,7 +553,7 @@ int			 cmdline_symset(char *);
 
 /* kroute.c */
 int		 kif_init(void);
-int		 kr_init(int);
+int		 kr_init(int, unsigned int);
 void		 kif_redistribute(const char *);
 int		 kr_change(struct kroute *);
 int		 kr_delete(struct kroute *);

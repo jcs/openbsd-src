@@ -1,4 +1,4 @@
-/* $OpenBSD: t1_enc.c,v 1.96 2017/02/07 02:08:38 beck Exp $ */
+/* $OpenBSD: t1_enc.c,v 1.98 2017/03/06 15:08:57 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -135,6 +135,7 @@
  * OTHERWISE.
  */
 
+#include <limits.h>
 #include <stdio.h>
 
 #include "ssl_locl.h"
@@ -192,6 +193,12 @@ int
 tls1_finish_mac(SSL *s, const unsigned char *buf, int len)
 {
 	int i;
+
+	if (len < 0)
+		return 0;
+
+	if (!tls1_handshake_hash_update(s, buf, len))
+		return 0;
 
 	if (S3I(s)->handshake_buffer &&
 	    !(s->s3->flags & TLS1_FLAGS_KEEP_HANDSHAKE)) {
@@ -365,67 +372,39 @@ err:
 
 /* seed1 through seed5 are virtually concatenated */
 static int
-tls1_PRF(long digest_mask, const void *seed1, int seed1_len, const void *seed2,
+tls1_PRF(SSL *s, const void *seed1, int seed1_len, const void *seed2,
     int seed2_len, const void *seed3, int seed3_len, const void *seed4,
     int seed4_len, const void *seed5, int seed5_len, const unsigned char *sec,
     int slen, unsigned char *out1, unsigned char *out2, int olen)
 {
-	int len, i, idx, count;
-	const unsigned char *S1;
-	long m;
 	const EVP_MD *md;
-	int ret = 0;
+	int i;
 
-	/* Count number of digests and partition sec evenly */
-	count = 0;
-	for (idx = 0; ssl_get_handshake_digest(idx, &m, &md); idx++) {
-		if ((m << TLS1_PRF_DGST_SHIFT) & digest_mask)
-			count++;
-	}
-	if (count == 0) {
-		SSLerrorx(SSL_R_SSL_HANDSHAKE_FAILURE);
-		goto err;
-	}
-	len = slen / count;
-	if (count == 1)
-		slen = 0;
-	S1 = sec;
 	memset(out1, 0, olen);
-	for (idx = 0; ssl_get_handshake_digest(idx, &m, &md); idx++) {
-		if ((m << TLS1_PRF_DGST_SHIFT) & digest_mask) {
-			if (!md) {
-				SSLerrorx(SSL_R_UNSUPPORTED_DIGEST_TYPE);
-				goto err;
-			}
-			if (!tls1_P_hash(md , S1, len + (slen&1), seed1,
-			    seed1_len, seed2, seed2_len, seed3, seed3_len,
-			    seed4, seed4_len, seed5, seed5_len, out2, olen))
-				goto err;
-			S1 += len;
-			for (i = 0; i < olen; i++) {
-				out1[i] ^= out2[i];
-			}
-		}
-	}
-	ret = 1;
 
-err:
-	return ret;
+	if (!ssl_get_handshake_evp_md(s, &md))
+		return (0);
+
+	if (!tls1_P_hash(md, sec, slen, seed1, seed1_len, seed2, seed2_len,
+	    seed3, seed3_len, seed4, seed4_len, seed5, seed5_len, out2, olen))
+		return (0);
+
+	for (i = 0; i < olen; i++)
+		out1[i] ^= out2[i];
+
+	return (1);
 }
 
 static int
 tls1_generate_key_block(SSL *s, unsigned char *km, unsigned char *tmp, int num)
 {
-	int ret;
-
-	ret = tls1_PRF(ssl_get_algorithm2(s),
+	return tls1_PRF(s,
 	    TLS_MD_KEY_EXPANSION_CONST, TLS_MD_KEY_EXPANSION_CONST_SIZE,
 	    s->s3->server_random, SSL3_RANDOM_SIZE,
 	    s->s3->client_random, SSL3_RANDOM_SIZE,
 	    NULL, 0, NULL, 0,
 	    s->session->master_key, s->session->master_key_length,
 	    km, tmp, num);
-	return ret;
 }
 
 /*
@@ -1121,52 +1100,22 @@ tls1_cert_verify_mac(SSL *s, int md_nid, unsigned char *out)
 int
 tls1_final_finish_mac(SSL *s, const char *str, int slen, unsigned char *out)
 {
-	unsigned int i;
-	EVP_MD_CTX ctx;
-	unsigned char buf[2*EVP_MAX_MD_SIZE];
-	unsigned char *q, buf2[12];
-	int idx;
-	long mask;
-	int err = 0;
-	const EVP_MD *md;
+	unsigned char buf1[EVP_MAX_MD_SIZE];
+	unsigned char buf2[12];
+	size_t hlen;
 
-	q = buf;
-
-	if (S3I(s)->handshake_buffer)
-		if (!tls1_digest_cached_records(s))
-			return 0;
-
-	EVP_MD_CTX_init(&ctx);
-
-	for (idx = 0; ssl_get_handshake_digest(idx, &mask, &md); idx++) {
-		if (ssl_get_algorithm2(s) & mask) {
-			int hashsize = EVP_MD_size(md);
-			EVP_MD_CTX *hdgst = S3I(s)->handshake_dgst[idx];
-			if (!hdgst || hashsize < 0 ||
-			    hashsize > (int)(sizeof buf - (size_t)(q - buf))) {
-				/* internal error: 'buf' is too small for this cipersuite! */
-				err = 1;
-			} else {
-				if (!EVP_MD_CTX_copy_ex(&ctx, hdgst) ||
-				    !EVP_DigestFinal_ex(&ctx, q, &i) ||
-				    (i != (unsigned int)hashsize))
-					err = 1;
-				q += hashsize;
-			}
-		}
-	}
-
-	if (!tls1_PRF(ssl_get_algorithm2(s), str, slen, buf, (int)(q - buf),
-	    NULL, 0, NULL, 0, NULL, 0,
-	    s->session->master_key, s->session->master_key_length,
-	    out, buf2, sizeof buf2))
-		err = 1;
-	EVP_MD_CTX_cleanup(&ctx);
-
-	if (err)
+	if (!tls1_handshake_hash_value(s, buf1, sizeof(buf1), &hlen))
 		return 0;
-	else
-		return sizeof buf2;
+
+	if (hlen > INT_MAX)
+		return 0;
+
+	if (!tls1_PRF(s, str, slen, buf1, hlen, NULL, 0, NULL, 0, NULL, 0,
+	    s->session->master_key, s->session->master_key_length,
+	    out, buf2, sizeof(buf2)))
+		return 0;
+
+	return sizeof(buf2);
 }
 
 int
@@ -1257,7 +1206,8 @@ tls1_generate_master_secret(SSL *s, unsigned char *out, unsigned char *p,
 {
 	unsigned char buff[SSL_MAX_MASTER_KEY_LENGTH];
 
-	tls1_PRF(ssl_get_algorithm2(s),
+	/* XXX - check return value. */
+	tls1_PRF(s,
 	    TLS_MD_MASTER_SECRET_CONST, TLS_MD_MASTER_SECRET_CONST_SIZE,
 	    s->s3->client_random, SSL3_RANDOM_SIZE, NULL, 0,
 	    s->s3->server_random, SSL3_RANDOM_SIZE, NULL, 0,
@@ -1329,8 +1279,7 @@ tls1_export_keying_material(SSL *s, unsigned char *out, size_t olen,
 	    TLS_MD_KEY_EXPANSION_CONST_SIZE) == 0)
 		goto err1;
 
-	rv = tls1_PRF(ssl_get_algorithm2(s),
-	    val, vallen, NULL, 0, NULL, 0, NULL, 0, NULL, 0,
+	rv = tls1_PRF(s, val, vallen, NULL, 0, NULL, 0, NULL, 0, NULL, 0,
 	    s->session->master_key, s->session->master_key_length,
 	    out, buff, olen);
 

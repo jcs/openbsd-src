@@ -1,4 +1,4 @@
-/*	$OpenBSD: route.h,v 1.157 2017/03/02 17:09:21 krw Exp $	*/
+/*	$OpenBSD: route.h,v 1.159 2017/03/06 08:56:39 mpi Exp $	*/
 /*	$NetBSD: route.h,v 1.9 1996/02/13 22:00:49 christos Exp $	*/
 
 /*
@@ -417,22 +417,21 @@ struct sockaddr_in6;
 struct bfd_config;
 
 void	 route_init(void);
-int	 route_output(struct mbuf *, ...);
+int	 route_output(struct mbuf *, struct socket *, struct sockaddr *,
+	    struct mbuf *);
 int	 route_usrreq(struct socket *, int, struct mbuf *,
 			   struct mbuf *, struct mbuf *, struct proc *);
-void	 rt_ifmsg(struct ifnet *);
-void	 rt_ifannouncemsg(struct ifnet *, int);
-void	 rt_bfdmsg(struct bfd_config *);
+void	 rtm_ifchg(struct ifnet *);
+void	 rtm_ifannounce(struct ifnet *, int);
+void	 rtm_bfd(struct bfd_config *);
 void	 rt_maskedcopy(struct sockaddr *,
 	    struct sockaddr *, struct sockaddr *);
 struct sockaddr *rt_plen2mask(struct rtentry *, struct sockaddr_in6 *);
-void	 rt_sendmsg(struct rtentry *, int, u_int);
-void	 rt_sendaddrmsg(struct rtentry *, int, struct ifaddr *);
-void	 rt_missmsg(int, struct rt_addrinfo *, int, uint8_t, u_int, int, u_int);
+void	 rtm_send(struct rtentry *, int, u_int);
+void	 rtm_addr(struct rtentry *, int, struct ifaddr *);
+void	 rtm_miss(int, struct rt_addrinfo *, int, uint8_t, u_int, int, u_int);
 int	 rt_setgate(struct rtentry *, struct sockaddr *, u_int);
 struct rtentry *rt_getll(struct rtentry *);
-void	 rt_setmetrics(u_long, const struct rt_metrics *, struct rt_kmetrics *);
-void	 rt_getmetrics(const struct rt_kmetrics *, struct rt_metrics *);
 
 int			 rt_timer_add(struct rtentry *,
 		             void(*)(struct rtentry *, struct rttimer *),

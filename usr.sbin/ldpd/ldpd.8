@@ -1,4 +1,4 @@
-.\"	$OpenBSD: ldpd.8,v 1.16 2016/07/01 23:14:31 renato Exp $
+.\"	$OpenBSD: ldpd.8,v 1.21 2017/03/04 00:15:35 renato Exp $
 .\"
 .\" Copyright (c) 2013, 2016 Renato Westphal <renato@openbsd.org>
 .\" Copyright (c) 2009 Michele Marchetto <michele@openbsd.org>
@@ -16,7 +16,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: July 1 2016 $
+.Dd $Mdocdate: March 4 2017 $
 .Dt LDPD 8
 .Os
 .Sh NAME
@@ -27,6 +27,7 @@
 .Op Fl dnv
 .Op Fl D Ar macro Ns = Ns Ar value
 .Op Fl f Ar file
+.Op Fl s Ar socket
 .Sh DESCRIPTION
 .Nm
 is the Label Distribution Protocol
@@ -61,6 +62,8 @@ Specify an alternative configuration file.
 .It Fl n
 Configtest mode.
 Only check the configuration file for validity.
+.It Fl s Ar socket
+Use an alternate location for the default control socket.
 .It Fl v
 Produce more verbose output.
 .El
@@ -126,6 +129,45 @@ socket used for communication with
 .%D October 2007
 .%R RFC 5036
 .%T LDP Specification
+.Re
+.Pp
+.Rs
+.%A B. Thomas
+.%A K. Raza
+.%A S. Aggarwal
+.%A R. Aggarwal
+.%A JL. Le Roux
+.%D July 2009
+.%R RFC 5561
+.%T LDP Capabilities
+.Re
+.Pp
+.Rs
+.%A R. Asati
+.%A I. Minei
+.%A B. Thomas
+.%D August 2010
+.%R RFC 5918
+.%T Label Distribution Protocol (LDP) 'Typed Wildcard' Forward Equivalence Class (FEC)
+.Re
+.Pp
+.Rs
+.%A R. Asati
+.%A P. Mohapatra
+.%A E. Chen
+.%A B. Thomas
+.%D August 2010
+.%R RFC 5919
+.%T Signaling LDP Label Advertisement Completion
+.Re
+.Pp
+.Rs
+.%A K. Raza
+.%A S. Boutros
+.%A C. Pignataro
+.%D July 2012
+.%R RFC 6667
+.%T LDP 'Typed Wildcard' Forwarding Equivalence Class (FEC) for PWid and Generalized PWid FEC Elements
 .Re
 .Pp
 .Rs
