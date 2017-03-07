@@ -144,7 +144,7 @@ struct cfdriver acpisbs_cd = {
 };
 
 const char *acpisbs_hids[] = {
-	"ACPI0002",
+	ACPI_DEV_SBS,
 	NULL
 };
 
@@ -211,6 +211,8 @@ acpisbs_attach(struct device *parent, struct device *self, void *aux)
 
 	aml_register_notify(sc->sc_devnode, aa->aaa_dev, acpisbs_notify,
 	    sc, ACPIDEV_POLL);
+
+	sc->sc_acpi->sc_havesbs = 1;
 }
 
 void

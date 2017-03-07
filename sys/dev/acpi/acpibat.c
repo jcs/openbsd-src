@@ -54,6 +54,9 @@ acpibat_match(struct device *parent, void *match, void *aux)
 	struct acpi_attach_args	*aa = aux;
 	struct cfdata		*cf = match;
 
+	if (((struct acpi_softc *)parent)->sc_havesbs)
+		return (0);
+
 	/* sanity */
 	return (acpi_matchhids(aa, acpibat_hids, cf->cf_driver->cd_name));
 }

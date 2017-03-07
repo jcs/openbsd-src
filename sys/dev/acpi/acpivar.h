@@ -258,6 +258,7 @@ struct acpi_softc {
 	struct acpi_ac_head	sc_ac;
 	struct acpi_bat_head	sc_bat;
 	struct acpi_sbs_head	sc_sbs;
+	int			sc_havesbs;
 
 	struct timeout		sc_dev_timeout;
 

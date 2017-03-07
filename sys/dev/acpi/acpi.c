@@ -114,9 +114,10 @@ void	acpi_enable_wakegpes(struct acpi_softc *, int);
 
 
 int	acpi_foundec(struct aml_node *, void *);
-int	acpi_foundsony(struct aml_node *node, void *arg);
+int	acpi_foundsony(struct aml_node *node, void *);
 int	acpi_foundhid(struct aml_node *, void *);
-int	acpi_add_device(struct aml_node *node, void *arg);
+int	acpi_foundsbs(struct aml_node *node, void *);
+int	acpi_add_device(struct aml_node *node, void *);
 
 void	acpi_thread(void *);
 void	acpi_create_thread(void *);
@@ -1075,12 +1076,16 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	/* attach pci interrupt routing tables */
 	aml_find_node(&aml_root, "_PRT", acpi_foundprt, sc);
 
+	/* attach embedded controller */
 	aml_find_node(&aml_root, "_HID", acpi_foundec, sc);
 
 	/* check if we're running on a sony */
 	aml_find_node(&aml_root, "GBRT", acpi_foundsony, sc);
 
 	aml_walknodes(&aml_root, AML_WALK_PRE, acpi_add_device, sc);
+
+	/* try to find smart battery first */
+	aml_find_node(&aml_root, "_HID", acpi_foundsbs, sc);
 
 	/* attach battery, power supply and button devices */
 	aml_find_node(&aml_root, "_HID", acpi_foundhid, sc);
@@ -2914,6 +2919,44 @@ acpi_foundvideo(struct aml_node *node, void *arg)
 
 	return (0);
 }
+
+int
+acpi_foundsbs(struct aml_node *node, void *arg)
+{
+	struct acpi_softc	*sc = (struct acpi_softc *)arg;
+	struct device		*self = (struct device *)arg;
+	char		 	 cdev[32], dev[32];
+	struct acpi_attach_args	 aaa;
+	int64_t			 sta;
+
+	if (acpi_parsehid(node, arg, cdev, dev, sizeof(dev)) != 0)
+		return (0);
+
+	if (aml_evalinteger(sc, node->parent, "_STA", 0, NULL, &sta))
+		sta = STA_PRESENT | STA_ENABLED | STA_DEV_OK | 0x1000;
+
+	if ((sta & STA_PRESENT) == 0)
+		return (0);
+
+	acpi_attach_deps(sc, node->parent);
+
+	if (strcmp(dev, ACPI_DEV_SBS) != 0)
+		return (0);
+
+	memset(&aaa, 0, sizeof(aaa));
+	aaa.aaa_iot = sc->sc_iot;
+	aaa.aaa_memt = sc->sc_memt;
+	aaa.aaa_node = node->parent;
+	aaa.aaa_dev = dev;
+
+	if (!node->parent->attached) {
+		config_found(self, &aaa, acpi_print);
+		node->parent->attached = 1;
+	}
+
+	return (0);
+}
+
 
 int
 acpiopen(dev_t dev, int flag, int mode, struct proc *p)
