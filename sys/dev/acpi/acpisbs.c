@@ -18,6 +18,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+/*
+ * TODO: support multiple batteries based on _SBS, make sc_battery an array and
+ * poll each battery independently
+ */
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/device.h>
@@ -234,7 +239,6 @@ acpisbs_read(struct acpisbs_softc *sc)
 				break;
 			}
 
-			/* TODO: support multiple batteries based on _SBS */
 			sc->sc_batteries_present = 1;
 
 			if (*ival & SMBATT_BM_CAPACITY_MODE)
