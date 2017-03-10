@@ -1,4 +1,4 @@
-/*	$OpenBSD: intel_panel.c,v 1.11 2015/09/23 23:12:12 kettenis Exp $	*/
+/*	$OpenBSD: intel_panel.c,v 1.12 2017/03/07 02:48:15 jcs Exp $	*/
 /*
  * Copyright © 2006-2010 Intel Corporation
  * Copyright (c) 2006 Dave Airlie <airlied@linux.ie>

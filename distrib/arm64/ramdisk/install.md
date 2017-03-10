@@ -1,4 +1,4 @@
-#	$OpenBSD: install.md,v 1.2 2017/02/18 02:01:53 jsg Exp $
+#	$OpenBSD: install.md,v 1.4 2017/03/10 05:49:08 jsg Exp $
 #
 #
 # Copyright (c) 1996 The NetBSD Foundation, Inc.
@@ -45,11 +45,13 @@ md_installboot() {
 	mount ${MOUNT_ARGS_msdos} ${_disk}i /mnt/mnt
 	mkdir -p /mnt/mnt/efi/boot
 	cp /mnt/usr/mdec/BOOTAA64.EFI /mnt/mnt/efi/boot/bootaa64.efi
+	echo bootaa64.efi > /mnt/mnt/efi/boot/startup.nsh
 
 	_plat=rpi
 	_mdec=/usr/mdec/$_plat
 
 	cp $_mdec/{bootcode.bin,start.elf,fixup.dat,*.dtb} /mnt/mnt/
+	cp $_mdec/u-boot.bin /mnt/mnt/
 	cat > /mnt/mnt/config.txt<<-__EOT
 		arm_control=0x200
 		enable_uart=1

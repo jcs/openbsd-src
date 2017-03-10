@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.15 2017/03/01 01:24:34 jsg Exp $
+# $OpenBSD: GENERIC,v 1.22 2017/03/10 03:27:50 jsg Exp $
 #
 # GENERIC machine description file
 #
@@ -65,6 +65,7 @@ vio*		at virtio?
 vioblk*		at virtio?
 viomb*		at virtio?
 viornd*		at virtio?
+vioscsi*	at virtio?
 
 simplefb*	at fdt?
 wsdisplay*	at simplefb?
@@ -83,7 +84,34 @@ sxirtc*		at fdt?		# Real Time Clock
 sximmc*		at fdt?		# SD/MMC card controller
 sdmmc*		at sximmc?	# SD/MMC bus
 ehci*		at fdt?		# EHCI (shim)
+
+# PCI
+ppb*		at pci?			# PCI-PCI bridges
+pci*		at ppb?
+
+# PCI Ethernet
+em*		at pci?			# Intel Pro/1000 Ethernet
+ix*		at pci?			# Intel 82598EB 10Gb Ethernet
+mskc*		at pci?			# Marvell Yukon-2
+msk*		at mskc?		#  each port of above
+re*		at pci?			# Realtek 8169/8169S/8110S
+
+# PCI SCSI
+ahci*		at pci? flags 0x0000	# AHCI SATA controllers
+					# flags 0x0001 to force SATA 1 (1.5Gb/s)
+nvme*		at pci?			# NVMe controllers
+
+# USB Controllers
+ohci*		at pci?			# Open Host Controller
+uhci*		at pci?			# Universal Host Controller (Intel)
+ehci*		at pci?			# Enhanced Host Controller
+xhci*		at pci?			# eXtensible Host Controller
+
+# USB bus support
+usb*		at ohci?
+usb*		at uhci?
 usb*		at ehci?
+usb*		at xhci?
 
 # USB devices
 uhub*		at usb?			# USB Hubs
@@ -190,14 +218,13 @@ audio*		at utvfu?
 udl*		at uhub?		# DisplayLink USB displays
 wsdisplay*	at udl?
 
+amphy*		at mii?			# AMD 79C873 PHYs
 atphy*		at mii?			# Attansic F1 PHYs
+eephy*		at mii?			# Marvell 88E1000 series PHY
 rgephy*		at mii?			# Realtek 8169S/8110S PHY
 rlphy*		at mii?			# Realtek 8139 internal PHYs
 ukphy*		at mii?			# "unknown" PHYs
-
-# PCI
-ppb*		at pci?			# PCI-PCI bridges
-pci*		at ppb?
+urlphy*		at mii?			# Realtek RTL8150L internal PHY
 
 scsibus*	at scsi?
 sd*		at scsibus?

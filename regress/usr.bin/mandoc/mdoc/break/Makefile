@@ -1,8 +1,7 @@
-# $OpenBSD: Makefile,v 1.5 2017/03/05 19:59:26 schwarze Exp $
+# $OpenBSD: Makefile,v 1.7 2017/03/08 22:53:36 schwarze Exp $
 
 REGRESS_TARGETS	= brokenbreaker twice tail two notopen
 LINT_TARGETS	= brokenbreaker twice tail two notopen
-MARKDOWN_TARGETS = brokenbreaker twice two notopen
 
 # It's hard to keep stuff together in next-line scope.
 

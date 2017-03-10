@@ -1,4 +1,4 @@
-/* $OpenBSD: acpisbs.c,v 1.2 2017/02/22 21:41:31 jcs Exp $ */
+/* $OpenBSD: acpisbs.c,v 1.3 2017/03/07 02:27:02 jcs Exp $ */
 /*
  * Smart Battery Subsystem device driver
  * ACPI 5.0 spec section 10

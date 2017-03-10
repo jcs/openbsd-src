@@ -1,4 +1,4 @@
-/*	$OpenBSD: i915_reg.h,v 1.11 2015/09/25 16:15:19 jsg Exp $	*/
+/*	$OpenBSD: i915_reg.h,v 1.12 2017/03/07 02:48:15 jcs Exp $	*/
 /* Copyright 2003 Tungsten Graphics, Inc., Cedar Park, Texas.
  * All Rights Reserved.
  *

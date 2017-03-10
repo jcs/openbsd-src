@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_markdown.c,v 1.3 2017/03/06 14:57:44 schwarze Exp $ */
+/*	$OpenBSD: mdoc_markdown.c,v 1.14 2017/03/08 19:23:23 schwarze Exp $ */
 /*
  * Copyright (c) 2017 Ingo Schwarze <schwarze@openbsd.org>
  *
@@ -51,6 +51,7 @@ static	int	 md_pre_raw(struct roff_node *);
 static	int	 md_pre_word(struct roff_node *);
 static	int	 md_pre_skip(struct roff_node *);
 static	void	 md_pre_syn(struct roff_node *);
+static	int	 md_pre_An(struct roff_node *);
 static	int	 md_pre_Ap(struct roff_node *);
 static	int	 md_pre_Bd(struct roff_node *);
 static	int	 md_pre_Bk(struct roff_node *);
@@ -89,6 +90,7 @@ static	void	 md_post_En(struct roff_node *);
 static	void	 md_post_Eo(struct roff_node *);
 static	void	 md_post_Fa(struct roff_node *);
 static	void	 md_post_Fd(struct roff_node *);
+static	void	 md_post_Fl(struct roff_node *);
 static	void	 md_post_Fn(struct roff_node *);
 static	void	 md_post_Fo(struct roff_node *);
 static	void	 md_post_In(struct roff_node *);
@@ -115,7 +117,7 @@ static	const struct md_act md_acts[MDOC_MAX + 1] = {
 	{ NULL, NULL, NULL, NULL, NULL }, /* El */
 	{ NULL, md_pre_It, md_post_It, NULL, NULL }, /* It */
 	{ NULL, md_pre_raw, md_post_raw, "*", "*" }, /* Ad */
-	{ NULL, NULL, NULL, NULL, NULL }, /* An */
+	{ NULL, md_pre_An, NULL, NULL, NULL }, /* An */
 	{ NULL, md_pre_raw, md_post_raw, "*", "*" }, /* Ar */
 	{ NULL, md_pre_raw, md_post_raw, "**", "**" }, /* Cd */
 	{ NULL, md_pre_raw, md_post_raw, "**", "**" }, /* Cm */
@@ -125,11 +127,11 @@ static	const struct md_act md_acts[MDOC_MAX + 1] = {
 	{ NULL, NULL, NULL, NULL, NULL }, /* Ex */
 	{ NULL, md_pre_Fa, md_post_Fa, NULL, NULL }, /* Fa */
 	{ NULL, md_pre_Fd, md_post_Fd, "**", "**" }, /* Fd */
-	{ NULL, md_pre_raw, md_post_raw, "**-", "**" }, /* Fl */
+	{ NULL, md_pre_raw, md_post_Fl, "**-", "**" }, /* Fl */
 	{ NULL, md_pre_Fn, md_post_Fn, NULL, NULL }, /* Fn */
 	{ NULL, md_pre_Fd, md_post_raw, "*", "*" }, /* Ft */
 	{ NULL, md_pre_raw, md_post_raw, "**", "**" }, /* Ic */
-	{ NULL, md_pre_In, md_post_In, "*", "*" }, /* In */
+	{ NULL, md_pre_In, md_post_In, NULL, NULL }, /* In */
 	{ NULL, md_pre_raw, md_post_raw, "`", "`" }, /* Li */
 	{ md_cond_head, md_pre_Nd, NULL, NULL, NULL }, /* Nd */
 	{ NULL, md_pre_Nm, md_post_Nm, "**", "**" }, /* Nm */
@@ -235,14 +237,16 @@ static	int	 outflags;
 #define	MD_sp		 (1 << 5)  /* Insert a paragraph break. */
 #define	MD_Sm		 (1 << 6)  /* Horizontal spacing mode. */
 #define	MD_Bk		 (1 << 7)  /* Word keep mode. */
+#define	MD_An_split	 (1 << 8)  /* Author mode is "split". */
+#define	MD_An_nosplit	 (1 << 9)  /* Author mode is "nosplit". */
 
 static	int	 escflags; /* Escape in generated markdown code: */
 #define	ESC_BOL	 (1 << 0)  /* "#*+-" near the beginning of a line. */
 #define	ESC_NUM	 (1 << 1)  /* "." after a leading number. */
 #define	ESC_HYP	 (1 << 2)  /* "(" immediately after "]". */
-#define	ESC_PAR	 (1 << 3)  /* ")" when "(" is open. */
 #define	ESC_SQU	 (1 << 4)  /* "]" when "[" is open. */
 #define	ESC_FON	 (1 << 5)  /* "*" immediately after unrelated "*". */
+#define	ESC_EOL	 (1 << 6)  /* " " at the and of a line. */
 
 static	int	 code_blocks, quote_blocks, list_blocks;
 static	int	 outcount;
@@ -370,37 +374,43 @@ md_stack(char c)
 static void
 md_preword(void)
 {
+	const char	*cp;
+
 	/*
 	 * If a list block is nested inside a code block or a blockquote,
 	 * blank lines for paragraph breaks no longer work; instead,
 	 * they terminate the list.  Work around this markdown issue
 	 * by using mere line breaks instead.
 	 */
+
 	if (list_blocks && outflags & MD_sp) {
 		outflags &= ~MD_sp;
 		outflags |= MD_br;
 	}
 
-	/* End the old line if requested. */
+	/*
+	 * End the old line if requested.
+	 * Escape whitespace at the end of the markdown line
+	 * such that it won't look like an output line break.
+	 */
 
 	if (outflags & MD_sp)
 		putchar('\n');
 	else if (outflags & MD_br) {
 		putchar(' ');
 		putchar(' ');
-#ifdef DEBUG
-		putchar(':');
-		putchar(':');
-		putchar(' ');
-		putchar(' ');
-#endif
-	}
+	} else if (outflags & MD_nl && escflags & ESC_EOL)
+		md_named("zwnj");
 
 	/* Start a new line if necessary. */
 
 	if (outflags & (MD_nl | MD_br | MD_sp)) {
 		putchar('\n');
-		fputs(md_stack('\0'), stdout);
+		for (cp = md_stack('\0'); *cp != '\0'; cp++) {
+			putchar(*cp);
+			if (*cp == '>')
+				putchar(' ');
+		}
 		outflags &= ~(MD_nl | MD_br | MD_sp);
 		escflags = ESC_BOL;
 		outcount = 0;
@@ -433,7 +443,7 @@ md_rawword(const char *s)
 {
 	md_preword();
 
-	if (*s == 0)
+	if (*s == '\0')
 		return;
 
 	if (escflags & ESC_FON) {
@@ -444,12 +454,6 @@ md_rawword(const char *s)
 
 	while (*s != '\0') {
 		switch(*s) {
-		case '(':
-			escflags |= ESC_PAR;
-			break;
-		case ')':
-			escflags |= ~ESC_PAR;
-			break;
 		case '*':
 			if (s[1] == '\0')
 				escflags |= ESC_FON;
@@ -466,6 +470,10 @@ md_rawword(const char *s)
 		}
 		md_char(*s++);
 	}
+	if (s[-1] == ' ')
+		escflags |= ESC_EOL;
+	else
+		escflags &= ~ESC_EOL;
 }
 
 /*
@@ -485,6 +493,9 @@ md_word(const char *s)
 		outflags &= ~MD_spc;
 
 	md_preword();
+
+	if (*s == '\0')
+		return;
 
 	/* No spacing after opening delimiters. */
 	if ((s[0] == '(' || s[0] == '[') && s[1] == '\0')
@@ -517,7 +528,7 @@ md_word(const char *s)
 			bs = escflags & ESC_HYP && !code_blocks;
 			break;
 		case ')':
-			bs = escflags & ESC_PAR && !code_blocks;
+			bs = escflags & ESC_NUM && !code_blocks;
 			break;
 		case '*':
 		case '[':
@@ -626,7 +637,10 @@ md_word(const char *s)
 	if (*currfont != '\0') {
 		outflags &= ~MD_spc;
 		md_rawword(currfont);
-	}
+	} else if (s[-2] == ' ')
+		escflags |= ESC_EOL;
+	else
+		escflags &= ~ESC_EOL;
 }
 
 /*
@@ -636,7 +650,7 @@ static void
 md_named(const char *s)
 {
 	printf("&%s;", s);
-	escflags &= ~ESC_FON;
+	escflags &= ~(ESC_FON | ESC_EOL);
 	outcount++;
 }
 
@@ -685,6 +699,8 @@ md_pre_raw(struct roff_node *n)
 	if ((prefix = md_acts[n->tok].prefix) != NULL) {
 		md_rawword(prefix);
 		outflags &= ~MD_spc;
+		if (*prefix == '`')
+			code_blocks++;
 	}
 	return 1;
 }
@@ -697,6 +713,8 @@ md_post_raw(struct roff_node *n)
 	if ((suffix = md_acts[n->tok].suffix) != NULL) {
 		outflags &= ~(MD_spc | MD_nl);
 		md_rawword(suffix);
+		if (*suffix == '`')
+			code_blocks--;
 	}
 }
 
@@ -778,6 +796,28 @@ md_pre_syn(struct roff_node *n)
 	default:
 		outflags |= MD_br;
 		break;
+	}
+}
+
+static int
+md_pre_An(struct roff_node *n)
+{
+	switch (n->norm->An.auth) {
+	case AUTH_split:
+		outflags &= ~MD_An_nosplit;
+		outflags |= MD_An_split;
+		return 0;
+	case AUTH_nosplit:
+		outflags &= ~MD_An_split;
+		outflags |= MD_An_nosplit;
+		return 0;
+	default:
+		if (outflags & MD_An_split)
+			outflags |= MD_br;
+		else if (n->sec == SEC_AUTHORS &&
+		    ! (outflags & MD_An_nosplit))
+			outflags |= MD_An_split;
+		return 1;
 	}
 }
 
@@ -931,21 +971,17 @@ md_pre_Eo(struct roff_node *n)
 static void
 md_post_Eo(struct roff_node *n)
 {
-	int	 body, tail;
-
 	if (n->end != ENDBODY_NOT) {
 		outflags |= MD_spc;
 		return;
 	}
 
-	body = n->child != NULL || n->parent->head->child != NULL;
-	tail = n->parent->tail != NULL && n->parent->tail->child != NULL;
+	if (n->child == NULL && n->parent->head->child == NULL)
+		return;
 
-	if (body && tail)
+	if (n->parent->tail != NULL && n->parent->tail->child != NULL)
 		outflags &= ~MD_spc;
-        else if ( ! (body || tail))
-		md_preword();
-        else if ( ! tail)
+        else
 		outflags |= MD_spc;
 }
 
@@ -991,6 +1027,15 @@ md_post_Fd(struct roff_node *n)
 {
 	md_post_raw(n);
 	outflags |= MD_br;
+}
+
+static void
+md_post_Fl(struct roff_node *n)
+{
+	md_post_raw(n);
+	if (n->child == NULL && n->next != NULL &&
+	    n->next->type != ROFFT_TEXT && !(n->next->flags & NODE_LINE))
+		outflags &= ~MD_spc;
 }
 
 static int
@@ -1067,16 +1112,15 @@ md_pre_In(struct roff_node *n)
 {
 	if (n->flags & NODE_SYNPRETTY) {
 		md_pre_syn(n);
-		md_pre_raw(n);
-		md_rawword("*");
+		md_rawword("**");
 		outflags &= ~MD_spc;
 		md_word("#include <");
-		outflags &= ~MD_spc;
 	} else {
 		md_word("<");
 		outflags &= ~MD_spc;
-		md_pre_raw(n);
+		md_rawword("*");
 	}
+	outflags &= ~MD_spc;
 	return 1;
 }
 
@@ -1085,13 +1129,11 @@ md_post_In(struct roff_node *n)
 {
 	if (n->flags & NODE_SYNPRETTY) {
 		outflags &= ~MD_spc;
-		md_rawword(">*");
-		md_post_raw(n);
+		md_rawword(">**");
 		outflags |= MD_nl;
 	} else {
-		md_post_raw(n);
 		outflags &= ~MD_spc;
-		md_rawword(">");
+		md_rawword("*>");
 	}
 }
 
@@ -1106,7 +1148,8 @@ md_pre_It(struct roff_node *n)
 
 	case ROFFT_HEAD:
 		bln = n->parent->parent;
-		if (bln->norm->Bl.comp == 0)
+		if (bln->norm->Bl.comp == 0 &&
+		    bln->norm->Bl.type != LIST_column)
 			outflags |= MD_sp;
 		outflags |= MD_nl;
 
@@ -1132,9 +1175,14 @@ md_pre_It(struct roff_node *n)
 			break;
 		case LIST_enum:
 			md_preword();
-			printf("%d.\t", ++bln->norm->Bl.count);
+			if (bln->norm->Bl.count < 99)
+				bln->norm->Bl.count++;
+			printf("%d.\t", bln->norm->Bl.count);
 			escflags &= ~ESC_FON;
 			break;
+		case LIST_column:
+			outflags |= MD_br;
+			return 0;
 		default:
 			return 0;
 		}
@@ -1253,7 +1301,7 @@ md_pre_Lk(struct roff_node *n)
 		md_rawword("<");
 
 	for (s = link->string; *s != '\0'; s++) {
-		if (strchr("%)<>", *s) != NULL) {
+		if (strchr("%()<>", *s) != NULL) {
 			printf("%%%2.2hhX", *s);
 			outcount += 3;
 		} else {
@@ -1350,6 +1398,10 @@ static int
 md_pre_Sh(struct roff_node *n)
 {
 	switch (n->type) {
+	case ROFFT_BLOCK:
+		if (n->sec == SEC_AUTHORS)
+			outflags &= ~(MD_An_split | MD_An_nosplit);
+		break;
 	case ROFFT_HEAD:
 		outflags |= MD_sp;
 		md_rawword(n->tok == MDOC_Sh ? "#" : "##");

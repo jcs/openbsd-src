@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.399 2017/02/15 20:00:16 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.405 2017/03/08 20:54:30 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -234,18 +234,18 @@ get_ifa(char *cp, int n)
 void
 routehandler(struct interface_info *ifi)
 {
-	struct client_state *client = ifi->client;
 	char ntoabuf[INET_ADDRSTRLEN];
 	struct in_addr a, b;
-	ssize_t n;
-	int linkstat, rslt;
+	struct sockaddr *sa;
+	struct ifa_msghdr *ifam;
+	struct client_state *client = ifi->client;
 	struct ether_addr hw;
 	struct rt_msghdr *rtm;
 	struct if_msghdr *ifm;
-	struct ifa_msghdr *ifam;
 	struct if_announcemsghdr *ifan;
-	struct sockaddr *sa;
 	char *errmsg, *rtmmsg;
+	ssize_t n;
+	int linkstat, rslt;
 
 	rtmmsg = calloc(1, 2048);
 	if (rtmmsg == NULL)
@@ -261,9 +261,6 @@ routehandler(struct interface_info *ifi)
 		goto done;
 
 	switch (rtm->rtm_type) {
-	case RTM_DESYNC:
-		log_warnx("route socket buffer overflow");
-		break;
 	case RTM_NEWADDR:
 		ifam = (struct ifa_msghdr *)rtm;
 		if (ifam->ifam_index != ifi->index)
@@ -352,6 +349,9 @@ routehandler(struct interface_info *ifi)
 			rslt = asprintf(&errmsg, "%s deleted from %s",
 			    inet_ntoa(a), ifi->name);
 		goto die;
+	case RTM_DESYNC:
+		log_warnx("route socket buffer overflow");
+		break;
 	case RTM_IFINFO:
 		ifm = (struct if_msghdr *)rtm;
 		if (ifm->ifm_index != ifi->index)
@@ -378,7 +378,7 @@ routehandler(struct interface_info *ifi)
 			log_debug("link state %s -> %s",
 			    ifi->linkstat ? "up" : "down",
 			    linkstat ? "up" : "down");
-#endif
+#endif	/* DEBUG */
 			ifi->linkstat = linkstat;
 			if (ifi->linkstat) {
 				if (client->state == S_PREBOOT) {
@@ -938,7 +938,7 @@ dhcpack(struct interface_info *ifi, struct in_addr client_addr,
 	    client->state != S_REBINDING) {
 #ifdef DEBUG
 		log_debug("Unexpected %s. State #%d", info, client->state);
-#endif
+#endif	/* DEBUG */
 		return;
 	}
 
@@ -969,7 +969,8 @@ bind_lease(struct interface_info *ifi)
 {
 	struct client_state *client = ifi->client;
 	struct in_addr gateway, mask;
-	struct option_data *options, *opt;
+	struct option_data *opt;
+	struct option_data *options;
 	struct client_lease *lease, *pl;
 	time_t cur_time;
 	int seen;
@@ -1099,10 +1100,10 @@ newlease:
 	if (!client->active->is_static && !seen)
 		TAILQ_INSERT_HEAD(&client->leases, client->active,  next);
 
-	client->state = S_BOUND;
-
 	/* Write out new leases file. */
 	rewrite_client_leases(ifi);
+
+	client->state = S_BOUND;
 
 	/* Set timeout to start the renewal process. */
 	set_timeout(client->active->renewal, state_bound, ifi);
@@ -1150,7 +1151,7 @@ dhcpoffer(struct interface_info *ifi, struct in_addr client_addr,
 	if (client->state != S_SELECTING) {
 #ifdef DEBUG
 		log_debug("Unexpected %s. State #%d.", info, client->state);
-#endif
+#endif	/* DEBUG */
 		return;
 	}
 
@@ -1162,7 +1163,7 @@ dhcpoffer(struct interface_info *ifi, struct in_addr client_addr,
 		    sizeof(in_addr_t))) {
 #ifdef DEBUG
 			log_debug("Duplicate %s.", info);
-#endif
+#endif	/* DEBUG */
 			return;
 		}
 	}
@@ -1375,14 +1376,14 @@ dhcpnak(struct interface_info *ifi, struct in_addr client_addr,
 	    client->state != S_REBINDING) {
 #ifdef DEBUG
 		log_debug("Unexpected %s. State #%d", info, client->state);
-#endif
+#endif	/* DEBUG */
 		return;
 	}
 
 	if (!client->active) {
 #ifdef DEBUG
 		log_debug("Unexpected %s. No active lease.", info);
-#endif
+#endif	/* DEBUG */
 		return;
 	}
 
@@ -2314,101 +2315,6 @@ get_ifname(struct interface_info *ifi, char *arg)
 		fatalx("Interface name too long");
 }
 
-/*
- * Update resolv.conf.
- */
-char *
-resolv_conf_contents(struct interface_info *ifi,
-    struct option_data *domainname, struct option_data *nameservers,
-    struct option_data *domainsearch)
-{
-	char *dn, *ns, *nss[MAXNS], *contents, *courtesy, *p, *buf;
-	size_t len;
-	int i, rslt, sz;
-
-	memset(nss, 0, sizeof(nss));
-
-	if (domainsearch->len) {
-		buf = calloc(1, DHCP_DOMAIN_SEARCH_LEN);
-		if (buf == NULL)
-			fatalx("No memory to decode domain search");
-		sz = pretty_print_domain_search(buf, DHCP_DOMAIN_SEARCH_LEN,
-		    domainsearch->data, domainsearch->len);
-		if (sz == -1)
-			dn = strdup("");
-		else {
-			rslt = asprintf(&dn, "search %s\n", buf);
-			if (rslt == -1)
-				dn = NULL;
-		}
-		free(buf);
-	} else if (domainname->len) {
-		rslt = asprintf(&dn, "search %s\n",
-		    pretty_print_option(DHO_DOMAIN_NAME, domainname, 0));
-		if (rslt == -1)
-			dn = NULL;
-	} else
-		dn = strdup("");
-	if (dn == NULL)
-		fatalx("no memory for domainname");
-
-	if (nameservers->len) {
-		ns = pretty_print_option(DHO_DOMAIN_NAME_SERVERS, nameservers,
-		    0);
-		for (i = 0; i < MAXNS; i++) {
-			p = strsep(&ns, " ");
-			if (p == NULL)
-				break;
-			if (*p == '\0')
-				continue;
-			rslt = asprintf(&nss[i], "nameserver %s\n", p);
-			if (rslt == -1)
-				fatalx("no memory for nameserver");
-		}
-	}
-
-	len = strlen(dn);
-	for (i = 0; i < MAXNS; i++)
-		if (nss[i])
-			len += strlen(nss[i]);
-
-	if (len > 0 && config->resolv_tail)
-		len += strlen(config->resolv_tail);
-
-	if (len == 0) {
-		free(dn);
-		return (NULL);
-	}
-
-	rslt = asprintf(&courtesy, "# Generated by %s dhclient\n", ifi->name);
-	if (rslt == -1)
-		fatalx("no memory for courtesy line");
-	len += strlen(courtesy);
-
-	len++; /* Need room for terminating NUL. */
-	contents = calloc(1, len);
-	if (contents == NULL)
-		fatalx("no memory for resolv.conf contents");
-
-	strlcat(contents, courtesy, len);
-	free(courtesy);
-
-	strlcat(contents, dn, len);
-	free(dn);
-
-	for (i = 0; i < MAXNS; i++) {
-		if (nss[i]) {
-			strlcat(contents, nss[i], len);
-			free(nss[i]);
-		}
-	}
-
-	if (config->resolv_tail)
-		strlcat(contents, config->resolv_tail, len);
-
-	return (contents);
-}
-
 struct client_lease *
 apply_defaults(struct client_lease *lease)
 {
@@ -2638,19 +2544,6 @@ apply_ignore_list(char *ignore_list)
 }
 
 void
-write_resolv_conf(u_int8_t *contents, size_t sz)
-{
-	int rslt;
-
-	rslt = imsg_compose(unpriv_ibuf, IMSG_WRITE_RESOLV_CONF,
-	    0, 0, -1, contents, sz);
-	if (rslt == -1)
-		log_warn("write_resolv_conf: imsg_compose");
-
-	flush_unpriv_ibuf("write_resolv_conf");
-}
-
-void
 write_option_db(u_int8_t *contents, size_t sz)
 {
 	int rslt;
@@ -2661,28 +2554,6 @@ write_option_db(u_int8_t *contents, size_t sz)
 		log_warn("write_option_db: imsg_compose");
 
 	flush_unpriv_ibuf("write_option_db");
-}
-
-void
-priv_write_resolv_conf(struct interface_info *ifi, struct imsg *imsg)
-{
-	u_int8_t *contents;
-	size_t sz;
-
-	if (imsg->hdr.len < IMSG_HEADER_SIZE) {
-		log_warnx("short IMSG_WRITE_RESOLV_CONF");
-		return;
-	}
-
-	if (!resolv_conf_priority(ifi))
-		return;
-
-	contents = imsg->data;
-	sz = imsg->hdr.len - IMSG_HEADER_SIZE;
-
-	priv_write_file("/etc/resolv.conf",
-	    O_WRONLY | O_CREAT | O_TRUNC,
-	    S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH, contents, sz);
 }
 
 void
@@ -2730,6 +2601,199 @@ priv_write_file(char *path, int flags, mode_t mode,
 		log_warn("fchmod(fd, 0x%x) of '%s' failed", mode, path);
 
 	close(fd);
+}
+
+void
+set_lease_times(struct client_lease *lease)
+{
+	time_t cur_time, time_max;
+	u_int32_t uint32val;
+
+	time(&cur_time);
+
+	time_max = LLONG_MAX - cur_time;
+	if (time_max > UINT32_MAX)
+		time_max = UINT32_MAX;
+
+	/*
+	 * Take the server-provided times if available.  Otherwise
+	 * figure them out according to the spec.
+	 *
+	 * expiry  == time to discard lease.
+	 * renewal == time to renew lease from server that provided it.
+	 * rebind  == time to renew lease from any server.
+	 *
+	 * 0 <= renewal <= rebind <= expiry <= time_max
+	 * &&
+	 * expiry >= MIN(time_max, 60)
+	 */
+
+	lease->expiry = 43200;	/* Default to 12 hours */
+	if (lease->options[DHO_DHCP_LEASE_TIME].len == sizeof(uint32val)) {
+		memcpy(&uint32val, lease->options[DHO_DHCP_LEASE_TIME].data,
+		    sizeof(uint32val));
+		lease->expiry = ntohl(uint32val);
+		if (lease->expiry < 60)
+			lease->expiry = 60;
+	}
+	if (lease->expiry > time_max)
+		lease->expiry = time_max;
+
+	lease->renewal = lease->expiry / 2;
+	if (lease->options[DHO_DHCP_RENEWAL_TIME].len == sizeof(uint32val)) {
+		memcpy(&uint32val, lease->options[DHO_DHCP_RENEWAL_TIME].data,
+		    sizeof(uint32val));
+		lease->renewal = ntohl(uint32val);
+		if (lease->renewal > lease->expiry)
+			lease->renewal = lease->expiry;
+	}
+
+	lease->rebind = (lease->expiry * 7) / 8;
+	if (lease->options[DHO_DHCP_REBINDING_TIME].len == sizeof(uint32val)) {
+		memcpy(&uint32val,
+		    lease->options[DHO_DHCP_REBINDING_TIME].data,
+		    sizeof(uint32val));
+		lease->rebind = ntohl(uint32val);
+		if (lease->rebind > lease->expiry)
+			lease->rebind = lease->expiry;
+	}
+	if (lease->rebind < lease->renewal)
+		lease->rebind = lease->renewal;
+
+	/* Convert lease lengths to times. */
+	lease->expiry += cur_time;
+	lease->renewal += cur_time;
+	lease->rebind += cur_time;
+}
+
+/*
+ * Update resolv.conf.
+ */
+char *
+resolv_conf_contents(struct interface_info *ifi,
+    struct option_data *domainname, struct option_data *nameservers,
+    struct option_data *domainsearch)
+{
+	char *dn, *ns, *nss[MAXNS], *contents, *courtesy, *p, *buf;
+	size_t len;
+	int i, rslt, sz;
+
+	memset(nss, 0, sizeof(nss));
+
+	if (domainsearch->len) {
+		buf = calloc(1, DHCP_DOMAIN_SEARCH_LEN);
+		if (buf == NULL)
+			fatalx("No memory to decode domain search");
+		sz = pretty_print_domain_search(buf, DHCP_DOMAIN_SEARCH_LEN,
+		    domainsearch->data, domainsearch->len);
+		if (sz == -1)
+			dn = strdup("");
+		else {
+			rslt = asprintf(&dn, "search %s\n", buf);
+			if (rslt == -1)
+				dn = NULL;
+		}
+		free(buf);
+	} else if (domainname->len) {
+		rslt = asprintf(&dn, "search %s\n",
+		    pretty_print_option(DHO_DOMAIN_NAME, domainname, 0));
+		if (rslt == -1)
+			dn = NULL;
+	} else
+		dn = strdup("");
+	if (dn == NULL)
+		fatalx("no memory for domainname");
+
+	if (nameservers->len) {
+		ns = pretty_print_option(DHO_DOMAIN_NAME_SERVERS, nameservers,
+		    0);
+		for (i = 0; i < MAXNS; i++) {
+			p = strsep(&ns, " ");
+			if (p == NULL)
+				break;
+			if (*p == '\0')
+				continue;
+			rslt = asprintf(&nss[i], "nameserver %s\n", p);
+			if (rslt == -1)
+				fatalx("no memory for nameserver");
+		}
+	}
+
+	len = strlen(dn);
+	for (i = 0; i < MAXNS; i++)
+		if (nss[i])
+			len += strlen(nss[i]);
+
+	if (len > 0 && config->resolv_tail)
+		len += strlen(config->resolv_tail);
+
+	if (len == 0) {
+		free(dn);
+		return (NULL);
+	}
+
+	rslt = asprintf(&courtesy, "# Generated by %s dhclient\n", ifi->name);
+	if (rslt == -1)
+		fatalx("no memory for courtesy line");
+	len += strlen(courtesy);
+
+	len++; /* Need room for terminating NUL. */
+	contents = calloc(1, len);
+	if (contents == NULL)
+		fatalx("no memory for resolv.conf contents");
+
+	strlcat(contents, courtesy, len);
+	free(courtesy);
+
+	strlcat(contents, dn, len);
+	free(dn);
+
+	for (i = 0; i < MAXNS; i++) {
+		if (nss[i]) {
+			strlcat(contents, nss[i], len);
+			free(nss[i]);
+		}
+	}
+
+	if (config->resolv_tail)
+		strlcat(contents, config->resolv_tail, len);
+
+	return (contents);
+}
+
+void
+write_resolv_conf(u_int8_t *contents, size_t sz)
+{
+	int rslt;
+
+	rslt = imsg_compose(unpriv_ibuf, IMSG_WRITE_RESOLV_CONF,
+	    0, 0, -1, contents, sz);
+	if (rslt == -1)
+		log_warn("write_resolv_conf: imsg_compose");
+
+	flush_unpriv_ibuf("write_resolv_conf");
+}
+
+void
+priv_write_resolv_conf(struct interface_info *ifi, struct imsg *imsg)
+{
+	u_int8_t *contents;
+	size_t sz;
+
+	if (imsg->hdr.len < IMSG_HEADER_SIZE) {
+		log_warnx("short IMSG_WRITE_RESOLV_CONF");
+		return;
+	}
+
+	if (!resolv_conf_priority(ifi))
+		return;
+
+	contents = imsg->data;
+	sz = imsg->hdr.len - IMSG_HEADER_SIZE;
+
+	priv_write_file("/etc/resolv.conf",
+	    O_WRONLY | O_CREAT | O_TRUNC,
+	    S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH, contents, sz);
 }
 
 /*
@@ -2882,67 +2946,4 @@ compare_lease(struct client_lease *active, struct client_lease *new)
 	}
 
 	return (0);
-}
-
-void
-set_lease_times(struct client_lease *lease)
-{
-	time_t cur_time, time_max;
-	u_int32_t uint32val;
-
-	time(&cur_time);
-
-	time_max = LLONG_MAX - cur_time;
-	if (time_max > UINT32_MAX)
-		time_max = UINT32_MAX;
-
-	/*
-	 * Take the server-provided times if available.  Otherwise
-	 * figure them out according to the spec.
-	 *
-	 * expiry  == time to discard lease.
-	 * renewal == time to renew lease from server that provided it.
-	 * rebind  == time to renew lease from any server.
-	 *
-	 * 0 <= renewal <= rebind <= expiry <= time_max
-	 * &&
-	 * expiry >= MIN(time_max, 60)
-	 */
-
-	lease->expiry = 43200;	/* Default to 12 hours */
-	if (lease->options[DHO_DHCP_LEASE_TIME].len == sizeof(uint32val)) {
-		memcpy(&uint32val, lease->options[DHO_DHCP_LEASE_TIME].data,
-		    sizeof(uint32val));
-		lease->expiry = ntohl(uint32val);
-		if (lease->expiry < 60)
-			lease->expiry = 60;
-	}
-	if (lease->expiry > time_max)
-		lease->expiry = time_max;
-
-	lease->renewal = lease->expiry / 2;
-	if (lease->options[DHO_DHCP_RENEWAL_TIME].len == sizeof(uint32val)) {
-		memcpy(&uint32val, lease->options[DHO_DHCP_RENEWAL_TIME].data,
-		    sizeof(uint32val));
-		lease->renewal = ntohl(uint32val);
-		if (lease->renewal > lease->expiry)
-			lease->renewal = lease->expiry;
-	}
-
-	lease->rebind = (lease->expiry * 7) / 8;
-	if (lease->options[DHO_DHCP_REBINDING_TIME].len == sizeof(uint32val)) {
-		memcpy(&uint32val,
-		    lease->options[DHO_DHCP_REBINDING_TIME].data,
-		    sizeof(uint32val));
-		lease->rebind = ntohl(uint32val);
-		if (lease->rebind > lease->expiry)
-			lease->rebind = lease->expiry;
-	}
-	if (lease->rebind < lease->renewal)
-		lease->rebind = lease->renewal;
-
-	/* Convert lease lengths to times. */
-	lease->expiry += cur_time;
-	lease->renewal += cur_time;
-	lease->rebind += cur_time;
 }

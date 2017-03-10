@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.729 2017/02/27 13:07:57 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.732 2017/03/09 17:06:35 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1508,6 +1508,9 @@ void printflike(3, 4) format_add(struct format_tree *, const char *,
 		     const char *, ...);
 char		*format_expand_time(struct format_tree *, const char *, time_t);
 char		*format_expand(struct format_tree *, const char *);
+char		*format_single(struct cmdq_item *, const char *,
+		     struct client *, struct session *, struct winlink *,
+		     struct window_pane *);
 void		 format_defaults(struct format_tree *, struct client *,
 		     struct session *, struct winlink *, struct window_pane *);
 void		 format_defaults_window(struct format_tree *, struct window *);
@@ -1610,6 +1613,7 @@ void	environ_unset(struct environ *, const char *);
 void	environ_update(struct options *, struct environ *, struct environ *);
 void	environ_push(struct environ *);
 void	environ_log(struct environ *, const char *);
+struct environ *environ_for_session(struct session *);
 
 /* tty.c */
 void	tty_create_log(void);
@@ -1815,6 +1819,8 @@ void	 server_update_socket(void);
 void	 server_add_accept(int);
 
 /* server-client.c */
+void	 server_client_set_identify(struct client *);
+void	 server_client_clear_identify(struct client *, struct window_pane *);
 void	 server_client_set_key_table(struct client *, const char *);
 const char *server_client_get_key_table(struct client *);
 int	 server_client_is_default_key_table(struct client *);
@@ -1835,7 +1841,6 @@ char	*server_client_get_path(struct client *, const char *);
 const char *server_client_get_cwd(struct client *);
 
 /* server-fn.c */
-void	 server_fill_environ(struct session *, struct environ *);
 void	 server_redraw_client(struct client *);
 void	 server_status_client(struct client *);
 void	 server_redraw_session(struct session *);
@@ -1855,8 +1860,6 @@ void	 server_unlink_window(struct session *, struct winlink *);
 void	 server_destroy_pane(struct window_pane *, int);
 void	 server_destroy_session(struct session *);
 void	 server_check_unattached(void);
-void	 server_set_identify(struct client *);
-void	 server_clear_identify(struct client *, struct window_pane *);
 int	 server_set_stdin_callback(struct client *, void (*)(struct client *,
 	     int, void *), void *, char **);
 void	 server_unzoom_window(struct window *);

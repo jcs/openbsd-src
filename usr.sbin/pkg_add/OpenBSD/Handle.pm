@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: Handle.pm,v 1.39 2014/02/08 16:11:02 espie Exp $
+# $OpenBSD: Handle.pm,v 1.42 2017/03/07 16:21:28 espie Exp $
 #
 # Copyright (c) 2007-2009 Marc Espie <espie@openbsd.org>
 #
@@ -134,6 +134,12 @@ sub has_error
 	return $self->{error};
 }
 
+sub has_reported_error
+{
+	my $self = shift;
+	return $self->{error_reported};
+}
+
 sub error_message
 {
 	my $self = shift;
@@ -235,10 +241,12 @@ sub get_plist
 	}
 	my $plist = $location->plist;
 	unless (defined $plist) {
-		$state->say("Can't find CONTENTS from #1", $location->url);
+		$state->say("Can't find CONTENTS from #1", $location->url)
+		    unless $location->{error_reported};
 		$location->close_with_client_error;
 		$location->wipe_info;
 		$handle->set_error(BAD_PACKAGE);
+		$handle->{error_reported} = 1;
 		return;
 	}
 	delete $location->{update_info};
@@ -282,6 +290,7 @@ sub get_location
 			$state);
 		if (!$handle->{tweaked}) {
 			$state->say("Can't find #1", $name);
+			$handle->{error_reported} = 1;
 			eval {
 				my $r = [$name];
 				$state->quirks->filter_obsolete($r, $state);

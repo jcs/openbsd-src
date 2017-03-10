@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1015 2017/02/09 15:19:32 jca Exp $ */
+/*	$OpenBSD: pf.c,v 1.1018 2017/03/09 05:47:28 claudio Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -1199,7 +1199,7 @@ pf_purge_thread(void *v)
 int32_t
 pf_state_expires(const struct pf_state *state)
 {
-	int32_t		timeout;
+	u_int32_t	timeout;
 	u_int32_t	start;
 	u_int32_t	end;
 	u_int32_t	states;
@@ -1228,7 +1228,7 @@ pf_state_expires(const struct pf_state *state)
 		if (states >= end)
 			return (0);
 
-		timeout = timeout * (end - states) / (end - start);
+		timeout = (u_int64_t)timeout * (end - states) / (end - start);
 	}
 
 	return (state->expire + timeout);
@@ -3143,11 +3143,13 @@ pf_socket_lookup(struct pf_pdesc *pd)
 	case IPPROTO_TCP:
 		sport = pd->hdr.tcp.th_sport;
 		dport = pd->hdr.tcp.th_dport;
+		NET_ASSERT_LOCKED();
 		tb = &tcbtable;
 		break;
 	case IPPROTO_UDP:
 		sport = pd->hdr.udp.uh_sport;
 		dport = pd->hdr.udp.uh_dport;
+		NET_ASSERT_LOCKED();
 		tb = &udbtable;
 		break;
 	default:
@@ -6780,7 +6782,7 @@ done:
 		s->key[PF_SK_STACK]->inp = pd.m->m_pkthdr.pf.inp;
 	}
 
-	if (s) {
+	if (s && (pd.m->m_pkthdr.ph_flowid & M_FLOWID_VALID) == 0) {
 		pd.m->m_pkthdr.ph_flowid = M_FLOWID_VALID |
 		    (M_FLOWID_MASK & bemtoh64(&s->id));
 	}

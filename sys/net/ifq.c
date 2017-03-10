@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifq.c,v 1.6 2017/01/24 03:57:35 dlg Exp $ */
+/*	$OpenBSD: ifq.c,v 1.9 2017/03/07 15:42:02 mikeb Exp $ */
 
 /*
  * Copyright (c) 2015 David Gwynne <dlg@openbsd.org>
@@ -29,7 +29,7 @@
  * priq glue
  */
 unsigned int	 priq_idx(unsigned int, const struct mbuf *);
-int		 priq_enq(struct ifqueue *, struct mbuf *);
+struct mbuf	*priq_enq(struct ifqueue *, struct mbuf *);
 struct mbuf	*priq_deq_begin(struct ifqueue *, void **);
 void		 priq_deq_commit(struct ifqueue *, struct mbuf *, void *);
 void		 priq_purge(struct ifqueue *, struct mbuf_list *);
@@ -53,13 +53,8 @@ const struct ifq_ops * const ifq_priq_ops = &priq_ops;
  * priq internal structures
  */
 
-struct priq_list {
-	struct mbuf		*head;
-	struct mbuf		*tail;
-};
-
 struct priq {
-	struct priq_list	 pq_lists[IFQ_NQUEUES];
+	struct mbuf_list	 pq_lists[IFQ_NQUEUES];
 };
 
 /*
@@ -225,7 +220,8 @@ ifq_attach(struct ifqueue *ifq, const struct ifq_ops *newops, void *opsarg)
 	ifq->ifq_q = newq;
 
 	while ((m = ml_dequeue(&ml)) != NULL) {
-		if (ifq->ifq_ops->ifqop_enq(ifq, m) != 0) {
+		m = ifq->ifq_ops->ifqop_enq(ifq, m);
+		if (m != NULL) {
 			ifq->ifq_qdrops++;
 			ml_enqueue(&free_ml, m);
 		} else
@@ -252,36 +248,29 @@ ifq_destroy(struct ifqueue *ifq)
 }
 
 int
-ifq_enqueue_try(struct ifqueue *ifq, struct mbuf *m)
+ifq_enqueue(struct ifqueue *ifq, struct mbuf *m)
 {
-	int rv;
+	struct mbuf *dm;
 
 	mtx_enter(&ifq->ifq_mtx);
-	rv = ifq->ifq_ops->ifqop_enq(ifq, m);
-	if (rv == 0) {
-		ifq->ifq_len++;
-
+	dm = ifq->ifq_ops->ifqop_enq(ifq, m);
+	if (dm != m) {
 		ifq->ifq_packets++;
 		ifq->ifq_bytes += m->m_pkthdr.len;
 		if (ISSET(m->m_flags, M_MCAST))
 			ifq->ifq_mcasts++;
-	} else
+	}
+
+	if (dm == NULL)
+		ifq->ifq_len++;
+	else
 		ifq->ifq_qdrops++;
 	mtx_leave(&ifq->ifq_mtx);
 
-	return (rv);
-}
+	if (dm != NULL)
+		m_freem(dm);
 
-int
-ifq_enqueue(struct ifqueue *ifq, struct mbuf *m)
-{
-	int err;
-
-	err = ifq_enqueue_try(ifq, m);
-	if (err != 0)
-		m_freem(m);
-
-	return (err);
+	return (dm == m ? ENOBUFS : 0);
 }
 
 struct mbuf *
@@ -394,7 +383,13 @@ priq_idx(unsigned int nqueues, const struct mbuf *m)
 void *
 priq_alloc(unsigned int idx, void *null)
 {
-	return (malloc(sizeof(struct priq), M_DEVBUF, M_WAITOK | M_ZERO));
+	struct priq *pq;
+	int i;
+
+	pq = malloc(sizeof(struct priq), M_DEVBUF, M_WAITOK);
+	for (i = 0; i < IFQ_NQUEUES; i++)
+		ml_init(&pq->pq_lists[i]);
+	return (pq);
 }
 
 void
@@ -403,40 +398,51 @@ priq_free(unsigned int idx, void *pq)
 	free(pq, M_DEVBUF, sizeof(struct priq));
 }
 
-int
+struct mbuf *
 priq_enq(struct ifqueue *ifq, struct mbuf *m)
 {
 	struct priq *pq;
-	struct priq_list *pl;
-
-	if (ifq_len(ifq) >= ifq->ifq_maxlen)
-		return (ENOBUFS);
+	struct mbuf_list *pl;
+	struct mbuf *n = NULL;
+	unsigned int prio;
 
 	pq = ifq->ifq_q;
 	KASSERT(m->m_pkthdr.pf.prio <= IFQ_MAXPRIO);
+
+	/* Find a lower priority queue to drop from */
+	if (ifq_len(ifq) >= ifq->ifq_maxlen) {
+		for (prio = 0; prio < m->m_pkthdr.pf.prio; prio++) {
+			pl = &pq->pq_lists[prio];
+			if (ml_len(pl) > 0) {
+				n = ml_dequeue(pl);
+				goto enqueue;
+			}
+		}
+		/*
+		 * There's no lower priority queue that we can
+		 * drop from so don't enqueue this one.
+		 */
+		return (m);
+	}
+
+ enqueue:
 	pl = &pq->pq_lists[m->m_pkthdr.pf.prio];
+	ml_enqueue(pl, m);
 
-	m->m_nextpkt = NULL;
-	if (pl->tail == NULL)
-		pl->head = m;
-	else
-		pl->tail->m_nextpkt = m;
-	pl->tail = m;
-
-	return (0);
+	return (n);
 }
 
 struct mbuf *
 priq_deq_begin(struct ifqueue *ifq, void **cookiep)
 {
 	struct priq *pq = ifq->ifq_q;
-	struct priq_list *pl;
+	struct mbuf_list *pl;
 	unsigned int prio = nitems(pq->pq_lists);
 	struct mbuf *m;
 
 	do {
 		pl = &pq->pq_lists[--prio];
-		m = pl->head;
+		m = MBUF_LIST_FIRST(pl);
 		if (m != NULL) {
 			*cookiep = pl;
 			return (m);
@@ -449,33 +455,22 @@ priq_deq_begin(struct ifqueue *ifq, void **cookiep)
 void
 priq_deq_commit(struct ifqueue *ifq, struct mbuf *m, void *cookie)
 {
-	struct priq_list *pl = cookie;
+	struct mbuf_list *pl = cookie;
 
-	KASSERT(pl->head == m);
+	KASSERT(MBUF_LIST_FIRST(pl) == m);
 
-	pl->head = m->m_nextpkt;
-	m->m_nextpkt = NULL;
-
-	if (pl->head == NULL)
-		pl->tail = NULL;
+	ml_dequeue(pl);
 }
 
 void
 priq_purge(struct ifqueue *ifq, struct mbuf_list *ml)
 {
 	struct priq *pq = ifq->ifq_q;
-	struct priq_list *pl;
+	struct mbuf_list *pl;
 	unsigned int prio = nitems(pq->pq_lists);
-	struct mbuf *m, *n;
 
 	do {
 		pl = &pq->pq_lists[--prio];
-
-		for (m = pl->head; m != NULL; m = n) {
-			n = m->m_nextpkt;
-			ml_enqueue(ml, m);
-		}
-
-		pl->head = pl->tail = NULL;
+		ml_enlist(ml, pl);
 	} while (prio > 0);
 }
