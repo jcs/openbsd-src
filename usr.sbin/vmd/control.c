@@ -392,15 +392,6 @@ control_dispatch_imsg(int fd, short event, void *arg)
 				return;
 			}
 			break;
-		case IMSG_VMDOP_GET_INFO_VM_REQUEST:
-			if (IMSG_DATA_SIZE(&imsg) != 0)
-				goto fail;
-			if (proc_compose_imsg(ps, PROC_PARENT, -1,
-			    imsg.hdr.type, fd, -1, NULL, 0) == -1) {
-				control_close(fd, cs);
-				return;
-			}
-			break;
 		case IMSG_VMDOP_LOAD:
 		case IMSG_VMDOP_RELOAD:
 		case IMSG_CTL_RESET:
