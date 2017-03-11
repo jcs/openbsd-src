@@ -1633,6 +1633,11 @@ acpi_dotask(struct acpi_softc *sc)
 	struct acpi_taskq *wq;
 	int s;
 
+	/* allow something more urgent to run before us */
+	rw_exit_write(&sc->sc_lck);
+	tsleep(sc, PWAIT, "acpi0", 1);
+	rw_enter_write(&sc->sc_lck);
+
 	s = spltty();
 	if (SIMPLEQ_EMPTY(&acpi_taskq)) {
 		splx(s);
