@@ -2584,6 +2584,8 @@ acpi_sleep_state(struct acpi_softc *sc, int sleepmode)
 		return (EOPNOTSUPP);
 	}
 
+	printf("%s: entering sleep state %d\n", DEVNAME(sc), state);
+
 	/* 1st suspend AML step: _TTS(tostate) */
 	if (aml_node_setval(sc, sc->sc_tts, state) != 0)
 		goto fail_tts;
@@ -2674,9 +2676,12 @@ acpi_sleep_state(struct acpi_softc *sc, int sleepmode)
 
 	/* Sleep */
 	sc->sc_state = state;
+	printf("%s: fully sleeping CPU for state %d\n", DEVNAME(sc), state);
 	error = acpi_sleep_cpu(sc, state);
 	sc->sc_state = ACPI_STATE_S0;
 	/* Resume */
+
+	printf("%s: resuming to state %d\n", DEVNAME(sc), sc->sc_state);
 
 #ifdef HIBERNATE
 	if (sleepmode == ACPI_SLEEP_HIBERNATE) {
@@ -2742,8 +2747,13 @@ fail_alloc:
 	acpi_indicator(sc, ACPI_SST_WORKING);
 
 	/* If we woke up but all the lids are closed, go back to sleep */
-	if (acpibtn_numopenlids() == 0 && lid_action != 0)
+	if (acpibtn_numopenlids() == 0 && lid_action != 0) {
+		printf("%s: resumed but lid is closed, sleeping again\n",
+		    DEVNAME(sc));
 		acpi_addtask(sc, acpi_sleep_task, sc, sleepmode);
+	} else
+		printf("%s: fully resumed to state %d\n", DEVNAME(sc),
+		    sc->sc_state);
 
 fail_tts:
 	return (error);
