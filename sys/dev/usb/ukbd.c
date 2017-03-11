@@ -315,12 +315,6 @@ ukbd_attach(struct device *parent, struct device *self, void *aux)
 		ukbd_enable(sc, 1);
 	}
 
-	/* Flash the leds; no real purpose, just shows we're alive. */
-	ukbd_set_leds(sc, WSKBD_LED_SCROLL | WSKBD_LED_NUM |
-		          WSKBD_LED_CAPS | WSKBD_LED_COMPOSE);
-	usbd_delay_ms(sc->sc_hdev.sc_udev, 400);
-	ukbd_set_leds(sc, 0);
-
 	hidkbd_attach_wskbd(kbd, layout, &ukbd_accessops);
 }
 
