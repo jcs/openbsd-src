@@ -1,4 +1,4 @@
-/* $OpenBSD: t1_enc.c,v 1.99 2017/03/07 13:37:03 jsing Exp $ */
+/* $OpenBSD: t1_enc.c,v 1.102 2017/03/10 16:03:27 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -144,6 +144,11 @@
 #include <openssl/hmac.h>
 #include <openssl/md5.h>
 
+int tls1_PRF(SSL *s, const void *seed1, int seed1_len, const void *seed2,
+    int seed2_len, const void *seed3, int seed3_len, const void *seed4,
+    int seed4_len, const void *seed5, int seed5_len, const unsigned char *sec,
+    int slen, unsigned char *out1, unsigned char *out2, int olen);
+
 void
 tls1_cleanup_key_block(SSL *s)
 {
@@ -160,7 +165,6 @@ int
 tls1_init_finished_mac(SSL *s)
 {
 	BIO_free(S3I(s)->handshake_buffer);
-	tls1_free_digest_list(s);
 
 	S3I(s)->handshake_buffer = BIO_new(BIO_s_mem());
 	if (S3I(s)->handshake_buffer == NULL)
@@ -171,29 +175,9 @@ tls1_init_finished_mac(SSL *s)
 	return (1);
 }
 
-void
-tls1_free_digest_list(SSL *s)
-{
-	int i;
-
-	if (s == NULL)
-		return;
-	if (S3I(s)->handshake_dgst == NULL)
-		return;
-
-	for (i = 0; i < SSL_MAX_DIGEST; i++) {
-		if (S3I(s)->handshake_dgst[i])
-			EVP_MD_CTX_destroy(S3I(s)->handshake_dgst[i]);
-	}
-	free(S3I(s)->handshake_dgst);
-	S3I(s)->handshake_dgst = NULL;
-}
-
 int
 tls1_finish_mac(SSL *s, const unsigned char *buf, int len)
 {
-	int i;
-
 	if (len < 0)
 		return 0;
 
@@ -206,58 +190,19 @@ tls1_finish_mac(SSL *s, const unsigned char *buf, int len)
 		return 1;
 	}
 
-	for (i = 0; i < SSL_MAX_DIGEST; i++) {
-		if (S3I(s)->handshake_dgst[i] == NULL)
-			continue;
-		if (!EVP_DigestUpdate(S3I(s)->handshake_dgst[i], buf, len)) {
-			SSLerror(s, ERR_R_EVP_LIB);
-			return 0;
-		}
-	}
-
 	return 1;
 }
 
 int
 tls1_digest_cached_records(SSL *s)
 {
-	const EVP_MD *md;
-	long hdatalen, mask;
+	long hdatalen;
 	void *hdata;
-	int i;
 
-	tls1_free_digest_list(s);
-
-	S3I(s)->handshake_dgst = calloc(SSL_MAX_DIGEST, sizeof(EVP_MD_CTX *));
-	if (S3I(s)->handshake_dgst == NULL) {
-		SSLerror(s, ERR_R_MALLOC_FAILURE);
-		goto err;
-	}
 	hdatalen = BIO_get_mem_data(S3I(s)->handshake_buffer, &hdata);
 	if (hdatalen <= 0) {
 		SSLerror(s, SSL_R_BAD_HANDSHAKE_LENGTH);
 		goto err;
-	}
-
-	/* Loop through bits of the algorithm2 field and create MD contexts. */
-	for (i = 0; ssl_get_handshake_digest(i, &mask, &md); i++) {
-		if ((mask & ssl_get_algorithm2(s)) == 0 || md == NULL)
-			continue;
-
-		S3I(s)->handshake_dgst[i] = EVP_MD_CTX_create();
-		if (S3I(s)->handshake_dgst[i] == NULL) {
-			SSLerror(s, ERR_R_MALLOC_FAILURE);
-			goto err;
-		}
-		if (!EVP_DigestInit_ex(S3I(s)->handshake_dgst[i], md, NULL)) {
-			SSLerror(s, ERR_R_EVP_LIB);
-			goto err;
-		}
-		if (!EVP_DigestUpdate(S3I(s)->handshake_dgst[i], hdata,
-		    hdatalen)) {
-			SSLerror(s, ERR_R_EVP_LIB);
-			goto err;
-		}
 	}
 
 	if (!(s->s3->flags & TLS1_FLAGS_KEEP_HANDSHAKE)) {
@@ -268,7 +213,6 @@ tls1_digest_cached_records(SSL *s)
 	return 1;
 
  err:
-	tls1_free_digest_list(s);
 	return 0;
 }
 
@@ -283,32 +227,32 @@ tls1_record_sequence_increment(unsigned char *seq)
 	}
 }
 
-/* seed1 through seed5 are virtually concatenated */
+/*
+ * TLS P_hash() data expansion function - see RFC 5246, section 5.
+ */
 static int
 tls1_P_hash(const EVP_MD *md, const unsigned char *sec, int sec_len,
     const void *seed1, int seed1_len, const void *seed2, int seed2_len,
     const void *seed3, int seed3_len, const void *seed4, int seed4_len,
     const void *seed5, int seed5_len, unsigned char *out, int olen)
 {
-	int chunk;
-	size_t j;
-	EVP_MD_CTX ctx, ctx_tmp;
-	EVP_PKEY *mac_key;
 	unsigned char A1[EVP_MAX_MD_SIZE];
+	EVP_MD_CTX ctx;
+	EVP_PKEY *mac_key;
 	size_t A1_len;
 	int ret = 0;
+	int chunk;
+	size_t j;
 
 	chunk = EVP_MD_size(md);
 	OPENSSL_assert(chunk >= 0);
 
 	EVP_MD_CTX_init(&ctx);
-	EVP_MD_CTX_init(&ctx_tmp);
+
 	mac_key = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, sec, sec_len);
 	if (!mac_key)
 		goto err;
 	if (!EVP_DigestSignInit(&ctx, NULL, md, NULL, mac_key))
-		goto err;
-	if (!EVP_DigestSignInit(&ctx_tmp, NULL, md, NULL, mac_key))
 		goto err;
 	if (seed1 && !EVP_DigestSignUpdate(&ctx, seed1, seed1_len))
 		goto err;
@@ -324,14 +268,9 @@ tls1_P_hash(const EVP_MD *md, const unsigned char *sec, int sec_len,
 		goto err;
 
 	for (;;) {
-		/* Reinit mac contexts */
 		if (!EVP_DigestSignInit(&ctx, NULL, md, NULL, mac_key))
 			goto err;
-		if (!EVP_DigestSignInit(&ctx_tmp, NULL, md, NULL, mac_key))
-			goto err;
 		if (!EVP_DigestSignUpdate(&ctx, A1, A1_len))
-			goto err;
-		if (!EVP_DigestSignUpdate(&ctx_tmp, A1, A1_len))
 			goto err;
 		if (seed1 && !EVP_DigestSignUpdate(&ctx, seed1, seed1_len))
 			goto err;
@@ -349,29 +288,33 @@ tls1_P_hash(const EVP_MD *md, const unsigned char *sec, int sec_len,
 				goto err;
 			out += j;
 			olen -= j;
-			/* calc the next A1 value */
-			if (!EVP_DigestSignFinal(&ctx_tmp, A1, &A1_len))
-				goto err;
 		} else {
-			/* last one */
 			if (!EVP_DigestSignFinal(&ctx, A1, &A1_len))
 				goto err;
 			memcpy(out, A1, olen);
 			break;
 		}
+
+		if (!EVP_DigestSignInit(&ctx, NULL, md, NULL, mac_key))
+			goto err;
+		if (!EVP_DigestSignUpdate(&ctx, A1, A1_len))
+			goto err;
+		if (!EVP_DigestSignFinal(&ctx, A1, &A1_len))
+			goto err;
 	}
 	ret = 1;
 
-err:
+ err:
 	EVP_PKEY_free(mac_key);
 	EVP_MD_CTX_cleanup(&ctx);
-	EVP_MD_CTX_cleanup(&ctx_tmp);
+
 	explicit_bzero(A1, sizeof(A1));
+
 	return ret;
 }
 
 /* seed1 through seed5 are virtually concatenated */
-static int
+int
 tls1_PRF(SSL *s, const void *seed1, int seed1_len, const void *seed2,
     int seed2_len, const void *seed3, int seed3_len, const void *seed4,
     int seed4_len, const void *seed5, int seed5_len, const unsigned char *sec,
@@ -1084,38 +1027,6 @@ tls1_enc(SSL *s, int send)
 			rec->length -= pad;
 	}
 	return ret;
-}
-
-int
-tls1_cert_verify_mac(SSL *s, int md_nid, unsigned char *out)
-{
-	EVP_MD_CTX ctx, *d = NULL;
-	unsigned int ret;
-	int i;
-
-	if (S3I(s)->handshake_buffer)
-		if (!tls1_digest_cached_records(s))
-			return 0;
-
-	for (i = 0; i < SSL_MAX_DIGEST; i++) {
-		if (S3I(s)->handshake_dgst[i] &&
-		    EVP_MD_CTX_type(S3I(s)->handshake_dgst[i]) == md_nid) {
-			d = S3I(s)->handshake_dgst[i];
-			break;
-		}
-	}
-	if (d == NULL) {
-		SSLerror(s, SSL_R_NO_REQUIRED_DIGEST);
-		return 0;
-	}
-
-	EVP_MD_CTX_init(&ctx);
-	if (!EVP_MD_CTX_copy_ex(&ctx, d))
-		return 0;
-	EVP_DigestFinal_ex(&ctx, out, &ret);
-	EVP_MD_CTX_cleanup(&ctx);
-
-	return ((int)ret);
 }
 
 int

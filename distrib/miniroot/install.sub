@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.982 2017/03/06 22:10:14 rpe Exp $
+#	$OpenBSD: install.sub,v 1.987 2017/03/10 22:34:09 rpe Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -1543,6 +1543,11 @@ install_http() {
 	local _idx=/tmp/i/index.txt _sha=/tmp/i/SHA256 _sig=/tmp/i/SHA256.sig
 	local _url_base _install_url _mirror_url _mirror_srv _mirror_dir
 
+	# N.B.: Don't make INSTALL_MIRROR a local variable! It preserves the
+	# mirror information if install_http() is called multiple times with
+	# mirror and local servers. That ensures that the mirror server ends
+	# up in /etc/installurl file if one of the servers is not a mirror.
+
 	# N.B.: 'http_proxy' is an environment variable used by ftp(1).
 	# DON'T change the name or case!
 	ask "HTTP proxy URL? (e.g. 'http://proxy:8080', or 'none')" \
@@ -1613,7 +1618,7 @@ install_http() {
 	# server *will* remember the specific directory info.
 	# Format: _mirror_srv/_mirror_dir location_info
 	#         ^---- _mirror_url ----^
-	set -- $(sed "/^$HTTP_SERVER/x;\$!d;x" $HTTP_LIST 2>/dev/null)
+	set -- $(grep -i "^$HTTP_SERVER" $HTTP_LIST 2>/dev/null | sed '$!d')
 	_mirror_url=$1
 	_mirror_srv=${_mirror_url%%/*}
 	_mirror_dir=${_mirror_url#*$_mirror_srv}
@@ -1621,7 +1626,6 @@ install_http() {
 	resp=$_mirror_dir/$HTTP_SETDIR
 	# If there is no directory specified, don't use this entry!
 	[[ -z $_mirror_dir ]] && resp=
-	INSTALL_MIRROR=
 	if (($# > 1)); then
 		# It's a mirror, since it has location info.
 		resp=$_mirror_dir/$HTTP_SETDIR
@@ -1659,7 +1663,7 @@ install_http() {
 	else
 		echo "Unable to get a verified list of distribution sets."
 		# Deny this server, if it's a mirror without a valid SHA256.sig.
-		if [[ -n $INSTALL_MIRROR ]]; then
+		if [[ ${_url_base%/$HTTP_SETDIR} == "$INSTALL_MIRROR" ]]; then
 			$AUTO && exit 1 || return
 		fi
 	fi
@@ -1679,7 +1683,8 @@ install_http() {
 
 	install_files "$_url_base" "$_file_list"
 
-	# Remember where we installed from, to tell the cgi server.
+	# Remember the sets location which is used later for creating the
+	# installurl(5) file and to tell the cgi server.
 	INSTALL_URL=${_url_base%/$HTTP_SETDIR}
 	[[ -n $INSTALL_MIRROR ]] && INSTALL_URL=$_http_proto://$INSTALL_MIRROR
 }
@@ -2541,9 +2546,8 @@ finish_up() {
 		done </mnt/etc/fstab
 	fi
 
-	# Create /etc/installurl with the mirror used during install or upgrade
-	# if it does not yet exist.
-	if [[ -n $INSTALL_MIRROR && ! -f /mnt/etc/installurl ]]; then
+	# Create /etc/installurl if it does not yet exist.
+	if [[ -n $INSTALL_URL && ! -f /mnt/etc/installurl ]]; then
 		echo "$INSTALL_URL" >/mnt/etc/installurl
 	fi
 
