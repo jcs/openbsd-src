@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.c,v 1.53 2017/03/02 07:33:37 reyk Exp $	*/
+/*	$OpenBSD: vmd.c,v 1.55 2017/03/15 19:54:52 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -86,7 +86,8 @@ vmd_dispatch_control(int fd, struct privsep_proc *p, struct imsg *imsg)
 		ret = vm_register(ps, &vmc, &vm, 0, vmc.vmc_uid);
 		if (vmc.vmc_flags == 0) {
 			/* start an existing VM with pre-configured options */
-			if (!(ret == -1 && errno == EALREADY)) {
+			if (!(ret == -1 && errno == EALREADY &&
+			    vm->vm_running == 0)) {
 				res = errno;
 				cmd = IMSG_VMDOP_START_VM_RESPONSE;
 			}
@@ -107,6 +108,10 @@ vmd_dispatch_control(int fd, struct privsep_proc *p, struct imsg *imsg)
 			/* Lookup vm (id) by name */
 			if ((vm = vm_getbyname(vid.vid_name)) == NULL) {
 				res = ENOENT;
+				cmd = IMSG_VMDOP_TERMINATE_VM_RESPONSE;
+				break;
+			} else if (vm->vm_shutdown) {
+				res = EALREADY;
 				cmd = IMSG_VMDOP_TERMINATE_VM_RESPONSE;
 				break;
 			}
@@ -189,7 +194,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 		IMSG_SIZE_CHECK(imsg, &vmr);
 		memcpy(&vmr, imsg->data, sizeof(vmr));
 		if ((vm = vm_getbyvmid(imsg->hdr.peerid)) == NULL)
-			fatalx("%s: invalid vm response", __func__);
+			break;
 		vm->vm_pid = vmr.vmr_pid;
 		vcp = &vm->vm_params.vmc_params;
 		vcp->vcp_id = vmr.vmr_id;
@@ -200,7 +205,6 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 		 * from the parent, not the control socket.
 		 */
 		if (vm->vm_peerid != (uint32_t)-1) {
-			vmr.vmr_result = res;
 			(void)strlcpy(vmr.vmr_ttyname, vm->vm_ttyname,
 			    sizeof(vmr.vmr_ttyname));
 			if (proc_compose_imsg(ps, PROC_CONTROL, -1,
@@ -235,12 +239,11 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 		IMSG_SIZE_CHECK(imsg, &vmr);
 		memcpy(&vmr, imsg->data, sizeof(vmr));
 		proc_forward_imsg(ps, imsg, PROC_CONTROL, -1);
+		if ((vm = vm_getbyid(vmr.vmr_id)) == NULL)
+			break;
 		if (vmr.vmr_result == 0) {
-			vm = vm_getbyid(vmr.vmr_id);
-			if (vm->vm_from_config)
-				vm->vm_running = 0;
-			else
-				vm_remove(vm);
+			/* Mark VM as shutting down */
+			vm->vm_shutdown = 1;
 		}
 		break;
 	case IMSG_VMDOP_TERMINATE_VM_EVENT:
@@ -250,7 +253,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 			break;
 		if (vmr.vmr_result == 0) {
 			if (vm->vm_from_config)
-				vm->vm_running = 0;
+				vm_stop(vm, 0);
 			else
 				vm_remove(vm);
 		} else if (vmr.vmr_result == EAGAIN) {
@@ -263,8 +266,16 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 		IMSG_SIZE_CHECK(imsg, &vir);
 		memcpy(&vir, imsg->data, sizeof(vir));
 		if ((vm = vm_getbyid(vir.vir_info.vir_id)) != NULL) {
-			(void)strlcpy(vir.vir_ttyname, vm->vm_ttyname,
-			    sizeof(vir.vir_ttyname));
+			memset(vir.vir_ttyname, 0, sizeof(vir.vir_ttyname));
+			if (vm->vm_ttyname != NULL)
+				strlcpy(vir.vir_ttyname, vm->vm_ttyname,
+				    sizeof(vir.vir_ttyname));
+			if (vm->vm_shutdown) {
+				/* XXX there might be a nicer way */
+				(void)strlcat(vir.vir_info.vir_name,
+				    " - stopping",
+				    sizeof(vir.vir_info.vir_name));
+			}
 			/* get the user id who started the vm */
 			vir.vir_uid = vm->vm_uid;
 			vir.vir_gid = vm->vm_params.vmc_gid;
@@ -703,6 +714,7 @@ vm_stop(struct vmd_vm *vm, int keeptty)
 		return;
 
 	vm->vm_running = 0;
+	vm->vm_shutdown = 0;
 
 	if (vm->vm_iev.ibuf.fd != -1) {
 		event_del(&vm->vm_iev.ev);

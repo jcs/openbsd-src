@@ -1,4 +1,4 @@
-/*	$OpenBSD: ikev2_pld.c,v 1.57 2017/01/20 13:49:48 mikeb Exp $	*/
+/*	$OpenBSD: ikev2_pld.c,v 1.59 2017/03/13 18:48:16 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -1151,6 +1151,36 @@ ikev2_pld_notify(struct iked *env, struct ikev2_payload *pld,
 		}
 		print_hex(md, 0, sizeof(md));
 		break;
+	case IKEV2_N_AUTHENTICATION_FAILED:
+		if (!msg->msg_e) {
+			log_debug("%s: AUTHENTICATION_FAILED not encrypted",
+			    __func__);
+			return (-1);
+		}
+		/*
+		 * If we are the responder, then we only accept
+		 * AUTHENTICATION_FAILED from authenticated peers.
+		 * If we are the initiator, the peer cannot be authenticated.
+		 */
+		if (!msg->msg_sa->sa_hdr.sh_initiator) {
+			if (!sa_stateok(msg->msg_sa, IKEV2_STATE_VALID)) {
+				log_debug("%s: ignoring AUTHENTICATION_FAILED"
+				    " from unauthenticated initiator",
+				    __func__);
+				return (-1);
+			}
+		} else {
+			if (sa_stateok(msg->msg_sa, IKEV2_STATE_VALID)) {
+				log_debug("%s: ignoring AUTHENTICATION_FAILED"
+				    " from authenticated responder",
+				    __func__);
+				return (-1);
+			}
+		}
+		log_debug("%s: AUTHENTICATION_FAILED, closing SA", __func__);
+		sa_state(env, msg->msg_sa, IKEV2_STATE_CLOSED);
+		msg->msg_sa = NULL;
+		break;
 	case IKEV2_N_INVALID_KE_PAYLOAD:
 		if (sa_stateok(msg->msg_sa, IKEV2_STATE_VALID) &&
 		    !msg->msg_e) {
@@ -1372,7 +1402,7 @@ ikev2_pld_delete(struct iked *env, struct ikev2_payload *pld,
 			    IKEV2_EXCHANGE_INFORMATIONAL, 1);
 			msg->msg_parent->msg_responded = 1;
 			ibuf_release(resp);
-			sa_state(env, sa, IKEV2_STATE_CLOSED);
+			ikev2_ikesa_recv_delete(env, sa);
 		} else {
 			/*
 			 * We're sending a delete message. Upper layer

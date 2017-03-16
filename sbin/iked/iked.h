@@ -1,4 +1,4 @@
-/*	$OpenBSD: iked.h,v 1.102 2017/02/03 08:23:46 guenther Exp $	*/
+/*	$OpenBSD: iked.h,v 1.109 2017/03/13 18:49:20 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -157,6 +157,7 @@ struct iked_flow {
 
 	RB_ENTRY(iked_flow)		 flow_node;
 	TAILQ_ENTRY(iked_flow)		 flow_entry;
+	int				 flow_ipcomp;
 };
 RB_HEAD(iked_flows, iked_flow);
 TAILQ_HEAD(iked_saflows, iked_flow);
@@ -172,6 +173,7 @@ struct iked_childsa {
 	uint8_t				 csa_persistent;/* do not rekey */
 	uint8_t				 csa_esn;	/* use ESN */
 	uint8_t				 csa_transport;	/* transport mode */
+	uint8_t				 csa_acquired;	/* no rekey for me */
 
 	struct iked_spi			 csa_spi;
 
@@ -429,15 +431,19 @@ struct iked_sa {
 	struct iked_childsas		 sa_childsas;	/* IPSec Child SAs */
 	struct iked_saflows		 sa_flows;	/* IPSec flows */
 
-	struct iked_sa			*sa_next;	/* IKE SA rekeying */
-	uint64_t			 sa_rekeyspi;	/* peerspi for rekey*/
+	struct iked_sa			*sa_nexti;	/* initiated IKE SA */
+	struct iked_sa			*sa_nextr;	/* simultaneous rekey */
+	uint64_t			 sa_rekeyspi;	/* peerspi CSA rekey*/
+	struct ibuf			*sa_simult;	/* simultaneous rekey */
 
 	uint8_t				 sa_ipcomp;	/* IPcomp transform */
 	uint16_t			 sa_cpi_out;	/* IPcomp outgoing */
 	uint16_t			 sa_cpi_in;	/* IPcomp incoming*/
 
 	struct iked_timer		 sa_timer;	/* SA timeouts */
-#define IKED_IKE_SA_DELETE_TIMEOUT	 300		/* 5 minutes */
+#define IKED_IKE_SA_EXCHANGE_TIMEOUT	 300		/* 5 minutes */
+#define IKED_IKE_SA_REKEY_TIMEOUT	 120		/* 2 minutes */
+#define IKED_IKE_SA_DELETE_TIMEOUT	 120		/* 2 minutes */
 #define IKED_IKE_SA_ALIVE_TIMEOUT	 60		/* 1 minute */
 
 	struct iked_timer		 sa_rekey;	/* rekey timeout */
@@ -696,6 +702,7 @@ void	 childsa_free(struct iked_childsa *);
 struct iked_childsa *
 	 childsa_lookup(struct iked_sa *, uint64_t, uint8_t);
 void	 flow_free(struct iked_flow *);
+int	 flow_equal(struct iked_flow *, struct iked_flow *);
 struct iked_sa *
 	 sa_lookup(struct iked *, uint64_t, uint64_t, unsigned int);
 struct iked_user *
@@ -756,11 +763,12 @@ pid_t	 ikev2(struct privsep *, struct privsep_proc *);
 void	 ikev2_recv(struct iked *, struct iked_message *);
 void	 ikev2_init_ike_sa(struct iked *, void *);
 int	 ikev2_sa_negotiate(struct iked_proposals *, struct iked_proposals *,
-	    struct iked_proposals *);
+	    struct iked_proposals *, int);
 int	 ikev2_policy2id(struct iked_static_id *, struct iked_id *, int);
 int	 ikev2_childsa_enable(struct iked *, struct iked_sa *);
 int	 ikev2_childsa_delete(struct iked *, struct iked_sa *,
 	    uint8_t, uint64_t, uint64_t *, int);
+void	 ikev2_ikesa_recv_delete(struct iked *, struct iked_sa *);
 
 struct ibuf *
 	 ikev2_prfplus(struct iked_hash *, struct ibuf *, struct ibuf *,

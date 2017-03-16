@@ -1,4 +1,4 @@
-/*	$OpenBSD: policy.c,v 1.42 2016/06/01 11:16:41 patrick Exp $	*/
+/*	$OpenBSD: policy.c,v 1.46 2017/03/13 18:48:16 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -343,7 +343,15 @@ sa_new(struct iked *env, uint64_t ispi, uint64_t rspi,
 	if (initiator && sa->sa_hdr.sh_rspi == 0 && rspi)
 		sa->sa_hdr.sh_rspi = rspi;
 
-	if (sa->sa_policy == NULL) {
+	if (pol == NULL && sa->sa_policy == NULL)
+		fatalx("%s: sa %p no policy", __func__, sa);
+	else if (sa->sa_policy == NULL) {
+		/* Increment refcount if the policy has refcounting enabled. */
+		if (pol->pol_flags & IKED_POLICY_REFCNT) {
+			log_info("%s: sa %p old pol %p pol_refcnt %d",
+			    __func__, sa, pol, pol->pol_refcnt);
+			policy_ref(env, pol);
+		}
 		sa->sa_policy = pol;
 		TAILQ_INSERT_TAIL(&pol->pol_sapeers, sa, sa_peer_entry);
 	} else
@@ -384,9 +392,13 @@ sa_free(struct iked *env, struct iked_sa *sa)
 	    print_spi(sa->sa_hdr.sh_rspi, 8));
 
 	/* IKE rekeying running? */
-	if (sa->sa_next) {
-		RB_REMOVE(iked_sas, &env->sc_sas, sa->sa_next);
-		config_free_sa(env, sa->sa_next);
+	if (sa->sa_nexti) {
+		RB_REMOVE(iked_sas, &env->sc_sas, sa->sa_nexti);
+		config_free_sa(env, sa->sa_nexti);
+	}
+	if (sa->sa_nextr) {
+		RB_REMOVE(iked_sas, &env->sc_sas, sa->sa_nextr);
+		config_free_sa(env, sa->sa_nextr);
 	}
 	RB_REMOVE(iked_sas, &env->sc_sas, sa);
 	config_free_sa(env, sa);
@@ -429,6 +441,8 @@ sa_address(struct iked_sa *sa, struct iked_addr *addr,
 void
 childsa_free(struct iked_childsa *csa)
 {
+	struct iked_childsa *csb;
+
 	if (csa->csa_children) {
 		/* XXX should not happen */
 		log_warnx("%s: trying to remove CSA %p children %u",
@@ -437,6 +451,8 @@ childsa_free(struct iked_childsa *csa)
 	}
 	if (csa->csa_parent)
 		csa->csa_parent->csa_children--;
+	if ((csb = csa->csa_peersa) != NULL)
+		csb->csa_peersa = NULL;
 	ibuf_release(csa->csa_encrkey);
 	ibuf_release(csa->csa_integrkey);
 	free(csa);
@@ -577,16 +593,24 @@ flow_cmp(struct iked_flow *a, struct iked_flow *b)
 {
 	int		diff = 0;
 
-	if (a->flow_peer && b->flow_peer)
-		diff = addr_cmp(a->flow_peer, b->flow_peer, 0);
+	if (!diff)
+		diff = (int)a->flow_ipproto - (int)b->flow_ipproto;
+	if (!diff)
+		diff = (int)a->flow_saproto - (int)b->flow_saproto;
+	if (!diff)
+		diff = (int)a->flow_dir - (int)b->flow_dir;
 	if (!diff)
 		diff = addr_cmp(&a->flow_dst, &b->flow_dst, 1);
 	if (!diff)
 		diff = addr_cmp(&a->flow_src, &b->flow_src, 1);
-	if (!diff && a->flow_dir && b->flow_dir)
-		diff = (int)a->flow_dir - (int)b->flow_dir;
 
 	return (diff);
+}
+
+int
+flow_equal(struct iked_flow *a, struct iked_flow *b)
+{
+	return (flow_cmp(a, b) == 0);
 }
 
 RB_GENERATE(iked_sas, iked_sa, sa_entry, sa_cmp);

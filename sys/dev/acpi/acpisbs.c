@@ -1,4 +1,4 @@
-/* $OpenBSD: acpisbs.c,v 1.3 2017/03/07 02:27:02 jcs Exp $ */
+/* $OpenBSD: acpisbs.c,v 1.6 2017/03/13 02:33:34 jcs Exp $ */
 /*
  * Smart Battery subsystem device driver
  * ACPI 5.0 spec section 10
@@ -133,7 +133,7 @@ int	acpisbs_notify(struct aml_node *, int, void *);
 
 int	acpi_smbus_read(struct acpisbs_softc *, uint8_t, uint8_t, int, void *);
 
-struct cfattach acpisbs_ca = {
+const struct cfattach acpisbs_ca = {
 	sizeof(struct acpisbs_softc),
 	acpisbs_match,
 	acpisbs_attach,
@@ -384,13 +384,16 @@ acpisbs_notify(struct aml_node *node, int notify_type, void *arg)
 		/* fallback poll */
 	case 0x80:
 		/*
-		 * EC SCI, but will come for every data point, so only run once
-		 * in a while
+		 * EC SCI will come for every data point, so only run once in a
+		 * while
 		 */
 		if (tv.tv_sec - sc->sc_lastpoll.tv_sec > ACPISBS_POLL_FREQ) {
-			acpisbs_read(sc, 1);
+			acpisbs_read(sc);
+			acpisbs_refresh_sensors(sc);
 			getmicrotime(&sc->sc_lastpoll);
 		}
+		break;
+	default:
 		break;
 	}
 
