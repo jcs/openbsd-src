@@ -1,4 +1,4 @@
-/*	$OpenBSD: syslogd.c,v 1.228 2017/03/14 15:35:48 deraadt Exp $	*/
+/*	$OpenBSD: syslogd.c,v 1.230 2017/03/16 23:55:19 bluhm Exp $	*/
 
 /*
  * Copyright (c) 1983, 1988, 1993, 1994
@@ -99,6 +99,7 @@
 #define SYSLOG_NAMES
 #include <sys/syslog.h>
 
+#include "log.h"
 #include "syslogd.h"
 #include "evbuffer_tls.h"
 
@@ -272,7 +273,7 @@ size_t	ctl_reply_offset = 0;	/* Number of bytes of reply written so far */
 char	*linebuf;
 int	 linesize;
 
-int		 fd_ctlconn, fd_udp, fd_udp6, fd_tls;
+int		 fd_ctlconn, fd_udp, fd_udp6;
 struct event	*ev_ctlaccept, *ev_ctlread, *ev_ctlwrite;
 
 struct peer {
@@ -291,6 +292,8 @@ void	 unix_readcb(int, short, void *);
 int	 reserve_accept4(int, int, struct event *,
     void (*)(int, short, void *), struct sockaddr *, socklen_t *, int);
 void	 tcp_acceptcb(int, short, void *);
+void	 tls_acceptcb(int, short, void *);
+void	 acceptcb(int, short, void *, int);
 int	 octet_counting(struct evbuffer *, char **, int);
 int	 non_transparent_framing(struct evbuffer *, char **);
 void	 tcp_readcb(struct bufferevent *, void *);
@@ -314,7 +317,6 @@ void	 ctlconn_cleanup(void);
 struct filed *cfline(char *, char *, char *);
 void	cvthname(struct sockaddr *, char *, size_t);
 int	decode(const char *, const CODE *);
-void	die(int);
 void	markit(void);
 void	fprintlog(struct filed *, int, char *);
 void	init(void);
@@ -354,7 +356,7 @@ main(int argc, char *argv[])
 	int		 ch, i;
 	int		 lockpipe[2] = { -1, -1}, pair[2], nullfd, fd;
 	int		 fd_ctlsock, fd_klog, fd_sendsys, *fd_bind, *fd_listen;
-	int		*fd_unix, nbind, nlisten;
+	int		 fd_tls, *fd_unix, nbind, nlisten;
 	char		**bind_host, **bind_port, **listen_host, **listen_port;
 	char		*tls_hostport, *tls_host, *tls_port;
 
@@ -462,6 +464,9 @@ main(int argc, char *argv[])
 	if (argc != optind)
 		usage();
 
+	log_init(Debug, LOG_SYSLOG);
+	log_procinit("syslogd");
+	log_setdebug(1);
 	if (Debug)
 		setvbuf(stdout, NULL, _IOLBF, 0);
 
@@ -693,8 +698,6 @@ main(int argc, char *argv[])
 
 	logdebug("off & running....\n");
 
-	tzset();
-
 	if (!Debug && !Foreground) {
 		char c;
 
@@ -772,7 +775,7 @@ main(int argc, char *argv[])
 	for (i = 0; i < nlisten; i++)
 		event_set(&ev_listen[i], fd_listen[i], EV_READ|EV_PERSIST,
 		    tcp_acceptcb, &ev_listen[i]);
-	event_set(ev_tls, fd_tls, EV_READ|EV_PERSIST, tcp_acceptcb, ev_tls);
+	event_set(ev_tls, fd_tls, EV_READ|EV_PERSIST, tls_acceptcb, ev_tls);
 	for (i = 0; i < nunix; i++)
 		event_set(&ev_unix[i], fd_unix[i], EV_READ|EV_PERSIST,
 		    unix_readcb, &ev_unix[i]);
@@ -786,6 +789,7 @@ main(int argc, char *argv[])
 
 	init();
 
+	log_setdebug(0);
 	Startup = 0;
 
 	/* Allocate ctl socket reply buffer if we have a ctl socket */
@@ -1088,6 +1092,18 @@ reserve_accept4(int lfd, int event, struct event *ev,
 void
 tcp_acceptcb(int lfd, short event, void *arg)
 {
+	acceptcb(lfd, event, arg, 0);
+}
+
+void
+tls_acceptcb(int lfd, short event, void *arg)
+{
+	acceptcb(lfd, event, arg, 1);
+}
+
+void
+acceptcb(int lfd, short event, void *arg, int usetls)
+{
 	struct event		*ev = arg;
 	struct peer		*p;
 	struct sockaddr_storage	 ss;
@@ -1132,7 +1148,7 @@ tcp_acceptcb(int lfd, short event, void *arg)
 		return;
 	}
 	p->p_ctx = NULL;
-	if (lfd == fd_tls) {
+	if (usetls) {
 		if (tls_accept_socket(server_ctx, &p->p_ctx, fd) < 0) {
 			snprintf(ebuf, sizeof(ebuf), "tls_accept_socket \"%s\"",
 			    peername);
@@ -1633,6 +1649,18 @@ printsys(char *msg)
 
 		logmsg(pri, line, LocalHostName, flags);
 	}
+}
+
+void
+vlogmsg(int pri, const char *proc, const char *fmt, va_list ap)
+{
+	char	msg[ERRBUFSIZE];
+	size_t	l;
+
+	l = snprintf(msg, sizeof(msg), "%s[%d]: ", proc, getpid());
+	if (l < sizeof(msg));
+		vsnprintf(msg + l, sizeof(msg) - l, fmt, ap);
+	logmsg(pri, msg, LocalHostName, ADDDATE);
 }
 
 struct timeval	now;
@@ -2251,7 +2279,7 @@ logerror_reason(const char *message, const char *reason)
 		logmsg(LOG_SYSLOG|LOG_ERR, ebuf, LocalHostName, ADDDATE);
 }
 
-void
+__dead void
 die(int signo)
 {
 	struct filed *f;
