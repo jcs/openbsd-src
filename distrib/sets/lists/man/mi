@@ -1080,6 +1080,7 @@
 ./usr/share/man/man4/acpimcfg.4
 ./usr/share/man/man4/acpiprt.4
 ./usr/share/man/man4/acpipwrres.4
+./usr/share/man/man4/acpisbs.4
 ./usr/share/man/man4/acpisony.4
 ./usr/share/man/man4/acpithinkpad.4
 ./usr/share/man/man4/acpitimer.4
@@ -2101,6 +2102,7 @@
 ./usr/share/man/man8/dhclient.8
 ./usr/share/man/man8/dhcpd.8
 ./usr/share/man/man8/dhcrelay.8
+./usr/share/man/man8/dhcrelay6.8
 ./usr/share/man/man8/disklabel.8
 ./usr/share/man/man8/diskless.8
 ./usr/share/man/man8/dmesg.8

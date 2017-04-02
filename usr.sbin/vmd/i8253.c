@@ -1,4 +1,4 @@
-/* $OpenBSD: i8253.c,v 1.5 2017/01/17 21:51:01 krw Exp $ */
+/* $OpenBSD: i8253.c,v 1.12 2017/03/27 00:28:04 deraadt Exp $ */
 /*
  * Copyright (c) 2016 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -53,10 +53,60 @@ i8253_init(uint32_t vm_id)
 	memset(&i8253_counter, 0, sizeof(struct i8253_counter));
 	gettimeofday(&i8253_counter[0].tv, NULL);
 	i8253_counter[0].start = 0xFFFF;
-	i8253_counter[0].mode = TIMER_RATEGEN;
+	i8253_counter[0].mode = TIMER_INTTC;
+	i8253_counter[0].last_r = 1;
 	evtimer_set(&i8253_counter[0].timer, i8253_fire,
 	    (void *)(intptr_t)vm_id);
-	i8253_reset(0);
+}
+
+/*
+ * i8253_do_readback
+ *
+ * Handles the readback status command. The readback status command latches
+ * the current counter value plus various status bits.
+ *
+ * Parameters:
+ *  data: The command word written by the guest VM
+ */
+void
+i8253_do_readback(uint32_t data)
+{
+	struct timeval now, delta;
+	uint64_t ns, ticks;
+
+	if ((data & TIMER_RB_C1) || (data & TIMER_RB_C2))
+		log_warnx("%s: readback of unsupported channel(s) "
+		    "requested", __func__);
+
+	/* bits are inverted here - !TIMER_RB_STATUS == enable chan readback */
+	if (data & ~TIMER_RB_STATUS)
+		i8253_counter[0].rbs = (data & TIMER_RB_C0) ? 1 : 0;
+
+	/* !TIMER_RB_COUNT == enable counter readback */
+	if (data & ~TIMER_RB_COUNT) {
+		if (data & TIMER_RB_C0) {
+			gettimeofday(&now, NULL);
+			delta.tv_sec = now.tv_sec - i8253_counter[0].tv.tv_sec;
+			delta.tv_usec = now.tv_usec -
+			    i8253_counter[0].tv.tv_usec;
+			if (delta.tv_usec < 0) {
+				delta.tv_sec--;
+				delta.tv_usec += 1000000;
+			}
+			if (delta.tv_usec > 1000000) {
+				delta.tv_sec++;
+				delta.tv_usec -= 1000000;
+			}
+			ns = delta.tv_usec * 1000 + delta.tv_sec * 1000000000;
+			ticks = ns / NS_PER_TICK;
+			if (i8253_counter[0].start)
+				i8253_counter[0].olatch =
+				    i8253_counter[0].start -
+				    ticks % i8253_counter[0].start;
+			else
+				i8253_counter[0].olatch = 0;
+		}
+	}
 }
 
 /*
@@ -83,20 +133,20 @@ vcpu_exit_i8253(struct vm_run_params *vrp)
 	struct timeval now, delta;
 	union vm_exit *vei = vrp->vrp_exit;
 
+	get_input_data(vei, &out_data);
+
 	if (vei->vei.vei_port == TIMER_CTRL) {
 		if (vei->vei.vei_dir == VEI_DIR_OUT) { /* OUT instruction */
-			out_data = vei->vei.vei_data;
 			sel = out_data &
 			    (TIMER_SEL0 | TIMER_SEL1 | TIMER_SEL2);
 			sel = sel >> 6;
-			if (sel > 2) {
-				log_warnx("%s: i8253 PIT: unuspported "
-				    "counter selected (%d)",
-				    __progname, sel);
-				goto ret;
+
+			if (sel == 3) {
+				i8253_do_readback(out_data);
+				return (0xFF);
 			}
 
-			rw = vei->vei.vei_data & (TIMER_LATCH | TIMER_16BIT);
+			rw = out_data & (TIMER_LATCH | TIMER_16BIT);
 
 			/*
 			 * Since we don't truly emulate each tick of the PIT
@@ -124,9 +174,12 @@ vcpu_exit_i8253(struct vm_run_params *vrp)
 				ns = delta.tv_usec * 1000 +
 				    delta.tv_sec * 1000000000;
 				ticks = ns / NS_PER_TICK;
-				i8253_counter[sel].olatch =
-				    i8253_counter[sel].start -
-				    ticks % i8253_counter[sel].start;
+				if (i8253_counter[sel].start) {
+					i8253_counter[sel].olatch =
+					    i8253_counter[sel].start -
+					    ticks % i8253_counter[sel].start;
+				} else
+					i8253_counter[sel].olatch = 0;
 				goto ret;
 			} else if (rw != TIMER_16BIT) {
 				log_warnx("%s: i8253 PIT: unsupported counter "
@@ -138,7 +191,7 @@ vcpu_exit_i8253(struct vm_run_params *vrp)
 		} else {
 			log_warnx("%s: i8253 PIT: read from control port "
 			    "unsupported", __progname);
-			vei->vei.vei_data = 0;
+			set_return_data(vei, 0);
 		}
 	} else {
 		sel = vei->vei.vei_port - (TIMER_CNTR0 + TIMER_BASE);
@@ -150,30 +203,35 @@ vcpu_exit_i8253(struct vm_run_params *vrp)
 
 		if (vei->vei.vei_dir == VEI_DIR_OUT) { /* OUT instruction */
 			if (i8253_counter[sel].last_w == 0) {
-				out_data = vei->vei.vei_data;
 				i8253_counter[sel].ilatch |= (out_data & 0xff);
 				i8253_counter[sel].last_w = 1;
 			} else {
-				out_data = vei->vei.vei_data;
 				i8253_counter[sel].ilatch |= ((out_data & 0xff) << 8);
 				i8253_counter[sel].start =
 				    i8253_counter[sel].ilatch;
 				i8253_counter[sel].last_w = 0;
-				mode = out_data & 0xe;
+				mode = (out_data & 0xe) >> 1;
 
 				i8253_counter[sel].mode = mode;
-
 				i8253_reset(sel);
 			}
 		} else {
+			if (i8253_counter[sel].rbs) {
+				i8253_counter[sel].rbs = 0;
+				data = i8253_counter[sel].mode << 1;
+				data |= TIMER_16BIT;
+				set_return_data(vei, data);
+				goto ret;
+			}
+
 			if (i8253_counter[sel].last_r == 0) {
 				data = i8253_counter[sel].olatch >> 8;
-				vei->vei.vei_data = data;
-				i8253_counter[sel].last_w = 1;
+				set_return_data(vei, data);
+				i8253_counter[sel].last_r = 1;
 			} else {
 				data = i8253_counter[sel].olatch & 0xFF;
-				vei->vei.vei_data = data;
-				i8253_counter[sel].last_w = 0;
+				set_return_data(vei, data);
+				i8253_counter[sel].last_r = 0;
 			}
 		}
 	}
@@ -207,13 +265,6 @@ i8253_reset(uint8_t chn)
 		return;
 	}
 
-	if (i8253_counter[chn].mode != TIMER_RATEGEN &&
-	    i8253_counter[chn].mode != (TIMER_RATEGEN | 0x8)) {
-		log_warnx("%s: unsupported counter mode 0x%x",
-		    __func__, i8253_counter[chn].mode);
-		return;
-	}
-
 	evtimer_del(&i8253_counter[chn].timer);
 	timerclear(&tv);
 
@@ -242,5 +293,6 @@ i8253_fire(int fd, short type, void *arg)
 
 	vcpu_assert_pic_irq((ptrdiff_t)arg, 0, 0);
 
-	evtimer_add(&i8253_counter[0].timer, &tv);
+	if (i8253_counter[0].mode != TIMER_INTTC)
+		evtimer_add(&i8253_counter[0].timer, &tv);
 }

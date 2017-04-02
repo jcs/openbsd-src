@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_carp.c,v 1.302 2017/02/20 06:29:42 jca Exp $	*/
+/*	$OpenBSD: ip_carp.c,v 1.304 2017/03/23 14:12:46 bluhm Exp $	*/
 
 /*
  * Copyright (c) 2002 Michael Shalayeff. All rights reserved.
@@ -898,7 +898,6 @@ carpdetach(struct carp_softc *sc)
 {
 	struct ifnet *ifp0;
 	struct carp_if *cif;
-	int s;
 
 	carp_del_all_timeouts(sc);
 
@@ -926,7 +925,6 @@ carpdetach(struct carp_softc *sc)
 	/* Restore previous input handler. */
 	if_ih_remove(ifp0, carp_input, cif);
 
-	s = splnet();
 	if (sc->lh_cookie != NULL)
 		hook_disestablish(ifp0->if_linkstatehooks, sc->lh_cookie);
 
@@ -938,7 +936,6 @@ carpdetach(struct carp_softc *sc)
 		free(cif, M_IFADDR, sizeof(*cif));
 	}
 	sc->sc_carpdev = NULL;
-	splx(s);
 }
 
 /* Detach an interface from the carp. */
@@ -950,11 +947,8 @@ carp_ifdetach(struct ifnet *ifp0)
 
 	KERNEL_ASSERT_LOCKED(); /* touching vhif_vrs */
 
-	for (sc = SRPL_FIRST_LOCKED(&cif->vhif_vrs); sc != NULL; sc = nextsc) {
-		nextsc = SRPL_NEXT_LOCKED(sc, sc_list);
-
+	SRPL_FOREACH_SAFE_LOCKED(sc, &cif->vhif_vrs, sc_list, nextsc)
 		carpdetach(sc); /* this can free cif */
-	}
 }
 
 void
@@ -1680,7 +1674,6 @@ carp_set_ifp(struct carp_softc *sc, struct ifnet *ifp0)
 	struct carp_if *cif, *ncif = NULL;
 	struct carp_softc *vr, *last = NULL, *after = NULL;
 	int myself = 0, error = 0;
-	int s;
 
 	KASSERT(ifp0 != sc->sc_carpdev);
 	KERNEL_ASSERT_LOCKED(); /* touching vhif_vrs */
@@ -1754,9 +1747,7 @@ carp_set_ifp(struct carp_softc *sc, struct ifnet *ifp0)
 	/* Change input handler of the physical interface. */
 	if_ih_insert(ifp0, carp_input, cif);
 
-	s = splnet();
 	carp_carpdev_state(ifp0);
-	splx(s);
 
 	return (0);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.195 2017/03/14 16:49:18 florian Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.201 2017/03/30 15:22:07 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -65,6 +65,7 @@
 #include <sys/pledge.h>
 
 #include "audio.h"
+#include "bpfilter.h"
 #include "pf.h"
 #include "pty.h"
 
@@ -372,7 +373,6 @@ static const struct {
 	{ "getpw",		PLEDGE_GETPW },
 	{ "id",			PLEDGE_ID },
 	{ "inet",		PLEDGE_INET },
-	{ "ioctl",		PLEDGE_TAPE },		/* Remove Mar 20 2017 */
 	{ "mcast",		PLEDGE_MCAST },
 	{ "pf",			PLEDGE_PF },
 	{ "proc",		PLEDGE_PROC },
@@ -1137,6 +1137,7 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 		}
 	}
 
+#if NBPFILTER > 0
 	if ((p->p_p->ps_pledge & PLEDGE_BPF)) {
 		switch (com) {
 		case BIOCGSTATS:	/* bpf: tcpdump privsep on ^C */
@@ -1146,6 +1147,7 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			break;
 		}
 	}
+#endif /* NBPFILTER > 0 */
 
 	if ((p->p_p->ps_pledge & PLEDGE_TAPE)) {
 		switch (com) {
@@ -1153,14 +1155,15 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 		case MTIOCTOP:
 			/* for pax(1) and such, checking tapes... */
 			if (fp->f_type == DTYPE_VNODE &&
-			    (vp->v_type == VCHR || vp->v_type == VBLK))
+			    vp->v_type == VCHR &&
+			    (vp->v_flag & VISTTY) == 0)
 				return (0);
 			break;
 		}
 	}
 
-	if ((p->p_p->ps_pledge & PLEDGE_DRM)) {
 #if NDRM > 0
+	if ((p->p_p->ps_pledge & PLEDGE_DRM)) {
 		if ((fp->f_type == DTYPE_VNODE) &&
 		    (vp->v_type == VCHR) &&
 		    (cdevsw[major(vp->v_rdev)].d_open == drmopen)) {
@@ -1168,11 +1171,11 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			if (error == 0)
 				return 0;
 		}
-#endif /* NDRM > 0 */
 	}
+#endif /* NDRM > 0 */
 
-	if ((p->p_p->ps_pledge & PLEDGE_AUDIO)) {
 #if NAUDIO > 0
+	if ((p->p_p->ps_pledge & PLEDGE_AUDIO)) {
 		switch (com) {
 		case AUDIO_GETPOS:
 		case AUDIO_GETPAR:
@@ -1184,8 +1187,8 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			    cdevsw[major(vp->v_rdev)].d_open == audioopen)
 				return (0);
 		}
-#endif /* NAUDIO > 0 */
 	}
+#endif /* NAUDIO > 0 */
 
 	if ((p->p_p->ps_pledge & PLEDGE_DISKLABEL)) {
 		switch (com) {
@@ -1213,8 +1216,8 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 		}
 	}
 
-	if ((p->p_p->ps_pledge & PLEDGE_PF)) {
 #if NPF > 0
+	if ((p->p_p->ps_pledge & PLEDGE_PF)) {
 		switch (com) {
 		case DIOCADDRULE:
 		case DIOCGETSTATUS:
@@ -1234,8 +1237,8 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 				return (0);
 			break;
 		}
-#endif
 	}
+#endif
 
 	if ((p->p_p->ps_pledge & PLEDGE_TTY)) {
 		switch (com) {
@@ -1303,8 +1306,8 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 		}
 	}
 
-	if ((p->p_p->ps_pledge & PLEDGE_VMM)) {
 #if NVMM > 0
+	if ((p->p_p->ps_pledge & PLEDGE_VMM)) {
 		if ((fp->f_type == DTYPE_VNODE) &&
 		    (vp->v_type == VCHR) &&
 		    (cdevsw[major(vp->v_rdev)].d_open == vmmopen)) {
@@ -1312,8 +1315,8 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			if (error == 0)
 				return 0;
 		}
-#endif
 	}
+#endif
 
 	return pledge_fail(p, error, PLEDGE_TTY);
 }
@@ -1417,6 +1420,8 @@ pledge_sockopt(struct proc *p, int set, int level, int optname)
 		case IP_RECVDSTPORT:
 			return (0);
 		case IP_MULTICAST_IF:
+		case IP_MULTICAST_TTL:
+		case IP_MULTICAST_LOOP:
 		case IP_ADD_MEMBERSHIP:
 		case IP_DROP_MEMBERSHIP:
 			if (p->p_p->ps_pledge & PLEDGE_MCAST)
@@ -1440,6 +1445,8 @@ pledge_sockopt(struct proc *p, int set, int level, int optname)
 #endif
 			return (0);
 		case IPV6_MULTICAST_IF:
+		case IPV6_MULTICAST_HOPS:
+		case IPV6_MULTICAST_LOOP:
 		case IPV6_JOIN_GROUP:
 		case IPV6_LEAVE_GROUP:
 			if (p->p_p->ps_pledge & PLEDGE_MCAST)

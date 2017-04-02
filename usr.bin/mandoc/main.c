@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.188 2017/03/03 14:21:41 schwarze Exp $ */
+/*	$OpenBSD: main.c,v 1.190 2017/03/27 18:51:20 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2012, 2014-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -87,7 +87,7 @@ static	void		  fs_search(const struct mansearch *,
 				const struct manpaths *, int, char**,
 				struct manpage **, size_t *);
 static	int		  koptions(int *, char *);
-static	int		  moptions(int *, char *);
+static	void		  moptions(int *, char *);
 static	void		  mmsg(enum mandocerr, enum mandoclevel,
 				const char *, int, int, const char *);
 static	void		  outdata_alloc(struct curparse *);
@@ -412,8 +412,8 @@ main(int argc, char *argv[])
 			err((int)MANDOCLEVEL_SYSERR, "pledge");
 	}
 
-	if (search.argmode == ARG_FILE && ! moptions(&options, auxpaths))
-		return (int)MANDOCLEVEL_BADARG;
+	if (search.argmode == ARG_FILE)
+		moptions(&options, auxpaths);
 
 	mchars_alloc();
 	curp.mp = mparse_alloc(options, curp.wlevel, mmsg, defos);
@@ -562,24 +562,22 @@ usage(enum argmode argmode)
 
 	switch (argmode) {
 	case ARG_FILE:
-		fputs("usage: mandoc [-acfhkl] [-I os=name] "
-		    "[-K encoding] [-mformat] [-O option]\n"
+		fputs("usage: mandoc [-ac] [-I os=name] "
+		    "[-K encoding] [-mdoc | -man] [-O options]\n"
 		    "\t      [-T output] [-W level] [file ...]\n", stderr);
 		break;
 	case ARG_NAME:
-		fputs("usage: man [-acfhklw] [-C file] [-I os=name] "
-		    "[-K encoding] [-M path] [-m path]\n"
-		    "\t   [-O option=value] [-S subsection] [-s section] "
-		    "[-T output] [-W level]\n"
-		    "\t   [section] name ...\n", stderr);
+		fputs("usage: man [-acfhklw] [-C file] [-M path] "
+		    "[-m path] [-S subsection]\n"
+		    "\t   [[-s] section] name ...\n", stderr);
 		break;
 	case ARG_WORD:
-		fputs("usage: whatis [-acfhklw] [-C file] "
+		fputs("usage: whatis [-afk] [-C file] "
 		    "[-M path] [-m path] [-O outkey] [-S arch]\n"
 		    "\t      [-s section] name ...\n", stderr);
 		break;
 	case ARG_EXPR:
-		fputs("usage: apropos [-acfhklw] [-C file] "
+		fputs("usage: apropos [-afk] [-C file] "
 		    "[-M path] [-m path] [-O outkey] [-S arch]\n"
 		    "\t       [-s section] expression ...\n", stderr);
 		break;
@@ -889,24 +887,16 @@ koptions(int *options, char *arg)
 	return 1;
 }
 
-static int
+static void
 moptions(int *options, char *arg)
 {
 
 	if (arg == NULL)
-		/* nothing to do */;
-	else if (0 == strcmp(arg, "doc"))
+		return;
+	if (strcmp(arg, "doc") == 0)
 		*options |= MPARSE_MDOC;
-	else if (0 == strcmp(arg, "andoc"))
-		/* nothing to do */;
-	else if (0 == strcmp(arg, "an"))
+	else if (strcmp(arg, "an") == 0)
 		*options |= MPARSE_MAN;
-	else {
-		warnx("-m %s: Bad argument", arg);
-		return 0;
-	}
-
-	return 1;
 }
 
 static int

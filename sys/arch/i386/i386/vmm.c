@@ -1,4 +1,4 @@
-/* $OpenBSD: vmm.c,v 1.24 2017/03/02 07:27:13 mlarkin Exp $ */
+/* $OpenBSD: vmm.c,v 1.26 2017/03/25 22:24:01 deraadt Exp $ */
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -100,6 +100,7 @@ struct vmm_softc {
 	size_t			vm_idx;		/* next unique VM index */
 };
 
+int vmm_enabled(void);
 int vmm_probe(struct device *, void *, void *);
 void vmm_attach(struct device *, struct device *, void *);
 int vmmopen(dev_t, int, int, struct proc *);
@@ -264,30 +265,21 @@ extern int cpu_pae;
 #define CR_LMSW		3
 
 /*
- * vmm_probe
+ * vmm_enabled
  *
  * Checks if we have at least one CPU with either VMX or SVM.
  * Returns 1 if we have at least one of either type, but not both, 0 otherwise.
  */
 int
-vmm_probe(struct device *parent, void *match, void *aux)
+vmm_enabled(void)
 {
 	struct cpu_info *ci;
 	CPU_INFO_ITERATOR cii;
-	const char **busname = (const char **)aux;
-	int found_vmx, found_svm, vmm_disabled;
-
-	/* Check if this probe is for us */
-	if (strcmp(*busname, vmm_cd.cd_name) != 0)
-		return (0);
+	int found_vmx = 0, found_svm = 0, vmm_disabled = 0;
 
 	/* i386 must be using PAE */
 	if (!cpu_pae)
 		return (0);
-
-	found_vmx = 0;
-	found_svm = 0;
-	vmm_disabled = 0;
 
 	/* Check if we have at least one CPU with either VMX or SVM */
 	CPU_INFO_FOREACH(cii, ci) {
@@ -307,10 +299,17 @@ vmm_probe(struct device *parent, void *match, void *aux)
 	if (found_vmx)
 		return 1;
 
-	if (vmm_disabled)
-		printf("vmm disabled by firmware\n");
-
 	return 0;
+}
+
+int
+vmm_probe(struct device *parent, void *match, void *aux)
+{
+	const char **busname = (const char **)aux;
+
+	if (strcmp(*busname, vmm_cd.cd_name) != 0)
+		return (0);
+	return (1);
 }
 
 /*
@@ -3445,8 +3444,6 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 		}
 
 		/* Handle vmd(8) injected interrupts */
-		/* XXX - 0x20 should be changed to PIC's vector base */
-
 		/* Is there an interrupt pending injection? */
 		if (irq != 0xFFFF) {
 			if (!vcpu->vc_irqready) {
@@ -3456,7 +3453,7 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 				break;
 			}
 
-			eii = (irq & 0xFF) + 0x20;
+			eii = (irq & 0xFF);
 			eii |= (1ULL << 31);	/* Valid */
 			eii |= (0ULL << 8);	/* Hardware Interrupt */
 			if (vmwrite(VMCS_ENTRY_INTERRUPTION_INFO, eii)) {

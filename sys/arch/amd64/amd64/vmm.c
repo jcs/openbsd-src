@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.119 2017/03/02 07:26:31 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.131 2017/03/28 21:38:44 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -100,6 +100,7 @@ struct vmm_softc {
 	size_t			vm_idx;		/* next unique VM index */
 };
 
+int vmm_enabled(void);
 int vmm_probe(struct device *, void *, void *);
 void vmm_attach(struct device *, struct device *, void *);
 int vmmopen(dev_t, int, int, struct proc *);
@@ -147,6 +148,8 @@ int vmx_handle_exit(struct vcpu *);
 int vmm_handle_cpuid(struct vcpu *);
 int vmx_handle_rdmsr(struct vcpu *);
 int vmx_handle_wrmsr(struct vcpu *);
+int vmx_handle_cr0_write(struct vcpu *, uint64_t);
+int vmx_handle_cr4_write(struct vcpu *, uint64_t);
 int vmx_handle_cr(struct vcpu *);
 int vmx_handle_inout(struct vcpu *);
 int vmx_handle_hlt(struct vcpu *);
@@ -259,26 +262,17 @@ extern struct gate_descriptor *idt;
 #define CR_LMSW		3
 
 /*
- * vmm_probe
+ * vmm_enabled
  *
  * Checks if we have at least one CPU with either VMX or SVM.
  * Returns 1 if we have at least one of either type, but not both, 0 otherwise.
  */
 int
-vmm_probe(struct device *parent, void *match, void *aux)
+vmm_enabled(void)
 {
 	struct cpu_info *ci;
 	CPU_INFO_ITERATOR cii;
-	const char **busname = (const char **)aux;
-	int found_vmx, found_svm, vmm_disabled;
-
-	/* Check if this probe is for us */
-	if (strcmp(*busname, vmm_cd.cd_name) != 0)
-		return (0);
-
-	found_vmx = 0;
-	found_svm = 0;
-	vmm_disabled = 0;
+	int found_vmx = 0, found_svm = 0, vmm_disabled = 0;
 
 	/* Check if we have at least one CPU with either VMX or SVM */
 	CPU_INFO_FOREACH(cii, ci) {
@@ -298,10 +292,17 @@ vmm_probe(struct device *parent, void *match, void *aux)
 	if (found_vmx)
 		return 1;
 
-	if (vmm_disabled)
-		printf("vmm disabled by firmware\n");
-
 	return 0;
+}
+
+int
+vmm_probe(struct device *parent, void *match, void *aux)
+{
+	const char **busname = (const char **)aux;
+
+	if (strcmp(*busname, vmm_cd.cd_name) != 0)
+		return (0);
+	return (1);
 }
 
 /*
@@ -2337,6 +2338,16 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 		goto exit;
 	}
 
+	if (vmwrite(VMCS_CR4_MASK, CR4_VMXE)) {
+		ret = EINVAL;
+		goto exit;
+	}
+
+	if (vmwrite(VMCS_CR0_MASK, CR0_NE)) {
+		ret = EINVAL;
+		goto exit;
+	}
+
 	/*
 	 * Set up the VMCS for the register state we want during VCPU start.
 	 * This matches what the CPU state would be after a bootloader
@@ -3367,7 +3378,7 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 	uint64_t exit_reason, cr3, vmcs_ptr, insn_error;
 	struct schedstate_percpu *spc;
 	struct vmx_invvpid_descriptor vid;
-	uint64_t eii, procbased;
+	uint64_t eii, procbased, int_st;
 	uint16_t irq;
 
 	resume = 0;
@@ -3392,6 +3403,8 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 		case VMX_EXIT_EXTINT:
 			break;
 		case VMX_EXIT_EPT_VIOLATION:
+			break;
+		case VMX_EXIT_CPUID:
 			break;
 #ifdef VMM_DEBUG
 		case VMX_EXIT_TRIPLE_FAULT:
@@ -3467,28 +3480,29 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 		}
 
 		/* Handle vmd(8) injected interrupts */
-		/* XXX - 0x20 should be changed to PIC's vector base */
-
 		/* Is there an interrupt pending injection? */
 		if (irq != 0xFFFF) {
-			if (!vcpu->vc_irqready) {
-				printf("vcpu_run_vmx: error - irq injected"
-				    " while not ready\n");
+			if (vmread(VMCS_GUEST_INTERRUPTIBILITY_ST, &int_st)) {
+				printf("%s: can't get interruptibility state\n",
+				    __func__);
 				ret = EINVAL;
 				break;
 			}
 
-			eii = (irq & 0xFF) + 0x20;
-			eii |= (1ULL << 31);	/* Valid */
-			eii |= (0ULL << 8);	/* Hardware Interrupt */
-			if (vmwrite(VMCS_ENTRY_INTERRUPTION_INFO, eii)) {
-				printf("vcpu_run_vmx: can't vector "
-				    "interrupt to guest\n");
-				ret = EINVAL;
-				break;
-			}
+			/* Interruptbility state 0x3 covers NMIs and STI */
+			if (!(int_st & 0x3) && vcpu->vc_irqready) {
+				eii = (irq & 0xFF);
+				eii |= (1ULL << 31);	/* Valid */
+				eii |= (0ULL << 8);	/* Hardware Interrupt */
+				if (vmwrite(VMCS_ENTRY_INTERRUPTION_INFO, eii)) {
+					printf("vcpu_run_vmx: can't vector "
+					    "interrupt to guest\n");
+					ret = EINVAL;
+					break;
+				}
 
-			irq = 0xFFFF;
+				irq = 0xFFFF;
+			}
 		} else if (!vcpu->vc_intr) {
 			/*
 			 * Disable window exiting
@@ -3764,7 +3778,7 @@ vmx_get_exit_info(uint64_t *rip, uint64_t *exit_reason)
 int
 vmx_handle_exit(struct vcpu *vcpu)
 {
-	uint64_t exit_reason, rflags;
+	uint64_t exit_reason, rflags, istate;
 	int update_rip, ret = 0;
 
 	update_rip = 0;
@@ -3835,6 +3849,23 @@ vmx_handle_exit(struct vcpu *vcpu)
 		if (vmwrite(VMCS_GUEST_IA32_RIP,
 		    vcpu->vc_gueststate.vg_rip)) {
 			printf("vmx_handle_exit: can't advance rip\n");
+			return (EINVAL);
+		}
+
+		if (vmread(VMCS_GUEST_INTERRUPTIBILITY_ST,
+		    &istate)) {
+			printf("%s: can't read interruptibility state\n",
+			    __func__);
+			return (EINVAL);
+		}
+
+		/* Interruptibilty state 0x3 covers NMIs and STI */
+		istate &= ~0x3;
+
+		if (vmwrite(VMCS_GUEST_INTERRUPTIBILITY_ST,
+		    istate)) {
+			printf("%s: can't write interruptibility state\n",
+			    __func__);
 			return (EINVAL);
 		}
 	}
@@ -4063,18 +4094,118 @@ vmx_handle_inout(struct vcpu *vcpu)
 	case IO_ICU2 ... IO_ICU2 + 1:
 	case 0x3f8 ... 0x3ff:
 	case 0xcf8:
-	case 0xcfc:
+	case 0xcfc ... 0xcff:
 	case VMM_PCI_IO_BAR_BASE ... VMM_PCI_IO_BAR_END:
 		ret = EAGAIN;
 		break;
 	default:
 		/* Read from unsupported ports returns FFs */
-		if (vcpu->vc_exit.vei.vei_dir == 1)
-			vcpu->vc_gueststate.vg_rax = 0xFFFFFFFF;
+		if (vcpu->vc_exit.vei.vei_dir == 1) {
+			if (vcpu->vc_exit.vei.vei_size == 4)
+				vcpu->vc_gueststate.vg_rax = 0xFFFFFFFF;
+			else if (vcpu->vc_exit.vei.vei_size == 2)
+				vcpu->vc_gueststate.vg_rax |= 0xFFFF;
+			else if (vcpu->vc_exit.vei.vei_size == 1)
+				vcpu->vc_gueststate.vg_rax |= 0xFF;
+		}
 		ret = 0;
 	}
 
 	return (ret);
+}
+
+/*
+ * vmx_handle_cr0_write
+ *
+ * Write handler for CR0. This function ensures valid values are written into
+ * CR0 for the cpu/vmm mode in use (cr0 must-be-0 and must-be-1 bits, etc).
+ *
+ * Parameters
+ *  vcpu: The vcpu taking the cr0 write exit
+ *     r: The guest's desired (incoming) cr0 value
+ *
+ * Return values:
+ *  0: if succesful
+ *  EINVAL: if an error occurred
+ */ 
+int
+vmx_handle_cr0_write(struct vcpu *vcpu, uint64_t r)
+{
+	struct vmx_msr_store *msr_store;
+	uint64_t ectls;
+
+	/*
+	 * XXX this is the place to place handling of the must1,must0 bits
+	 *     and the cr0 write shadow
+	 */
+
+	/* CR0 must always have NE set */
+	r |= CR0_NE;
+
+	if (vmwrite(VMCS_GUEST_IA32_CR0, r)) {
+		printf("%s: can't write guest cr0\n", __func__);
+		return (EINVAL);
+	}
+
+	/* If the guest hasn't enabled paging, nothing more to do. */
+	if (!(r & CR0_PG))
+		return (0);
+
+	/*
+	 * If the guest has enabled paging, then the IA32_VMX_IA32E_MODE_GUEST
+	 * control must be set to the same as EFER_LME.
+	 */
+	msr_store = (struct vmx_msr_store *) vcpu->vc_vmx_msr_exit_save_va;
+
+	if (vmread(VMCS_ENTRY_CTLS, &ectls)) {
+		printf("%s: can't read entry controls", __func__);
+		return (EINVAL);
+	}
+
+	if (msr_store[0].vms_data & EFER_LME)
+		ectls |= IA32_VMX_IA32E_MODE_GUEST;
+	else
+		ectls &= ~IA32_VMX_IA32E_MODE_GUEST;
+
+	if (vmwrite(VMCS_ENTRY_CTLS, ectls)) {
+		printf("%s: can't write entry controls", __func__);
+		return (EINVAL);
+	}
+
+	return (0);
+}
+
+/*
+ * vmx_handle_cr4_write
+ *
+ * Write handler for CR4. This function ensures valid values are written into
+ * CR4 for the cpu/vmm mode in use (cr4 must-be-0 and must-be-1 bits, etc).
+ *
+ * Parameters
+ *  vcpu: The vcpu taking the cr4 write exit
+ *     r: The guest's desired (incoming) cr4 value
+ *
+ * Return values:
+ *  0: if succesful
+ *  EINVAL: if an error occurred
+ */ 
+int
+vmx_handle_cr4_write(struct vcpu *vcpu, uint64_t r)
+{
+	/*
+	 * XXX this is the place to place handling of the must1,must0 bits
+	 *     and the cr4 write shadow
+	 */
+
+	/* CR4_VMXE must always be enabled */
+	r |= CR4_VMXE;
+
+	if (vmwrite(VMCS_GUEST_IA32_CR4, r)) {
+		printf("%s: can't write guest cr4\n", __func__);
+		return (EINVAL);
+	}
+
+	return (0);
 }
 
 /*
@@ -4085,28 +4216,67 @@ vmx_handle_inout(struct vcpu *vcpu)
 int
 vmx_handle_cr(struct vcpu *vcpu)
 {
-	uint64_t insn_length, exit_qual;
-	uint8_t crnum, dir;
-
+	uint64_t insn_length, exit_qual, r;
+	uint8_t crnum, dir, reg;
+	
 	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
-		printf("vmx_handle_cr: can't obtain instruction length\n");
+		printf("%s: can't obtain instruction length\n", __func__);
 		return (EINVAL);
 	}
 
 	if (vmx_get_exit_qualification(&exit_qual)) {
-		printf("vmx_handle_cr: can't get exit qual\n");
+		printf("%s: can't get exit qual\n", __func__);
 		return (EINVAL);
 	}
 
 	/* Low 4 bits of exit_qual represent the CR number */
 	crnum = exit_qual & 0xf;
 
+	/*
+	 * Bits 5:4 indicate the direction of operation (or special CR-modifying
+	 * instruction
+	 */
 	dir = (exit_qual & 0x30) >> 4;
+
+	/* Bits 11:8 encode the source/target register */
+	reg = (exit_qual & 0xf00) >> 8;
 
 	switch (dir) {
 	case CR_WRITE:
-		DPRINTF("vmx_handle_cr: mov to cr%d @ %llx\n",
-	    	    crnum, vcpu->vc_gueststate.vg_rip);
+		DPRINTF("%s: mov to cr%d @ %llx, data=%llx\n", __func__, crnum,
+		    vcpu->vc_gueststate.vg_rip, r);
+		if (crnum == 0 || crnum == 4) {
+			switch (reg) {
+			case 0: r = vcpu->vc_gueststate.vg_rax; break;
+			case 1: r = vcpu->vc_gueststate.vg_rcx; break;
+			case 2: r = vcpu->vc_gueststate.vg_rdx; break;
+			case 3: r = vcpu->vc_gueststate.vg_rbx; break;
+			case 4: if (vmread(VMCS_GUEST_IA32_RSP, &r)) {
+					printf("%s: unable to read guest "
+					    "RSP\n", __func__);
+					return (EINVAL);
+				}
+				break;
+			case 5: r = vcpu->vc_gueststate.vg_rbp; break;
+			case 6: r = vcpu->vc_gueststate.vg_rsi; break;
+			case 7: r = vcpu->vc_gueststate.vg_rdi; break;
+			case 8: r = vcpu->vc_gueststate.vg_r8; break;
+			case 9: r = vcpu->vc_gueststate.vg_r9; break;
+			case 10: r = vcpu->vc_gueststate.vg_r10; break;
+			case 11: r = vcpu->vc_gueststate.vg_r11; break;
+			case 12: r = vcpu->vc_gueststate.vg_r12; break;
+			case 13: r = vcpu->vc_gueststate.vg_r13; break;
+			case 14: r = vcpu->vc_gueststate.vg_r14; break;
+			case 15: r = vcpu->vc_gueststate.vg_r15; break;
+			}
+		}
+
+		if (crnum == 0)
+			vmx_handle_cr0_write(vcpu, r);
+			
+		if (crnum == 4)
+			vmx_handle_cr4_write(vcpu, r);
+
 		break;
 	case CR_READ:
 		DPRINTF("vmx_handle_cr: mov from cr%d @ %llx\n",
@@ -4136,20 +4306,24 @@ vmx_handle_cr(struct vcpu *vcpu)
  * Handler for rdmsr instructions. Bitmap MSRs are allowed implicit access
  * and won't end up here. This handler is primarily intended to catch otherwise
  * unknown MSR access for possible later inclusion in the bitmap list. For
- * each MSR access that ends up here, we log the access.
+ * each MSR access that ends up here, we log the access (when VMM_DEBUG is
+ * enabled)
  *
  * Parameters:
  *  vcpu: vcpu structure containing instruction info causing the exit
  *
  * Return value:
  *  0: The operation was successful
- *  1: An error occurred
+ *  EINVAL: An error occurred
  */
 int
 vmx_handle_rdmsr(struct vcpu *vcpu)
 {
 	uint64_t insn_length;
-	uint64_t *rax, *rcx, *rdx, msr;
+	uint64_t *rax, *rdx;
+#ifdef VMM_DEBUG
+	uint64_t *rcx;
+#endif /* VMM_DEBUG */
 
 	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
 		printf("%s: can't obtain instruction length\n", __func__);
@@ -4160,16 +4334,17 @@ vmx_handle_rdmsr(struct vcpu *vcpu)
 	KASSERT(insn_length == 2);
 
 	rax = &vcpu->vc_gueststate.vg_rax;
-	rcx = &vcpu->vc_gueststate.vg_rcx;
 	rdx = &vcpu->vc_gueststate.vg_rdx;
 
-	msr = rdmsr(*rcx);
-	*rax = msr & 0xFFFFFFFFULL;
-	*rdx = msr >> 32;
+	*rax = 0;
+	*rdx = 0;
 
-	/* XXX log the access for now, to be able to identify unknown MSRs */
-	printf("%s: rdmsr exit, msr=0x%llx, data returned to "
+#ifdef VMM_DEBUG
+	/* Log the access, to be able to identify unknown MSRs */
+	rcx = &vcpu->vc_gueststate.vg_rcx;
+	DPRINTF("%s: rdmsr exit, msr=0x%llx, data returned to "
 	    "guest=0x%llx:0x%llx\n", __func__, *rcx, *rdx, *rax);
+#endif /* VMM_DEBUG */
 
 	vcpu->vc_gueststate.vg_rip += insn_length;
 
@@ -4180,21 +4355,24 @@ vmx_handle_rdmsr(struct vcpu *vcpu)
  * vmx_handle_wrmsr
  *
  * Handler for wrmsr instructions. This handler logs the access, and discards
- * the written data. Any valid wrmsr will not end up here (it will be
- * whitelisted in the MSR bitmap).
+ * the written data (when VMM_DEBUG is enabled). Any valid wrmsr will not end
+ * up here (it will be whitelisted in the MSR bitmap).
  *
  * Parameters:
  *  vcpu: vcpu structure containing instruction info causing the exit
  *
  * Return value:
  *  0: The operation was successful
- *  1: An error occurred
+ *  EINVAL: An error occurred
  */
 int
 vmx_handle_wrmsr(struct vcpu *vcpu)
 {
 	uint64_t insn_length;
-	uint64_t *rax, *rcx, *rdx;
+	uint64_t *rax, *rdx;
+#ifdef VMM_DEBUG
+	uint64_t *rcx;
+#endif /* VMM_DEBUG */
 
 	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
 		printf("%s: can't obtain instruction length\n", __func__);
@@ -4205,12 +4383,14 @@ vmx_handle_wrmsr(struct vcpu *vcpu)
 	KASSERT(insn_length == 2);
 
 	rax = &vcpu->vc_gueststate.vg_rax;
-	rcx = &vcpu->vc_gueststate.vg_rcx;
 	rdx = &vcpu->vc_gueststate.vg_rdx;
 
-	/* XXX log the access for now, to be able to identify unknown MSRs */
-	printf("%s: wrmsr exit, msr=0x%llx, discarding data written from "
+#ifdef VMM_DEBUG
+	/* Log the access, to be able to identify unknown MSRs */
+	rcx = &vcpu->vc_gueststate.vg_rcx;
+	DPRINTF("%s: wrmsr exit, msr=0x%llx, discarding data written from "
 	    "guest=0x%llx:0x%llx\n", __func__, *rcx, *rdx, *rax);
+#endif /* VMM_DEBUG */
 
 	vcpu->vc_gueststate.vg_rip += insn_length;
 
@@ -4275,6 +4455,7 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		 *  context id (CPUIDECX_CNXTID)
 		 *  silicon debug (CPUIDECX_SDBG)
 		 *  xTPR (CPUIDECX_XTPR)
+		 *  AVX (CPUIDECX_AVX)
 		 *  perf/debug (CPUIDECX_PDCM)
 		 *  pcid (CPUIDECX_PCID)
 		 *  direct cache access (CPUIDECX_DCA)
@@ -4297,7 +4478,7 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		    CPUIDECX_VMX | CPUIDECX_DTES64 |
 		    CPUIDECX_DSCPL | CPUIDECX_SMX |
 		    CPUIDECX_CNXTID | CPUIDECX_SDBG |
-		    CPUIDECX_XTPR |
+		    CPUIDECX_XTPR | CPUIDECX_AVX |
 		    CPUIDECX_PCID | CPUIDECX_DCA |
 		    CPUIDECX_X2APIC | CPUIDECX_DEADLINE);
 		*rdx = curcpu()->ci_feature_flags &
@@ -4451,6 +4632,7 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		*rbx = 0;
 		*rcx = 0;
 		*rdx = 0;
+		break;
 	case 0x80000001: 	/* Extended function info */
 		*rax = curcpu()->ci_efeature_eax;
 		*rbx = 0;	/* Reserved */

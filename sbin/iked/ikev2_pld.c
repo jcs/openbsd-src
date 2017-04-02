@@ -1,4 +1,4 @@
-/*	$OpenBSD: ikev2_pld.c,v 1.59 2017/03/13 18:48:16 mikeb Exp $	*/
+/*	$OpenBSD: ikev2_pld.c,v 1.61 2017/03/27 17:17:49 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -1202,13 +1202,13 @@ ikev2_pld_notify(struct iked *env, struct ikev2_payload *pld,
 		}
 		memcpy(&group, buf, len);
 		group = betoh16(group);
-		if ((msg->msg_policy->pol_peerdh = group_get(group))
-		    == NULL) {
-			log_debug("%s: unable to select DH group %d", __func__,
+		if (group_getid(group) == NULL) {
+			log_debug("%s: unable to select DH group %u", __func__,
 			    group);
 			return (-1);
 		}
-		log_debug("%s: responder selected DH group %d", __func__,
+		msg->msg_policy->pol_peerdh = group;
+		log_debug("%s: responder selected DH group %u", __func__,
 		    group);
 		sa_state(env, msg->msg_sa, IKEV2_STATE_CLOSED);
 		msg->msg_sa = NULL;
@@ -1288,6 +1288,27 @@ ikev2_pld_notify(struct iked *env, struct ikev2_payload *pld,
 			msg->msg_sa->sa_ipcomp = transform;
 			msg->msg_sa->sa_cpi_out = betoh16(cpi);
 		}
+		break;
+	case IKEV2_N_COOKIE:
+		if (msg->msg_e) {
+			log_debug("%s: N_COOKIE encrypted",
+			    __func__);
+			return (-1);
+		}
+		if (len < IKED_COOKIE_MIN || len > IKED_COOKIE_MAX) {
+			log_debug("%s: ignoring malformed cookie"
+			    " notification: %zu", __func__, len);
+			return (0);
+		}
+		log_debug("%s: received cookie, len %zu", __func__, len);
+		print_hex(buf, 0, len);
+
+		ibuf_release(msg->msg_cookie);
+		if ((msg->msg_cookie = ibuf_new(buf, len)) == NULL) {
+			log_debug("%s: failed to get peer cookie", __func__);
+			return (-1);
+		}
+		msg->msg_parent->msg_cookie = msg->msg_cookie;
 		break;
 	case IKEV2_N_SIGNATURE_HASH_ALGORITHMS:
 		if (msg->msg_e) {

@@ -30,9 +30,9 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"	$OpenBSD: malloc.3,v 1.103 2017/03/07 06:07:50 otto Exp $
+.\"	$OpenBSD: malloc.3,v 1.108 2017/03/29 17:38:37 otto Exp $
 .\"
-.Dd $Mdocdate: March 7 2017 $
+.Dd $Mdocdate: March 29 2017 $
 .Dt MALLOC 3
 .Os
 .Sh NAME
@@ -119,9 +119,14 @@ The
 .Fn recallocarray
 function is similar to
 .Fn reallocarray
-except that it takes care of clearing newly allocated memory.
-Additionally, the memory that becomes unallocated while shrinking
-or moving existing allocations is erased.
+except it ensures newly allocated memory is cleared similar to
+.Xr calloc 3 .
+Memory that becomes unallocated while shrinking or moving existing
+allocations is explicitly discarded (meaning, pages of memory
+are disposed via
+.Xr munmap 2 ,
+and smaller allocations are cleared with
+.Xr explicit_bzero 3 ) .
 If
 .Fa ptr
 is a
@@ -159,20 +164,11 @@ pointer, no action occurs.
 If
 .Fa ptr
 was previously freed by
-.Fn free ,
-.Fn realloc ,
-.Fn reallocarray
-or
-.Fn recallocarray ,
+.Fn free
+or a reallocation function,
 the behavior is undefined and the double free is a security concern.
 .Sh RETURN VALUES
-Upon successful completion, the functions
-.Fn malloc ,
-.Fn calloc ,
-.Fn realloc ,
-.Fn reallocarray
-and
-.Fn recallocarray
+Upon successful completion, the allocation functions
 return a pointer to the allocated space; otherwise, a
 .Dv NULL
 pointer is returned and
@@ -375,9 +371,10 @@ if ((p = malloc(size * num)) == NULL)
 Assuming the implementation checks for integer overflow as
 .Ox
 does, it is much easier to use
-.Fn calloc
+.Fn calloc ,
+.Fn reallocarray ,
 or
-.Fn reallocarray .
+.Fn recallocarray .
 .Pp
 The above examples could be simplified to:
 .Bd -literal -offset indent
@@ -391,14 +388,7 @@ if ((p = calloc(num, size)) == NULL)
 	err(1, NULL);
 .Ed
 .Sh DIAGNOSTICS
-If
-.Fn malloc ,
-.Fn calloc ,
-.Fn realloc ,
-.Fn reallocarray ,
-or
-.Fn free
-detect an error condition,
+If any of the functions detect an error condition,
 a message will be printed to file descriptor
 2 (not using stdio).
 Errors will result in the process being aborted.
@@ -408,12 +398,7 @@ Here is a brief description of the error messages and what they mean:
 .It Dq out of memory
 If the
 .Cm X
-option is specified it is an error for
-.Fn malloc ,
-.Fn calloc ,
-.Fn realloc ,
-or
-.Fn reallocarray
+option is specified it is an error for the allocation functions
 to return
 .Dv NULL .
 .It Dq malloc init mmap failed
@@ -421,27 +406,31 @@ This is a rather weird condition that is most likely to indicate a
 seriously overloaded system or a ulimit restriction.
 .It Dq bogus pointer (double free?)
 An attempt to
-.Fn free ,
-.Fn realloc ,
+.Fn free
 or
-.Fn reallocarray
-an unallocated pointer was made.
+reallocate an unallocated pointer was made.
 .It Dq chunk is already free
 There was an attempt to free a chunk that had already been freed.
 .It Dq use after free
 A chunk has been modified after it was freed.
 .It Dq modified chunk-pointer
 The pointer passed to
-.Fn free ,
-.Fn realloc ,
-or
-.Fn reallocarray
-has been modified.
+.Fn free
+or a reallocation function has been modified.
 .It Dq chunk canary corrupted address offset@length
 A byte after the requested size has been overwritten,
 indicating a heap overflow.
 The offset at which corruption was detected is printed before the @,
 and the requested length of the allocation after the @.
+.It Dq recorded old size oldsize != size
+.Fn recallocarray
+has detected that the given old size does not equal the recorded size in its
+meta data.
+Enabling option
+.Cm C
+allows
+.Fn recallocarray
+to catch more of these cases.
 .It Dq recursive call
 An attempt was made to call recursively into these functions, i.e., from a
 signal handler.
@@ -457,12 +446,6 @@ functions nor utilize any other functions which may call
 routines).
 .It Dq unknown char in MALLOC_OPTIONS
 We found something we didn't understand.
-.It Dq malloc cache overflow/underflow
-The internal malloc page cache has been corrupted.
-.It Dq malloc free slot lost
-The internal malloc page cache has been corrupted.
-.It Dq guard size
-An inconsistent guard size was detected.
 .It any other error
 .Fn malloc
 detected an internal error;
@@ -582,9 +565,10 @@ An attacker may be able to leverage this heap corruption to execute arbitrary
 code.
 .Pp
 Consider using
-.Fn calloc
-or
+.Fn calloc ,
 .Fn reallocarray
+or
+.Fn recallocarray
 instead of using multiplication in
 .Fn malloc
 and

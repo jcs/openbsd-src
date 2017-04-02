@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_log.c,v 1.48 2016/06/23 15:41:42 bluhm Exp $	*/
+/*	$OpenBSD: subr_log.c,v 1.50 2017/03/27 11:45:49 bluhm Exp $	*/
 /*	$NetBSD: subr_log.c,v 1.11 1996/03/30 22:24:44 christos Exp $	*/
 
 /*
@@ -172,10 +172,12 @@ logopen(dev_t dev, int flags, int mode, struct proc *p)
 int
 logclose(dev_t dev, int flag, int mode, struct proc *p)
 {
+	struct file *fp;
 
-	if (syslogf)
-		FRELE(syslogf, p);
+	fp = syslogf;
 	syslogf = NULL;
+	if (fp)
+		FRELE(fp, p);
 	log_open = 0;
 	logsoftc.sc_state = 0;
 	return (0);
@@ -355,11 +357,11 @@ logioctl(dev_t dev, u_long com, caddr_t data, int flag, struct proc *p)
 	case LIOCSFD:
 		if ((error = suser(p, 0)) != 0)
 			return (error);
-		if ((error = getsock(p, *(int *)data, &fp)) != 0)
+		fp = syslogf;
+		if ((error = getsock(p, *(int *)data, &syslogf)) != 0)
 			return (error);
-		if (syslogf)
-			FRELE(syslogf, p);
-		syslogf = fp;
+		if (fp)
+			FRELE(fp, p);
 		break;
 
 	default:
@@ -409,14 +411,17 @@ dosendsyslog(struct proc *p, const char *buf, size_t nbyte, int flags,
 	struct iovec *ktriov = NULL;
 	int iovlen;
 #endif
+	struct file *fp;
 	char pri[6], *kbuf;
 	struct iovec aiov;
 	struct uio auio;
 	size_t i, len;
 	int error;
 
-	if (syslogf)
-		FREF(syslogf);
+	/* Global variable syslogf may change during sleep, use local copy. */
+	fp = syslogf;
+	if (fp)
+		FREF(fp);
 	else if (!ISSET(flags, LOG_CONS))
 		return (ENOTCONN);
 	else {
@@ -467,8 +472,8 @@ dosendsyslog(struct proc *p, const char *buf, size_t nbyte, int flags,
 #endif
 
 	len = auio.uio_resid;
-	if (syslogf) {
-		error = sosend(syslogf->f_data, NULL, &auio, NULL, NULL, 0);
+	if (fp) {
+		error = sosend(fp->f_data, NULL, &auio, NULL, NULL, 0);
 		if (error == 0)
 			len -= auio.uio_resid;
 	} else if (constty || cn_devvp) {
@@ -515,8 +520,8 @@ dosendsyslog(struct proc *p, const char *buf, size_t nbyte, int flags,
 		free(ktriov, M_TEMP, iovlen);
 	}
 #endif
-	if (syslogf)
-		FRELE(syslogf, p);
+	if (fp)
+		FRELE(fp, p);
 	else
 		error = ENOTCONN;
 	return (error);

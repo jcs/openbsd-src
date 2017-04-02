@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.115 2017/02/20 23:21:19 beck Exp $
+# $OpenBSD: Makefile,v 1.119 2017/03/26 00:06:10 schwarze Exp $
 
 .include <bsd.own.mk>
 
@@ -26,6 +26,7 @@ MAN=	\
 	BIO_find_type.3 \
 	BIO_get_ex_new_index.3 \
 	BIO_new.3 \
+	BIO_printf.3 \
 	BIO_push.3 \
 	BIO_read.3 \
 	BIO_s_accept.3 \
@@ -192,6 +193,9 @@ MAN=	\
 	SMIME_write_PKCS7.3 \
 	SXNET_new.3 \
 	TS_REQ_new.3 \
+	UI_UTIL_read_pw.3 \
+	UI_create_method.3 \
+	UI_get_string_type.3 \
 	UI_new.3 \
 	X509V3_get_d2i.3 \
 	X509_ALGOR_dup.3 \
@@ -221,6 +225,8 @@ MAN=	\
 	X509_check_ca.3 \
 	X509_check_host.3 \
 	X509_check_issued.3 \
+	X509_cmp_time.3 \
+	X509_digest.3 \
 	X509_get_pubkey.3 \
 	X509_get_serialNumber.3 \
 	X509_get_subject_name.3 \

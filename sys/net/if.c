@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.490 2017/03/08 09:19:45 mpi Exp $	*/
+/*	$OpenBSD: if.c,v 1.492 2017/03/22 12:45:22 mikeb Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -228,12 +228,6 @@ int		 netisr;
 struct taskq	*softnettq;
 
 struct task if_input_task_locked = TASK_INITIALIZER(if_netisr, NULL);
-
-/*
- * Serialize socket operations to ensure no new sleeping points
- * are introduced in IP output paths.
- */
-struct rwlock netlock = RWLOCK_INITIALIZER("netlock");
 
 /*
  * Network interface utility routines.
@@ -1152,10 +1146,7 @@ if_clone_create(const char *name, int rdomain)
 	if (ifunit(name) != NULL)
 		return (EEXIST);
 
-	/* XXXSMP breaks atomicity */
-	rw_exit_write(&netlock);
 	ret = (*ifc->ifc_create)(ifc, unit);
-	rw_enter_write(&netlock);
 
 	if (ret != 0 || (ifp = ifunit(name)) == NULL)
 		return (ret);
@@ -1197,10 +1188,7 @@ if_clone_destroy(const char *name)
 		splx(s);
 	}
 
-	/* XXXSMP breaks atomicity */
-	rw_exit_write(&netlock);
 	ret = (*ifc->ifc_destroy)(ifp);
-	rw_enter_write(&netlock);
 
 	return (ret);
 }
@@ -1520,7 +1508,7 @@ if_down(struct ifnet *ifp)
 	splsoftassert(IPL_SOFTNET);
 
 	ifp->if_flags &= ~IFF_UP;
-	microtime(&ifp->if_lastchange);
+	getmicrotime(&ifp->if_lastchange);
 	TAILQ_FOREACH(ifa, &ifp->if_addrlist, ifa_list) {
 		pfctlinput(PRC_IFDOWN, ifa->ifa_addr);
 	}
@@ -1539,7 +1527,7 @@ if_up(struct ifnet *ifp)
 	splsoftassert(IPL_SOFTNET);
 
 	ifp->if_flags |= IFF_UP;
-	microtime(&ifp->if_lastchange);
+	getmicrotime(&ifp->if_lastchange);
 
 #ifdef INET6
 	/* Userland expects the kernel to set ::1 on default lo(4). */
@@ -2170,7 +2158,7 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	}
 
 	if (((oif_flags ^ ifp->if_flags) & IFF_UP) != 0)
-		microtime(&ifp->if_lastchange);
+		getmicrotime(&ifp->if_lastchange);
 
 	return (error);
 }

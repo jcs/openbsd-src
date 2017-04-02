@@ -1,4 +1,4 @@
-/*	$OpenBSD: vm.c,v 1.3 2017/03/15 18:06:18 reyk Exp $	*/
+/*	$OpenBSD: vm.c,v 1.11 2017/03/27 00:28:04 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -76,6 +76,7 @@ void init_emulated_hw(struct vmop_create_params *, int *, int *);
 void vcpu_exit_inout(struct vm_run_params *);
 uint8_t vcpu_exit_pci(struct vm_run_params *);
 int vcpu_pic_intr(uint32_t, uint32_t, uint8_t);
+int loadfile_bios(FILE *, struct vcpu_reg_state *);
 
 static struct vm_mem_range *find_gpa_range(struct vm_create_params *, paddr_t,
     size_t);
@@ -135,6 +136,76 @@ static const struct vcpu_reg_state vcpu_init_flat32 = {
 };
 
 /*
+ * Represents a standard register set for an BIOS to be booted
+ * as a flat 16 bit address space.
+ */
+static const struct vcpu_reg_state vcpu_init_flat16 = {
+#ifdef __i386__
+        .vrs_gprs[VCPU_REGS_EFLAGS] = 0x2,
+        .vrs_gprs[VCPU_REGS_EIP] = 0xFFF0,
+        .vrs_gprs[VCPU_REGS_ESP] = 0x0,
+#else
+        .vrs_gprs[VCPU_REGS_RFLAGS] = 0x2,
+        .vrs_gprs[VCPU_REGS_RIP] = 0xFFF0,
+        .vrs_gprs[VCPU_REGS_RSP] = 0x0,
+#endif
+        .vrs_crs[VCPU_REGS_CR0] = 0x60000010,
+        .vrs_crs[VCPU_REGS_CR3] = 0,
+        .vrs_sregs[VCPU_REGS_CS] = { 0xF000, 0xFFFF, 0x809F, 0xF0000},
+        .vrs_sregs[VCPU_REGS_DS] = { 0x0, 0xFFFF, 0x8093, 0x0},
+        .vrs_sregs[VCPU_REGS_ES] = { 0x0, 0xFFFF, 0x8093, 0x0},
+        .vrs_sregs[VCPU_REGS_FS] = { 0x0, 0xFFFF, 0x8093, 0x0},
+        .vrs_sregs[VCPU_REGS_GS] = { 0x0, 0xFFFF, 0x8093, 0x0},
+        .vrs_sregs[VCPU_REGS_SS] = { 0x0, 0xFFFF, 0x8093, 0x0},
+        .vrs_gdtr = { 0x0, 0xFFFF, 0x0, 0x0},
+        .vrs_idtr = { 0x0, 0xFFFF, 0x0, 0x0},
+        .vrs_sregs[VCPU_REGS_LDTR] = { 0x0, 0xFFFF, 0x0082, 0x0},
+        .vrs_sregs[VCPU_REGS_TR] = { 0x0, 0xFFFF, 0x008B, 0x0},
+};
+
+/*
+ * loadfile_bios
+ *
+ * Alternatively to loadfile_elf, this function loads a non-ELF BIOS image
+ * directly into memory.
+ *
+ * Parameters:
+ *  fp: file of a kernel file to load
+ *  (out) vrs: register state to set on init for this kernel
+ *
+ * Return values:
+ *  0 if successful
+ *  various error codes returned from read(2) or loadelf functions
+ */
+int
+loadfile_bios(FILE *fp, struct vcpu_reg_state *vrs)
+{
+	off_t	 size, off;
+
+	/* Set up a "flat 16 bit" register state for BIOS */
+	memcpy(vrs, &vcpu_init_flat16, sizeof(*vrs));
+
+	/* Get the size of the BIOS image and seek to the beginning */
+	if (fseeko(fp, 0, SEEK_END) == -1 || (size = ftello(fp)) == -1 ||
+	    fseeko(fp, 0, SEEK_SET) == -1)
+		return (-1);
+
+	/* The BIOS image must end at 1M */
+	if ((off = 1048576 - size) < 0)
+		return (-1);
+
+	/* Read BIOS image into memory */
+	if (mread(fp, off, size) != (size_t)size) {
+		errno = EIO;
+		return (-1);
+	}
+
+	log_debug("%s: loaded BIOS image", __func__);
+
+	return (0);
+}
+
+/*
  * start_vm
  *
  * After forking a new VM process, starts the new VM with the creation
@@ -163,7 +234,7 @@ start_vm(struct vmd_vm *vm, int fd)
 	struct vcpu_reg_state	 vrs;
 	int			 nicfds[VMM_MAX_NICS_PER_VM];
 	int			 ret;
-	FILE			*kernfp;
+	FILE			*fp;
 	struct vmboot_params	 vmboot;
 	size_t			 i;
 
@@ -203,22 +274,28 @@ start_vm(struct vmd_vm *vm, int fd)
 	 * Set up default "flat 32 bit" register state - RIP,
 	 * RSP, and GDT info will be set in bootloader
 	 */
-	memcpy(&vrs, &vcpu_init_flat32, sizeof(struct vcpu_reg_state));
+	memcpy(&vrs, &vcpu_init_flat32, sizeof(vrs));
 
 	/* Find and open kernel image */
-	if ((kernfp = vmboot_open(vm->vm_kernel,
+	if ((fp = vmboot_open(vm->vm_kernel,
 	    vm->vm_disks[0], &vmboot)) == NULL)
 		fatalx("failed to open kernel - exiting");
 
 	/* Load kernel image */
-	ret = loadelf_main(kernfp, vcp, &vrs,
+	ret = loadfile_elf(fp, vcp, &vrs,
 	    vmboot.vbp_bootdev, vmboot.vbp_howto);
-	if (ret) {
-		errno = ret;
-		fatal("failed to load kernel - exiting");
-	}
 
-	vmboot_close(kernfp, &vmboot);
+	/*
+	 * Try BIOS as a fallback (only if it was provided as an image
+	 * with vm->vm_kernel and not loaded from the disk)
+	 */
+	if (ret && errno == ENOEXEC && vm->vm_kernel != -1)
+		ret = loadfile_bios(fp, &vrs);
+
+	if (ret)
+		fatal("failed to load kernel or BIOS - exiting");
+
+	vmboot_close(fp, &vmboot);
 
 	if (vm->vm_kernel != -1)
 		close(vm->vm_kernel);
@@ -373,6 +450,10 @@ vcpu_reset(uint32_t vmid, uint32_t vcpu_id, struct vcpu_reg_state *vrs)
  *
  * Sets up the guest physical memory ranges that the VM can access.
  *
+ * Parameters:
+ *  vcp: VM create parameters describing the VM whose memory map
+ *       is being created
+ *
  * Return values:
  *  nothing
  */
@@ -526,6 +607,15 @@ init_emulated_hw(struct vmop_create_params *vmc, int *child_disks,
 {
 	struct vm_create_params *vcp = &vmc->vmc_params;
 	int i;
+	uint64_t memlo, memhi;
+
+	/* Calculate memory size for NVRAM registers */
+	memlo = memhi = 0;
+	if (vcp->vcp_nmemranges > 2)
+		memlo = vcp->vcp_memranges[2].vmr_size - 15 * 0x100000;
+
+	if (vcp->vcp_nmemranges > 3)
+		memhi = vcp->vcp_memranges[3].vmr_size;
 
 	/* Reset the IO port map */
 	memset(&ioports_map, 0, sizeof(io_fn_t) * MAX_PORTS);
@@ -538,7 +628,7 @@ init_emulated_hw(struct vmop_create_params *vmc, int *child_disks,
 	ioports_map[TIMER_BASE + TIMER_CNTR2] = vcpu_exit_i8253;
 
 	/* Init mc146818 RTC */
-	mc146818_init(vcp->vcp_id);
+	mc146818_init(vcp->vcp_id, memlo, memhi);
 	ioports_map[IO_RTC] = vcpu_exit_mc146818;
 	ioports_map[IO_RTC + 1] = vcpu_exit_mc146818;
 
@@ -560,6 +650,9 @@ init_emulated_hw(struct vmop_create_params *vmc, int *child_disks,
 
 	ioports_map[PCI_MODE1_ADDRESS_REG] = vcpu_exit_pci;
 	ioports_map[PCI_MODE1_DATA_REG] = vcpu_exit_pci;
+	ioports_map[PCI_MODE1_DATA_REG + 1] = vcpu_exit_pci;
+	ioports_map[PCI_MODE1_DATA_REG + 2] = vcpu_exit_pci;
+	ioports_map[PCI_MODE1_DATA_REG + 3] = vcpu_exit_pci;
 	pci_init();
 
 	/* Initialize virtio devices */
@@ -925,6 +1018,9 @@ vcpu_exit_pci(struct vm_run_params *vrp)
 		pci_handle_address_reg(vrp);
 		break;
 	case PCI_MODE1_DATA_REG:
+	case PCI_MODE1_DATA_REG + 1:
+	case PCI_MODE1_DATA_REG + 2:
+	case PCI_MODE1_DATA_REG + 3:
 		pci_handle_data_reg(vrp);
 		break;
 	case VMM_PCI_IO_BAR_BASE ... VMM_PCI_IO_BAR_END:
@@ -957,7 +1053,7 @@ vcpu_exit_inout(struct vm_run_params *vrp)
 	if (ioports_map[vei->vei.vei_port] != NULL)
 		intr = ioports_map[vei->vei.vei_port](vrp);
 	else if (vei->vei.vei_dir == VEI_DIR_IN)
-			vei->vei.vei_data = 0xFFFFFFFF;
+			set_return_data(vei, 0xFFFFFFFF);
 
 	if (intr != 0xFF)
 		vcpu_assert_pic_irq(vrp->vrp_vm_id, vrp->vrp_vcpu_id, intr);
@@ -989,6 +1085,7 @@ vcpu_exit(struct vm_run_params *vrp)
 
 	switch (vrp->vrp_exit_reason) {
 	case VMX_EXIT_INT_WINDOW:
+	case VMX_EXIT_CPUID:
 	case VMX_EXIT_EXTINT:
 	case VMX_EXIT_EPT_VIOLATION:
 	case SVM_VMEXIT_NPF:
@@ -1289,4 +1386,66 @@ mutex_unlock(pthread_mutex_t *m)
 		errno = ret;
 		fatal("could not release mutex");
 	}
+}
+
+/*
+ * set_return_data
+ *
+ * Utility function for manipulating register data in vm exit info structs. This
+ * function ensures that the data is copied to the vei->vei.vei_data field with
+ * the proper size for the operation being performed.
+ *
+ * Parameters:
+ *  vei: exit information
+ *  data: return data
+ */
+void
+set_return_data(union vm_exit *vei, uint32_t data)
+{
+	switch (vei->vei.vei_size) {
+	case 1:
+		vei->vei.vei_data &= ~0xFF;
+		vei->vei.vei_data |= (uint8_t)data;
+		break;
+	case 2:
+		vei->vei.vei_data &= ~0xFFFF;
+		vei->vei.vei_data |= (uint16_t)data;
+		break;
+	case 4:
+		vei->vei.vei_data = data;
+		break;
+	}
+}
+
+/*
+ * get_input_data
+ *
+ * Utility function for manipulating register data in vm exit info structs. This
+ * function ensures that the data is copied from the vei->vei.vei_data field with
+ * the proper size for the operation being performed.
+ *
+ * Parameters:
+ *  vei: exit information
+ *  data: location to store the result
+ */
+void
+get_input_data(union vm_exit *vei, uint32_t *data)
+{
+	switch (vei->vei.vei_size) {
+	case 1:
+		*data &= 0xFFFFFF00;
+		*data |= (uint8_t)vei->vei.vei_data;
+		break;
+	case 2:
+		*data &= 0xFFFF0000;
+		*data |= (uint16_t)vei->vei.vei_data;
+		break;
+	case 4:
+		*data = vei->vei.vei_data;
+		break;
+	default:
+		log_warnx("%s: invalid i/o size %d", __func__,
+		    vei->vei.vei_size);
+	}
+
 }

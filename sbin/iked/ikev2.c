@@ -1,4 +1,4 @@
-/*	$OpenBSD: ikev2.c,v 1.143 2017/03/13 18:49:20 mikeb Exp $	*/
+/*	$OpenBSD: ikev2.c,v 1.152 2017/03/30 15:48:30 patrick Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -63,7 +63,7 @@ void	 ikev2_init_recv(struct iked *, struct iked_message *,
 	    struct ike_header *);
 void	 ikev2_init_ike_sa_timeout(struct iked *, void *);
 int	 ikev2_init_ike_sa_peer(struct iked *, struct iked_policy *,
-	    struct iked_addr *);
+	    struct iked_addr *, struct iked_message *);
 int	 ikev2_init_ike_auth(struct iked *, struct iked_sa *);
 int	 ikev2_init_auth(struct iked *, struct iked_message *);
 int	 ikev2_init_done(struct iked *, struct iked_sa *);
@@ -195,6 +195,8 @@ ikev2_dispatch_parent(int fd, struct privsep_proc *p, struct imsg *imsg)
 		return (config_getpfkey(env, imsg));
 	case IMSG_CFG_POLICY:
 		return (config_getpolicy(env, imsg));
+	case IMSG_CFG_FLOW:
+		return (config_getflow(env, imsg));
 	case IMSG_CFG_USER:
 		return (config_getuser(env, imsg));
 	case IMSG_COMPILE:
@@ -257,7 +259,7 @@ ikev2_dispatch_cert(int fd, struct privsep_proc *p, struct imsg *imsg)
 		} else {
 			log_warnx("%s: peer certificate is invalid", __func__);
 			ikev2_send_auth_failed(env, sa);
-			return (-1);
+			break;
 		}
 		if (ikev2_ike_auth(env, sa) != 0)
 			log_debug("%s: failed to send ike auth", __func__);
@@ -323,6 +325,7 @@ ikev2_dispatch_cert(int fd, struct privsep_proc *p, struct imsg *imsg)
 		id->id_type = type;
 		id->id_offset = 0;
 		ibuf_release(id->id_buf);
+		id->id_buf = NULL;
 
 		if (type != IKEV2_AUTH_NONE) {
 			if (len <= 0 ||
@@ -498,13 +501,39 @@ done:
 }
 
 int
-ikev2_ike_auth_compatible(struct iked_sa *sa, uint8_t want, uint8_t have)
+ikev2_ike_auth_compatible(struct iked_sa *sa, uint8_t policy, uint8_t wire)
 {
-	if (want == have)
+	if (wire == IKEV2_AUTH_SIG_ANY)		/* internal, not on wire */
+		return (-1);
+	if (policy == wire || policy == IKEV2_AUTH_NONE)
 		return (0);
-	if (sa->sa_sigsha2 &&
-	    have == IKEV2_AUTH_SIG && want == IKEV2_AUTH_RSA_SIG)
-		return (0);
+	switch (policy) {
+	case IKEV2_AUTH_SIG_ANY:
+		switch (wire) {
+		case IKEV2_AUTH_SIG:
+		case IKEV2_AUTH_RSA_SIG:
+		case IKEV2_AUTH_ECDSA_256:
+		case IKEV2_AUTH_ECDSA_384:
+		case IKEV2_AUTH_ECDSA_521:
+			return (0);
+		}
+		break;
+	case IKEV2_AUTH_SIG:
+	case IKEV2_AUTH_RSA_SIG:
+	case IKEV2_AUTH_ECDSA_256:
+	case IKEV2_AUTH_ECDSA_384:
+	case IKEV2_AUTH_ECDSA_521:
+		switch (wire) {
+		/*
+		 * XXX Maybe we need an indication saying:
+		 * XXX Accept AUTH_SIG as long as its DSA?
+		 */
+		case IKEV2_AUTH_SIG:
+			if (sa->sa_sigsha2)
+				return (0);
+		}
+		break;
+	}
 	return (-1);
 }
 
@@ -592,8 +621,10 @@ ikev2_ike_auth_recv(struct iked *env, struct iked_sa *sa,
 
 		if (ikev2_ike_auth_compatible(sa,
 		    ikeauth.auth_method, msg->msg_auth.id_type) < 0) {
-			log_warnx("%s: unexpected auth method %s", __func__,
-			    print_map(msg->msg_auth.id_type, ikev2_auth_map));
+			log_warnx("%s: unexpected auth method %s, was "
+			    "expecting %s", __func__,
+			    print_map(msg->msg_auth.id_type, ikev2_auth_map),
+			    print_map(ikeauth.auth_method, ikev2_auth_map));
 			return (-1);
 		}
 		ikeauth.auth_method = msg->msg_auth.id_type;
@@ -705,6 +736,7 @@ ikev2_init_recv(struct iked *env, struct iked_message *msg,
 	struct iked_sa		*sa;
 	in_port_t		 port;
 	struct iked_socket	*sock;
+	struct iked_policy	*pol;
 
 	if (ikev2_msg_valid_ike_sa(env, hdr, msg) == -1) {
 		log_debug("%s: unknown SA", __func__);
@@ -770,6 +802,14 @@ ikev2_init_recv(struct iked *env, struct iked_message *msg,
 
 	switch (hdr->ike_exchange) {
 	case IKEV2_EXCHANGE_IKE_SA_INIT:
+		if (ibuf_length(msg->msg_cookie)) {
+			pol = sa->sa_policy;
+			if (ikev2_init_ike_sa_peer(env, pol,
+			    &pol->pol_peer, msg) != 0)
+				log_warnx("%s: failed to initiate a "
+				    "IKE_SA_INIT exchange", __func__);
+			break;
+		}
 		(void)ikev2_init_auth(env, msg);
 		break;
 	case IKEV2_EXCHANGE_IKE_AUTH:
@@ -804,7 +844,7 @@ ikev2_init_ike_sa(struct iked *env, void *arg)
 
 		log_debug("%s: initiating \"%s\"", __func__, pol->pol_name);
 
-		if (ikev2_init_ike_sa_peer(env, pol, &pol->pol_peer))
+		if (ikev2_init_ike_sa_peer(env, pol, &pol->pol_peer, NULL))
 			log_debug("%s: failed to initiate with peer %s",
 			    __func__,
 			    print_host((struct sockaddr *)&pol->pol_peer.addr,
@@ -829,15 +869,16 @@ ikev2_init_ike_sa_timeout(struct iked *env, void *arg)
 
 int
 ikev2_init_ike_sa_peer(struct iked *env, struct iked_policy *pol,
-    struct iked_addr *peer)
+    struct iked_addr *peer, struct iked_message *retry)
 {
 	struct sockaddr_storage		 ss;
 	struct iked_message		 req;
 	struct ike_header		*hdr;
 	struct ikev2_payload		*pld;
 	struct ikev2_keyexchange	*ke;
-	struct iked_sa			*sa;
-	struct ibuf			*buf;
+	struct ikev2_notify		*n;
+	struct iked_sa			*sa = NULL;
+	struct ibuf			*buf, *cookie = NULL;
 	struct group			*group;
 	ssize_t				 len;
 	int				 ret = -1;
@@ -847,20 +888,32 @@ ikev2_init_ike_sa_peer(struct iked *env, struct iked_policy *pol,
 	if ((sock = ikev2_msg_getsocket(env, peer->addr_af, 0)) == NULL)
 		return (-1);
 
+	if (retry != NULL) {
+		sa = retry->msg_sa;
+		cookie = retry->msg_cookie;
+		sa_state(env, sa, IKEV2_STATE_INIT);
+	}
+
 	/* Create a new initiator SA */
-	if ((sa = sa_new(env, 0, 0, 1, pol)) == NULL)
+	if (sa == NULL &&
+	    (sa = sa_new(env, 0, 0, 1, pol)) == NULL)
 		return (-1);
 
 	/* Pick peer's DH group if asked */
-	/* XXX free old sa_dhgroup ? */
-	sa->sa_dhgroup = pol->pol_peerdh;
+	if (pol->pol_peerdh > 0 && sa->sa_dhgroup == NULL &&
+	    (sa->sa_dhgroup = group_get(pol->pol_peerdh)) == NULL) {
+		log_warnx("%s: invalid peer DH group %u", __func__,
+		    pol->pol_peerdh);
+		goto closeonly;
+	}
+	sa->sa_reqid = 0;
 
 	if (ikev2_sa_initiator(env, sa, NULL, NULL) == -1)
-		goto done;
+		goto closeonly;
 
 	if (pol->pol_local.addr.ss_family == AF_UNSPEC) {
 		if (socket_getaddr(sock->sock_fd, &ss) == -1)
-			goto done;
+			goto closeonly;
 	} else
 		memcpy(&ss, &pol->pol_local.addr, pol->pol_local.addr.ss_len);
 
@@ -880,8 +933,30 @@ ikev2_init_ike_sa_peer(struct iked *env, struct iked_policy *pol,
 
 	/* IKE header */
 	if ((hdr = ikev2_add_header(buf, sa, req.msg_msgid,
-	    IKEV2_PAYLOAD_SA, IKEV2_EXCHANGE_IKE_SA_INIT, 0)) == NULL)
+	    cookie == NULL ? IKEV2_PAYLOAD_SA : IKEV2_PAYLOAD_NOTIFY,
+	    IKEV2_EXCHANGE_IKE_SA_INIT, 0)) == NULL)
 		goto done;
+
+	/* Reflect COOKIE */
+	if (cookie) {
+		if ((pld = ikev2_add_payload(buf)) == NULL)
+			goto done;
+		if ((n = ibuf_advance(buf, sizeof(*n))) == NULL)
+			goto done;
+		n->n_protoid = IKEV2_SAPROTO_NONE;
+		n->n_spisize = 0;
+		n->n_type = htobe16(IKEV2_N_COOKIE);
+		if (ikev2_add_buf(buf, cookie) == -1)
+			goto done;
+		len = sizeof(*n) + ibuf_size(cookie);
+
+		log_debug("%s: added cookie, len %zu", __func__,
+		    ibuf_size(cookie));
+		print_hex(ibuf_data(cookie), 0, ibuf_size(cookie));
+
+		if (ikev2_next_payload(pld, len, IKEV2_PAYLOAD_SA) == -1)
+			goto done;
+	}
 
 	/* SA payload */
 	if ((pld = ikev2_add_payload(buf)) == NULL)
@@ -953,11 +1028,12 @@ ikev2_init_ike_sa_peer(struct iked *env, struct iked_policy *pol,
 	timer_add(env, &sa->sa_timer, IKED_IKE_SA_EXCHANGE_TIMEOUT);
 
  done:
+	ikev2_msg_cleanup(env, &req);
+ closeonly:
 	if (ret == -1) {
 		log_debug("%s: closing SA", __func__);
 		sa_free(env, sa);
 	}
-	ikev2_msg_cleanup(env, &req);
 
 	return (ret);
 }
@@ -1177,6 +1253,7 @@ ikev2_policy2id(struct iked_static_id *polid, struct iked_id *id, int srcid)
 		if (inet_pton(AF_INET, (char *)polid->id_data, &in4) != 1 ||
 		    ibuf_add(id->id_buf, &in4, sizeof(in4)) != 0) {
 			ibuf_release(id->id_buf);
+			id->id_buf = NULL;
 			return (-1);
 		}
 		break;
@@ -1184,6 +1261,7 @@ ikev2_policy2id(struct iked_static_id *polid, struct iked_id *id, int srcid)
 		if (inet_pton(AF_INET6, (char *)polid->id_data, &in6) != 1 ||
 		    ibuf_add(id->id_buf, &in6, sizeof(in6)) != 0) {
 			ibuf_release(id->id_buf);
+			id->id_buf = NULL;
 			return (-1);
 		}
 		break;
@@ -1196,6 +1274,7 @@ ikev2_policy2id(struct iked_static_id *polid, struct iked_id *id, int srcid)
 			if (name)
 				X509_NAME_free(name);
 			ibuf_release(id->id_buf);
+			id->id_buf = NULL;
 			return (-1);
 		}
 		X509_NAME_free(name);
@@ -1204,6 +1283,7 @@ ikev2_policy2id(struct iked_static_id *polid, struct iked_id *id, int srcid)
 		if (ibuf_add(id->id_buf,
 		    polid->id_data, polid->id_length) != 0) {
 			ibuf_release(id->id_buf);
+			id->id_buf = NULL;
 			return (-1);
 		}
 		break;
@@ -2068,7 +2148,8 @@ ikev2_resp_recv(struct iked *env, struct iked_message *msg,
 			ikev2_send_error(env, sa, msg, hdr->ike_exchange);
 		break;
 	case IKEV2_EXCHANGE_INFORMATIONAL:
-		if (!msg->msg_responded && !msg->msg_error) {
+		if (sa_stateok(sa, IKEV2_STATE_AUTH_REQUEST) &&
+		    !msg->msg_responded && !msg->msg_error) {
 			(void)ikev2_send_ike_e(env, sa, NULL,
 			    IKEV2_PAYLOAD_NONE, IKEV2_EXCHANGE_INFORMATIONAL,
 			    1);
@@ -3134,6 +3215,11 @@ ikev2_ikesa_enable(struct iked *env, struct iked_sa *sa, struct iked_sa *nsa)
 		nsa->sa_addrpool6 = sa->sa_addrpool6;
 		sa->sa_addrpool6 = NULL;
 		RB_INSERT(iked_addrpool6, &env->sc_addrpool6, nsa);
+	}
+	/* Transfer other attributes */
+	if (sa->sa_tag) {
+		nsa->sa_tag = sa->sa_tag;
+		sa->sa_tag = NULL;
 	}
 
 	log_debug("%s: activating new IKE SA", __func__);
@@ -5143,7 +5229,8 @@ ikev2_acquire_sa(struct iked *env, struct iked_flow *acquire)
 		log_debug("%s: found matching policy '%s'", __func__,
 		    p->pol_name);
 
-		if (ikev2_init_ike_sa_peer(env, p, acquire->flow_peer) != 0)
+		if (ikev2_init_ike_sa_peer(env, p,
+		    acquire->flow_peer, NULL) != 0)
 			log_warnx("%s: failed to initiate a "
 			    "IKE_SA_INIT exchange", __func__);
 	} else {
@@ -5223,7 +5310,7 @@ ikev2_drop_sa(struct iked *env, struct iked_spi *drop)
 	struct iked_sa			*sa;
 	struct ikev2_delete		*del;
 	uint32_t			 spi32;
-	int			 	 acquired;
+	int				 acquired;
 
 	key.csa_spi = *drop;
 	csa = RB_FIND(iked_activesas, &env->sc_activesas, &key);

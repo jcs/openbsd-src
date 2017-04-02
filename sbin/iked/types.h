@@ -1,4 +1,4 @@
-/*	$OpenBSD: types.h,v 1.26 2017/01/03 17:51:38 reyk Exp $	*/
+/*	$OpenBSD: types.h,v 1.28 2017/03/27 10:43:53 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -56,6 +56,9 @@
 #define IKED_NONCE_MIN		16	/* XXX 128 bits */
 #define IKED_NONCE_SIZE		32	/* XXX 256 bits */
 
+#define IKED_COOKIE_MIN		1	/* min 1 bytes */
+#define IKED_COOKIE_MAX		64	/* max 64 bytes */
+
 #define IKED_ID_SIZE		1024	/* XXX should be dynamic */
 #define IKED_PSK_SIZE		1024	/* XXX should be dynamic */
 #define IKED_MSGBUF_MAX		8192
@@ -101,6 +104,7 @@ enum imsg_type {
 	IMSG_PFKEY_SOCKET,
 	IMSG_IKE_MESSAGE,
 	IMSG_CFG_POLICY,
+	IMSG_CFG_FLOW,
 	IMSG_CFG_USER,
 	IMSG_CERTREQ,
 	IMSG_CERT,

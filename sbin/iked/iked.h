@@ -1,4 +1,4 @@
-/*	$OpenBSD: iked.h,v 1.109 2017/03/13 18:49:20 mikeb Exp $	*/
+/*	$OpenBSD: iked.h,v 1.113 2017/03/27 17:17:49 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -258,8 +258,8 @@ struct iked_policy {
 	unsigned int			 pol_ipproto;
 
 	struct iked_addr		 pol_peer;
-	struct group			*pol_peerdh;
 	struct iked_static_id		 pol_peerid;
+	uint32_t			 pol_peerdh;
 
 	struct iked_addr		 pol_local;
 	struct iked_static_id		 pol_localid;
@@ -502,6 +502,7 @@ struct iked_message {
 	struct iked_id		 msg_auth;	/* AUTH payload */
 	struct iked_id		 msg_id;
 	struct iked_id		 msg_cert;
+	struct ibuf		*msg_cookie;
 
 	/* Parse stack */
 	struct iked_proposal	*msg_prop;
@@ -665,6 +666,9 @@ int	 config_getreset(struct iked *, struct imsg *);
 int	 config_setpolicy(struct iked *, struct iked_policy *,
 	    enum privsep_procid);
 int	 config_getpolicy(struct iked *, struct imsg *);
+int	 config_setflow(struct iked *, struct iked_policy *,
+	    enum privsep_procid);
+int	 config_getflow(struct iked *, struct imsg *);
 int	 config_setsocket(struct iked *, struct sockaddr_storage *, in_port_t,
 	    enum privsep_procid);
 int	 config_getsocket(struct iked *env, struct imsg *,
@@ -753,6 +757,7 @@ struct ibuf *
 	 dsa_setkey(struct iked_dsa *, void *, size_t, uint8_t);
 void	 dsa_free(struct iked_dsa *);
 int	 dsa_init(struct iked_dsa *, const void *, size_t);
+size_t	 dsa_prefix(struct iked_dsa *);
 size_t	 dsa_length(struct iked_dsa *);
 int	 dsa_update(struct iked_dsa *, const void *, size_t);
 ssize_t	 dsa_sign_final(struct iked_dsa *, void *, size_t);

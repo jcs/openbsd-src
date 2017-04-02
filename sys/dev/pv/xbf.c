@@ -1,4 +1,4 @@
-/*	$OpenBSD: xbf.c,v 1.26 2017/03/13 01:10:03 mikeb Exp $	*/
+/*	$OpenBSD: xbf.c,v 1.28 2017/03/19 16:37:19 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2016 Mike Belopuhov
@@ -469,7 +469,7 @@ xbf_load_xs(struct scsi_xfer *xs, int desc)
 	if (error) {
 		DPRINTF("%s: failed to load %d bytes of data\n",
 		    sc->sc_dev.dv_xname, xs->datalen);
-		return (-1);
+		return (error);
 	}
 
 	for (i = 0; i < map->dm_nsegs; i++) {
@@ -534,13 +534,13 @@ xbf_bounce_xs(struct scsi_xfer *xs, int desc)
 	    sc->sc_dev.dv_xname, xs->datalen, size, map->dm_nsegs);
 
 	if (ISSET(xs->flags, SCSI_DATA_OUT))
-		memcpy((caddr_t)dma->dma_vaddr, xs->data, xs->datalen);
+		memcpy(dma->dma_vaddr, xs->data, xs->datalen);
 
 	for (i = 0; i < map->dm_nsegs; i++) {
 		sge = &xrd->xrd_req.req_sgl[i];
 		sge->sge_ref = map->dm_segs[i].ds_addr;
 		sge->sge_first = i > 0 ? 0 :
-		    ((vaddr_t)xs->data & PAGE_MASK) >> XBF_SEC_SHIFT;
+		    ((vaddr_t)dma->dma_vaddr & PAGE_MASK) >> XBF_SEC_SHIFT;
 		sge->sge_last = sge->sge_first +
 		    (map->dm_segs[i].ds_len >> XBF_SEC_SHIFT) - 1;
 
@@ -652,7 +652,7 @@ xbf_submit_cmd(struct scsi_xfer *xs)
 		else
 			error = xbf_bounce_xs(xs, desc);
 		if (error)
-			return (error);
+			return (-1);
 	} else {
 		DPRINTF("%s: desc %d %s%s lba %llu\n", sc->sc_dev.dv_xname,
 		    desc, operation == XBF_OP_FLUSH ? "flush" : "barrier",
@@ -675,7 +675,7 @@ xbf_submit_cmd(struct scsi_xfer *xs)
 
 	xen_intr_signal(sc->sc_xih);
 
-	return desc;
+	return (desc);
 }
 
 int

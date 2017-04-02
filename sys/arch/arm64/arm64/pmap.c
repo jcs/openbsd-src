@@ -1,4 +1,4 @@
-/* $OpenBSD: pmap.c,v 1.26 2017/03/16 20:15:07 kettenis Exp $ */
+/* $OpenBSD: pmap.c,v 1.29 2017/03/28 18:23:53 kettenis Exp $ */
 /*
  * Copyright (c) 2008-2009,2014-2016 Dale Rahn <drahn@dalerahn.com>
  *
@@ -43,7 +43,7 @@
 
 #endif
 
-void pmap_setttb(struct proc *p, paddr_t pcb_pagedir, struct pcb *);
+void pmap_setttb(struct proc *p);
 void arm64_tlbi_asid(vaddr_t va, int asid);
 void pmap_free_asid(pmap_t pm);
 
@@ -255,6 +255,27 @@ const struct kmem_pa_mode kp_lN = {
 	.kp_zero = 1,
 };
 
+const uint64_t ap_bits_user[8] = {
+	[PROT_NONE]			= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AP(2),
+	[PROT_READ]			= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(3),
+	[PROT_WRITE]			= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(1),
+	[PROT_WRITE|PROT_READ]		= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(1),
+	[PROT_EXEC]			= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(2),
+	[PROT_EXEC|PROT_READ]		= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(3),
+	[PROT_EXEC|PROT_WRITE]		= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(1),
+	[PROT_EXEC|PROT_WRITE|PROT_READ]= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(1),
+};
+
+const uint64_t ap_bits_kern[8] = {
+	[PROT_NONE]				= ATTR_PXN|ATTR_UXN|ATTR_AP(2),
+	[PROT_READ]				= ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(2),
+	[PROT_WRITE]				= ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(0),
+	[PROT_WRITE|PROT_READ]			= ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(0),
+	[PROT_EXEC]				= ATTR_UXN|ATTR_AF|ATTR_AP(2),
+	[PROT_EXEC|PROT_READ]			= ATTR_UXN|ATTR_AF|ATTR_AP(2),
+	[PROT_EXEC|PROT_WRITE]			= ATTR_UXN|ATTR_AF|ATTR_AP(0),
+	[PROT_EXEC|PROT_WRITE|PROT_READ]	= ATTR_UXN|ATTR_AF|ATTR_AP(0),
+};
 
 /*
  * This is used for pmap_kernel() mappings, they are not to be removed
@@ -886,8 +907,7 @@ pmap_pinit(pmap_t pm)
 
 	}
 
-	//pmap_allocate_asid(pm); // by default global (allocate asid later!?!)
-	pm->pm_asid = -1;
+	pmap_allocate_asid(pm);
 
 	pmap_extract(pmap_kernel(), l0va, (paddr_t *)&pm->pm_pt0pa);
 
@@ -900,7 +920,7 @@ int pmap_vp_poolcache = 0; // force vp poolcache to allocate late.
  * Create and return a physical map.
  */
 pmap_t
-pmap_create()
+pmap_create(void)
 {
 	pmap_t pmap;
 
@@ -939,9 +959,8 @@ pmap_destroy(pmap_t pm)
 	if (refs > 0)
 		return;
 
-	if (pm->pm_asid != -1) {
-		pmap_free_asid(pm);
-	}
+	pmap_free_asid(pm);
+
 	/*
 	 * reference count is zero, free pmap resources and free pmap.
 	 */
@@ -1113,12 +1132,15 @@ CTASSERT(sizeof(struct pmapvp0) == 8192);
 int mappings_allocated = 0;
 int pted_allocated = 0;
 
+extern char __text_start[], _etext[];
+extern char __rodata_start[], _erodata[];
+
 vaddr_t
 pmap_bootstrap(long kvo, paddr_t lpt1,  long kernelstart, long kernelend,
     long ram_start, long ram_end)
 {
 	void  *va;
-	paddr_t pa;
+	paddr_t pa, pt1pa;
 	struct pmapvp1 *vp1;
 	struct pmapvp2 *vp2;
 	struct pmapvp3 *vp3;
@@ -1145,12 +1167,10 @@ pmap_bootstrap(long kvo, paddr_t lpt1,  long kernelstart, long kernelend,
 	// so all accesses initializing tables must be done via physical
 	// pointers
 
-	pa = pmap_steal_avail(sizeof (struct pmapvp1), Lx_TABLE_ALIGN,
-	    &va);
-	vp1 = (struct pmapvp1 *)pa;
+	pt1pa = pmap_steal_avail(sizeof (struct pmapvp1), Lx_TABLE_ALIGN, &va);
+	vp1 = (struct pmapvp1 *)pt1pa;
 	pmap_kernel()->pm_vp.l1 = (struct pmapvp1 *)va;
-	pmap_kernel()->pm_pt0pa = pa;
-	pmap_kernel()->pm_asid = -1;
+	pmap_kernel()->pm_asid = 0;
 
 	// allocate Lx entries
 	for (i = VP_IDX1(VM_MIN_KERNEL_ADDRESS);
@@ -1214,7 +1234,9 @@ pmap_bootstrap(long kvo, paddr_t lpt1,  long kernelstart, long kernelend,
 		}
 	}
 
-	// XXX should this extend the l2 bootstrap mappings for kernel entries?
+	pa = pmap_steal_avail(Lx_TABLE_ALIGN, Lx_TABLE_ALIGN, &va);
+	memset((void *)pa, 0, Lx_TABLE_ALIGN);
+	pmap_kernel()->pm_pt0pa = pa;
 
 	/* now that we have mapping space for everything, lets map it */
 	/* all of these mappings are ram -> kernel va */
@@ -1222,7 +1244,7 @@ pmap_bootstrap(long kvo, paddr_t lpt1,  long kernelstart, long kernelend,
 	// enable mappings for existing 'allocated' mapping in the bootstrap
 	// page tables
 	extern uint64_t *pagetable;
-	extern int *_end;
+	extern char _end[];
 	vp2 = (void *)((long)&pagetable + kvo);
 	struct mem_region *mp;
 	ssize_t size;
@@ -1234,50 +1256,39 @@ pmap_bootstrap(long kvo, paddr_t lpt1,  long kernelstart, long kernelend,
 		{
 			paddr_t mappa = pa & ~(L2_SIZE-1);
 			vaddr_t mapva = mappa - kvo;
-			if (mapva < (vaddr_t)&_end)
+			int prot = PROT_READ | PROT_WRITE;
+
+			if (mapva < (vaddr_t)_end)
 				continue;
+
+			if (mapva >= (vaddr_t)__text_start &&
+			    mapva < (vaddr_t)_etext)
+				prot = PROT_READ | PROT_EXEC;
+			else if (mapva >= (vaddr_t)__rodata_start &&
+			    mapva < (vaddr_t)_erodata)
+				prot = PROT_READ;
+
 			vp2->l2[VP_IDX2(mapva)] = mappa | L2_BLOCK |
-			    ATTR_AF | ATTR_IDX(PTE_ATTR_WB) |
-			    ATTR_SH(SH_INNER);
+			    ATTR_IDX(PTE_ATTR_WB) | ATTR_SH(SH_INNER) |
+			    ap_bits_kern[prot];
 		}
 	}
 
-	// At this point we are still running on the bootstrap page tables
-	// however all memory allocated for the final page tables is
-	// 'allocated' and should now be mapped
-	// This means we are able to use the virtual addressing to
-	// enter the final mappings into the new mapping tables.
-
-#if 0
-	vm_prot_t prot;
-
-	for (mp = pmap_allocated; mp->size != 0; mp++) {
-		vaddr_t va;
-		paddr_t pa;
-		vsize_t size;
-		extern char *etext();
-		//printf("mapping %08x sz %08x\n", mp->start, mp->size);
-		for (pa = mp->start, va = pa + kvo, size = mp->size & ~0xfff;
-		    size > 0;
-		    va += PAGE_SIZE, pa+= PAGE_SIZE, size -= PAGE_SIZE)
-		{
-			pa = va - kvo;
-			prot = PROT_READ|PROT_WRITE;
-			if ((vaddr_t)va >= (vaddr_t)kernelstart &&
-			    (vaddr_t)va < (vaddr_t)etext)
-				prot |= PROT_EXEC; // XXX remove WRITE?
-			pmap_kenter_cache(va, pa, prot, PMAP_CACHE_WB);
-		}
-	}
-#endif
 	pmap_avail_fixup();
 
+	/*
+	 * At this point we are still running on the bootstrap page
+	 * tables however all memory for the final page tables is
+	 * 'allocated' and should now be mapped.  This means we are
+	 * able to use the virtual addressing to enter the final
+	 * mappings into the new mapping tables.
+	 */
 	vstart = pmap_map_stolen(kernelstart);
 
 	void (switch_mmu_kernel)(long);
 	void (*switch_mmu_kernel_table)(long) =
 	    (void *)((long)&switch_mmu_kernel + kvo);
-	switch_mmu_kernel_table (pmap_kernel()->pm_pt0pa);
+	switch_mmu_kernel_table(pt1pa);
 
 	printf("all mapped\n");
 
@@ -1395,33 +1406,12 @@ pmap_set_l3(struct pmap *pm, uint64_t va, struct pmapvp3 *l3_va, paddr_t l3_pa)
 void
 pmap_activate(struct proc *p)
 {
-	pmap_t pm;
-	struct pcb *pcb;
+	pmap_t pm = p->p_vmspace->vm_map.pmap;
 	int psw;
 
-	pm = p->p_vmspace->vm_map.pmap;
-	pcb = &p->p_addr->u_pcb;
-
-	// printf("%s: called on proc %p %p\n", __func__, p,  pcb->pcb_pagedir);
-	if (pm != pmap_kernel() && pm->pm_asid == -1) {
-		// this userland process has no asid, allocate one.
-		pmap_allocate_asid(pm);
-	}
-
-	if (pm != pmap_kernel())
-		pcb->pcb_pagedir = ((uint64_t)pm->pm_asid << 48) | pm->pm_pt0pa;
-
 	psw = disable_interrupts();
-	if (p == curproc && pm != pmap_kernel() && pm != curcpu()->ci_curpm) {
-		// clean up old process
-		if (curcpu()->ci_curpm != NULL) {
-			atomic_dec_int(&curcpu()->ci_curpm->pm_active);
-		}
-
-		curcpu()->ci_curpm = pm;
-		pmap_setttb(p, pcb->pcb_pagedir, pcb);
-		atomic_inc_int(&pm->pm_active);
-	}
+	if (p == curproc && pm != curcpu()->ci_curpm)
+		pmap_setttb(p);
 	restore_interrupts(psw);
 }
 
@@ -1431,15 +1421,6 @@ pmap_activate(struct proc *p)
 void
 pmap_deactivate(struct proc *p)
 {
-	pmap_t pm;
-	int psw;
-	psw = disable_interrupts();
-	pm = p->p_vmspace->vm_map.pmap;
-	if (pm == curcpu()->ci_curpm) {
-		curcpu()->ci_curpm = NULL;
-		atomic_dec_int(&pm->pm_active);
-	}
-	restore_interrupts(psw);
 }
 
 /*
@@ -1572,28 +1553,6 @@ pmap_proc_iflush(struct process *pr, vaddr_t va, vsize_t len)
 	if (pr == curproc->p_p)
 		cpu_icache_sync_range(va, len);
 }
-
-STATIC uint64_t ap_bits_user[8] = {
-	[PROT_NONE]			= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AP(2),
-	[PROT_READ]			= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(3),
-	[PROT_WRITE]			= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(1),
-	[PROT_WRITE|PROT_READ]		= ATTR_nG|ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(1),
-	[PROT_EXEC]			= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(2),
-	[PROT_EXEC|PROT_READ]		= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(3),
-	[PROT_EXEC|PROT_WRITE]		= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(1),
-	[PROT_EXEC|PROT_WRITE|PROT_READ]= ATTR_nG|ATTR_PXN|ATTR_AF|ATTR_AP(1),
-};
-
-STATIC uint64_t ap_bits_kern[8] = {
-	[PROT_NONE]				= ATTR_PXN|ATTR_UXN|ATTR_AP(2),
-	[PROT_READ]				= ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(2),
-	[PROT_WRITE]				= ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(0),
-	[PROT_WRITE|PROT_READ]			= ATTR_PXN|ATTR_UXN|ATTR_AF|ATTR_AP(0),
-	[PROT_EXEC]				= ATTR_UXN|ATTR_AF|ATTR_AP(2),
-	[PROT_EXEC|PROT_READ]			= ATTR_UXN|ATTR_AF|ATTR_AP(2),
-	[PROT_EXEC|PROT_WRITE]			= ATTR_UXN|ATTR_AF|ATTR_AP(0),
-	[PROT_EXEC|PROT_WRITE|PROT_READ]	= ATTR_UXN|ATTR_AF|ATTR_AP(0),
-};
 
 void
 pmap_pte_insert(struct pte_desc *pted)
@@ -2138,42 +2097,33 @@ pmap_steal_avail(size_t size, int align, void **kva)
 vaddr_t
 pmap_map_stolen(vaddr_t kernel_start)
 {
-	int prot;
 	struct mem_region *mp;
-	uint64_t pa, va, e;
-	extern char *etext();
+	paddr_t pa;
+	vaddr_t va;
+	uint64_t e;
 
-
-	int oldprot = 0;
-	printf("mapping self\n");
 	for (mp = pmap_allocated; mp->size; mp++) {
-		printf("start %16llx end %16llx\n", mp->start, mp->start + mp->size);
-		printf("exe range %16llx %16llx\n", kernel_start,
-		    (uint64_t)&etext);
 		for (e = 0; e < mp->size; e += PAGE_SIZE) {
-			/* XXX - is this a kernel text mapping? */
-			/* XXX - Do we care about KDB ? */
+			int prot = PROT_READ | PROT_WRITE;
+
 			pa = mp->start + e;
 			va = pa - pmap_avail_kvo;
+
 			if (va < VM_MIN_KERNEL_ADDRESS ||
 			    va >= VM_MAX_KERNEL_ADDRESS)
 				continue;
-			if ((vaddr_t)va >= (vaddr_t)kernel_start &&
-			    (vaddr_t)va < (vaddr_t)&etext) {
-				prot = PROT_READ|PROT_WRITE|
-				    PROT_EXEC;
-			} else {
-				prot = PROT_READ|PROT_WRITE;
-			}
-			if (prot != oldprot) {
-				printf("mapping  v %16llx p %16llx prot %x\n", va,
-				    pa, prot);
-				oldprot = prot;
-			}
+
+			if (va >= (vaddr_t)__text_start &&
+			    va < (vaddr_t)_etext)
+				prot = PROT_READ | PROT_EXEC;
+			else if (va >= (vaddr_t)__rodata_start &&
+			    va < (vaddr_t)_erodata)
+				prot = PROT_READ;
+
 			pmap_kenter_cache(va, pa, prot, PMAP_CACHE_WB);
 		}
 	}
-	printf("last mapping  v %16llx p %16llx\n", va, pa);
+
 	return va + PAGE_SIZE;
 }
 
@@ -2230,8 +2180,7 @@ pmap_show_mapping(uint64_t va)
 	__asm volatile ("mrs     %x0, ttbr0_el1" : "=r"(ttbr0));
 	__asm volatile ("mrs     %x0, tcr_el1" : "=r"(tcr));
 
-	printf("  ttbr0 %llx %llx %llx tcr %llx\n", ttbr0, pm->pm_pt0pa,
-	    curproc->p_addr->u_pcb.pcb_pagedir, tcr);
+	printf("  ttbr0 %llx %llx tcr %llx\n", ttbr0, pm->pm_pt0pa, tcr);
 	printf("  vp1 = %llx\n", vp1);
 
 	vp2 = vp1->vp[VP_IDX1(va)];
@@ -2255,85 +2204,41 @@ pmap_show_mapping(uint64_t va)
 	return;
 }
 
-// in theory arm64 can support 16 bit asid should we support more?
-// XXX should this be based on how many the specific cpu supports.
-#define MAX_ASID 256
-struct pmap *pmap_asid[MAX_ASID];
-int pmap_asid_id_next = 1;
-int pmap_asid_id_flush = 0;
+#define NUM_ASID (1 << 16)
+uint64_t pmap_asid[NUM_ASID / 64];
 
-// stupid quick allocator, flush all asid when we run out
-// XXX never searches, just flushes all on rollover (or out)
-// XXXXX - this is not MP safe
-// MPSAFE would need to check if slot is available, and skip if
-// not and on revoking asids it would need to lock each pmap, see if it were
-// active, if not active, free the asid, mark asid free , and then unlock
 void
 pmap_allocate_asid(pmap_t pm)
 {
-	int i, new_asid;
+	int asid, bit;
 
-	if (pmap_asid_id_next == MAX_ASID) {
-		/*
-		 * Out of ASIDs.  Reclaim them all and schedule a full
-		 * TLB flush.  We can't flush here as the CPU could
-		 * (and would) speculatively load TLB entries for the
-		 * ASID of the current pmap.
-		 */
-		for (i = 0;i < MAX_ASID; i++) {
-			if (pmap_asid[i] != NULL) {
-				pmap_asid[i]->pm_asid = -1;
-				pmap_asid[i] = NULL;
-			}
-		}
-		pmap_asid_id_next = 1;
-		pmap_asid_id_flush = 1;
-	}
+	do {
+		asid = arc4random() & (NUM_ASID - 1);
+		bit = (asid & (64 - 1));
+	} while (asid == 0 || (pmap_asid[asid / 64] & (1ULL << bit)));
 
-	// locks?
-	new_asid = pmap_asid_id_next++;
-
-	//printf("%s: allocating asid %d for pmap %p\n",
-	//    __func__, new_asid, pm);
-
-	pmap_asid[new_asid] = pm;
-	pmap_asid[new_asid]->pm_asid = new_asid;
-	return;
+	pmap_asid[asid / 64] |= (1ULL << bit);
+	pm->pm_asid = asid;
 }
 
 void
 pmap_free_asid(pmap_t pm)
 {
-	//printf("freeing asid %d pmap %p\n", pm->pm_asid, pm);
-	// XX locks
-	int asid = pm->pm_asid;
-	pm->pm_asid = -1;
-	pmap_asid[asid] = NULL;
+	int asid, bit;
+
+	KASSERT(pm != curcpu()->ci_curpm);
+	cpu_tlb_flush_asid_all((uint64_t)pm->pm_asid << 48);
+
+	asid = pm->pm_asid;
+	bit = (asid & (64 - 1));
+	pmap_asid[asid / 64] &= ~(1ULL << bit);
 }
 
 void
-pmap_setttb(struct proc *p, paddr_t pagedir, struct pcb *pcb)
+pmap_setttb(struct proc *p)
 {
-	// XXX process locks
 	pmap_t pm = p->p_vmspace->vm_map.pmap;
-	//int oasid = pm->pm_asid;
 
-	if (pm != pmap_kernel()) {
-		if (pm->pm_asid < 0) {
-			pmap_allocate_asid(pm);
-			pcb->pcb_pagedir = ((uint64_t)pm->pm_asid << 48) |
-			    pm->pm_pt0pa;
-			pagedir = pcb->pcb_pagedir;
-		}
-		//printf("switching userland to %p %p asid %d new asid %d\n",
-		//    pm, pmap_kernel(), oasid, pm->pm_asid);
-
-		cpu_setttb(pagedir);
-		if (pmap_asid_id_flush) {
-			pmap_asid_id_flush = 0;
-			cpu_tlb_flush();
-		}
-	} else {
-		// XXX what to do if switching to kernel pmap !?!?
-	}
+	cpu_setttb(((uint64_t)pm->pm_asid << 48) | pm->pm_pt0pa);
+	curcpu()->ci_curpm = pm;
 }
