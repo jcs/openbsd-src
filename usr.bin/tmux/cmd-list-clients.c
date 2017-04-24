@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-list-clients.c,v 1.31 2017/02/03 11:57:27 nicm Exp $ */
+/* $OpenBSD: cmd-list-clients.c,v 1.33 2017/04/22 10:22:39 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -29,7 +29,7 @@
  */
 
 #define LIST_CLIENTS_TEMPLATE					\
-	"#{client_tty}: #{session_name} "			\
+	"#{client_name}: #{session_name} "			\
 	"[#{client_width}x#{client_height} #{client_termname}]"	\
 	"#{?client_utf8, (utf8),} #{?client_readonly, (ro),}"
 
@@ -42,7 +42,7 @@ const struct cmd_entry cmd_list_clients_entry = {
 	.args = { "F:t:", 0, 0 },
 	.usage = "[-F format] " CMD_TARGET_SESSION_USAGE,
 
-	.tflag = CMD_SESSION,
+	.target = { 't', CMD_FIND_SESSION, 0 },
 
 	.flags = CMD_READONLY|CMD_AFTERHOOK,
 	.exec = cmd_list_clients_exec
@@ -60,7 +60,7 @@ cmd_list_clients_exec(struct cmd *self, struct cmdq_item *item)
 	char			*line;
 
 	if (args_has(args, 't'))
-		s = item->state.tflag.s;
+		s = item->target.s;
 	else
 		s = NULL;
 

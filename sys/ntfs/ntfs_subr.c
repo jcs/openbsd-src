@@ -1,4 +1,4 @@
-/*	$OpenBSD: ntfs_subr.c,v 1.48 2016/09/01 08:40:39 natano Exp $	*/
+/*	$OpenBSD: ntfs_subr.c,v 1.50 2017/04/11 14:43:49 dhill Exp $	*/
 /*	$NetBSD: ntfs_subr.c,v 1.4 2003/04/10 21:37:32 jdolecek Exp $	*/
 
 /*-

@@ -1,4 +1,4 @@
-/*	$OpenBSD: dwc2_hcd.c,v 1.16 2015/06/28 11:48:18 jmatthew Exp $	*/
+/*	$OpenBSD: dwc2_hcd.c,v 1.18 2017/04/11 14:43:49 dhill Exp $	*/
 /*	$NetBSD: dwc2_hcd.c,v 1.15 2014/11/24 10:14:14 skrll Exp $	*/
 
 /*

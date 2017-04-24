@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-split-window.c,v 1.80 2017/03/09 17:02:38 nicm Exp $ */
+/* $OpenBSD: cmd-split-window.c,v 1.83 2017/04/22 10:22:39 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -44,7 +44,7 @@ const struct cmd_entry cmd_split_window_entry = {
 	.usage = "[-bdfhvP] [-c start-directory] [-F format] "
 		 "[-p percentage|-l size] " CMD_TARGET_PANE_USAGE " [command]",
 
-	.tflag = CMD_PANE,
+	.target = { 't', CMD_FIND_PANE, 0 },
 
 	.flags = 0,
 	.exec = cmd_split_window_exec
@@ -53,12 +53,13 @@ const struct cmd_entry cmd_split_window_entry = {
 static enum cmd_retval
 cmd_split_window_exec(struct cmd *self, struct cmdq_item *item)
 {
+	struct cmd_find_state	*current = &item->shared->current;
 	struct args		*args = self->args;
-	struct client		*c = item->state.c;
-	struct session		*s = item->state.tflag.s;
-	struct winlink		*wl = item->state.tflag.wl;
+	struct client		*c = cmd_find_client(item, NULL, 1);
+	struct session		*s = item->target.s;
+	struct winlink		*wl = item->target.wl;
 	struct window		*w = wl->window;
-	struct window_pane	*wp = item->state.tflag.wp, *new_wp = NULL;
+	struct window_pane	*wp = item->target.wp, *new_wp = NULL;
 	struct environ		*env;
 	const char		*cmd, *path, *shell, *template, *cwd, *to_free;
 	char		       **argv, *cause, *new_cause, *cp;
@@ -156,6 +157,7 @@ cmd_split_window_exec(struct cmd *self, struct cmdq_item *item)
 	if (!args_has(args, 'd')) {
 		window_set_active_pane(w, new_wp);
 		session_select(s, wl->idx);
+		cmd_find_from_session(current, s);
 		server_redraw_session(s);
 	} else
 		server_status_session(s);
@@ -172,12 +174,7 @@ cmd_split_window_exec(struct cmd *self, struct cmdq_item *item)
 	if (to_free != NULL)
 		free((void *)to_free);
 
-	cmd_find_clear_state(&fs, NULL, 0);
-	fs.s = s;
-	fs.wl = wl;
-	fs.w = w;
-	fs.wp = new_wp;
-	cmd_find_log_state(__func__, &fs);
+	cmd_find_from_winlink_pane(&fs, wl, new_wp);
 	hooks_insert(s->hooks, item, &fs, "after-split-window");
 
 	return (CMD_RETURN_NORMAL);

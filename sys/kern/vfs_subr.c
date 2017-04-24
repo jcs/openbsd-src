@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_subr.c,v 1.257 2017/01/15 23:18:05 bluhm Exp $	*/
+/*	$OpenBSD: vfs_subr.c,v 1.259 2017/04/20 14:13:00 visa Exp $	*/
 /*	$NetBSD: vfs_subr.c,v 1.53 1996/04/22 01:39:13 christos Exp $	*/
 
 /*
@@ -172,7 +172,7 @@ vfs_busy(struct mount *mp, int flags)
 
 	/* new mountpoints need their lock initialised */
 	if (mp->mnt_lock.rwl_name == NULL)
-		rw_init(&mp->mnt_lock, "vfslock");
+		rw_init_flags(&mp->mnt_lock, "vfslock", RWL_IS_VNODE);
 
 	if (flags & VB_WRITE)
 		rwflags |= RW_WRITE;
@@ -1311,7 +1311,7 @@ vfs_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 			return (EOPNOTSUPP);
 
 		/* Make a copy, clear out kernel pointers */
-		tmpvfsp = malloc(sizeof(*tmpvfsp), M_TEMP, M_WAITOK);
+		tmpvfsp = malloc(sizeof(*tmpvfsp), M_TEMP, M_WAITOK|M_ZERO);
 		memcpy(tmpvfsp, vfsp, sizeof(*tmpvfsp));
 		tmpvfsp->vfc_vfsops = NULL;
 		tmpvfsp->vfc_next = NULL;

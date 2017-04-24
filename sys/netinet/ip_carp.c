@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_carp.c,v 1.304 2017/03/23 14:12:46 bluhm Exp $	*/
+/*	$OpenBSD: ip_carp.c,v 1.308 2017/04/14 20:46:31 bluhm Exp $	*/
 
 /*
  * Copyright (c) 2002 Michael Shalayeff. All rights reserved.
@@ -415,7 +415,7 @@ carp_hmac_verify(struct carp_vhost_entry *vhe, u_int32_t counter[2],
 }
 
 int
-carp_proto_input(struct mbuf **mp, int *offp, int proto)
+carp_proto_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct ifnet *ifp;
 
@@ -511,7 +511,7 @@ carp_proto_input_if(struct ifnet *ifp, struct mbuf **mp, int *offp, int proto)
 
 #ifdef INET6
 int
-carp6_proto_input(struct mbuf **mp, int *offp, int proto)
+carp6_proto_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct ifnet *ifp;
 
@@ -729,6 +729,7 @@ carp_sysctl_carpstat(void *oldp, size_t *oldlenp, void *newp)
 	struct carpstats carpstat;
 
 	CTASSERT(sizeof(carpstat) == (carps_ncounters * sizeof(uint64_t)));
+	memset(&carpstat, 0, sizeof carpstat);
 	counters_read(carpcounters, (uint64_t *)&carpstat, carps_ncounters);
 	return (sysctl_rdstruct(oldp, oldlenp, newp,
 	    &carpstat, sizeof(carpstat)));

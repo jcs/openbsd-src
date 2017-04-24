@@ -1,8 +1,13 @@
-# $OpenBSD: Makefile,v 1.6 2017/02/16 02:08:42 jsg Exp $
+# $OpenBSD: Makefile,v 1.8 2017/04/17 15:53:21 kettenis Exp $
 
 .include <bsd.own.mk>
 
-.if ${COMPILER_VERSION:L} == "clang"
+.if ${COMPILER_VERSION:L} != "clang"
+CC=		clang
+CXX=		clang++
+.endif
+
+.if ${BUILD_CLANG:L} == "yes"
 
 HDRDIR=		${.CURDIR}/include
 SRCDIR=		${.CURDIR}/src
@@ -42,6 +47,7 @@ SRCS+=		abort_message.cpp\
 
 CPPFLAGS+=	-I${SHDRDIR} -I${HDRDIR} -I${UHDRDIR}
 CPPFLAGS+=	-D_LIBUNWIND_IS_NATIVE_ONLY
+CFLAGS+=	-nostdlib -funwind-tables
 CXXFLAGS+=	-nostdlib -nostdinc++ -funwind-tables
 .if empty(CXXFLAGS:M-std=*)
 CXXFLAGS+=	-std=c++11

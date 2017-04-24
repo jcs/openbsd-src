@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gif.c,v 1.91 2017/01/29 19:58:47 bluhm Exp $	*/
+/*	$OpenBSD: if_gif.c,v 1.93 2017/04/14 20:50:35 bluhm Exp $	*/
 /*	$KAME: if_gif.c,v 1.43 2001/02/20 08:51:07 itojun Exp $	*/
 
 /*
@@ -716,7 +716,7 @@ in_gif_output(struct ifnet *ifp, int family, struct mbuf **m0)
 }
 
 int
-in_gif_input(struct mbuf **mp, int *offp, int proto)
+in_gif_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct mbuf *m = *mp;
 	struct gif_softc *sc;
@@ -762,7 +762,7 @@ in_gif_input(struct mbuf **mp, int *offp, int proto)
 
 inject:
 	/* No GIF interface was configured */
-	return ip4_input(mp, offp, proto);
+	return ip4_input(mp, offp, proto, af);
 }
 
 #ifdef INET6
@@ -839,7 +839,7 @@ in6_gif_output(struct ifnet *ifp, int family, struct mbuf **m0)
 	return 0;
 }
 
-int in6_gif_input(struct mbuf **mp, int *offp, int proto)
+int in6_gif_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct mbuf *m = *mp;
 	struct gif_softc *sc;
@@ -856,7 +856,6 @@ int in6_gif_input(struct mbuf **mp, int *offp, int proto)
 	in6_recoverscope(&src, &ip6->ip6_src);
 	in6_recoverscope(&dst, &ip6->ip6_dst);
 
-#define satoin6(sa)	(satosin6(sa)->sin6_addr)
 	LIST_FOREACH(sc, &gif_softc_list, gif_list) {
 		if (sc->gif_psrc == NULL || sc->gif_pdst == NULL ||
 		    sc->gif_psrc->sa_family != AF_INET6 ||
@@ -888,6 +887,6 @@ int in6_gif_input(struct mbuf **mp, int *offp, int proto)
 
 inject:
 	/* No GIF tunnel configured */
-	return ip4_input(mp, offp, proto);
+	return ip4_input(mp, offp, proto, af);
 }
 #endif /* INET6 */

@@ -1,8 +1,13 @@
-# $OpenBSD: Makefile,v 1.5 2017/01/20 07:55:20 patrick Exp $
+# $OpenBSD: Makefile,v 1.7 2017/04/17 15:53:21 kettenis Exp $
 
 .include <bsd.own.mk>
 
-.if ${COMPILER_VERSION:L} == "clang"
+.if ${COMPILER_VERSION:L} != "clang"
+CC=		clang
+CXX=		clang++
+.endif
+
+.if ${BUILD_CLANG:L} == "yes"
 
 LIB=	compiler_rt
 NOPIC=
@@ -170,14 +175,19 @@ SRCS+=	${file}.c
 SRCS+=	comparetf2.c \
 	extenddftf2.c \
 	extendsftf2.c \
-	trunctfdf2.c \
-	trunctfsf2.c \
 	fixtfdi.c \
 	fixtfsi.c \
+	fixtfti.c \
+	fixunstfdi.c \
+	fixunstfsi.c \
+	fixunstfti.c \
 	floatditf.c \
 	floatsitf.c \
 	floatunsitf.c \
-	multc3.c
+	floatunditf.c \
+	multc3.c \
+	trunctfdf2.c \
+	trunctfsf2.c
 .endif
 
 .if ${RTARCH} == "arm"

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ndp.c,v 1.79 2016/11/29 08:55:06 mpi Exp $	*/
+/*	$OpenBSD: ndp.c,v 1.81 2017/04/15 11:58:51 bluhm Exp $	*/
 /*	$KAME: ndp.c,v 1.101 2002/07/17 08:46:33 itojun Exp $	*/
 
 /*
@@ -142,7 +142,7 @@ void rtr_flush(void);
 void harmonize_rtr(void);
 static char *sec2str(time_t);
 static void ts_print(const struct timeval *);
-static int rdomain = 0;
+static int rdomain;
 
 static char *rtpref_str[] = {
 	"medium",		/* 00 */
@@ -161,7 +161,8 @@ main(int argc, char *argv[])
 
 	pid = getpid();
 	thiszone = gmt2local(0);
-	while ((ch = getopt(argc, argv, "acd:f:i:nprstA:HPRV:")) != -1)
+	rdomain = getrtable();
+	while ((ch = getopt(argc, argv, "acd:f:i:nprstA:HPRV:")) != -1) {
 		switch (ch) {
 		case 'a':
 		case 'c':
@@ -217,7 +218,7 @@ main(int argc, char *argv[])
 		default:
 			usage();
 		}
-
+	}
 	argc -= optind;
 	argv += optind;
 
@@ -333,13 +334,18 @@ file(char *name)
 void
 getsocket(void)
 {
-	if (rtsock < 0) {
-		rtsock = socket(PF_ROUTE, SOCK_RAW, 0);
-		if (rtsock < 0) {
-			err(1, "socket");
-			/* NOTREACHED */
-		}
-	}
+	socklen_t len = sizeof(rdomain);
+
+	if (rtsock >= 0)
+		return;
+	rtsock = socket(PF_ROUTE, SOCK_RAW, 0);
+	if (rtsock < 0)
+		err(1, "routing socket");
+	if (setsockopt(rtsock, PF_ROUTE, ROUTE_TABLEFILTER, &rdomain, len) < 0)
+		err(1, "ROUTE_TABLEFILTER");
+
+	if (pledge("stdio dns", NULL) == -1)
+		err(1, "pledge");
 }
 
 struct	sockaddr_in6 so_mask = {sizeof(so_mask), AF_INET6 };

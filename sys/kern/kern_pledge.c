@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.201 2017/03/30 15:22:07 deraadt Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.205 2017/04/20 15:21:53 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -121,7 +121,6 @@ const uint64_t pledge_syscalls[SYS_MAXSYSCALL] = {
 	[SYS_getegid] = PLEDGE_STDIO,
 	[SYS_getresgid] = PLEDGE_STDIO,
 	[SYS_getgroups] = PLEDGE_STDIO,
-	[SYS_getlogin59] = PLEDGE_STDIO,
 	[SYS_getlogin_r] = PLEDGE_STDIO,
 	[SYS_getpgrp] = PLEDGE_STDIO,
 	[SYS_getpgid] = PLEDGE_STDIO,
@@ -546,7 +545,7 @@ sys_pledge(struct proc *p, void *v, register_t *retval)
 }
 
 int
-pledge_syscall(struct proc *p, int code, int *tval)
+pledge_syscall(struct proc *p, int code, uint64_t *tval)
 {
 	p->p_pledge_syscall = code;
 	*tval = 0;
@@ -1130,6 +1129,7 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 
 	if ((p->p_p->ps_pledge & PLEDGE_INET)) {
 		switch (com) {
+		case SIOCATMARK:
 		case SIOCGIFGROUP:
 			if (fp->f_type == DTYPE_SOCKET)
 				return (0);
@@ -1155,9 +1155,12 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 		case MTIOCTOP:
 			/* for pax(1) and such, checking tapes... */
 			if (fp->f_type == DTYPE_VNODE &&
-			    vp->v_type == VCHR &&
-			    (vp->v_flag & VISTTY) == 0)
-				return (0);
+			    vp->v_type == VCHR) {
+				if (vp->v_flag & VISTTY)
+					return (ENOTTY);
+				else
+					return (0);
+			}
 			break;
 		}
 	}

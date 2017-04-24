@@ -40,6 +40,7 @@ tls_config_set_protocols
 tls_config_set_session_id
 tls_config_set_session_lifetime
 tls_config_set_verify_depth
+tls_config_skip_private_key_check
 tls_config_verify
 tls_config_verify_client
 tls_config_verify_client_optional
@@ -59,6 +60,7 @@ tls_handshake
 tls_init
 tls_load_file
 tls_ocsp_process_response
+tls_peer_cert_chain_pem
 tls_peer_cert_contains_name
 tls_peer_cert_hash
 tls_peer_cert_issuer

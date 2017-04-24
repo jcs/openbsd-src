@@ -1,4 +1,4 @@
-/* $OpenBSD: window.c,v 1.187 2017/03/21 09:49:10 nicm Exp $ */
+/* $OpenBSD: window.c,v 1.190 2017/04/20 17:49:26 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -709,12 +709,12 @@ window_destroy_panes(struct window *w)
 	}
 }
 
-/* Retuns the printable flags on a window, empty string if no flags set. */
-char *
-window_printable_flags(struct session *s, struct winlink *wl)
+const char *
+window_printable_flags(struct winlink *wl)
 {
-	char	flags[32];
-	int	pos;
+	struct session	*s = wl->session;
+	static char	 flags[32];
+	int		 pos;
 
 	pos = 0;
 	if (wl->flags & WINLINK_ACTIVITY)
@@ -732,7 +732,7 @@ window_printable_flags(struct session *s, struct winlink *wl)
 	if (wl->window->flags & WINDOW_ZOOMED)
 		flags[pos++] = 'Z';
 	flags[pos] = '\0';
-	return (xstrdup(flags));
+	return (flags);
 }
 
 struct window_pane *
@@ -883,7 +883,7 @@ window_pane_spawn(struct window_pane *wp, int argc, char **argv,
 	ws.ws_col = screen_size_x(&wp->base);
 	ws.ws_row = screen_size_y(&wp->base);
 
-	wp->pid = pty_fork(ptm_fd, &wp->fd, wp->tty, sizeof wp->tty, &ws);
+	wp->pid = fdforkpty(ptm_fd, &wp->fd, wp->tty, NULL, &ws);
 	switch (wp->pid) {
 	case -1:
 		wp->fd = -1;

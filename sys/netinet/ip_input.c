@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_input.c,v 1.295 2017/02/05 16:23:38 jca Exp $	*/
+/*	$OpenBSD: ip_input.c,v 1.298 2017/04/19 15:21:54 bluhm Exp $	*/
 /*	$NetBSD: ip_input.c,v 1.30 1996/03/16 23:53:58 christos Exp $	*/
 
 /*
@@ -584,7 +584,7 @@ found:
 	 * Switch out to protocol's input routine.
 	 */
 	ipstat_inc(ips_delivered);
-	(*inetsw[ip_protox[ip->ip_p]].pr_input)(&m, &hlen, ip->ip_p);
+	(*inetsw[ip_protox[ip->ip_p]].pr_input)(&m, &hlen, ip->ip_p, AF_INET);
 	return;
 bad:
 	m_freem(m);
@@ -1512,8 +1512,8 @@ ip_forward(struct mbuf *m, struct ifnet *ifp, struct rtentry *rt, int srcrt)
 
 #ifdef IPSEC
 		if (rt != NULL) {
-			if (rt->rt_rmx.rmx_mtu)
-				destmtu = rt->rt_rmx.rmx_mtu;
+			if (rt->rt_mtu)
+				destmtu = rt->rt_mtu;
 			else {
 				struct ifnet *destifp;
 
@@ -1655,7 +1655,7 @@ ip_sysctl_ipstat(void *oldp, size_t *oldlenp, void *newp)
 	int i;
 
 	CTASSERT(sizeof(ipstat) == (nitems(counters) * sizeof(u_long)));
-
+	memset(&ipstat, 0, sizeof ipstat);
 	counters_read(ipcounters, counters, nitems(counters));
 
 	for (i = 0; i < nitems(counters); i++)

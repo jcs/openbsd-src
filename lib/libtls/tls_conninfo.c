@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_conninfo.c,v 1.13 2017/01/09 15:31:20 jsing Exp $ */
+/* $OpenBSD: tls_conninfo.c,v 1.15 2017/04/05 03:19:22 beck Exp $ */
 /*
  * Copyright (c) 2015 Joel Sing <jsing@openbsd.org>
  * Copyright (c) 2015 Bob Beck <beck@openbsd.org>
@@ -23,7 +23,7 @@
 #include <tls.h>
 #include "tls_internal.h"
 
-static int
+int
 tls_hex_string(const unsigned char *in, size_t inlen, char **out,
     size_t *outlen)
 {
@@ -56,35 +56,16 @@ tls_hex_string(const unsigned char *in, size_t inlen, char **out,
 static int
 tls_get_peer_cert_hash(struct tls *ctx, char **hash)
 {
-	char d[EVP_MAX_MD_SIZE], *dhex = NULL;
-	int dlen, rv = -1;
-
 	*hash = NULL;
 	if (ctx->ssl_peer_cert == NULL)
 		return (0);
 
-	if (X509_digest(ctx->ssl_peer_cert, EVP_sha256(), d, &dlen) != 1) {
-		tls_set_errorx(ctx, "digest failed");
-		goto err;
-	}
-
-	if (tls_hex_string(d, dlen, &dhex, NULL) != 0) {
-		tls_set_errorx(ctx, "digest hex string failed");
-		goto err;
-	}
-
-	if (asprintf(hash, "SHA256:%s", dhex) == -1) {
-		tls_set_errorx(ctx, "out of memory");
+	if (tls_cert_hash(ctx->ssl_peer_cert, hash) == -1) {
+		tls_set_errorx(ctx, "unable to compute peer certificate hash - out of memory");
 		*hash = NULL;
-		goto err;
+		return -1;
 	}
-
-	rv = 0;
-
-err:
-	free(dhex);
-
-	return (rv);
+	return 0;
 }
 
 static int
@@ -193,6 +174,49 @@ tls_conninfo_alpn_proto(struct tls *ctx)
 	return (0);
 }
 
+static int
+tls_conninfo_cert_pem(struct tls *ctx)
+{
+	int i, rv = -1;
+	BIO *membio = NULL;
+	BUF_MEM *bptr = NULL;
+
+	if (ctx->conninfo == NULL)
+		goto err;
+	if (ctx->ssl_peer_cert == NULL)
+		return 0;
+	if ((membio = BIO_new(BIO_s_mem()))== NULL)
+		goto err;
+
+	/*
+	 * We have to write the peer cert out separately, because
+	 * the certificate chain may or may not contain it.
+	 */
+	if (!PEM_write_bio_X509(membio, ctx->ssl_peer_cert))
+		goto err;
+	for (i = 0; i < sk_X509_num(ctx->ssl_peer_chain); i++) {
+		X509 *chaincert = sk_X509_value(ctx->ssl_peer_chain, i);
+		if (chaincert != ctx->ssl_peer_cert &&
+		    !PEM_write_bio_X509(membio, chaincert))
+			goto err;
+	}
+
+	BIO_get_mem_ptr(membio, &bptr);
+	free(ctx->conninfo->peer_cert);
+	ctx->conninfo->peer_cert_len = 0;
+	if ((ctx->conninfo->peer_cert = malloc(bptr->length)) == NULL)
+		goto err;
+	ctx->conninfo->peer_cert_len = bptr->length;
+	memcpy(ctx->conninfo->peer_cert, bptr->data,
+	    ctx->conninfo->peer_cert_len);
+
+	/* BIO_free() will kill BUF_MEM - because we have not set BIO_NOCLOSE */
+	rv = 0;
+ err:
+	BIO_free(membio);
+	return rv;
+}
+
 int
 tls_conninfo_populate(struct tls *ctx)
 {
@@ -229,6 +253,9 @@ tls_conninfo_populate(struct tls *ctx)
 	if (tls_get_peer_cert_info(ctx) == -1)
 		goto err;
 
+	if (tls_conninfo_cert_pem(ctx) == -1)
+		goto err;
+
 	return (0);
 
  err:
@@ -259,6 +286,10 @@ tls_conninfo_free(struct tls_conninfo *conninfo)
 	conninfo->issuer = NULL;
 	free(conninfo->subject);
 	conninfo->subject = NULL;
+
+	free(conninfo->peer_cert);
+	conninfo->peer_cert = NULL;
+	conninfo->peer_cert_len = 0;
 
 	free(conninfo);
 }
@@ -294,3 +325,4 @@ tls_conn_version(struct tls *ctx)
 		return (NULL);
 	return (ctx->conninfo->version);
 }
+

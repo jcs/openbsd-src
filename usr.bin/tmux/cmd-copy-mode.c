@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-copy-mode.c,v 1.31 2016/10/16 19:04:05 nicm Exp $ */
+/* $OpenBSD: cmd-copy-mode.c,v 1.33 2017/04/22 10:22:39 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -33,7 +33,7 @@ const struct cmd_entry cmd_copy_mode_entry = {
 	.args = { "Met:u", 0, 0 },
 	.usage = "[-Mu] " CMD_TARGET_PANE_USAGE,
 
-	.tflag = CMD_PANE,
+	.target = { 't', CMD_FIND_PANE, 0 },
 
 	.flags = CMD_AFTERHOOK,
 	.exec = cmd_copy_mode_exec
@@ -46,7 +46,7 @@ const struct cmd_entry cmd_clock_mode_entry = {
 	.args = { "t:", 0, 0 },
 	.usage = CMD_TARGET_PANE_USAGE,
 
-	.tflag = CMD_PANE,
+	.target = { 't', CMD_FIND_PANE, 0 },
 
 	.flags = CMD_AFTERHOOK,
 	.exec = cmd_copy_mode_exec
@@ -56,12 +56,13 @@ static enum cmd_retval
 cmd_copy_mode_exec(struct cmd *self, struct cmdq_item *item)
 {
 	struct args		*args = self->args;
+	struct cmdq_shared	*shared = item->shared;
 	struct client		*c = item->client;
 	struct session		*s;
-	struct window_pane	*wp = item->state.tflag.wp;
+	struct window_pane	*wp = item->target.wp;
 
 	if (args_has(args, 'M')) {
-		if ((wp = cmd_mouse_pane(&item->mouse, &s, NULL)) == NULL)
+		if ((wp = cmd_mouse_pane(&shared->mouse, &s, NULL)) == NULL)
 			return (CMD_RETURN_NORMAL);
 		if (c == NULL || c->session != s)
 			return (CMD_RETURN_NORMAL);
@@ -80,7 +81,7 @@ cmd_copy_mode_exec(struct cmd *self, struct cmdq_item *item)
 	if (args_has(args, 'M')) {
 		if (wp->mode != NULL && wp->mode != &window_copy_mode)
 			return (CMD_RETURN_NORMAL);
-		window_copy_start_drag(c, &item->mouse);
+		window_copy_start_drag(c, &shared->mouse);
 	}
 	if (wp->mode == &window_copy_mode && args_has(self->args, 'u'))
 		window_copy_pageup(wp, 0);

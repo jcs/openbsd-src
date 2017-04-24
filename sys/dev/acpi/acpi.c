@@ -1,4 +1,4 @@
-/* $OpenBSD: acpi.c,v 1.326 2017/03/27 20:27:38 deraadt Exp $ */
+/* $OpenBSD: acpi.c,v 1.328 2017/04/08 04:06:01 deraadt Exp $ */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -90,9 +90,6 @@ int	_acpi_matchhids(const char *, const char *[]);
 
 int	acpi_inidev(struct aml_node *, void *);
 int	acpi_foundprt(struct aml_node *, void *);
-
-struct acpi_q *acpi_maptable(struct acpi_softc *, paddr_t, const char *,
-	    const char *, const char *, int);
 
 int	acpi_enable(struct acpi_softc *);
 void	acpi_init_states(struct acpi_softc *);
@@ -2417,6 +2414,7 @@ acpi_sleep_state(struct acpi_softc *sc, int sleepmode)
 	}
 #endif /* HIBERNATE */
 
+	sensor_quiesce();
 	if (config_suspend_all(DVACT_QUIESCE))
 		goto fail_quiesce;
 
@@ -2499,6 +2497,7 @@ fail_suspend:
 
 fail_quiesce:
 	config_suspend_all(DVACT_WAKEUP);
+	sensor_restart();
 
 #ifdef HIBERNATE
 	if (sleepmode == ACPI_SLEEP_HIBERNATE) {

@@ -1,4 +1,4 @@
-/* $OpenBSD: dsdt.c,v 1.231 2017/02/16 18:02:22 jcs Exp $ */
+/* $OpenBSD: dsdt.c,v 1.233 2017/04/15 04:54:04 guenther Exp $ */
 /*
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
  *
@@ -46,9 +46,6 @@
 #define AML_INTSTRLEN		16
 #define AML_NAMESEG_LEN		4
 
-struct acpi_q		*acpi_maptable(struct acpi_softc *sc, paddr_t,
-			    const char *, const char *,
-			    const char *, int);
 struct aml_scope	*aml_load(struct acpi_softc *, struct aml_scope *,
 			    struct aml_value *, struct aml_value *);
 
@@ -409,7 +406,8 @@ acpi_walkmem(int sig, const char *lbl)
 {
 	struct acpi_memblock *sptr;
 
-	printf("--- walkmem:%s %x --- %x bytes alloced\n", lbl, sig, acpi_nalloc);
+	printf("--- walkmem:%s %x --- %lx bytes alloced\n", lbl, sig,
+	    acpi_nalloc);
 	LIST_FOREACH(sptr, &acpi_memhead, link) {
 		if (sptr->sig < sig)
 			break;

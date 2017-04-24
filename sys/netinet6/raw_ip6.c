@@ -1,4 +1,4 @@
-/*	$OpenBSD: raw_ip6.c,v 1.108 2017/03/13 20:18:21 claudio Exp $	*/
+/*	$OpenBSD: raw_ip6.c,v 1.111 2017/04/19 15:44:45 bluhm Exp $	*/
 /*	$KAME: raw_ip6.c,v 1.69 2001/03/04 15:55:44 itojun Exp $	*/
 
 /*
@@ -116,7 +116,7 @@ rip6_init(void)
 }
 
 int
-rip6_input(struct mbuf **mp, int *offp, int proto)
+rip6_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct mbuf *m = *mp;
 	struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
@@ -125,7 +125,10 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 	struct sockaddr_in6 rip6src;
 	struct mbuf *opts = NULL;
 
-	rip6stat_inc(rip6s_ipackets);
+	KASSERT(af == AF_INET6);
+
+	if (proto != IPPROTO_ICMPV6)
+		rip6stat_inc(rip6s_ipackets);
 
 	/* Be proactive about malicious use of IPv4 mapped address */
 	if (IN6_IS_ADDR_V4MAPPED(&ip6->ip6_src) ||
@@ -146,7 +149,7 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 			continue;
 		if (!(in6p->inp_flags & INP_IPV6))
 			continue;
-		if (in6p->inp_ipv6.ip6_nxt &&
+		if ((in6p->inp_ipv6.ip6_nxt || proto == IPPROTO_ICMPV6) &&
 		    in6p->inp_ipv6.ip6_nxt != proto)
 			continue;
 #if NPF > 0
@@ -170,7 +173,18 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 		if (!IN6_IS_ADDR_UNSPECIFIED(&in6p->inp_faddr6) &&
 		    !IN6_ARE_ADDR_EQUAL(&in6p->inp_faddr6, &ip6->ip6_src))
 			continue;
-		if (in6p->inp_cksum6 != -1) {
+		if (proto == IPPROTO_ICMPV6 && in6p->inp_icmp6filt) {
+			struct icmp6_hdr *icmp6;
+
+			IP6_EXTHDR_GET(icmp6, struct icmp6_hdr *, m, *offp,
+			    sizeof(*icmp6));
+			if (icmp6 == NULL)
+				return IPPROTO_DONE;
+			if (ICMP6_FILTER_WILLBLOCK(icmp6->icmp6_type,
+			    in6p->inp_icmp6filt))
+				continue;
+		}
+		if (proto != IPPROTO_ICMPV6 && in6p->inp_cksum6 != -1) {
 			rip6stat_inc(rip6s_isum);
 			if (in6_cksum(m, proto, *offp,
 			    m->m_pkthdr.len - *offp)) {
@@ -214,12 +228,14 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 		struct counters_ref ref;
 		uint64_t *counters;
 
-		rip6stat_inc(rip6s_nosock);
-		if (m->m_flags & M_MCAST)
-			rip6stat_inc(rip6s_nosockmcast);
-		if (proto == IPPROTO_NONE)
+		if (proto != IPPROTO_ICMPV6) {
+			rip6stat_inc(rip6s_nosock);
+			if (m->m_flags & M_MCAST)
+				rip6stat_inc(rip6s_nosockmcast);
+		}
+		if (proto == IPPROTO_NONE || proto == IPPROTO_ICMPV6) {
 			m_freem(m);
-		else {
+		} else {
 			u_int8_t *prvnxtp = ip6_get_prevhdr(m, *offp); /* XXX */
 			icmp6_error(m, ICMP6_PARAM_PROB,
 			    ICMP6_PARAMPROB_NEXTHEADER,

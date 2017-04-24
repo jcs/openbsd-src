@@ -1,4 +1,4 @@
-/*	$OpenBSD: uaudio.c,v 1.124 2017/02/10 08:09:36 ratchov Exp $ */
+/*	$OpenBSD: uaudio.c,v 1.126 2017/04/08 02:57:25 deraadt Exp $ */
 /*	$NetBSD: uaudio.c,v 1.90 2004/10/29 17:12:53 kent Exp $	*/
 
 /*
@@ -623,7 +623,7 @@ uaudio_mixer_add_ctl(struct uaudio_softc *sc, struct mixerctl *mc)
 	/* Copy old data, if there was any */
 	if (sc->sc_nctls != 0) {
 		memcpy(nmc, sc->sc_ctls, sizeof(*mc) * (sc->sc_nctls));
-		free(sc->sc_ctls, M_USBDEV, 0);
+		free(sc->sc_ctls, M_USBDEV, sc->sc_nctls * sizeof(*mc));
 	}
 	sc->sc_ctls = nmc;
 
@@ -1498,7 +1498,7 @@ uaudio_add_alt(struct uaudio_softc *sc, const struct as_info *ai)
 	/* Copy old data, if there was any */
 	if (sc->sc_nalts != 0) {
 		memcpy(nai, sc->sc_alts, sizeof(*ai) * (sc->sc_nalts));
-		free(sc->sc_alts, M_USBDEV, 0);
+		free(sc->sc_alts, M_USBDEV, sc->sc_nalts * sizeof(*ai));
 	}
 	sc->sc_alts = nai;
 	DPRINTFN(2,("%s: adding alt=%d, enc=%d\n",
@@ -1829,7 +1829,7 @@ uaudio_identify_ac(struct uaudio_softc *sc, const usb_config_descriptor_t *cdesc
 	ibufend = ibuf + aclen;
 	dp = (const usb_descriptor_t *)ibuf;
 	ndps = 0;
-	iot = malloc(256 * sizeof(struct io_terminal),
+	iot = mallocarray(256, sizeof(struct io_terminal),
 	    M_TEMP, M_NOWAIT | M_ZERO);
 	if (iot == NULL) {
 		printf("%s: no memory\n", __func__);
@@ -1989,7 +1989,7 @@ uaudio_identify_ac(struct uaudio_softc *sc, const usb_config_descriptor_t *cdesc
 			free(iot[i].output, M_TEMP, 0);
 		iot[i].d.desc = NULL;
 	}
-	free(iot, M_TEMP, 0);
+	free(iot, M_TEMP, 256 * sizeof(struct io_terminal));
 
 	return (USBD_NORMAL_COMPLETION);
 }

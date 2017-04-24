@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.21 2017/03/16 09:17:20 rzalamena Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.23 2017/04/05 14:40:56 reyk Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -56,9 +56,9 @@ struct packet_ctx {
 	struct sockaddr_storage		 pc_src;
 	struct sockaddr_storage		 pc_dst;
 
-	u_int8_t			*pc_circuit;
+	const char 			*pc_circuit;
 	int				 pc_circuitlen;
-	u_int8_t			*pc_remote;
+	const char			*pc_remote;
 	int				 pc_remotelen;
 };
 
@@ -168,14 +168,14 @@ void add_protocol(char *, int, void (*)(struct protocol *), void *);
 void remove_protocol(struct protocol *);
 
 /* packet.c */
-void assemble_hw_header(struct interface_info *, unsigned char *,
-    int *, struct packet_ctx *);
-void assemble_udp_ip_header(struct interface_info *, unsigned char *,
-    int *, struct packet_ctx *pc, unsigned char *, int);
-ssize_t decode_hw_header(struct interface_info *, unsigned char *,
-    int, struct packet_ctx *);
-ssize_t decode_udp_ip_header(struct interface_info *, unsigned char *,
-    int, struct packet_ctx *, int);
+ssize_t assemble_hw_header(unsigned char *, size_t, size_t,
+    struct packet_ctx *, unsigned int);
+ssize_t assemble_udp_ip_header(unsigned char *, size_t, size_t,
+    struct packet_ctx *pc, unsigned char *, size_t);
+ssize_t decode_hw_header(unsigned char *, size_t, size_t, struct packet_ctx *,
+    unsigned int);
+ssize_t decode_udp_ip_header(unsigned char *, size_t, size_t,
+    struct packet_ctx *);
 
 /* dhcrelay.c */
 extern int server_fd;

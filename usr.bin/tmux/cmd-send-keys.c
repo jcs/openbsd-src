@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-send-keys.c,v 1.37 2017/01/07 15:28:13 nicm Exp $ */
+/* $OpenBSD: cmd-send-keys.c,v 1.39 2017/04/22 10:22:39 nicm Exp $ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -36,7 +36,7 @@ const struct cmd_entry cmd_send_keys_entry = {
 	.args = { "lXRMN:t:", 0, -1 },
 	.usage = "[-lXRM] [-N repeat-count] " CMD_TARGET_PANE_USAGE " key ...",
 
-	.tflag = CMD_PANE,
+	.target = { 't', CMD_FIND_PANE, 0 },
 
 	.flags = CMD_AFTERHOOK,
 	.exec = cmd_send_keys_exec
@@ -49,7 +49,7 @@ const struct cmd_entry cmd_send_prefix_entry = {
 	.args = { "2t:", 0, 0 },
 	.usage = "[-2] " CMD_TARGET_PANE_USAGE,
 
-	.tflag = CMD_PANE,
+	.target = { 't', CMD_FIND_PANE, 0 },
 
 	.flags = CMD_AFTERHOOK,
 	.exec = cmd_send_keys_exec
@@ -59,10 +59,10 @@ static enum cmd_retval
 cmd_send_keys_exec(struct cmd *self, struct cmdq_item *item)
 {
 	struct args		*args = self->args;
-	struct client		*c = item->state.c;
-	struct window_pane	*wp = item->state.tflag.wp;
-	struct session		*s = item->state.tflag.s;
-	struct mouse_event	*m = &item->mouse;
+	struct client		*c = cmd_find_client(item, NULL, 1);
+	struct window_pane	*wp = item->target.wp;
+	struct session		*s = item->target.s;
+	struct mouse_event	*m = &item->shared->mouse;
 	struct utf8_data	*ud, *uc;
 	wchar_t			 wc;
 	int			 i, literal;

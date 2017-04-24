@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_input.c,v 1.181 2017/03/06 08:59:07 mpi Exp $	*/
+/*	$OpenBSD: ip6_input.c,v 1.183 2017/04/14 20:46:31 bluhm Exp $	*/
 /*	$KAME: ip6_input.c,v 1.188 2001/03/29 05:34:31 itojun Exp $	*/
 
 /*
@@ -532,7 +532,8 @@ ip6_local(struct mbuf *m, int off, int nxt)
 				goto bad;
 		}
 
-		nxt = (*inet6sw[ip6_protox[nxt]].pr_input)(&m, &off, nxt);
+		nxt = (*inet6sw[ip6_protox[nxt]].pr_input)(&m, &off, nxt,
+		    AF_INET6);
 	}
 	return;
  bad:
@@ -777,7 +778,7 @@ ip6_process_hopopts(struct mbuf *m, u_int8_t *opthead, int hbhlen,
 				return (-1);
 			}
 			optlen = IP6OPT_RTALERT_LEN;
-			bcopy((caddr_t)(opt + 2), (caddr_t)&rtalert_val, 2);
+			memcpy((caddr_t)&rtalert_val, (caddr_t)(opt + 2), 2);
 			*rtalertp = ntohs(rtalert_val);
 			break;
 		case IP6OPT_JUMBO:
@@ -810,9 +811,9 @@ ip6_process_hopopts(struct mbuf *m, u_int8_t *opthead, int hbhlen,
 
 			/*
 			 * We may see jumbolen in unaligned location, so
-			 * we'd need to perform bcopy().
+			 * we'd need to perform memcpy().
 			 */
-			bcopy(opt + 2, &jumboplen, sizeof(jumboplen));
+			memcpy(&jumboplen, opt + 2, sizeof(jumboplen));
 			jumboplen = (u_int32_t)htonl(jumboplen);
 
 #if 1
@@ -935,7 +936,7 @@ ip6_savecontrol(struct inpcb *in6p, struct mbuf *m, struct mbuf **mp)
 	/* RFC 2292 sec. 5 */
 	if ((in6p->inp_flags & IN6P_PKTINFO) != 0) {
 		struct in6_pktinfo pi6;
-		bcopy(&ip6->ip6_dst, &pi6.ipi6_addr, sizeof(struct in6_addr));
+		memcpy(&pi6.ipi6_addr, &ip6->ip6_dst, sizeof(struct in6_addr));
 		if (IN6_IS_SCOPE_EMBED(&pi6.ipi6_addr))
 			pi6.ipi6_addr.s6_addr16[1] = 0;
 		pi6.ipi6_ifindex = m ? m->m_pkthdr.ph_ifidx : 0;

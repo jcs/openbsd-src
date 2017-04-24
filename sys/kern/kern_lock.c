@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_lock.c,v 1.47 2016/06/19 11:54:33 natano Exp $	*/
+/*	$OpenBSD: kern_lock.c,v 1.49 2017/04/20 15:06:47 visa Exp $	*/
 
 /* 
  * Copyright (c) 1995
@@ -39,6 +39,7 @@
 #include <sys/lock.h>
 #include <sys/systm.h>
 #include <sys/sched.h>
+#include <sys/witness.h>
 
 #ifdef MP_LOCKDEBUG
 /* CPU-dependent timing, this needs to be settable from ddb. */
@@ -65,10 +66,14 @@ _kernel_lock_init(void)
  */
 
 void
-_kernel_lock(void)
+_kernel_lock(const char *file, int line)
 {
 	SCHED_ASSERT_UNLOCKED();
+#ifdef WITNESS
+	___mp_lock(&kernel_lock, file, line);
+#else
 	__mp_lock(&kernel_lock);
+#endif
 }
 
 void
@@ -82,4 +87,23 @@ _kernel_lock_held(void)
 {
 	return (__mp_lock_held(&kernel_lock));
 }
+
+#ifdef WITNESS
+void
+_mp_lock_init(struct __mp_lock *mpl, struct lock_type *type)
+{
+	mpl->mpl_lock_obj.lo_name = type->lt_name;
+	mpl->mpl_lock_obj.lo_type = type;
+	if (mpl == &kernel_lock)
+		mpl->mpl_lock_obj.lo_flags = LO_WITNESS | LO_INITIALIZED |
+		    LO_SLEEPABLE | (LO_CLASS_KERNEL_LOCK << LO_CLASSSHIFT);
+	else if (mpl == &sched_lock)
+		mpl->mpl_lock_obj.lo_flags = LO_WITNESS | LO_INITIALIZED |
+		    LO_RECURSABLE | (LO_CLASS_SCHED_LOCK << LO_CLASSSHIFT);
+	WITNESS_INIT(&mpl->mpl_lock_obj, type);
+
+	___mp_lock_init(mpl);
+}
+#endif /* WITNESS */
+
 #endif /* MULTIPROCESSOR */

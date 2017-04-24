@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.989 2017/03/31 18:36:49 rpe Exp $
+#	$OpenBSD: install.sub,v 1.996 2017/04/11 19:23:10 rpe Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -189,17 +189,18 @@ show_cols() {
 	rm -rf -- $_cdir
 }
 
-# Echo file $1 to stdout. Skip comment lines and delete everything after the
-# first '#' from other lines.
+# Echo file $1 to stdout. Skip comment lines and delete everything
+# after the first '#' from other lines. Strip leading and trailing
+# whitespace if IFS is set.
 stripcom () {
-	local _l
+	local _file=$1 _line
 
-	[[ -f $1 ]] || return
+	[[ -f $_file ]] || return
 
 	set -o noglob
-	while read _l; do
-		[[ -n ${_l%%#*} ]] && echo $_l
-	done <$1
+	while read _line; do
+		[[ -n ${_line%%#*} ]] && echo $_line
+	done <$_file
 	set +o noglob
 }
 
@@ -258,19 +259,26 @@ lease_value () {
 # Device related functions
 # ------------------------------------------------------------------------------
 
-# Show device name, label and size for the provided list of disk devices.
+# Show device name, info, NAA and size for the provided list of disk devices.
 # Create device nodes as needed and cleanup afterwards.
 diskinfo() {
-	local _d
+	local _d _i _n _s
 
 	for _d; do
+		# Extract disk information enclosed in <> from dmesg.
+		_i=$(dmesg | sed -n '/^'$_d' at /h;${g;s/^.*<\(.*\)>.*$/\1/p;}')
+		_i=${_i##+([[:space:],])}
+		_i=${_i%%+([[:space:],])}
+
+		# Extract Network Address Authority information from dmesg..
+		_n=$(dmesg | sed -En '/^'$_d' at /h;${g;s/^.* ([a-z0-9]+\.[a-zA-Z0-9_]+)$/\1/p;}')
+
+		# Extract disk size from disklabel output.
 		make_dev $_d
-		echo -n "$_d: "
-		disklabel -dpg $_d 2>/dev/null |
-		sed	-e '/^label: /{s,,,;s/ *$//;s/^$/<no label>/;h;d;}' \
-			-e '/.*# total bytes: \(.*\)/{s//(\1)/;H;}' \
-			-e '$!d;x;s/\n/ /'
+		_s=$(disklabel -dpg $_d 2>/dev/null | sed -n '/.*# total bytes: \(.*\)/{s//(\1)/p;}')
 		rm -f /dev/{r,}$_d?
+
+		echo "$_d: $_i $_n $_s"
 	done
 }
 
@@ -1699,7 +1707,7 @@ install_http() {
 	else
 		# Remove the architecture and snaphots or version part.
 		INSTALL_URL=${_url_base%/$ARCH}
-		INSTALL_URL=${INSTALL_URL%@(/$VERSION|/snapshots)}
+		INSTALL_URL=${INSTALL_URL%@(/$VNAME|/snapshots)}
 	fi
 }
 
@@ -2116,37 +2124,37 @@ ifstart () {
 	((NIFS++))
 	while :; do
 		if [ "$cmd2" ]; then
-			# we are carrying over from the 'read dt dtaddr'
-			# last time
+			# We are carrying over from the 'read dt dtaddr'
+			# last time.
 			set -- $cmd2
 			af=$1 name=$2 mask=$3 bcaddr=$4 ext1=$5 cmd2=
-			# make sure and get any remaining args in ext2,
-			# like the read below
+			# Make sure and get any remaining args in ext2,
+			# like the read below.
 			i=1
-			while [ i -lt 6 -a -n "$1" ]; do shift; let i=i+1; done
+			while [ $i -lt 6 -a -n "$1" ]; do shift; let i=i+1; done
 			ext2="$@"
 		else
-			# read the next line or exit the while loop
+			# Read the next line or exit the while loop.
 			read af name mask bcaddr ext1 ext2 || break
 		fi
-		# $af can be "dhcp", "rtsol", an address family,
-		# commands, or a comment.
+		# $af can be "dhcp", "up", "rtsol", an address family, commands,
+		# or a comment.
 		case "$af" in
 		"#"*|"!"*|"bridge"|"")
-			# skip comments, user commands, bridges,
-			# and empty lines
+			# Skip comments, user commands, bridges, and empty lines.
 			continue
 			;;
-		"dhcp")	[ "$name" = "NONE" ] && name=
+		"dhcp")
+			[ "$name" = "NONE" ] && name=
 			[ "$mask" = "NONE" ] && mask=
 			[ "$bcaddr" = "NONE" ] && bcaddr=
-			dhcpif="$dhcpif $if"
 			cmd="ifconfig $if $name $mask $bcaddr $ext1 $ext2 down"
 			if [[ -x /sbin/dhclient ]]; then
 				cmd="$cmd; dhclient $if"
 			else
 				cmd="$cmd; echo /sbin/dhclient missing - skipping dhcp request."
 			fi
+			dhcpif="$dhcpif $if"
 			;;
 		"rtsol")
 			if ifconfig $if inet6 >/dev/null 2>&1; then
@@ -2156,9 +2164,10 @@ ifstart () {
 				cmd="$cmd; echo no INET6 support - skipping rtsol request."
 			fi
 			;;
-		*)	read dt dtaddr
+		*)
+			read dt dtaddr
 			if [ "$name" = "alias" ]; then
-				# perform a 'shift' of sorts
+				# Perform a 'shift' of sorts.
 				alias=$name
 				name=$mask
 				mask=$bcaddr
@@ -2170,7 +2179,8 @@ ifstart () {
 			fi
 			cmd="ifconfig $if $af $alias $name"
 			case "$dt" in
-			dest)	cmd="$cmd $dtaddr"
+			dest)
+				cmd="$cmd $dtaddr"
 				;;
 			*)
 				cmd2="$dt $dtaddr"
@@ -2183,7 +2193,7 @@ ifstart () {
 					return
 				fi
 				[ "$mask" ] && cmd="$cmd netmask $mask"
-				if [ "$bcaddr" -a X"$bcaddr" != "XNONE" ]; then
+				if [ "$bcaddr" -a "X$bcaddr" != "XNONE" ]; then
 					cmd="$cmd broadcast $bcaddr"
 				fi
 				;;
@@ -2195,7 +2205,8 @@ ifstart () {
 				[ "$mask" ] && cmd="$cmd prefixlen $mask"
 				cmd="$cmd $bcaddr"
 				;;
-			*)	cmd="$cmd $mask $bcaddr"
+			*)
+				cmd="$cmd $mask $bcaddr"
 				;;
 			esac
 			cmd="$cmd $ext1 $ext2"
@@ -2427,7 +2438,7 @@ install_sets() {
 	ifconfig netboot >/dev/null 2>&1 && : ${_d:=http}
 
 	# Set default location to HTTP if installurl(5) exists.
-	[[ -s /mnt/etc/installurl ]] && : ${_d:=http}
+	[[ -s /mnt/etc/installurl ]] && _d=http
 
 	# Set default location to the first cdrom device if any are found.
 	[[ -n $_cddevs ]] && : ${_d:=cd0}

@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.63 2016/12/17 11:51:02 visa Exp $ */
+/*	$OpenBSD: cpu.c,v 1.66 2017/04/22 15:43:35 visa Exp $ */
 
 /*
  * Copyright (c) 1997-2004 Opsycon AB (www.opsycon.se)
@@ -51,6 +51,7 @@ struct cpuset cpus_running;
 #endif
 
 vaddr_t	cache_valias_mask;
+int	cpu_has_userlocal;
 
 struct cfattach cpu_ca = {
 	sizeof(struct device), cpumatch, cpuattach
@@ -204,6 +205,9 @@ cpuattach(struct device *parent, struct device *dev, void *aux)
 		case 0x05:
 			printf("STC Loongson3%c CPU", 'A' + vers_min - 5);
 			break;
+		case 0x08:
+			printf("STC Loongson3A2000/3B2000 CPU");
+			break;
 		default:
 			printf("Unknown STC Loongson CPU type (%02x)",
 			    ch->c0prid & 0xff);
@@ -224,6 +228,9 @@ cpuattach(struct device *parent, struct device *dev, void *aux)
 		break;
 	case MIPS_CN71XX:
 		printf("CN70xx/CN71xx CPU");
+		break;
+	case MIPS_CN73XX:
+		printf("CN72xx/CN73xx CPU");
 		break;
 	default:
 		printf("Unknown CPU type (0x%x)", ch->type);
@@ -300,6 +307,9 @@ cpuattach(struct device *parent, struct device *dev, void *aux)
 		case 0x05:
 			printf("STC Loongson3%c FPU", 'A' + vers_min - 5);
 			break;
+		case 0x08:
+			printf("STC Loongson3A2000/3B2000 FPU");
+			break;
 		default:
 			printf("Unknown STC Loongson FPU type (%02x)",
 			    ch->c1prid & 0xff);
@@ -309,6 +319,9 @@ cpuattach(struct device *parent, struct device *dev, void *aux)
 		break;
 	case MIPS_CN71XX:
 		printf("CN70xx/CN71xx FPU");
+		break;
+	case MIPS_CN73XX:
+		printf("CN72xx/CN73xx FPU");
 		break;
 	default:
 		printf("Unknown FPU type (0x%x)", fptype);

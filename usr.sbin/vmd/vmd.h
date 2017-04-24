@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.h,v 1.49 2017/03/25 16:28:25 reyk Exp $	*/
+/*	$OpenBSD: vmd.h,v 1.52 2017/04/21 07:03:26 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -23,6 +23,8 @@
 #include <machine/vmmvar.h>
 
 #include <net/if.h>
+#include <netinet/in.h>
+#include <netinet/if_ether.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -47,6 +49,9 @@
 #define NR_BACKLOG		5
 #define VMD_SWITCH_TYPE		"bridge"
 #define VM_DEFAULT_MEMORY	512
+
+/* 100.64.0.0/10 from rfc6598 (IPv4 Prefix for Shared Address Space) */
+#define VMD_DHCP_PREFIX		"100.64.0.0/10"
 
 #ifdef VMD_DEBUG
 #define dprintf(x...)   do { log_debug(x); } while(0)
@@ -74,8 +79,10 @@ enum imsg_type {
 	IMSG_VMDOP_PRIV_IFUP,
 	IMSG_VMDOP_PRIV_IFDOWN,
 	IMSG_VMDOP_PRIV_IFGROUP,
+	IMSG_VMDOP_PRIV_IFADDR,
 	IMSG_VMDOP_VM_SHUTDOWN,
-	IMSG_VMDOP_VM_REBOOT
+	IMSG_VMDOP_VM_REBOOT,
+	IMSG_VMDOP_CONFIG
 };
 
 struct vmop_result {
@@ -102,6 +109,7 @@ struct vmop_ifreq {
 	uint32_t		 vfr_id;
 	char			 vfr_name[IF_NAMESIZE];
 	char			 vfr_value[VM_NAME_MAX];
+	struct ifaliasreq	 vfr_ifra;
 };
 
 struct vmop_create_params {
@@ -116,7 +124,8 @@ struct vmop_create_params {
 	unsigned int		 vmc_ifflags[VMM_MAX_NICS_PER_VM];
 #define VMIFF_UP		0x01
 #define VMIFF_LOCKED		0x02
-#define VMIFF_OPTMASK		VMIFF_LOCKED
+#define VMIFF_LOCAL		0x04
+#define VMIFF_OPTMASK		(VMIFF_LOCKED|VMIFF_LOCAL)
 	char			 vmc_ifnames[VMM_MAX_NICS_PER_VM][IF_NAMESIZE];
 	char			 vmc_ifswitch[VMM_MAX_NICS_PER_VM][VM_NAME_MAX];
 	char			 vmc_ifgroup[VMM_MAX_NICS_PER_VM][IF_NAMESIZE];
@@ -159,7 +168,6 @@ TAILQ_HEAD(switchlist, vmd_switch);
 struct vmd_vm {
 	struct vmop_create_params vm_params;
 	pid_t			 vm_pid;
-	/* Userspace ID of VM. The user never sees this */
 	uint32_t		 vm_vmid;
 	int			 vm_kernel;
 	int			 vm_disks[VMM_MAX_DISKS_PER_VM];
@@ -181,9 +189,23 @@ struct vmd_vm {
 };
 TAILQ_HEAD(vmlist, vmd_vm);
 
+struct address {
+	struct sockaddr_storage	 ss;
+	int			 prefixlen;
+	TAILQ_ENTRY(address)	 entry;
+};
+TAILQ_HEAD(addresslist, address);
+
+struct vmd_config {
+	struct address		 cfg_localprefix;
+};
+
 struct vmd {
 	struct privsep		 vmd_ps;
 	const char		*vmd_conffile;
+
+	/* global configuration that is sent to the children */
+	struct vmd_config	 vmd_cfg;
 
 	int			 vmd_debug;
 	int			 vmd_verbose;
@@ -191,7 +213,6 @@ struct vmd {
 
 	uint32_t		 vmd_nvm;
 	struct vmlist		*vmd_vms;
-
 	uint32_t		 vmd_nswitches;
 	struct switchlist	*vmd_switches;
 
@@ -199,10 +220,44 @@ struct vmd {
 	int			 vmd_ptmfd;
 };
 
+static inline struct sockaddr_in *
+ss2sin(struct sockaddr_storage *ss)
+{
+	return ((struct sockaddr_in *)ss);
+}
+
+static inline struct sockaddr_in6 *
+ss2sin6(struct sockaddr_storage *ss)
+{
+	return ((struct sockaddr_in6 *)ss);
+}
+
+struct packet_ctx {
+	uint8_t			 pc_htype;
+	uint8_t			 pc_hlen;
+	uint8_t			 pc_smac[ETHER_ADDR_LEN];
+	uint8_t			 pc_dmac[ETHER_ADDR_LEN];
+
+	struct sockaddr_storage	 pc_src;
+	struct sockaddr_storage	 pc_dst;
+};
+
+/* packet.c */
+ssize_t	 assemble_hw_header(unsigned char *, size_t, size_t,
+	    struct packet_ctx *, unsigned int);
+ssize_t	 assemble_udp_ip_header(unsigned char *, size_t, size_t,
+	    struct packet_ctx *pc, unsigned char *, size_t);
+ssize_t	 decode_hw_header(unsigned char *, size_t, size_t, struct packet_ctx *,
+	    unsigned int);
+ssize_t	 decode_udp_ip_header(unsigned char *, size_t, size_t,
+	    struct packet_ctx *);
+
 /* vmd.c */
 void	 vmd_reload(unsigned int, const char *);
-struct vmd_vm *vm_getbyvmid(uint32_t);
 struct vmd_vm *vm_getbyid(uint32_t);
+struct vmd_vm *vm_getbyvmid(uint32_t);
+uint32_t vm_id2vmid(uint32_t, struct vmd_vm *);
+uint32_t vm_vmid2id(uint32_t, struct vmd_vm *);
 struct vmd_vm *vm_getbyname(const char *);
 struct vmd_vm *vm_getbypid(pid_t);
 void	 vm_stop(struct vmd_vm *, int);
@@ -215,6 +270,7 @@ void	 vm_closetty(struct vmd_vm *);
 void	 switch_remove(struct vmd_switch *);
 struct vmd_switch *switch_getbyname(const char *);
 char	*get_string(uint8_t *, size_t);
+uint32_t prefixlen2mask(uint8_t);
 
 /* priv.c */
 void	 priv(struct privsep *, struct privsep_proc *);
@@ -223,6 +279,7 @@ int	 priv_findname(const char *, const char **);
 int	 priv_validgroup(const char *);
 int	 vm_priv_ifconfig(struct privsep *, struct vmd_vm *);
 int	 vm_priv_brconfig(struct privsep *, struct vmd_switch *);
+uint32_t vm_priv_addr(struct address *, uint32_t, int, int);
 
 /* vmm.c */
 void	 vmm(struct privsep *, struct privsep_proc *);
@@ -242,6 +299,8 @@ __dead void vm_shutdown(unsigned int);
 /* control.c */
 int	 config_init(struct vmd *);
 void	 config_purge(struct vmd *, unsigned int);
+int	 config_setconfig(struct vmd *);
+int	 config_getconfig(struct vmd *, struct imsg *);
 int	 config_setreset(struct vmd *, unsigned int);
 int	 config_getreset(struct vmd *, struct imsg *);
 int	 config_setvm(struct privsep *, struct vmd_vm *, uint32_t, uid_t);
@@ -256,5 +315,6 @@ void	 vmboot_close(FILE *, struct vmboot_params *);
 /* parse.y */
 int	 parse_config(const char *);
 int	 cmdline_symset(char *);
+int	 host(const char *, struct address *);
 
 #endif /* VMD_H */

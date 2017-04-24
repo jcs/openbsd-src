@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.256 2017/03/24 14:45:00 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.267 2017/04/23 18:13:24 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -76,8 +76,12 @@ static void	tty_default_attributes(struct tty *, const struct window_pane *,
 #define tty_use_margin(tty) \
 	((tty)->term_type == TTY_VT420)
 
-#define tty_pane_full_width(tty, ctx)					\
+#define tty_pane_full_width(tty, ctx) \
 	((ctx)->xoff == 0 && screen_size_x((ctx)->wp->screen) >= (tty)->sx)
+
+#define TTY_BLOCK_INTERVAL (100000 /* 100 milliseconds */)
+#define TTY_BLOCK_START(tty) (1 + ((tty)->sx * (tty)->sy) * 8)
+#define TTY_BLOCK_STOP(tty) (1 + ((tty)->sx * (tty)->sy) / 8)
 
 void
 tty_create_log(void)
@@ -94,8 +98,6 @@ tty_create_log(void)
 int
 tty_init(struct tty *tty, struct client *c, int fd, char *term)
 {
-	char	*path;
-
 	if (!isatty(fd))
 		return (-1);
 
@@ -105,12 +107,10 @@ tty_init(struct tty *tty, struct client *c, int fd, char *term)
 		tty->term_name = xstrdup("unknown");
 	else
 		tty->term_name = xstrdup(term);
+
 	tty->fd = fd;
 	tty->client = c;
 
-	if ((path = ttyname(fd)) == NULL)
-		return (-1);
-	tty->path = xstrdup(path);
 	tty->cstyle = 0;
 	tty->ccolour = xstrdup("");
 
@@ -125,8 +125,9 @@ tty_init(struct tty *tty, struct client *c, int fd, char *term)
 int
 tty_resize(struct tty *tty)
 {
-	struct winsize	ws;
-	u_int		sx, sy;
+	struct client	*c = tty->client;
+	struct winsize	 ws;
+	u_int		 sx, sy;
 
 	if (ioctl(tty->fd, TIOCGWINSZ, &ws) != -1) {
 		sx = ws.ws_col;
@@ -139,7 +140,8 @@ tty_resize(struct tty *tty)
 		sx = 80;
 		sy = 24;
 	}
-	log_debug("%s: %s now %ux%u", __func__, tty->path, sx, sy);
+	log_debug("%s: %s now %ux%u", __func__, c->name, sx, sy);
+
 	if (!tty_set_size(tty, sx, sy))
 		return (0);
 	tty_invalidate(tty);
@@ -160,29 +162,79 @@ static void
 tty_read_callback(__unused int fd, __unused short events, void *data)
 {
 	struct tty	*tty = data;
+	struct client	*c = tty->client;
 	size_t		 size = EVBUFFER_LENGTH(tty->in);
 	int		 nread;
 
 	nread = evbuffer_read(tty->in, tty->fd, -1);
 	if (nread == -1)
 		return;
-	log_debug("%s: read %d bytes (already %zu)", tty->path, nread, size);
+	log_debug("%s: read %d bytes (already %zu)", c->name, nread, size);
 
 	while (tty_keys_next(tty))
 		;
 }
 
 static void
+tty_timer_callback(__unused int fd, __unused short events, void *data)
+{
+	struct tty	*tty = data;
+	struct client	*c = tty->client;
+	struct timeval	 tv = { .tv_usec = TTY_BLOCK_INTERVAL };
+
+	log_debug("%s: %zu discarded", c->name, tty->discarded);
+
+	c->flags |= CLIENT_REDRAW;
+	c->discarded += tty->discarded;
+
+	if (tty->discarded < TTY_BLOCK_STOP(tty)) {
+		tty->flags &= ~TTY_BLOCK;
+		tty_invalidate(tty);
+		return;
+	}
+	tty->discarded = 0;
+	evtimer_add(&tty->timer, &tv);
+}
+
+static int
+tty_block_maybe(struct tty *tty)
+{
+	struct client	*c = tty->client;
+	size_t		 size = EVBUFFER_LENGTH(tty->out);
+	struct timeval	 tv = { .tv_usec = TTY_BLOCK_INTERVAL };
+
+	if (size < TTY_BLOCK_START(tty))
+		return (0);
+
+	if (tty->flags & TTY_BLOCK)
+		return (1);
+	tty->flags |= TTY_BLOCK;
+
+	log_debug("%s: can't keep up, %zu discarded", c->name, size);
+
+	evbuffer_drain(tty->out, size);
+	c->discarded += size;
+
+	tty->discarded = 0;
+	evtimer_add(&tty->timer, &tv);
+	return (1);
+}
+
+static void
 tty_write_callback(__unused int fd, __unused short events, void *data)
 {
 	struct tty	*tty = data;
+	struct client	*c = tty->client;
 	size_t		 size = EVBUFFER_LENGTH(tty->out);
 	int		 nwrite;
 
 	nwrite = evbuffer_write(tty->out, tty->fd);
 	if (nwrite == -1)
 		return;
-	log_debug("%s: wrote %d bytes (of %zu)", tty->path, nwrite, size);
+	log_debug("%s: wrote %d bytes (of %zu)", c->name, nwrite, size);
+
+	if (tty_block_maybe(tty))
+		return;
 
 	if (EVBUFFER_LENGTH(tty->out) != 0)
 		event_add(&tty->event_out, NULL);
@@ -198,7 +250,7 @@ tty_open(struct tty *tty, char **cause)
 	}
 	tty->flags |= TTY_OPENED;
 
-	tty->flags &= ~(TTY_NOCURSOR|TTY_FREEZE);
+	tty->flags &= ~(TTY_NOCURSOR|TTY_FREEZE|TTY_BLOCK|TTY_TIMER);
 
 	event_set(&tty->event_in, tty->fd, EV_PERSIST|EV_READ,
 	    tty_read_callback, tty);
@@ -206,6 +258,8 @@ tty_open(struct tty *tty, char **cause)
 
 	event_set(&tty->event_out, tty->fd, EV_WRITE, tty_write_callback, tty);
 	tty->out = evbuffer_new();
+
+	evtimer_set(&tty->timer, tty_timer_callback, tty);
 
 	tty_start_tty(tty);
 
@@ -272,6 +326,9 @@ tty_stop_tty(struct tty *tty)
 	if (!(tty->flags & TTY_STARTED))
 		return;
 	tty->flags &= ~TTY_STARTED;
+
+	event_del(&tty->timer);
+	tty->flags &= ~TTY_BLOCK;
 
 	event_del(&tty->event_in);
 	event_del(&tty->event_out);
@@ -351,7 +408,6 @@ tty_free(struct tty *tty)
 	tty_close(tty);
 
 	free(tty->ccolour);
-	free(tty->path);
 	free(tty->term_name);
 }
 
@@ -424,8 +480,16 @@ tty_putcode_ptr2(struct tty *tty, enum tty_code_code code, const void *a,
 static void
 tty_add(struct tty *tty, const char *buf, size_t len)
 {
+	struct client	*c = tty->client;
+
+	if (tty->flags & TTY_BLOCK) {
+		tty->discarded += len;
+		return;
+	}
+
 	evbuffer_add(tty->out, buf, len);
-	log_debug("%s: %.*s", tty->path, (int)len, (const char *)buf);
+	log_debug("%s: %.*s", c->name, (int)len, (const char *)buf);
+	c->written += len;
 
 	if (tty_log_fd != -1)
 		write(tty_log_fd, buf, len);
@@ -602,8 +666,17 @@ tty_emulate_repeat(struct tty *tty, enum tty_code_code code,
 static void
 tty_repeat_space(struct tty *tty, u_int n)
 {
-	while (n-- > 0)
-		tty_putc(tty, ' ');
+	static char s[500];
+
+	if (*s != ' ')
+		memset(s, ' ', sizeof s);
+
+	while (n > sizeof s) {
+		tty_putn(tty, s, sizeof s, sizeof s);
+		n -= sizeof s;
+	}
+	if (n != 0)
+		tty_putn(tty, s, n, n);
 }
 
 /*
@@ -683,10 +756,11 @@ tty_draw_line(struct tty *tty, const struct window_pane *wp,
 {
 	struct grid_cell	 gc, last;
 	u_int			 i, j, sx, width;
-	int			 flags = (tty->flags & TTY_NOCURSOR);
+	int			 flags, cleared = 0;
 	char			 buf[512];
 	size_t			 len;
 
+	flags = (tty->flags & TTY_NOCURSOR);
 	tty->flags |= TTY_NOCURSOR;
 	tty_update_mode(tty, tty->mode, s);
 
@@ -699,7 +773,18 @@ tty_draw_line(struct tty *tty, const struct window_pane *wp,
 	if (sx > tty->sx)
 		sx = tty->sx;
 
-	tty_cursor(tty, ox, oy + py);
+	if (screen_size_x(s) < tty->sx &&
+	    ox == 0 &&
+	    sx != screen_size_x(s) &&
+	    tty_term_has(tty->term, TTYC_EL1) &&
+	    !tty_fake_bce(tty, wp, 8)) {
+		tty_default_attributes(tty, wp, 8);
+		tty_cursor(tty, screen_size_x(s) - 1, oy + py);
+		tty_putcode(tty, TTYC_EL1);
+		cleared = 1;
+	}
+	if (sx != 0)
+		tty_cursor(tty, ox, oy + py);
 
 	memcpy(&last, &grid_default_cell, sizeof last);
 	len = 0;
@@ -753,9 +838,8 @@ tty_draw_line(struct tty *tty, const struct window_pane *wp,
 		tty_putn(tty, buf, len, width);
 	}
 
-	if (sx < tty->sx) {
+	if (!cleared && sx < tty->sx) {
 		tty_default_attributes(tty, wp, 8);
-
 		tty_cursor(tty, ox + sx, oy + py);
 		if (sx != screen_size_x(s) &&
 		    ox + screen_size_x(s) >= tty->sx &&
@@ -795,9 +879,7 @@ tty_write(void (*cmdfn)(struct tty *, const struct tty_ctx *),
 	if (wp == NULL)
 		return;
 
-	if (wp->window->flags & WINDOW_REDRAW || wp->flags & PANE_REDRAW)
-		return;
-	if (!window_pane_visible(wp) || wp->flags & PANE_DROP)
+	if ((wp->flags & (PANE_REDRAW|PANE_DROP)) || !window_pane_visible(wp))
 		return;
 
 	TAILQ_FOREACH(c, &clients, entry) {
@@ -856,19 +938,15 @@ tty_cmd_deletecharacter(struct tty *tty, const struct tty_ctx *ctx)
 void
 tty_cmd_clearcharacter(struct tty *tty, const struct tty_ctx *ctx)
 {
-	u_int	i;
-
 	tty_attributes(tty, &grid_default_cell, ctx->wp);
 
 	tty_cursor_pane(tty, ctx, ctx->ocx, ctx->ocy);
 
 	if (tty_term_has(tty->term, TTYC_ECH) &&
-	    !tty_fake_bce(tty, ctx->wp, ctx->bg))
+	    !tty_fake_bce(tty, ctx->wp, 8))
 		tty_putcode1(tty, TTYC_ECH, ctx->num);
-	else {
-		for (i = 0; i < ctx->num; i++)
-			tty_putc(tty, ' ');
-	}
+	else
+		tty_repeat_space(tty, ctx->num);
 }
 
 void
@@ -974,7 +1052,7 @@ tty_cmd_reverseindex(struct tty *tty, const struct tty_ctx *ctx)
 		return;
 
 	if (!tty_pane_full_width(tty, ctx) ||
-	    tty_fake_bce(tty, ctx->wp, ctx->bg) ||
+	    tty_fake_bce(tty, ctx->wp, 8) ||
 	    !tty_term_has(tty->term, TTYC_CSR) ||
 	    !tty_term_has(tty->term, TTYC_RI)) {
 		tty_redraw_region(tty, ctx);
@@ -999,7 +1077,7 @@ tty_cmd_linefeed(struct tty *tty, const struct tty_ctx *ctx)
 		return;
 
 	if ((!tty_pane_full_width(tty, ctx) && !tty_use_margin(tty)) ||
-	    tty_fake_bce(tty, wp, ctx->bg) ||
+	    tty_fake_bce(tty, wp, 8) ||
 	    !tty_term_has(tty->term, TTYC_CSR)) {
 		tty_redraw_region(tty, ctx);
 		return;
@@ -1030,7 +1108,7 @@ tty_cmd_scrollup(struct tty *tty, const struct tty_ctx *ctx)
 	u_int			 i;
 
 	if ((!tty_pane_full_width(tty, ctx) && !tty_use_margin(tty)) ||
-	    tty_fake_bce(tty, wp, ctx->bg) ||
+	    tty_fake_bce(tty, wp, 8) ||
 	    !tty_term_has(tty->term, TTYC_CSR)) {
 		tty_redraw_region(tty, ctx);
 		return;
@@ -1140,6 +1218,7 @@ tty_cmd_clearscreen(struct tty *tty, const struct tty_ctx *ctx)
 	tty_margin_off(tty);
 
 	if (tty_pane_full_width(tty, ctx) &&
+	    ctx->yoff + wp->sy >= tty->sy - 1 &&
 	    status_at_line(tty->client) <= 0 &&
 	    tty_term_has(tty->term, TTYC_ED)) {
 		tty_cursor_pane(tty, ctx, 0, 0);

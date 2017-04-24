@@ -1,4 +1,4 @@
-/* $OpenBSD: server.c,v 1.166 2017/02/09 15:04:53 nicm Exp $ */
+/* $OpenBSD: server.c,v 1.170 2017/04/22 06:13:30 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -63,7 +63,7 @@ static void	server_child_stopped(pid_t, int);
 void
 server_set_marked(struct session *s, struct winlink *wl, struct window_pane *wp)
 {
-	cmd_find_clear_state(&marked_pane, NULL, 0);
+	cmd_find_clear_state(&marked_pane, 0);
 	marked_pane.s = s;
 	marked_pane.wl = wl;
 	marked_pane.w = wl->window;
@@ -74,7 +74,7 @@ server_set_marked(struct session *s, struct winlink *wl, struct window_pane *wp)
 void
 server_clear_marked(void)
 {
-	cmd_find_clear_state(&marked_pane, NULL, 0);
+	cmd_find_clear_state(&marked_pane, 0);
 }
 
 /* Is this the marked pane? */
@@ -119,12 +119,16 @@ server_create_socket(void)
 		return (-1);
 
 	mask = umask(S_IXUSR|S_IXGRP|S_IRWXO);
-	if (bind(fd, (struct sockaddr *) &sa, sizeof(sa)) == -1)
+	if (bind(fd, (struct sockaddr *) &sa, sizeof(sa)) == -1) {
+		close(fd);
 		return (-1);
+	}
 	umask(mask);
 
-	if (listen(fd, 128) == -1)
+	if (listen(fd, 128) == -1) {
+		close(fd);
 		return (-1);
+	}
 	setblocking(fd, 0);
 
 	return (fd);
@@ -134,7 +138,8 @@ server_create_socket(void)
 int
 server_start(struct event_base *base, int lockfd, char *lockfile)
 {
-	int	pair[2];
+	int		 pair[2];
+	struct job	*job;
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC, pair) != 0)
 		fatal("socketpair failed");
@@ -175,11 +180,15 @@ server_start(struct event_base *base, int lockfd, char *lockfile)
 
 	start_cfg();
 
-	status_prompt_load_history();
-
 	server_add_accept(0);
 
 	proc_loop(server_proc, server_loop);
+
+	LIST_FOREACH(job, &all_jobs, entry) {
+		if (job->pid != -1)
+			kill(job->pid, SIGTERM);
+	}
+
 	status_prompt_save_history();
 	exit(0);
 }
@@ -400,7 +409,7 @@ server_child_exited(pid_t pid, int status)
 		}
 	}
 
-	LIST_FOREACH(job, &all_jobs, lentry) {
+	LIST_FOREACH(job, &all_jobs, entry) {
 		if (pid == job->pid) {
 			job_died(job, status);	/* might free job */
 			break;

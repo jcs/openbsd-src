@@ -1,4 +1,4 @@
-/*	$OpenBSD: azalia.c,v 1.233 2017/03/19 11:18:26 jsg Exp $	*/
+/*	$OpenBSD: azalia.c,v 1.235 2017/04/11 14:43:49 dhill Exp $	*/
 /*	$NetBSD: azalia.c,v 1.20 2006/05/07 08:31:44 kent Exp $	*/
 
 /*-

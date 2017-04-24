@@ -1,4 +1,4 @@
-/*	$OpenBSD: syslogd.h,v 1.27 2017/03/16 23:55:19 bluhm Exp $ */
+/*	$OpenBSD: syslogd.h,v 1.30 2017/04/05 22:15:35 bluhm Exp $ */
 
 /*
  * Copyright (c) 2003 Anil Madhavapeddy <anil@recoil.org>
@@ -37,7 +37,7 @@ int   priv_getnameinfo(struct sockaddr *, socklen_t, char *, size_t);
 /* Terminal message */
 #define TTYMSGTIME	1		/* timeout used by ttymsg */
 #define TTYMAXDELAY	256		/* max events in ttymsg */
-char *ttymsg(struct iovec *, int, char *);
+void ttymsg(struct iovec *, int, char *);
 
 /* File descriptor send/recv */
 void send_fd(int, int);
@@ -50,11 +50,9 @@ extern char *path_ctlsock;
 
 #define MAXLINE		8192		/* maximum line length */
 #define ERRBUFSIZE	256
-void logdebug(const char *, ...) __attribute__((__format__ (printf, 1, 2)));
 void vlogmsg(int pri, const char *, const char *, va_list);
 __dead void die(int);
 extern int Debug;
-extern int Startup;
 
 struct ringbuf {
 	char *buf;

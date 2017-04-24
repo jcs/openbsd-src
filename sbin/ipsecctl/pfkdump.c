@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfkdump.c,v 1.44 2017/03/02 17:44:32 bluhm Exp $	*/
+/*	$OpenBSD: pfkdump.c,v 1.46 2017/04/19 15:59:38 bluhm Exp $	*/
 
 /*
  * Copyright (c) 2003 Markus Friedl.  All rights reserved.
@@ -258,15 +258,20 @@ print_flags(uint32_t flags)
 	static char fstr[80];
 	struct idname *entry;
 	size_t len;
-	int i, comma = 0;
+	int i, comma = 0, n;
 
 	len = snprintf(fstr, sizeof(fstr), "%#x<", flags);
+	if (len >= sizeof(fstr))
+		return (NULL);
 	for (i = 0; i < 32; i++) {
 		if ((flags & (1 << i)) == 0 ||
 		    (entry = lookup(flag_types, 1 << i)) == NULL)
 			continue;
-		len += snprintf(fstr + len, sizeof(fstr) - len - 1,
+		n = snprintf(fstr + len, sizeof(fstr) - len - 1,
 		    comma ? ",%s" : "%s", entry->name);
+		if ((size_t)n >= sizeof(fstr) - len - 1)
+			return (NULL);
+		len += n;
 		comma = 1;
 	}
 	strlcat(fstr, ">", sizeof(fstr));
@@ -813,7 +818,7 @@ pfkey_print_sa(struct sadb_msg *msg, int opts)
 		extensions[SADB_EXT_KEY_ENCRYPT] = NULL;
 	}
 	if (extensions[SADB_X_EXT_SA2]) {
-		r.type |= RULE_GROUP;
+		r.type |= RULE_BUNDLE;
 		sa2 = (struct sadb_sa *)extensions[SADB_X_EXT_SA2];
 		r.spi2 = ntohl(sa2->sadb_sa_spi);
 		parse_addr(extensions[SADB_X_EXT_DST2], &dst2);

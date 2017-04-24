@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_nep.c,v 1.27 2017/01/22 10:17:38 dlg Exp $	*/
+/*	$OpenBSD: if_nep.c,v 1.30 2017/04/11 14:43:49 dhill Exp $	*/
 /*
  * Copyright (c) 2014, 2015 Mark Kettenis
  *

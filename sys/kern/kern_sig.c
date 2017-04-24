@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sig.c,v 1.208 2017/01/24 00:58:55 mpi Exp $	*/
+/*	$OpenBSD: kern_sig.c,v 1.211 2017/04/20 12:59:36 visa Exp $	*/
 /*	$NetBSD: kern_sig.c,v 1.54 1996/04/22 01:38:32 christos Exp $	*/
 
 /*
@@ -63,15 +63,13 @@
 #include <sys/user.h>
 #include <sys/syslog.h>
 #include <sys/pledge.h>
+#include <sys/witness.h>
 
 #include <sys/mount.h>
 #include <sys/syscallargs.h>
 
 #include <uvm/uvm_extern.h>
-
-#ifdef  __HAVE_MD_TCB
-# include <machine/tcb.h>
-#endif
+#include <machine/tcb.h>
 
 int	filt_sigattach(struct knote *kn);
 void	filt_sigdetach(struct knote *kn);
@@ -649,7 +647,7 @@ killpg1(struct proc *cp, int signum, int pgid, int all)
 	struct pgrp *pgrp;
 	int nfound = 0;
 
-	if (all)
+	if (all) {
 		/* 
 		 * broadcast
 		 */
@@ -662,7 +660,7 @@ killpg1(struct proc *cp, int signum, int pgid, int all)
 			if (signum)
 				prsignal(pr, signum);
 		}
-	else {
+	} else {
 		if (pgid == 0)
 			/*
 			 * zero pgid means send to my process group.
@@ -1848,6 +1846,8 @@ userret(struct proc *p)
 		single_thread_check(p, 0);
 		KERNEL_UNLOCK();
 	}
+
+	WITNESS_WARN(WARN_PANIC, NULL, "userret: returning");
 
 	p->p_cpu->ci_schedstate.spc_curpriority = p->p_priority = p->p_usrpri;
 }

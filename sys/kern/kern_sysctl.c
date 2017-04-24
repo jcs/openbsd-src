@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.322 2017/03/07 09:29:40 mpi Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.324 2017/04/05 04:15:44 guenther Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -370,6 +370,7 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return (sysctl_clockrate(oldp, oldlenp, newp));
 	case KERN_BOOTTIME: {
 		struct timeval bt;
+		memset(&bt, 0, sizeof bt);
 		TIMESPEC_TO_TIMEVAL(&bt, &boottime);
 		return (sysctl_rdstruct(oldp, oldlenp, newp, &bt, sizeof bt));
 	  }
@@ -2088,9 +2089,9 @@ sysctl_diskinit(int update, struct proc *p)
 		diskstats = NULL;
 		disknames = NULL;
 		diskstats = mallocarray(disk_count, sizeof(struct diskstats),
-		    M_SYSCTL, M_WAITOK);
+		    M_SYSCTL, M_WAITOK|M_ZERO);
 		diskstatslen = disk_count * sizeof(struct diskstats);
-		disknames = malloc(tlen, M_SYSCTL, M_WAITOK);
+		disknames = malloc(tlen, M_SYSCTL, M_WAITOK|M_ZERO);
 		disknameslen = tlen;
 		disknames[0] = '\0';
 

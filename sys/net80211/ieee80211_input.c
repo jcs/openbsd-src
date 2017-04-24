@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_input.c,v 1.189 2017/03/13 07:44:10 stsp Exp $	*/
+/*	$OpenBSD: ieee80211_input.c,v 1.191 2017/04/11 14:43:49 dhill Exp $	*/
 
 /*-
  * Copyright (c) 2001 Atsushi Onoe

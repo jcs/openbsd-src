@@ -1,4 +1,4 @@
-/*	$OpenBSD: dispatch.c,v 1.117 2017/03/08 15:46:36 krw Exp $	*/
+/*	$OpenBSD: dispatch.c,v 1.119 2017/04/05 18:22:30 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -73,6 +73,7 @@
 struct dhcp_timeout timeout;
 
 void packethandler(struct interface_info *ifi);
+void sendhup(struct client_lease *);
 
 void
 get_hw_address(struct interface_info *ifi)
@@ -233,21 +234,17 @@ interface_link_forceup(char *ifname)
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	if (ioctl(sock, SIOCGIFFLAGS, (caddr_t)&ifr) == -1) {
-		log_warn("interface_link_forceup: SIOCGIFFLAGS failed");
+		log_warn("SIOCGIFFLAGS");
 		return;
 	}
 
-	/* Force it down and up so others notice link state change. */
-	ifr.ifr_flags &= ~IFF_UP;
-	if (ioctl(sock, SIOCSIFFLAGS, (caddr_t)&ifr) == -1) {
-		log_warn("interface_link_forceup: SIOCSIFFLAGS DOWN failed");
-		return;
-	}
-
-	ifr.ifr_flags |= IFF_UP;
-	if (ioctl(sock, SIOCSIFFLAGS, (caddr_t)&ifr) == -1) {
-		log_warn("interface_link_forceup: SIOCSIFFLAGS UP failed");
-		return;
+	/* Force it up if it isn't already. */
+	if ((ifr.ifr_flags & IFF_UP) == 0) {
+		ifr.ifr_flags |= IFF_UP;
+		if (ioctl(sock, SIOCSIFFLAGS, (caddr_t)&ifr) == -1) {
+			log_warn("SIOCSIFFLAGS");
+			return;
+		}
 	}
 }
 
@@ -341,4 +338,26 @@ get_rdomain(char *name)
 
 	close(s);
 	return rv;
+}
+
+/*
+ * Inform the [priv] process a HUP was received and it should restart.
+ */
+void
+sendhup(struct client_lease *active)
+{
+	struct imsg_hup imsg;
+	int rslt;
+
+	if (active)
+		imsg.addr = active->address;
+	else
+		imsg.addr.s_addr = INADDR_ANY;
+
+	rslt = imsg_compose(unpriv_ibuf, IMSG_HUP, 0, 0, -1,
+	    &imsg, sizeof(imsg));
+	if (rslt == -1)
+		log_warn("sendhup: imsg_compose");
+
+	flush_unpriv_ibuf("sendhup");
 }

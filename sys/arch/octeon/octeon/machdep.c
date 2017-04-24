@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.82 2017/01/06 15:37:44 fcambus Exp $ */
+/*	$OpenBSD: machdep.c,v 1.86 2017/04/20 15:42:26 visa Exp $ */
 
 /*
  * Copyright (c) 2009, 2010 Miodrag Vallat.
@@ -99,7 +99,8 @@ vm_map_t phys_map;
 struct boot_desc *octeon_boot_desc;
 struct boot_info *octeon_boot_info;
 
-void *octeon_fdt;
+void		*octeon_fdt;
+unsigned int	 octeon_ver;
 
 char uboot_rootdev[OCTEON_ARGV_MAX];
 
@@ -275,6 +276,22 @@ mips_init(__register_t a0, __register_t a1, __register_t a2 __unused,
 	prid = cp0_get_prid();
 
 	bootcpu_hwinfo.clock = boot_desc->eclock;
+
+	switch ((prid >> 8) & 0xff) {
+	default:
+		octeon_ver = OCTEON_1;
+		break;
+	case MIPS_CN50XX:
+		octeon_ver = OCTEON_PLUS;
+		break;
+	case MIPS_CN61XX:
+		octeon_ver = OCTEON_2;
+		break;
+	case MIPS_CN71XX:
+	case MIPS_CN73XX:
+		octeon_ver = OCTEON_3;
+		break;
+	}
 
 	/*
 	 * Look at arguments passed to us and compute boothowto.
@@ -536,7 +553,7 @@ cpu_startup()
 	/*
 	 * Good {morning,afternoon,evening,night}.
 	 */
-	printf(version);
+	printf("%s", version);
 	printf("real mem = %lu (%luMB)\n", ptoa((psize_t)physmem),
 	    ptoa((psize_t)physmem)/1024/1024);
 
@@ -584,15 +601,13 @@ octeon_ioclock_speed(void)
 {
 	extern struct boot_info *octeon_boot_info;
 	u_int64_t mio_rst_boot, rst_boot;
-	int chipid;
 
-	chipid = octeon_get_chipid();
-	switch (octeon_model_family(chipid)) {
-	case OCTEON_MODEL_FAMILY_CN61XX:
+	switch (octeon_ver) {
+	case OCTEON_2:
 		mio_rst_boot = octeon_xkphys_read_8(MIO_RST_BOOT);
 		return OCTEON_IO_REF_CLOCK * ((mio_rst_boot >>
 		    MIO_RST_BOOT_PNR_MUL_SHIFT) & MIO_RST_BOOT_PNR_MUL_MASK);
-	case OCTEON_MODEL_FAMILY_CN71XX:
+	case OCTEON_3:
 		rst_boot = octeon_xkphys_read_8(RST_BOOT);
 		return OCTEON_IO_REF_CLOCK * ((rst_boot >>
 		    RST_BOOT_PNR_MUL_SHIFT) & RST_BOOT_PNR_MUL_MASK);
@@ -604,7 +619,19 @@ octeon_ioclock_speed(void)
 void
 octeon_tlb_init(void)
 {
+	uint32_t hwrena = 0;
 	uint32_t pgrain = 0;
+
+	/*
+	 * If the UserLocal register is available, let userspace
+	 * access it using the RDHWR instruction.
+	 */
+	if (cp0_get_config_3() & CONFIG3_ULRI) {
+		cp0_set_userlocal(NULL);
+		hwrena |= HWRENA_ULR;
+		cpu_has_userlocal = 1;
+	}
+	cp0_set_hwrena(hwrena);
 
 #ifdef MIPS_PTE64
 	pgrain |= PGRAIN_ELPA;
@@ -687,8 +714,6 @@ int	waittime = -1;
 __dead void
 boot(int howto)
 {
-	int chipid;
-
 	if (curproc)
 		savectx(curproc->p_addr, 0);
 
@@ -733,16 +758,11 @@ haltsys:
 		tlb_set_wired(0);
 		tlb_flush(bootcpu_hwinfo.tlbsize);
 
-		chipid = octeon_get_chipid();
-		switch (octeon_model_family(chipid)) {
-		case OCTEON_MODEL_FAMILY_CN71XX:
+		if (octeon_ver == OCTEON_3)
 			octeon_xkphys_write_8(RST_SOFT_RST, 1);
-			break;
-		default:
+		else
 			octeon_xkphys_write_8(OCTEON_CIU_BASE +
 			    CIU_SOFT_RST, 1);
-			break;
-		}
 	}
 
 	for (;;)

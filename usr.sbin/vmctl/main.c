@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.24 2017/03/25 16:28:25 reyk Exp $	*/
+/*	$OpenBSD: main.c,v 1.26 2017/04/19 15:38:32 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -65,7 +65,7 @@ struct ctl_command ctl_commands[] = {
 	{ "reload",	CMD_RELOAD,	ctl_reload,	"" },
 	{ "reset",	CMD_RESET,	ctl_reset,	"[all|vms|switches]" },
 	{ "start",	CMD_START,	ctl_start,	"\"name\""
-	    " [-c] [-b image] [-m size]\n"
+	    " [-Lc] [-b image] [-m size]\n"
 	    "\t\t[-n switch] [-i count] [-d disk]*" },
 	{ "status",	CMD_STATUS,	ctl_status,	"[id]" },
 	{ "stop",	CMD_STOP,	ctl_stop,	"id" },
@@ -194,8 +194,8 @@ vmmaction(struct parse_result *res)
 
 	switch (res->action) {
 	case CMD_START:
-		ret = vm_start(res->name, res->size, res->nifs, res->nets,
-		    res->ndisks, res->disks, res->path);
+		ret = vm_start(res->id, res->name, res->size, res->nifs,
+		    res->nets, res->ndisks, res->disks, res->path);
 		if (ret) {
 			errno = ret;
 			err(1, "start VM operation failed");
@@ -533,12 +533,13 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 	if (argc < 2)
 		ctl_usage(res->ctl);
 
-	if ((res->name = strdup(argv[1])) == NULL)
-		errx(1, "strdup");
+	if (parse_vmid(res, argv[1]) == -1)
+		errx(1, "invalid id: %s", argv[1]);
+
 	argc--;
 	argv++;
 
-	while ((ch = getopt(argc, argv, "b:cm:n:d:i:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:cLm:n:d:i:")) != -1) {
 		switch (ch) {
 		case 'b':
 			if (res->path)
@@ -550,6 +551,10 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 			break;
 		case 'c':
 			tty_autoconnect = 1;
+			break;
+		case 'L':
+			if (parse_network(res, ".") != 0)
+				errx(1, "invalid network: %s", optarg);
 			break;
 		case 'm':
 			if (res->size)

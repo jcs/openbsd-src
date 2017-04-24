@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_input.c,v 1.338 2017/02/09 15:19:32 jca Exp $	*/
+/*	$OpenBSD: tcp_input.c,v 1.341 2017/04/19 15:21:54 bluhm Exp $	*/
 /*	$NetBSD: tcp_input.c,v 1.23 1996/02/13 23:43:44 christos Exp $	*/
 
 /*
@@ -355,11 +355,11 @@ tcp_flush_queue(struct tcpcb *tp)
  * protocol specification dated September, 1981 very closely.
  */
 int
-tcp_input(struct mbuf **mp, int *offp, int proto)
+tcp_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct mbuf *m = *mp;
 	int iphlen = *offp;
-	struct ip *ip;
+	struct ip *ip = NULL;
 	struct inpcb *inp = NULL;
 	u_int8_t *optp = NULL;
 	int optlen = 0;
@@ -383,7 +383,6 @@ tcp_input(struct mbuf **mp, int *offp, int proto)
 	struct tdb *tdb;
 	int error;
 #endif /* IPSEC */
-	int af;
 #ifdef TCP_ECN
 	u_char iptos;
 #endif
@@ -400,51 +399,9 @@ tcp_input(struct mbuf **mp, int *offp, int proto)
 		goto drop;
 
 	/*
-	 * Before we do ANYTHING, we have to figure out if it's TCP/IPv6 or
-	 * TCP/IPv4.
-	 */
-	switch (mtod(m, struct ip *)->ip_v) {
-#ifdef INET6
-	case 6:
-		af = AF_INET6;
-		break;
-#endif
-	case 4:
-		af = AF_INET;
-		break;
-	default:
-		m_freem(m);
-		return IPPROTO_DONE;
-	}
-
-	/*
 	 * Get IP and TCP header together in first mbuf.
 	 * Note: IP leaves IP header in first mbuf.
 	 */
-	switch (af) {
-	case AF_INET:
-#ifdef DIAGNOSTIC
-		if (iphlen < sizeof(struct ip)) {
-			m_freem(m);
-			return IPPROTO_DONE;
-		}
-#endif /* DIAGNOSTIC */
-		break;
-#ifdef INET6
-	case AF_INET6:
-#ifdef DIAGNOSTIC
-		if (iphlen < sizeof(struct ip6_hdr)) {
-			m_freem(m);
-			return IPPROTO_DONE;
-		}
-#endif /* DIAGNOSTIC */
-		break;
-#endif
-	default:
-		m_freem(m);
-		return IPPROTO_DONE;
-	}
-
 	IP6_EXTHDR_GET(th, struct tcphdr *, m, iphlen, sizeof(*th));
 	if (!th) {
 		tcpstat_inc(tcps_rcvshort);
@@ -452,10 +409,6 @@ tcp_input(struct mbuf **mp, int *offp, int proto)
 	}
 
 	tlen = m->m_pkthdr.len - iphlen;
-	ip = NULL;
-#ifdef INET6
-	ip6 = NULL;
-#endif
 	switch (af) {
 	case AF_INET:
 		ip = mtod(m, struct ip *);
@@ -498,6 +451,8 @@ tcp_input(struct mbuf **mp, int *offp, int proto)
 		}
 		break;
 #endif
+	default:
+		unhandled_af(af);
 	}
 
 	/*
@@ -2995,12 +2950,12 @@ tcp_mss(struct tcpcb *tp, int offer)
 	 * if there's an mtu associated with the route and we support
 	 * path MTU discovery for the underlying protocol family, use it.
 	 */
-	if (rt->rt_rmx.rmx_mtu) {
+	if (rt->rt_mtu) {
 		/*
 		 * One may wish to lower MSS to take into account options,
 		 * especially security-related options.
 		 */
-		if (tp->pf == AF_INET6 && rt->rt_rmx.rmx_mtu < IPV6_MMTU) {
+		if (tp->pf == AF_INET6 && rt->rt_mtu < IPV6_MMTU) {
 			/*
 			 * RFC2460 section 5, last paragraph: if path MTU is
 			 * smaller than 1280, use 1280 as packet size and
@@ -3009,7 +2964,7 @@ tcp_mss(struct tcpcb *tp, int offer)
 			mss = IPV6_MMTU - iphlen - sizeof(struct ip6_frag) -
 			    sizeof(struct tcphdr);
 		} else {
-			mss = rt->rt_rmx.rmx_mtu - iphlen -
+			mss = rt->rt_mtu - iphlen -
 			    sizeof(struct tcphdr);
 		}
 	} else if (ifp->if_flags & IFF_LOOPBACK) {

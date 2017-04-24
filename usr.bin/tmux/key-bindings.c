@@ -1,4 +1,4 @@
-/* $OpenBSD: key-bindings.c,v 1.73 2017/02/06 15:00:41 nicm Exp $ */
+/* $OpenBSD: key-bindings.c,v 1.76 2017/04/21 19:33:07 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -84,7 +84,7 @@ key_bindings_unref_table(struct key_table *table)
 }
 
 void
-key_bindings_add(const char *name, key_code key, int can_repeat,
+key_bindings_add(const char *name, key_code key, int repeat,
     struct cmd_list *cmdlist)
 {
 	struct key_table	*table;
@@ -100,11 +100,12 @@ key_bindings_add(const char *name, key_code key, int can_repeat,
 		free(bd);
 	}
 
-	bd = xmalloc(sizeof *bd);
+	bd = xcalloc(1, sizeof *bd);
 	bd->key = key;
 	RB_INSERT(key_bindings, &table->key_bindings, bd);
 
-	bd->can_repeat = can_repeat;
+	if (repeat)
+		bd->flags |= KEY_BINDING_REPEAT;
 	bd->cmdlist = cmdlist;
 }
 
@@ -260,6 +261,8 @@ key_bindings_init(void)
 		"bind -Tcopy-mode n send -X search-again",
 		"bind -Tcopy-mode q send -X cancel",
 		"bind -Tcopy-mode t command-prompt -1p'jump to forward' 'send -X jump-to-forward \"%%%\"'",
+		"bind -Tcopy-mode Home send -X start-of-line",
+		"bind -Tcopy-mode End send -X end-of-line",
 		"bind -Tcopy-mode MouseDown1Pane select-pane",
 		"bind -Tcopy-mode MouseDrag1Pane select-pane\\; send -X begin-selection",
 		"bind -Tcopy-mode MouseDragEnd1Pane send -X copy-selection-and-cancel",
@@ -413,7 +416,8 @@ key_bindings_dispatch(struct key_binding *bd, struct client *c,
 		cmdq_append(c, cmdq_get_callback(key_bindings_read_only, NULL));
 	else {
 		item = cmdq_get_command(bd->cmdlist, fs, m, 0);
-		item->repeat = bd->can_repeat;
+		if (bd->flags & KEY_BINDING_REPEAT)
+			item->shared->flags |= CMDQ_SHARED_REPEAT;
 		cmdq_append(c, item);
 	}
 }

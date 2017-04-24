@@ -228,8 +228,6 @@
 ./etc/skel/.ssh
 ./etc/ssh
 ./etc/ssl
-./etc/ssl/acme
-./etc/ssl/acme/private
 ./etc/ssl/lib
 ./etc/ssl/private
 ./etc/termcap
@@ -616,8 +614,8 @@
 ./usr/games
 ./usr/include
 ./usr/lib
-./usr/lib/libc.so.89.3
-./usr/lib/libc.so.89.3.a
+./usr/lib/libc.so.89.4
+./usr/lib/libc.so.89.4.a
 ./usr/lib/libcrypto.so.41.1
 ./usr/lib/libcurses.so.14.0
 ./usr/lib/libedit.so.5.2
@@ -633,7 +631,6 @@
 ./usr/lib/libmenuw.so.6.0
 ./usr/lib/libncurses.so.14.0
 ./usr/lib/libncursesw.so.14.0
-./usr/lib/libobjc.so.6.0
 ./usr/lib/libossaudio.so.4.0
 ./usr/lib/libpanel.so.6.0
 ./usr/lib/libpanelw.so.6.0
@@ -646,12 +643,11 @@
 ./usr/lib/libskey.so.6.0
 ./usr/lib/libsndio.so.6.1
 ./usr/lib/libssl.so.43.2
-./usr/lib/libstdc++.so.57.0
 ./usr/lib/libtermcap.so.14.0
 ./usr/lib/libtermlib.so.14.0
-./usr/lib/libtls.so.15.4
+./usr/lib/libtls.so.15.5
 ./usr/lib/libusbhid.so.7.0
-./usr/lib/libutil.so.12.1
+./usr/lib/libutil.so.12.2
 ./usr/lib/libz.so.5.0
 ./usr/lib/locate
 ./usr/lib/locate/src.db
@@ -3580,6 +3576,7 @@
 ./usr/share/terminfo/e
 ./usr/share/terminfo/e/ecma+color
 ./usr/share/terminfo/e/ecma+sgr
+./usr/share/terminfo/e/ecma+strikeout
 ./usr/share/terminfo/e/elks
 ./usr/share/terminfo/e/elks-ansi
 ./usr/share/terminfo/e/elks-glasstty
@@ -3622,6 +3619,7 @@
 ./usr/share/terminfo/f/f200vi-w
 ./usr/share/terminfo/f/falco
 ./usr/share/terminfo/f/falco-p
+./usr/share/terminfo/f/fbterm
 ./usr/share/terminfo/f/fenix
 ./usr/share/terminfo/f/fenixw
 ./usr/share/terminfo/f/fixterm
@@ -4970,6 +4968,7 @@
 ./usr/share/terminfo/v/vt-utf8
 ./usr/share/terminfo/v/vt100
 ./usr/share/terminfo/v/vt100+
+./usr/share/terminfo/v/vt100+4bsd
 ./usr/share/terminfo/v/vt100+enq
 ./usr/share/terminfo/v/vt100+fnkeys
 ./usr/share/terminfo/v/vt100+keypad

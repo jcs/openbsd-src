@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.236 2017/03/05 06:40:18 guenther Exp $	*/
+/*	$OpenBSD: proc.h,v 1.238 2017/04/20 12:59:36 visa Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -273,6 +273,8 @@ struct process {
      "\024NOBROADCASTKILL" "\025PLEDGE" "\026WXNEEDED")
 
 
+struct lock_list_entry;
+
 struct proc {
 	TAILQ_ENTRY(proc) p_runq;
 	LIST_ENTRY(proc) p_list;	/* List of all threads. */
@@ -330,12 +332,6 @@ struct proc {
 	u_char	p_usrpri;	/* User-priority based on p_estcpu and ps_nice. */
 	int	p_pledge_syscall;	/* Cache of current syscall */
 
-#ifndef	__HAVE_MD_TCB
-	void	*p_tcb;		/* user-space thread-control-block address */
-# define TCB_SET(p, addr)	((p)->p_tcb = (addr))
-# define TCB_GET(p)		((p)->p_tcb)
-#endif
-
 	struct	ucred *p_ucred;		/* cached credentials */
 	struct	sigaltstack p_sigstk;	/* sp & on stack state variable */
 
@@ -354,6 +350,8 @@ struct proc {
 	int	p_sicode;	/* For core dump/debugger XXX */
 
 	u_short	p_xstat;	/* Exit status for wait; also stop signal. */
+
+	struct	lock_list_entry *p_sleeplocks;
 };
 
 /* Status values. */

@@ -1,4 +1,4 @@
-/* $OpenBSD: netcat.c,v 1.178 2017/03/09 13:58:00 bluhm Exp $ */
+/* $OpenBSD: netcat.c,v 1.181 2017/04/16 15:11:01 deraadt Exp $ */
 /*
  * Copyright (c) 2001 Eric Jackson <ericj@monkey.org>
  * Copyright (c) 2015 Bob Beck.  All rights reserved.
@@ -106,6 +106,7 @@ int	tls_cachanged;				/* Using non-default CA file */
 int     TLSopt;					/* TLS options */
 char	*tls_expectname;			/* required name in peer cert */
 char	*tls_expecthash;			/* required hash of peer cert */
+FILE	*Zflag;					/* file to save peer cert */
 
 int timeout = -1;
 int family = AF_UNSPEC;
@@ -132,6 +133,7 @@ int	unix_listen(char *);
 void	set_common_sockopts(int, int);
 int	map_tos(char *, int *);
 int	map_tls(char *, int *);
+void    save_peer_cert(struct tls *_tls_ctx, FILE *_fp);
 void	report_connect(const struct sockaddr *, socklen_t, char *);
 void	report_tls(struct tls *tls_ctx, char * host, char *tls_expectname);
 void	usage(int);
@@ -165,7 +167,7 @@ main(int argc, char *argv[])
 	signal(SIGPIPE, SIG_IGN);
 
 	while ((ch = getopt(argc, argv,
-	    "46C:cDde:FH:hI:i:K:klM:m:NnO:o:P:p:R:rSs:T:tUuV:vw:X:x:z")) != -1) {
+	    "46C:cDde:FH:hI:i:K:klM:m:NnO:o:P:p:R:rSs:T:tUuV:vw:X:x:Z:z")) != -1) {
 		switch (ch) {
 		case '4':
 			family = AF_INET;
@@ -279,6 +281,12 @@ main(int argc, char *argv[])
 			if ((proxy = strdup(optarg)) == NULL)
 				err(1, NULL);
 			break;
+		case 'Z':
+			if (strcmp(optarg, "-") == 0)
+				Zflag = stderr;
+			else if ((Zflag = fopen(optarg, "w")) == NULL)
+				err(1, "can't open %s", optarg);
+			break;
 		case 'z':
 			zflag = 1;
 			break;
@@ -385,6 +393,8 @@ main(int argc, char *argv[])
 		errx(1, "you must specify -c to use -C");
 	if (Kflag && !usetls)
 		errx(1, "you must specify -c to use -K");
+	if (Zflag && !usetls)
+		errx(1, "you must specify -c to use -Z");
 	if (oflag && !Cflag)
 		errx(1, "you must specify -C to use -o");
 	if (tls_cachanged && !usetls)
@@ -530,18 +540,19 @@ main(int argc, char *argv[])
 				s = local_listen(host, uport, hints);
 			if (s < 0)
 				err(1, NULL);
-			/*
-			 * For UDP and -k, don't connect the socket, let it
-			 * receive datagrams from multiple socket pairs.
-			 */
-			if (uflag && kflag)
+			if (uflag && kflag) {
+				/*
+				 * For UDP and -k, don't connect the socket,
+				 * let it receive datagrams from multiple
+				 * socket pairs.
+				 */
 				readwrite(s, NULL);
-			/*
-			 * For UDP and not -k, we will use recvfrom() initially
-			 * to wait for a caller, then use the regular functions
-			 * to talk to the caller.
-			 */
-			else if (uflag && !kflag) {
+			} else if (uflag && !kflag) {
+				/*
+				 * For UDP and not -k, we will use recvfrom()
+				 * initially to wait for a caller, then use
+				 * the regular functions to talk to the caller.
+				 */
 				int rv, plen;
 				char buf[16384];
 				struct sockaddr_storage z;
@@ -766,6 +777,11 @@ tls_setup_client(struct tls *tls_ctx, int s, char *host)
 	if (tls_expecthash && tls_peer_cert_hash(tls_ctx) &&
 	    strcmp(tls_expecthash, tls_peer_cert_hash(tls_ctx)) != 0)
 		errx(1, "peer certificate is not %s", tls_expecthash);
+	if (Zflag) {
+		save_peer_cert(tls_ctx, Zflag);
+		if (Zflag != stderr && (fclose(Zflag) != 0))
+			err(1, "fclose failed saving peer cert");
+	}
 }
 
 struct tls *
@@ -1549,6 +1565,21 @@ map_tls(char *s, int *val)
 }
 
 void
+save_peer_cert(struct tls *tls_ctx, FILE *fp)
+{
+	const char *pem;
+	size_t plen;
+	FILE *out;
+
+	if ((pem = tls_peer_cert_chain_pem(tls_ctx, &plen)) == NULL)
+		errx(1, "Can't get peer certificate");
+	if (fprintf(fp, "%.*s", plen, pem) < 0)
+		err(1, "unable to save peer cert");
+	if (fflush(fp) != 0)
+		err(1, "unable to flush peer cert");
+}
+
+void
 report_tls(struct tls * tls_ctx, char * host, char *tls_expectname)
 {
 	time_t t;
@@ -1678,6 +1709,7 @@ help(void)
 	\t-w timeout	Timeout for connects and final net reads\n\
 	\t-X proto	Proxy protocol: \"4\", \"5\" (SOCKS) or \"connect\"\n\
 	\t-x addr[:port]\tSpecify proxy address and port\n\
+	\t-Z		Peer certificate file\n\
 	\t-z		Zero-I/O mode [used for scanning]\n\
 	Port numbers can be individual or ranges: lo-hi [inclusive]\n");
 	exit(1);
@@ -1694,7 +1726,8 @@ usage(int ret)
 	    "[-R CAfile]\n"
 	    "\t  [-s source] [-T keyword] [-V rtable] [-w timeout] "
 	    "[-X proxy_protocol]\n"
-	    "\t  [-x proxy_address[:port]] [destination] [port]\n");
+	    "\t  [-x proxy_address[:port]] [-Z peercertfile] "
+	    "[destination] [port]\n");
 	if (ret)
 		exit(1);
 }

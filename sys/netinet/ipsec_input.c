@@ -1,4 +1,4 @@
-/*	$OpenBSD: ipsec_input.c,v 1.145 2017/02/28 09:59:34 mpi Exp $	*/
+/*	$OpenBSD: ipsec_input.c,v 1.147 2017/04/14 20:46:31 bluhm Exp $	*/
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -139,11 +139,11 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto,
 	    (sproto == IPPROTO_IPCOMP && !ipcomp_enable)) {
 		switch (af) {
 		case AF_INET:
-			rip_input(&m, &skip, sproto);
+			rip_input(&m, &skip, sproto, af);
 			break;
 #ifdef INET6
 		case AF_INET6:
-			rip6_input(&m, &skip, sproto);
+			rip6_input(&m, &skip, sproto, af);
 			break;
 #endif /* INET6 */
 		default:
@@ -518,8 +518,7 @@ ipsec_common_input_cb(struct mbuf *m, struct tdb *tdbp, int skip, int protoff)
 		}
 
 		tdbi = (struct tdb_ident *)(mtag + 1);
-		bcopy(&tdbp->tdb_dst, &tdbi->dst,
-		    sizeof(union sockaddr_union));
+		tdbi->dst = tdbp->tdb_dst;
 		tdbi->proto = tdbp->tdb_sproto;
 		tdbi->spi = tdbp->tdb_spi;
 		tdbi->rdomain = tdbp->tdb_rdomain;
@@ -672,7 +671,7 @@ ipcomp_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 
 /* IPv4 AH wrapper. */
 int
-ah4_input(struct mbuf **mp, int *offp, int proto)
+ah4_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	ipsec_common_input(*mp, *offp, offsetof(struct ip, ip_p), AF_INET,
 	    proto, 0);
@@ -692,7 +691,7 @@ ah4_ctlinput(int cmd, struct sockaddr *sa, u_int rdomain, void *v)
 
 /* IPv4 ESP wrapper. */
 int
-esp4_input(struct mbuf **mp, int *offp, int proto)
+esp4_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	ipsec_common_input(*mp, *offp, offsetof(struct ip, ip_p), AF_INET,
 	    proto, 0);
@@ -701,7 +700,7 @@ esp4_input(struct mbuf **mp, int *offp, int proto)
 
 /* IPv4 IPCOMP wrapper */
 int
-ipcomp4_input(struct mbuf **mp, int *offp, int proto)
+ipcomp4_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	ipsec_common_input(*mp, *offp, offsetof(struct ip, ip_p), AF_INET,
 	    proto, 0);
@@ -739,7 +738,7 @@ ipsec_common_ctlinput(u_int rdomain, int cmd, struct sockaddr *sa,
 		dst.sin_len = sizeof(struct sockaddr_in);
 		dst.sin_addr.s_addr = ip->ip_dst.s_addr;
 
-		bcopy((caddr_t)ip + hlen, &spi, sizeof(u_int32_t));
+		memcpy(&spi, (caddr_t)ip + hlen, sizeof(u_int32_t));
 
 		tdbp = gettdb(rdomain, spi, (union sockaddr_union *)&dst,
 		    proto);
@@ -837,7 +836,7 @@ esp4_ctlinput(int cmd, struct sockaddr *sa, u_int rdomain, void *v)
 #ifdef INET6
 /* IPv6 AH wrapper. */
 int
-ah6_input(struct mbuf **mp, int *offp, int proto)
+ah6_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	int l = 0;
 	int protoff, nxt;
@@ -889,7 +888,7 @@ ah6_input(struct mbuf **mp, int *offp, int proto)
 
 /* IPv6 ESP wrapper. */
 int
-esp6_input(struct mbuf **mp, int *offp, int proto)
+esp6_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	int l = 0;
 	int protoff, nxt;
@@ -942,7 +941,7 @@ esp6_input(struct mbuf **mp, int *offp, int proto)
 
 /* IPv6 IPcomp wrapper */
 int
-ipcomp6_input(struct mbuf **mp, int *offp, int proto)
+ipcomp6_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	int l = 0;
 	int protoff, nxt;

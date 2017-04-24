@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_srvr.c,v 1.11 2017/03/10 16:03:27 jsing Exp $ */
+/* $OpenBSD: ssl_srvr.c,v 1.14 2017/04/14 15:32:41 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -1271,8 +1271,7 @@ ssl3_send_server_kex_ecdhe_ecp(SSL *s, int nid, CBB *cbb)
 	unsigned char *data;
 	EC_KEY *ecdh = NULL, *ecdhp;
 	const EC_GROUP *group;
-	unsigned char *encodedPoint = NULL;
-	int encodedlen = 0;
+	int encoded_len = 0;
 	int curve_id = 0;
 	BN_CTX *bn_ctx = NULL;
 	int al;
@@ -1335,27 +1334,16 @@ ssl3_send_server_kex_ecdhe_ecp(SSL *s, int nid, CBB *cbb)
 	 * Encode the public key. First check the size of encoding and
 	 * allocate memory accordingly.
 	 */
-	encodedlen = EC_POINT_point2oct(group, EC_KEY_get0_public_key(ecdh),
+	encoded_len = EC_POINT_point2oct(group, EC_KEY_get0_public_key(ecdh),
 	    POINT_CONVERSION_UNCOMPRESSED, NULL, 0, NULL);
-
-	encodedPoint = malloc(encodedlen);
-
-	bn_ctx = BN_CTX_new();
-	if ((encodedPoint == NULL) || (bn_ctx == NULL)) {
-		SSLerror(s, ERR_R_MALLOC_FAILURE);
-		goto err;
-	}
-
-	encodedlen = EC_POINT_point2oct(group, EC_KEY_get0_public_key(ecdh),
-	    POINT_CONVERSION_UNCOMPRESSED, encodedPoint, encodedlen, bn_ctx);
-
-	if (encodedlen == 0) {
+	if (encoded_len == 0) {
 		SSLerror(s, ERR_R_ECDH_LIB);
 		goto err;
 	}
-
-	BN_CTX_free(bn_ctx);
-	bn_ctx = NULL;
+	if ((bn_ctx = BN_CTX_new()) == NULL) {
+		SSLerror(s, ERR_R_MALLOC_FAILURE);
+		goto err;
+	}
 
 	/*
 	 * Only named curves are supported in ECDH ephemeral key exchanges.
@@ -1370,23 +1358,23 @@ ssl3_send_server_kex_ecdhe_ecp(SSL *s, int nid, CBB *cbb)
 		goto err;
 	if (!CBB_add_u8_length_prefixed(cbb, &ecpoint))
 		goto err;
-	if (!CBB_add_space(&ecpoint, &data, encodedlen))
+	if (!CBB_add_space(&ecpoint, &data, encoded_len))
 		goto err;
-
-	memcpy(data, encodedPoint, encodedlen);
-
-	free(encodedPoint);
-	encodedPoint = NULL;
-
+	if (EC_POINT_point2oct(group, EC_KEY_get0_public_key(ecdh),
+	    POINT_CONVERSION_UNCOMPRESSED, data, encoded_len, bn_ctx) == 0) {
+		SSLerror(s, ERR_R_ECDH_LIB);
+		goto err;
+	}
 	if (!CBB_flush(cbb))
 		goto err;
+
+	BN_CTX_free(bn_ctx);
 
 	return (1);
 	
  f_err:
 	ssl3_send_alert(s, SSL3_AL_FATAL, al);
  err:
-	free(encodedPoint);
 	BN_CTX_free(bn_ctx);
 
 	return (-1);
@@ -2001,8 +1989,7 @@ ssl3_get_client_kex_ecdhe_ecx(SSL *s, unsigned char *p, long n)
 	if (!X25519(shared_key, S3I(s)->tmp.x25519, CBS_data(&ecpoint)))
 		goto err;
 
-	explicit_bzero(S3I(s)->tmp.x25519, X25519_KEY_LENGTH);
-	free(S3I(s)->tmp.x25519);
+	freezero(S3I(s)->tmp.x25519, X25519_KEY_LENGTH);
 	S3I(s)->tmp.x25519 = NULL;
 
 	s->session->master_key_length =
@@ -2012,9 +1999,7 @@ ssl3_get_client_kex_ecdhe_ecx(SSL *s, unsigned char *p, long n)
 	ret = 1;
 
  err:
-	if (shared_key != NULL)
-		explicit_bzero(shared_key, X25519_KEY_LENGTH);
-	free(shared_key);
+	freezero(shared_key, X25519_KEY_LENGTH);
 
 	return (ret);
 }
@@ -2711,17 +2696,14 @@ ssl3_send_newsession_ticket(SSL *s)
 
 		s->internal->state = SSL3_ST_SW_SESSION_TICKET_B;
 
-		explicit_bzero(senc, slen_full);
-		free(senc);
+		freezero(senc, slen_full);
 	}
 
 	/* SSL3_ST_SW_SESSION_TICKET_B */
 	return (ssl3_handshake_write(s));
 
  err:
-	if (senc != NULL)
-		explicit_bzero(senc, slen_full);
-	free(senc);
+	freezero(senc, slen_full);
 
 	return (-1);
 }

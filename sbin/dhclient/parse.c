@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.c,v 1.43 2017/02/15 20:00:16 krw Exp $	*/
+/*	$OpenBSD: parse.c,v 1.50 2017/04/09 20:44:13 krw Exp $	*/
 
 /* Common parser code for dhcpd and dhclient. */
 
@@ -57,6 +57,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <vis.h>
 
 #include "dhcp.h"
 #include "dhcpd.h"
@@ -127,30 +128,33 @@ parse_semi(FILE *cfile)
 	return (1);
 }
 
-/*
- * string-parameter :== STRING SEMI
- */
 char *
-parse_string(FILE *cfile)
+parse_string(FILE *cfile, unsigned int *len)
 {
+	static char unvisbuf[1500];
 	char *val, *s;
-	int token;
+	int i, token;
 
 	token = next_token(&val, cfile);
 	if (token != TOK_STRING) {
-		parse_warn("filename must be a string");
+		parse_warn("expecting string.");
 		if (token != ';')
 			skip_to_semi(cfile);
 		return (NULL);
 	}
-	s = strdup(val);
-	if (!s)
-		fatalx("no memory for string %s.", val);
 
-	if (!parse_semi(cfile)) {
-		free(s);
+	i = strnunvis(unvisbuf, val, sizeof(unvisbuf));
+	if (i == -1) {
+		parse_warn("could not unvis string");
 		return (NULL);
 	}
+	s = malloc(i+1);
+	if (!s)
+		fatalx("no memory for string %s.", val);
+	memcpy(s, unvisbuf, i+1);	/* copy terminating NUL */
+	if (len != NULL)
+		*len = i;
+
 	return (s);
 }
 
@@ -177,7 +181,7 @@ parse_cidr(FILE *cfile, unsigned char *cidr)
 	}
 
 	if (!len) {
-		parse_warn("expecting CIDR subnet.");
+		parse_warn("expecting decimal value.");
 		skip_to_semi(cfile);
 		return (0);
 	} else if (token != '/') {
@@ -185,7 +189,7 @@ parse_cidr(FILE *cfile, unsigned char *cidr)
 		skip_to_semi(cfile);
 		return (0);
 	} else if (!parse_decimal(cfile, cidr, 'B') || *cidr > 32) {
-		parse_warn("Expecting CIDR prefix length.");
+		parse_warn("expecting decimal value <= 32.");
 		skip_to_semi(cfile);
 		return (0);
 	}
@@ -216,7 +220,7 @@ parse_ip_addr(FILE *cfile, struct in_addr *addr)
 		skip_to_semi(cfile);
 		return (0);
 	} else {
-		parse_warn("expecting decimal octet.");
+		parse_warn("expecting decimal value.");
 		skip_to_semi(cfile);
 		return (0);
 	}
@@ -254,7 +258,7 @@ parse_ethernet(FILE *cfile, struct ether_addr *hardware)
 		parse_warn("expecting ':'.");
 		skip_to_semi(cfile);
 	} else {
-		parse_warn("expecting hex octet.");
+		parse_warn("expecting hex value.");
 		skip_to_semi(cfile);
 	}
 }
@@ -420,13 +424,13 @@ void
 parse_warn(char *msg)
 {
 	static char spaces[81];
-	int i;
+	unsigned int i;
 
 	log_warnx("%s line %d: %s", tlname, lexline, msg);
 	log_warnx("%s", token_line);
-	if (lexchar < sizeof(spaces)) {
+	if ((unsigned int)lexchar < sizeof(spaces)) {
 		memset(spaces, 0, sizeof(spaces));
-		for (i = 0; i < lexchar - 1; i++) {
+		for (i = 0; (int)i < lexchar - 1; i++) {
 			if (token_line[i] == '\t')
 				spaces[i] = '\t';
 			else

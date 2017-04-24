@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-choose-client.c,v 1.31 2016/10/16 19:04:05 nicm Exp $ */
+/* $OpenBSD: cmd-choose-client.c,v 1.33 2017/04/22 10:22:39 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -28,7 +28,7 @@
  */
 
 #define CHOOSE_CLIENT_TEMPLATE					\
-	"#{client_tty}: #{session_name} "			\
+	"#{client_name}: #{session_name} "			\
 	"[#{client_width}x#{client_height} #{client_termname}]"	\
 	"#{?client_utf8, (utf8),}#{?client_readonly, (ro),} "	\
 	"(last used #{t:client_activity})"
@@ -45,7 +45,7 @@ const struct cmd_entry cmd_choose_client_entry = {
 	.args = { "F:t:", 0, 1 },
 	.usage = CMD_TARGET_WINDOW_USAGE " [-F format] [template]",
 
-	.tflag = CMD_WINDOW,
+	.target = { 't', CMD_FIND_WINDOW, 0 },
 
 	.flags = 0,
 	.exec = cmd_choose_client_exec
@@ -59,10 +59,10 @@ static enum cmd_retval
 cmd_choose_client_exec(struct cmd *self, struct cmdq_item *item)
 {
 	struct args			*args = self->args;
-	struct client			*c = item->state.c;
+	struct client			*c = cmd_find_client(item, NULL, 1);
 	struct client			*c1;
 	struct window_choose_data	*cdata;
-	struct winlink			*wl = item->state.tflag.wl;
+	struct winlink			*wl = item->target.wl;
 	const char			*template;
 	char				*action;
 	u_int			 	 idx, cur;
@@ -85,7 +85,7 @@ cmd_choose_client_exec(struct cmd *self, struct cmdq_item *item)
 
 	cur = idx = 0;
 	TAILQ_FOREACH(c1, &clients, entry) {
-		if (c1->session == NULL || c1->tty.path == NULL)
+		if (c1->session == NULL)
 			continue;
 		if (c1 == item->client)
 			cur = idx;
@@ -97,7 +97,7 @@ cmd_choose_client_exec(struct cmd *self, struct cmdq_item *item)
 		format_add(cdata->ft, "line", "%u", idx);
 		format_defaults(cdata->ft, c1, NULL, NULL, NULL);
 
-		cdata->command = cmd_template_replace(action, c1->tty.path, 1);
+		cdata->command = cmd_template_replace(action, c1->name, 1);
 
 		window_choose_add(wl->window->active, cdata);
 

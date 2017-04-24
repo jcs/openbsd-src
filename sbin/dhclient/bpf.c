@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpf.c,v 1.47 2017/02/12 15:53:15 krw Exp $	*/
+/*	$OpenBSD: bpf.c,v 1.50 2017/04/19 05:36:12 natano Exp $	*/
 
 /* BPF socket interface code, originally contributed by Archie Cobbs. */
 
@@ -78,13 +78,13 @@ if_register_bpf(struct interface_info *ifi)
 	struct ifreq ifr;
 	int sock;
 
-	if ((sock = open("/dev/bpf0", O_RDWR | O_CLOEXEC)) == -1)
+	if ((sock = open("/dev/bpf", O_RDWR | O_CLOEXEC)) == -1)
 		fatal("Can't open bpf");
 
 	/* Set the BPF device to point at this interface. */
 	strlcpy(ifr.ifr_name, ifi->name, IFNAMSIZ);
 	if (ioctl(sock, BIOCSETIF, &ifr) < 0)
-		fatal("Can't attach interface %s to /dev/bpf0", ifi->name);
+		fatal("Can't attach interface %s to /dev/bpf", ifi->name);
 
 	return (sock);
 }
@@ -350,12 +350,12 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 	 */
 	do {
 		/* If the buffer is empty, fill it. */
-		if (ifi->rbuf_offset == ifi->rbuf_len) {
+		if (ifi->rbuf_offset >= ifi->rbuf_len) {
 			length = read(ifi->bfdesc, ifi->rbuf, ifi->rbuf_max);
 			if (length <= 0)
 				return (length);
 			ifi->rbuf_offset = 0;
-			ifi->rbuf_len = BPF_WORDALIGN(length);
+			ifi->rbuf_len = length;
 		}
 
 		/*
@@ -397,7 +397,8 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 		ifi->rbuf_offset += hdr.bh_hdrlen;
 
 		/* Decode the physical header. */
-		offset = decode_hw_header(ifi->rbuf, ifi->rbuf_offset, hfrom);
+		offset = decode_hw_header(ifi->rbuf + ifi->rbuf_offset,
+		   hdr.bh_caplen, hfrom);
 
 		/*
 		 * If a physical layer checksum failed (dunno of any
@@ -413,8 +414,8 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 		hdr.bh_caplen -= offset;
 
 		/* Decode the IP and UDP headers. */
-		offset = decode_udp_ip_header(ifi->rbuf,
-		    ifi->rbuf_offset, from, hdr.bh_caplen);
+		offset = decode_udp_ip_header(ifi->rbuf + ifi->rbuf_offset,
+		   hdr.bh_caplen, from);
 
 		/* If the IP or UDP checksum was bad, skip the packet. */
 		if (offset < 0) {

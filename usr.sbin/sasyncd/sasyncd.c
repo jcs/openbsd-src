@@ -1,4 +1,4 @@
-/*	$OpenBSD: sasyncd.c,v 1.24 2015/08/20 22:39:29 deraadt Exp $	*/
+/*	$OpenBSD: sasyncd.c,v 1.27 2017/04/10 09:27:08 reyk Exp $	*/
 
 /*
  * Copyright (c) 2005 Håkan Olsson.  All rights reserved.
@@ -135,7 +135,7 @@ usage(void)
 {
 	extern char *__progname;
 
-	fprintf(stderr, "usage: %s [-dv] [-c config-file]\n", __progname);
+	fprintf(stderr, "usage: %s [-dnv] [-c config-file]\n", __progname);
 	exit(1);
 }
 
@@ -144,7 +144,7 @@ main(int argc, char **argv)
 {
 	extern char	*__progname;
 	char		*cfgfile = 0;
-	int		 ch;
+	int		 ch, noaction = 0;
 
 	if (geteuid() != 0) {
 		/* No point in continuing. */
@@ -153,7 +153,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	while ((ch = getopt(argc, argv, "c:dv")) != -1) {
+	while ((ch = getopt(argc, argv, "c:dnv")) != -1) {
 		switch (ch) {
 		case 'c':
 			if (cfgfile)
@@ -162,6 +162,9 @@ main(int argc, char **argv)
 			break;
 		case 'd':
 			cfgstate.debug++;
+			break;
+		case 'n':
+			noaction = 1;
 			break;
 		case 'v':
 			cfgstate.verboselevel++;
@@ -191,11 +194,21 @@ main(int argc, char **argv)
 	if (conf_parse_file(cfgfile) == 0 ) {
 		if (!cfgstate.sharedkey) {
 			fprintf(stderr, "config: "
-			    "no shared key specified, cannot continue");
+			    "no shared key specified, cannot continue\n");
+			exit(1);
+		}
+		if (!cfgstate.carp_ifname || !*cfgstate.carp_ifname) {
+			fprintf(stderr, "config: "
+			    "no carp interface specified, cannot continue\n");
 			exit(1);
 		}
 	} else {
 		exit(1);
+	}
+
+	if (noaction) {
+		fprintf(stderr, "configuration OK\n");
+		exit(0);
 	}
 
 	carp_demote(CARP_INC, 0);

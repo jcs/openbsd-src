@@ -1,4 +1,4 @@
-/*	$OpenBSD: lock_machdep.c,v 1.20 2017/03/07 14:41:57 visa Exp $	*/
+/*	$OpenBSD: lock_machdep.c,v 1.22 2017/04/20 13:20:17 visa Exp $	*/
 /* $NetBSD: lock_machdep.c,v 1.1.2.3 2000/05/03 14:40:30 sommerfeld Exp $ */
 
 /*-
@@ -37,8 +37,10 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
+#include <sys/witness.h>
+#include <sys/_lock.h>
 
-#include <machine/atomic.h>
 #include <machine/lock.h>
 #include <machine/cpufunc.h>
 
@@ -46,11 +48,11 @@
 
 #ifdef MULTIPROCESSOR
  void
-__mp_lock_init(struct __mp_lock *mpl)
+___mp_lock_init(struct __mp_lock *mpl)
 {
 	memset(mpl->mpl_cpus, 0, sizeof(mpl->mpl_cpus));
 	mpl->mpl_users = 0;
-	mpl->mpl_ticket = 0;
+	mpl->mpl_ticket = 1;
 }
 
 #if defined(MP_LOCKDEBUG)
@@ -61,17 +63,6 @@ __mp_lock_init(struct __mp_lock *mpl)
 /* CPU-dependent timing, needs this to be settable from ddb. */
 extern int __mp_lock_spinout;
 #endif
-
-static inline u_int
-fetch_and_add(u_int *var, u_int value)
-{
-	asm volatile("lock; xaddl %%eax, %2;"
-	    : "=a" (value)
-	    : "a" (value), "m" (*var)
-	    : "memory");
- 
-	return (value);
-}
 
 static __inline void
 __mp_lock_spin(struct __mp_lock *mpl, u_int me)
@@ -95,21 +86,31 @@ __mp_lock_spin(struct __mp_lock *mpl, u_int me)
 }
 
 void
-__mp_lock(struct __mp_lock *mpl)
+___mp_lock(struct __mp_lock *mpl LOCK_FL_VARS)
 {
 	struct __mp_lock_cpu *cpu = &mpl->mpl_cpus[cpu_number()];
 	long ef = read_eflags();
+#ifdef WITNESS
+	int lock_held;
+
+	lock_held = __mp_lock_held(mpl);
+	if (!lock_held)
+		WITNESS_CHECKORDER(&mpl->mpl_lock_obj,
+		    LOP_EXCLUSIVE | LOP_NEWORDER, file, line, NULL);
+#endif
 
 	disable_intr();
 	if (cpu->mplc_depth++ == 0)
-		cpu->mplc_ticket = fetch_and_add(&mpl->mpl_users, 1);
+		cpu->mplc_ticket = atomic_inc_int_nv(&mpl->mpl_users);
 	write_eflags(ef);
 
 	__mp_lock_spin(mpl, cpu->mplc_ticket);
+
+	WITNESS_LOCK(&mpl->mpl_lock_obj, LOP_EXCLUSIVE, file, line);
 }
 
 void
-__mp_unlock(struct __mp_lock *mpl)
+___mp_unlock(struct __mp_lock *mpl LOCK_FL_VARS)
 {
 	struct __mp_lock_cpu *cpu = &mpl->mpl_cpus[cpu_number()];
 	int ef = read_eflags();
@@ -121,6 +122,8 @@ __mp_unlock(struct __mp_lock *mpl)
 	}
 #endif
 
+	WITNESS_UNLOCK(&mpl->mpl_lock_obj, LOP_EXCLUSIVE, file, line);
+
 	disable_intr();
 	if (--cpu->mplc_depth == 0)
 		mpl->mpl_ticket++;
@@ -128,14 +131,21 @@ __mp_unlock(struct __mp_lock *mpl)
 }
 
 int
-__mp_release_all(struct __mp_lock *mpl)
+___mp_release_all(struct __mp_lock *mpl LOCK_FL_VARS)
 {
 	struct __mp_lock_cpu *cpu = &mpl->mpl_cpus[cpu_number()];
 	int ef = read_eflags();
 	int rv;
+#ifdef WITNESS
+	int i;
+#endif
 
 	disable_intr();
 	rv = cpu->mplc_depth;
+#ifdef WITNESS
+	for (i = 0; i < rv; i++)
+		WITNESS_UNLOCK(&mpl->mpl_lock_obj, LOP_EXCLUSIVE, file, line);
+#endif
 	cpu->mplc_depth = 0;
 	mpl->mpl_ticket++;
 	write_eflags(ef);
@@ -144,10 +154,16 @@ __mp_release_all(struct __mp_lock *mpl)
 }
 
 int
-__mp_release_all_but_one(struct __mp_lock *mpl)
+___mp_release_all_but_one(struct __mp_lock *mpl LOCK_FL_VARS)
 {
 	struct __mp_lock_cpu *cpu = &mpl->mpl_cpus[cpu_number()];
 	int rv = cpu->mplc_depth - 1;
+#ifdef WITNESS
+	int i;
+
+	for (i = 0; i < rv; i++)
+		WITNESS_UNLOCK(&mpl->mpl_lock_obj, LOP_EXCLUSIVE, file, line);
+#endif
 
 	cpu->mplc_depth = 1;
 
@@ -155,10 +171,10 @@ __mp_release_all_but_one(struct __mp_lock *mpl)
 }
 
 void
-__mp_acquire_count(struct __mp_lock *mpl, int count)
+___mp_acquire_count(struct __mp_lock *mpl, int count LOCK_FL_VARS)
 {
 	while (count--)
-		__mp_lock(mpl);
+		___mp_lock(mpl LOCK_FL_ARGS);
 }
 
 int

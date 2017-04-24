@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_pfsync.c,v 1.246 2017/03/11 13:21:16 stsp Exp $	*/
+/*	$OpenBSD: if_pfsync.c,v 1.250 2017/04/14 20:46:31 bluhm Exp $	*/
 
 /*
  * Copyright (c) 2002 Michael Shalayeff
@@ -649,7 +649,7 @@ pfsync_state_import(struct pfsync_state *sp, int flags)
 }
 
 int
-pfsync_input(struct mbuf **mp, int *offp, int proto)
+pfsync_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct mbuf *n, *m = *mp;
 	struct pfsync_softc *sc = pfsyncif;
@@ -2384,6 +2384,7 @@ pfsync_sysctl_pfsyncstat(void *oldp, size_t *oldlenp, void *newp)
 	struct pfsyncstats pfsyncstat;
 
 	CTASSERT(sizeof(pfsyncstat) == (pfsyncs_ncounters * sizeof(uint64_t)));
+	memset(&pfsyncstat, 0, sizeof pfsyncstat);
 	counters_read(pfsynccounters, (uint64_t *)&pfsyncstat,
 	    pfsyncs_ncounters);
 	return (sysctl_rdstruct(oldp, oldlenp, newp,

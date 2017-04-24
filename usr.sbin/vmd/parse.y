@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.23 2017/03/27 00:28:04 deraadt Exp $	*/
+/*	$OpenBSD: parse.y,v 1.27 2017/04/21 11:02:10 reyk Exp $	*/
 
 /*
  * Copyright (c) 2007-2016 Reyk Floeter <reyk@openbsd.org>
@@ -116,10 +116,11 @@ typedef struct {
 
 %token	INCLUDE ERROR
 %token	ADD DISK DOWN GROUP INTERFACE NIFS PATH SIZE SWITCH UP VMID
-%token	ENABLE DISABLE VM KERNEL LLADDR MEMORY OWNER LOCKED
+%token	ENABLE DISABLE VM BOOT LLADDR MEMORY OWNER LOCKED LOCAL PREFIX
 %token	<v.string>	STRING
 %token  <v.number>	NUMBER
 %type	<v.number>	disable
+%type	<v.number>	local
 %type	<v.number>	locked
 %type	<v.number>	updown
 %type	<v.lladdr>	lladdr
@@ -133,6 +134,7 @@ grammar		: /* empty */
 		| grammar include '\n'
 		| grammar '\n'
 		| grammar varset '\n'
+		| grammar main '\n'
 		| grammar switch '\n'
 		| grammar vm '\n'
 		| grammar error '\n'		{ file->errors++; }
@@ -166,6 +168,22 @@ varset		: STRING '=' STRING		{
 				fatalx("cannot store variable");
 			free($1);
 			free($3);
+		}
+		;
+
+main		: LOCAL PREFIX STRING {
+			struct address	 h;
+
+			/* The local prefix is IPv4-only */
+			if (host($3, &h) == -1 ||
+			    h.ss.ss_family != AF_INET ||
+			    h.prefixlen > 32 || h.prefixlen < 0) {
+				yyerror("invalid local prefix: %s", $3);
+				free($3);
+				YYERROR;
+			}
+
+			memcpy(&env->vmd_cfg.cfg_localprefix, &h, sizeof(h));
 		}
 		;
 
@@ -325,39 +343,41 @@ vm_opts		: disable			{
 			free($2);
 			vmc.vmc_flags |= VMOP_CREATE_DISK;
 		}
-		| INTERFACE optstring iface_opts_o {
+		| local INTERFACE optstring iface_opts_o {
 			unsigned int	i;
 			char		type[IF_NAMESIZE];
 
 			i = vcp_nnics;
 			if (++vcp_nnics > VMM_MAX_NICS_PER_VM) {
 				yyerror("too many interfaces: %zu", vcp_nnics);
-				free($2);
+				free($3);
 				YYERROR;
 			}
 
-			if ($2 != NULL) {
-				if (strcmp($2, "tap") != 0 &&
-				    (priv_getiftype($2, type, NULL) == -1 ||
+			if ($1)
+				vmc.vmc_ifflags[i] |= VMIFF_LOCAL;
+			if ($3 != NULL) {
+				if (strcmp($3, "tap") != 0 &&
+				    (priv_getiftype($3, type, NULL) == -1 ||
 				    strcmp(type, "tap") != 0)) {
-					yyerror("invalid interface: %s", $2);
-					free($2);
+					yyerror("invalid interface: %s", $3);
+					free($3);
 					YYERROR;
 				}
 
-				if (strlcpy(vmc.vmc_ifnames[i], $2,
+				if (strlcpy(vmc.vmc_ifnames[i], $3,
 				    sizeof(vmc.vmc_ifnames[i])) >=
 				    sizeof(vmc.vmc_ifnames[i])) {
 					yyerror("interface name too long: %s",
-					    $2);
-					free($2);
+					    $3);
+					free($3);
 					YYERROR;
 				}
 			}
-			free($2);
+			free($3);
 			vmc.vmc_flags |= VMOP_CREATE_NETWORK;
 		}
-		| KERNEL string			{
+		| BOOT string			{
 			if (vcp->vcp_kernel[0] != '\0') {
 				yyerror("kernel specified more than once");
 				free($2);
@@ -547,6 +567,10 @@ lladdr		: STRING			{
 		}
 		;
 
+local		: /* empty */			{ $$ = 0; }
+		| LOCAL				{ $$ = 1; }
+		;
+
 locked		: /* empty */			{ $$ = 0; }
 		| LOCKED			{ $$ = 1; }
 		;
@@ -605,6 +629,7 @@ lookup(char *s)
 	/* this has to be sorted always */
 	static const struct keywords keywords[] = {
 		{ "add",		ADD },
+		{ "boot",		BOOT },
 		{ "disable",		DISABLE },
 		{ "disk",		DISK },
 		{ "down",		DOWN },
@@ -614,11 +639,12 @@ lookup(char *s)
 		{ "include",		INCLUDE },
 		{ "interface",		INTERFACE },
 		{ "interfaces",		NIFS },
-		{ "kernel",		KERNEL },
 		{ "lladdr",		LLADDR },
+		{ "local",		LOCAL },
 		{ "locked",		LOCKED },
 		{ "memory",		MEMORY },
 		{ "owner",		OWNER },
+		{ "prefix",		PREFIX },
 		{ "size",		SIZE },
 		{ "switch",		SWITCH },
 		{ "up",			UP },
@@ -933,7 +959,9 @@ parse_config(const char *filename)
 
 	if ((file = pushfile(filename, 0)) == NULL) {
 		log_warn("failed to open %s", filename);
-		return (0);
+		if (errno == ENOENT)
+			return (0);
+		return (-1);
 	}
 	topfile = file;
 	setservent(1);
@@ -1085,4 +1113,44 @@ parse_disk(char *word)
 	vcp->vcp_ndisks++;
 
 	return (0);
+}
+
+int
+host(const char *str, struct address *h)
+{
+	struct addrinfo		 hints, *res;
+	int			 prefixlen;
+	char			*s, *p;
+	const char		*errstr;
+
+	if ((s = strdup(str)) == NULL) {
+		log_warn("strdup");
+		goto fail;
+	}
+
+	if ((p = strrchr(s, '/')) != NULL) {
+		*p++ = '\0';
+		prefixlen = strtonum(p, 0, 128, &errstr);
+		if (errstr) {
+			log_warnx("prefixlen is %s: %s", errstr, p);
+			goto fail;
+		}
+	} else
+		prefixlen = 128;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_flags = AI_NUMERICHOST;
+	if (getaddrinfo(s, NULL, &hints, &res) == 0) {
+		memset(h, 0, sizeof(*h));
+		memcpy(&h->ss, res->ai_addr, res->ai_addrlen);
+		h->prefixlen = prefixlen;
+		freeaddrinfo(res);
+		free(s);
+		return (0);
+	}
+
+ fail:
+	free(s);
+	return (-1);
 }

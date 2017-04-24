@@ -1,4 +1,4 @@
-/*	$OpenBSD: clparse.c,v 1.105 2017/02/12 13:55:01 krw Exp $	*/
+/*	$OpenBSD: clparse.c,v 1.110 2017/04/08 20:16:04 krw Exp $	*/
 
 /* Parser for dhclient config and lease files. */
 
@@ -64,7 +64,8 @@ void parse_client_statement(FILE *, struct interface_info *);
 int parse_X(FILE *, u_int8_t *, int);
 int parse_option_list(FILE *, u_int8_t *, size_t);
 void parse_interface_declaration(FILE *, struct interface_info *);
-void parse_client_lease_statement(FILE *, int, struct interface_info *);
+void parse_client_lease_statement(FILE *, unsigned int,
+    struct interface_info *);
 void parse_client_lease_declaration(FILE *, struct client_lease *,
     struct interface_info *);
 int parse_option_decl(FILE *, struct option_data *);
@@ -278,14 +279,16 @@ parse_client_statement(FILE *cfile, struct interface_info *ifi)
 		parse_reject_statement(cfile);
 		break;
 	case TOK_FILENAME:
-		string = parse_string(cfile);
+		string = parse_string(cfile, NULL);
 		free(config->filename);
 		config->filename = string;
+		parse_semi(cfile);
 		break;
 	case TOK_SERVER_NAME:
-		string = parse_string(cfile);
+		string = parse_string(cfile, NULL);
 		free(config->server_name);
 		config->server_name = string;
+		parse_semi(cfile);
 		break;
 	case TOK_FIXED_ADDR:
 		if (parse_ip_addr(cfile, &config->address))
@@ -296,7 +299,7 @@ parse_client_statement(FILE *cfile, struct interface_info *ifi)
 			parse_semi(cfile);
 		break;
 	default:
-		parse_warn("expecting a statement.");
+		parse_warn("expecting statement.");
 		if (token != ';')
 			skip_to_semi(cfile);
 		break;
@@ -327,7 +330,7 @@ parse_X(FILE *cfile, u_int8_t *buf, int max)
 			skip_to_semi(cfile);
 			return (-1);
 		} else {
-			parse_warn("expecting hex octet.");
+			parse_warn("expecting hex value.");
 			skip_to_semi(cfile);
 			return (-1);
 		}
@@ -342,7 +345,7 @@ parse_X(FILE *cfile, u_int8_t *buf, int max)
 		memcpy(buf, val, len + 1);
 	} else {
 		token = next_token(NULL, cfile);
-		parse_warn("expecting string or hexadecimal data");
+		parse_warn("expecting string or hex data.");
 		if (token != ';')
 			skip_to_semi(cfile);
 		return (-1);
@@ -357,9 +360,10 @@ parse_X(FILE *cfile, u_int8_t *buf, int max)
 int
 parse_option_list(FILE *cfile, u_int8_t *list, size_t sz)
 {
-	int	 ix, i, j;
-	int	 token;
-	char	*val;
+	unsigned int	 ix, j;
+	int		 i;
+	int		 token;
+	char		*val;
 
 	memset(list, DHO_PAD, sz);
 	ix = 0;
@@ -421,7 +425,7 @@ parse_interface_declaration(FILE *cfile, struct interface_info *ifi)
 
 	token = next_token(&val, cfile);
 	if (token != TOK_STRING) {
-		parse_warn("expecting interface name (in quotes).");
+		parse_warn("expecting string.");
 		if (token != ';')
 			skip_to_semi(cfile);
 		return;
@@ -434,7 +438,7 @@ parse_interface_declaration(FILE *cfile, struct interface_info *ifi)
 
 	token = next_token(&val, cfile);
 	if (token != '{') {
-		parse_warn("expecting left brace.");
+		parse_warn("expecting '{'.");
 		if (token != ';')
 			skip_to_semi(cfile);
 		return;
@@ -463,7 +467,7 @@ parse_interface_declaration(FILE *cfile, struct interface_info *ifi)
  *		client-lease-declarations client-lease-declaration
  */
 void
-parse_client_lease_statement(FILE *cfile, int is_static,
+parse_client_lease_statement(FILE *cfile, unsigned int is_static,
     struct interface_info *ifi)
 {
 	struct client_state	*client = ifi->client;
@@ -472,7 +476,7 @@ parse_client_lease_statement(FILE *cfile, int is_static,
 
 	token = next_token(NULL, cfile);
 	if (token != '{') {
-		parse_warn("expecting left brace.");
+		parse_warn("expecting '{'.");
 		if (token != ';')
 			skip_to_semi(cfile);
 		return;
@@ -503,7 +507,9 @@ parse_client_lease_statement(FILE *cfile, int is_static,
 	TAILQ_FOREACH_SAFE(lp, &client->leases, next, pl) {
 		if (lp->is_static != is_static)
 			continue;
-		if (strcmp(lp->ssid, ifi->ssid) != 0)
+		if (lp->ssid_len != lease->ssid_len)
+			continue;
+		if (memcmp(lp->ssid, lease->ssid, lp->ssid_len) != 0)
 			continue;
 		if ((lease->options[DHO_DHCP_CLIENT_IDENTIFIER].len != 0) &&
 		    ((lp->options[DHO_DHCP_CLIENT_IDENTIFIER].len !=
@@ -549,6 +555,7 @@ parse_client_lease_declaration(FILE *cfile, struct client_lease *lease,
     struct interface_info *ifi)
 {
 	char *val;
+	unsigned int len;
 	int token;
 
 	token = next_token(&val, cfile);
@@ -560,7 +567,7 @@ parse_client_lease_declaration(FILE *cfile, struct client_lease *lease,
 	case TOK_INTERFACE:
 		token = next_token(&val, cfile);
 		if (token != TOK_STRING) {
-			parse_warn("expecting interface name (in quotes).");
+			parse_warn("expecting string.");
 			if (token != ';')
 				skip_to_semi(cfile);
 			return;
@@ -584,17 +591,20 @@ parse_client_lease_declaration(FILE *cfile, struct client_lease *lease,
 		skip_to_semi(cfile);
 		return;
 	case TOK_FILENAME:
-		lease->filename = parse_string(cfile);
-		return;
+		lease->filename = parse_string(cfile, NULL);
+		break;
 	case TOK_SERVER_NAME:
-		lease->server_name = parse_string(cfile);
-		return;
+		lease->server_name = parse_string(cfile, NULL);
+		break;
 	case TOK_SSID:
-		val = parse_string(cfile);
-		if (val)
-			strlcpy(lease->ssid, val, sizeof(lease->ssid));
+		val = parse_string(cfile, &len);
+		if (val && len <= sizeof(lease->ssid)) {
+			memset(lease->ssid, 0, sizeof(lease->ssid));
+			memcpy(lease->ssid, val, len);
+			lease->ssid_len = len;
+		}
 		free(val);
-		return;
+		break;
 	case TOK_RENEW:
 		lease->renewal = parse_date(cfile);
 		return;
@@ -625,7 +635,7 @@ parse_option_decl(FILE *cfile, struct option_data *options)
 	u_int8_t	 buf[4];
 	u_int8_t	 cidr[5];
 	u_int8_t	 hunkbuf[1024];
-	int		 hunkix = 0;
+	unsigned int	 hunkix = 0;
 	char		*fmt;
 	struct in_addr	 ip_addr;
 	u_int8_t	*dp;
@@ -634,7 +644,7 @@ parse_option_decl(FILE *cfile, struct option_data *options)
 
 	token = next_token(&val, cfile);
 	if (!is_identifier(token)) {
-		parse_warn("expecting identifier after option keyword.");
+		parse_warn("expecting identifier.");
 		if (token != ';')
 			skip_to_semi(cfile);
 		return (-1);
@@ -666,14 +676,9 @@ parse_option_decl(FILE *cfile, struct option_data *options)
 				hunkix += len;
 				break;
 			case 't': /* Text string. */
-				token = next_token(&val, cfile);
-				if (token != TOK_STRING) {
-					parse_warn("expecting string.");
-					if (token != ';')
-						skip_to_semi(cfile);
+				val = parse_string(cfile, &len);
+				if (val == NULL)
 					return (-1);
-				}
-				len = strlen(val);
 				if (hunkix + len + 1 > sizeof(hunkbuf)) {
 					parse_warn("option data buffer "
 					    "overflow");
@@ -683,6 +688,7 @@ parse_option_decl(FILE *cfile, struct option_data *options)
 				memcpy(&hunkbuf[hunkix], val, len + 1);
 				nul_term = 1;
 				hunkix += len;
+				free(val);
 				break;
 			case 'I': /* IP address. */
 				if (!parse_ip_addr(cfile, &ip_addr))

@@ -1,4 +1,4 @@
-/* $OpenBSD: notify.c,v 1.20 2017/01/11 14:56:44 nicm Exp $ */
+/* $OpenBSD: notify.c,v 1.22 2017/04/21 20:26:34 nicm Exp $ */
 
 /*
  * Copyright (c) 2012 George Nachman <tmux@georgester.com>
@@ -44,9 +44,9 @@ notify_hook(struct cmdq_item *item, struct notify_entry *ne)
 	struct session		*s = ne->session;
 	struct window		*w = ne->window;
 
-	cmd_find_clear_state(&fs, NULL, 0);
+	cmd_find_clear_state(&fs, 0);
 	if (cmd_find_empty_state(&ne->fs) || !cmd_find_valid_state(&ne->fs))
-		cmd_find_current(&fs, item, CMD_FIND_QUIET);
+		cmd_find_from_nothing(&fs);
 	else
 		cmd_find_copy_state(&fs, &ne->fs);
 
@@ -164,10 +164,7 @@ notify_client(const char *name, struct client *c)
 {
 	struct cmd_find_state	fs;
 
-	if (c->session != NULL)
-		cmd_find_from_session(&fs, c->session);
-	else
-		cmd_find_current(&fs, NULL, CMD_FIND_QUIET);
+	cmd_find_from_client(&fs, c);
 	notify_add(name, &fs, c, NULL, NULL, NULL);
 }
 
@@ -179,17 +176,17 @@ notify_session(const char *name, struct session *s)
 	if (session_alive(s))
 		cmd_find_from_session(&fs, s);
 	else
-		cmd_find_current(&fs, NULL, CMD_FIND_QUIET);
+		cmd_find_from_nothing(&fs);
 	notify_add(name, &fs, NULL, s, NULL, NULL);
 }
 
 void
-notify_winlink(const char *name, struct session *s, struct winlink *wl)
+notify_winlink(const char *name, struct winlink *wl)
 {
 	struct cmd_find_state	fs;
 
-	cmd_find_from_winlink(&fs, s, wl);
-	notify_add(name, &fs, NULL, s, wl->window, NULL);
+	cmd_find_from_winlink(&fs, wl);
+	notify_add(name, &fs, NULL, wl->session, wl->window, NULL);
 }
 
 void

@@ -1,4 +1,4 @@
-/*      $OpenBSD: ath.c,v 1.112 2017/01/22 10:17:37 dlg Exp $  */
+/*      $OpenBSD: ath.c,v 1.114 2017/04/11 14:43:49 dhill Exp $  */
 /*	$NetBSD: ath.c,v 1.37 2004/08/18 21:59:39 dyoung Exp $	*/
 
 /*-

@@ -30,18 +30,19 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"	$OpenBSD: malloc.3,v 1.108 2017/03/29 17:38:37 otto Exp $
+.\"	$OpenBSD: malloc.3,v 1.114 2017/04/23 06:36:36 otto Exp $
 .\"
-.Dd $Mdocdate: March 29 2017 $
+.Dd $Mdocdate: April 23 2017 $
 .Dt MALLOC 3
 .Os
 .Sh NAME
 .Nm malloc ,
 .Nm calloc ,
+.Nm realloc ,
+.Nm free ,
 .Nm reallocarray ,
 .Nm recallocarray ,
-.Nm realloc ,
-.Nm free
+.Nm freezero
 .Nd memory allocation and deallocation
 .Sh SYNOPSIS
 .In stdlib.h
@@ -50,23 +51,33 @@
 .Ft void *
 .Fn calloc "size_t nmemb" "size_t size"
 .Ft void *
-.Fn reallocarray "void *ptr" "size_t nmemb" "size_t size"
-.Ft void *
-.Fn recallocarray "void *ptr" "size_t oldnmemb" "size_t nmemb" "size_t size"
-.Ft void *
 .Fn realloc "void *ptr" "size_t size"
 .Ft void
 .Fn free "void *ptr"
+.Ft void *
+.Fn reallocarray "void *ptr" "size_t nmemb" "size_t size"
+.Ft void *
+.Fn recallocarray "void *ptr" "size_t oldnmemb" "size_t nmemb" "size_t size"
+.Ft void
+.Fn freezero "void *ptr" "size_t size"
 .Vt char *malloc_options ;
 .Sh DESCRIPTION
+The standard functions
+.Fn malloc ,
+.Fn calloc ,
+and
+.Fn realloc
+allocate
+.Em objects ,
+regions of memory to store values.
 The
 .Fn malloc
 function allocates uninitialized space for an object of
 the specified
 .Fa size .
 .Fn malloc
-maintains multiple lists of free blocks according to size, allocating
-space from the appropriate list.
+maintains multiple lists of free objects according to size, allocating
+from the appropriate list or requesting memory from the kernel.
 The allocated space is suitably aligned (after possible pointer coercion) for
 storage of any type of object.
 .Pp
@@ -85,6 +96,12 @@ function changes the size of the object pointed to by
 to
 .Fa size
 bytes and returns a pointer to the (possibly moved) object.
+If
+.Fa ptr
+is not
+.Dv NULL ,
+it must be a pointer returned by an earlier call to an allocation or
+reallocation function that was not freed in between.
 The contents of the object are unchanged up to the lesser
 of the new and old sizes.
 If the new size is larger, the value of the newly allocated portion
@@ -103,6 +120,26 @@ behaves like
 and allocates a new object.
 .Pp
 The
+.Fn free
+function causes the space pointed to by
+.Fa ptr
+to be either placed on a list of free blocks to make it available for future
+allocation or, when appropriate, to be returned to the kernel using
+.Xr munmap 2 .
+If
+.Fa ptr
+is
+.Dv NULL ,
+no action occurs.
+If
+.Fa ptr
+was previously freed by
+.Fn free
+or a reallocation function,
+the behavior is undefined and the double free is a security concern.
+.Pp
+Designed for safe allocation of arrays,
+the
 .Fn reallocarray
 function is similar to
 .Fn realloc
@@ -115,31 +152,35 @@ and checks for integer overflow in the calculation
 *
 .Fa size .
 .Pp
+Used for the allocation of memory holding sensitive data,
+the
+.Fn recallocarray
+and
+.Fn freezeo
+functions guarantee that memory becoming unallocated is explicitly
+.Em discarded ,
+meaning pages of memory are disposed via
+.Xr munmap 2
+and cached free objects are cleared with
+.Xr explicit_bzero 3 .
+.Pp
 The
 .Fn recallocarray
 function is similar to
 .Fn reallocarray
 except it ensures newly allocated memory is cleared similar to
-.Xr calloc 3 .
-Memory that becomes unallocated while shrinking or moving existing
-allocations is explicitly discarded (meaning, pages of memory
-are disposed via
-.Xr munmap 2 ,
-and smaller allocations are cleared with
-.Xr explicit_bzero 3 ) .
+.Fn calloc .
 If
 .Fa ptr
-is a
-.Dv NULL
-pointer,
+is
+.Dv NULL ,
 .Fa oldnmemb
 is ignored and the call is equivalent to
 .Fn calloc .
 If
 .Fa ptr
-is not a
-.Dv NULL
-pointer,
+is not
+.Dv NULL ,
 .Fa oldnmemb
 must be a value such that
 .Fa oldnmemb
@@ -150,36 +191,43 @@ is the size of the earlier allocation that returned
 otherwise the behaviour is undefined.
 .Pp
 The
+.Fn freezero
+function is similar to the
 .Fn free
-function causes the space pointed to by
-.Fa ptr
-to be either placed on a list of free pages to make it available for future
-allocation or, if required, to be returned to the kernel using
-.Xr munmap 2 .
+function except it ensures memory is explicitly discarded.
 If
 .Fa ptr
-is a
-.Dv NULL
-pointer, no action occurs.
+is
+.Dv NULL ,
+no action occurs.
 If
 .Fa ptr
-was previously freed by
-.Fn free
-or a reallocation function,
-the behavior is undefined and the double free is a security concern.
+is not
+.Dv NULL ,
+the
+.Fa size
+argument must be equal or smaller than the size of the earlier allocation
+that returned
+.Fa ptr .
+.Fn freezero
+guarantees the memory range starting at
+.Fa ptr
+with length
+.Fa size
+is discarded while deallocating the whole object originally allocated.
 .Sh RETURN VALUES
 Upon successful completion, the allocation functions
-return a pointer to the allocated space; otherwise, a
+return a pointer to the allocated space; otherwise,
 .Dv NULL
-pointer is returned and
+is returned and
 .Va errno
 is set to
 .Er ENOMEM .
 .Pp
 If
-.Fa size
-or
 .Fa nmemb
+or
+.Fa size
 is equal to 0, a unique pointer to an access protected,
 zero sized object is returned.
 Access via this pointer will generate a
@@ -204,7 +252,9 @@ to
 .Pp
 If
 .Fa ptr
-is not NULL and multiplying
+is not
+.Dv NULL
+and multiplying
 .Fa oldnmemb
 and
 .Fa size
@@ -319,10 +369,8 @@ function should be used for resizing objects containing sensitive data like
 keys.
 To avoid leaking information,
 it guarantees memory is cleared before placing it on the internal free list.
-A
-.Fn free
-call for such an object should still be preceded by a call to
-.Xr explicit_bzero 3 .
+Deallocation of such an object should be done by calling
+.Fn freezero .
 .Sh ENVIRONMENT
 .Bl -tag -width "/etc/malloc.conf"
 .It Ev MALLOC_OPTIONS
@@ -346,7 +394,7 @@ size_t num, size;
 if (size && num > SIZE_MAX / size)
 	errc(1, EOVERFLOW, "overflow");
 
-if ((p = malloc(size * num)) == NULL)
+if ((p = malloc(num * size)) == NULL)
 	err(1, NULL);
 .Ed
 .Pp
@@ -364,7 +412,7 @@ if (size < 0 || num < 0)
 if (size && num > INT_MAX / size)
 	errc(1, EOVERFLOW, "overflow");
 
-if ((p = malloc(size * num)) == NULL)
+if ((p = malloc(num * size)) == NULL)
 	err(1, NULL);
 .Ed
 .Pp
@@ -401,9 +449,6 @@ If the
 option is specified it is an error for the allocation functions
 to return
 .Dv NULL .
-.It Dq malloc init mmap failed
-This is a rather weird condition that is most likely to indicate a
-seriously overloaded system or a ulimit restriction.
 .It Dq bogus pointer (double free?)
 An attempt to
 .Fn free
@@ -471,9 +516,9 @@ functions conform to
 .St -ansiC .
 .Pp
 If
-.Fa size
-or
 .Fa nmemb
+or
+.Fa size
 are 0, the return value is implementation defined;
 other conforming implementations may return
 .Dv NULL
@@ -539,6 +584,10 @@ The
 .Fn recallocarray
 function appeared in
 .Ox 6.1 .
+The
+.Fn freezero
+function appeared in
+.Ox 6.2 .
 .Sh CAVEATS
 When using
 .Fn malloc ,

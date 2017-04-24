@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_icmp.c,v 1.163 2017/02/07 22:30:16 jmatthew Exp $	*/
+/*	$OpenBSD: ip_icmp.c,v 1.166 2017/04/19 15:21:54 bluhm Exp $	*/
 /*	$NetBSD: ip_icmp.c,v 1.19 1996/02/13 23:42:22 christos Exp $	*/
 
 /*
@@ -128,7 +128,7 @@ int *icmpctl_vars[ICMPCTL_MAXID] = ICMPCTL_VARS;
 void icmp_mtudisc_timeout(struct rtentry *, struct rttimer *);
 int icmp_ratelimit(const struct in_addr *, const int, const int);
 void icmp_redirect_timeout(struct rtentry *, struct rttimer *);
-int icmp_input_if(struct ifnet *, struct mbuf **, int *, int);
+int icmp_input_if(struct ifnet *, struct mbuf **, int *, int, int);
 int icmp_sysctl_icmpstat(void *, size_t *, void *);
 
 void
@@ -306,7 +306,7 @@ icmp_error(struct mbuf *n, int type, int code, u_int32_t dest, int destmtu)
  * Process a received ICMP message.
  */
 int
-icmp_input(struct mbuf **mp, int *offp, int proto)
+icmp_input(struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct ifnet *ifp;
 
@@ -316,13 +316,13 @@ icmp_input(struct mbuf **mp, int *offp, int proto)
 		return IPPROTO_DONE;
 	}
 
-	proto = icmp_input_if(ifp, mp, offp, proto);
+	proto = icmp_input_if(ifp, mp, offp, proto, af);
 	if_put(ifp);
 	return proto;
 }
 
 int
-icmp_input_if(struct ifnet *ifp, struct mbuf **mp, int *offp, int proto)
+icmp_input_if(struct ifnet *ifp, struct mbuf **mp, int *offp, int proto, int af)
 {
 	struct mbuf *m = *mp;
 	int hlen = *offp;
@@ -685,7 +685,7 @@ reflect:
 	}
 
 raw:
-	return rip_input(mp, offp, proto);
+	return rip_input(mp, offp, proto, af);
 
 freeit:
 	m_freem(m);
@@ -929,7 +929,7 @@ icmp_sysctl_icmpstat(void *oldp, size_t *oldlenp, void *newp)
 	int i;
 
 	CTASSERT(sizeof(icmpstat) == (nitems(counters) * sizeof(u_long)));
-
+	memset(&icmpstat, 0, sizeof icmpstat);
 	counters_read(icmpcounters, counters, nitems(counters));
 
 	for (i = 0; i < nitems(counters); i++)
@@ -1021,12 +1021,12 @@ icmp_mtudisc(struct icmp *icp, u_int rtableid)
 
 		mtu = ntohs(icp->icmp_ip.ip_len);
 		/* Some 4.2BSD-based routers incorrectly adjust the ip_len */
-		if (mtu > rt->rt_rmx.rmx_mtu && rt->rt_rmx.rmx_mtu != 0)
+		if (mtu > rt->rt_mtu && rt->rt_mtu != 0)
 			mtu -= (icp->icmp_ip.ip_hl << 2);
 
 		/* If we still can't guess a value, try the route */
 		if (mtu == 0) {
-			mtu = rt->rt_rmx.rmx_mtu;
+			mtu = rt->rt_mtu;
 
 			/* If no route mtu, default to the interface mtu */
 
@@ -1048,11 +1048,11 @@ icmp_mtudisc(struct icmp *icp, u_int rtableid)
 	 *	  on a route.  We should be using a separate flag
 	 *	  for the kernel to indicate this.
 	 */
-	if ((rt->rt_rmx.rmx_locks & RTV_MTU) == 0) {
+	if ((rt->rt_locks & RTV_MTU) == 0) {
 		if (mtu < 296 || mtu > ifp->if_mtu)
-			rt->rt_rmx.rmx_locks |= RTV_MTU;
-		else if (rt->rt_rmx.rmx_mtu > mtu || rt->rt_rmx.rmx_mtu == 0)
-			rt->rt_rmx.rmx_mtu = mtu;
+			rt->rt_locks |= RTV_MTU;
+		else if (rt->rt_mtu > mtu || rt->rt_mtu == 0)
+			rt->rt_mtu = mtu;
 	}
 
 	if_put(ifp);
@@ -1084,8 +1084,8 @@ icmp_mtudisc_timeout(struct rtentry *rt, struct rttimer *r)
 			(*ctlfunc)(PRC_MTUINC, sintosa(&sin),
 			    r->rtt_tableid, NULL);
 	} else {
-		if ((rt->rt_rmx.rmx_locks & RTV_MTU) == 0)
-			rt->rt_rmx.rmx_mtu = 0;
+		if ((rt->rt_locks & RTV_MTU) == 0)
+			rt->rt_mtu = 0;
 	}
 
 	if_put(ifp);
