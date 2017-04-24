@@ -128,7 +128,7 @@ int	acpisbs_match(struct device *, void *, void *);
 void	acpisbs_attach(struct device *, struct device *, void *);
 void	acpisbs_setup_sensors(struct acpisbs_softc *);
 void	acpisbs_refresh_sensors(struct acpisbs_softc *);
-void	acpisbs_read(void *, int);
+void	acpisbs_read(struct acpisbs_softc *);
 int	acpisbs_notify(struct aml_node *, int, void *);
 
 int	acpi_smbus_read(struct acpisbs_softc *, uint8_t, uint8_t, int, void *);
@@ -191,7 +191,7 @@ acpisbs_attach(struct device *parent, struct device *self, void *aux)
 	printf(": %s", sc->sc_devnode->name);
 
 	if (sbs > 0)
-		acpisbs_read(sc, 0);
+		acpisbs_read(sc);
 
 	if (sc->sc_batteries_present) {
 		if (sc->sc_battery.device_name[0])
@@ -220,18 +220,13 @@ acpisbs_attach(struct device *parent, struct device *self, void *aux)
 }
 
 void
-acpisbs_read(void *arg0, int start)
+acpisbs_read(struct acpisbs_softc *sc)
 {
-	struct acpisbs_softc *sc = arg0;
 	int i;
 
-	for (i = start; i < nitems(acpisbs_battery_checks); i++) {
+	for (i = 0; i < nitems(acpisbs_battery_checks); i++) {
 		struct acpisbs_battery_check check = acpisbs_battery_checks[i];
 		void *p = (void *)&sc->sc_battery + check.offset;
-
-		if (sc->sc_batteries_present < 1 &&
-		check.command != SMBATT_CMD_BATTERY_MODE)
-			break;
 
 		acpi_smbus_read(sc, check.mode, check.command, check.len, p);
 
@@ -257,16 +252,7 @@ acpisbs_read(void *arg0, int start)
 			else
 				sc->sc_battery.units = ACPISBS_UNITS_MA;
 		}
-
-		if (!cold && (i + 1 < nitems(acpisbs_battery_checks))) {
-			/* let other tasks run, call back for the next check */
-			acpi_addtask(sc->sc_acpi, acpisbs_read, sc, start + 1);
-			return;
-		}
 	}
-
-	if (sc->sc_sensors != NULL)
-		acpisbs_refresh_sensors(sc);
 }
 
 void
