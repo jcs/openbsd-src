@@ -111,10 +111,9 @@ void	acpi_enable_wakegpes(struct acpi_softc *, int);
 
 
 int	acpi_foundec(struct aml_node *, void *);
-int	acpi_foundsony(struct aml_node *node, void *);
+int	acpi_foundsony(struct aml_node *node, void *arg);
 int	acpi_foundhid(struct aml_node *, void *);
-int	acpi_foundsbs(struct aml_node *node, void *);
-int	acpi_add_device(struct aml_node *node, void *);
+int	acpi_add_device(struct aml_node *node, void *arg);
 
 void	acpi_thread(void *);
 void	acpi_create_thread(void *);
@@ -1633,11 +1632,6 @@ acpi_dotask(struct acpi_softc *sc)
 	struct acpi_taskq *wq;
 	int s;
 
-	/* allow something more urgent to run before us */
-	rw_exit_write(&sc->sc_lck);
-	tsleep(sc, PWAIT, "acpi0", 1);
-	rw_enter_write(&sc->sc_lck);
-
 	s = spltty();
 	if (SIMPLEQ_EMPTY(&acpi_taskq)) {
 		splx(s);
@@ -2455,7 +2449,6 @@ acpi_sleep_state(struct acpi_softc *sc, int sleepmode)
 
 	/* Sleep */
 	sc->sc_state = state;
-	printf("%s: fully sleeping CPU for state %d\n", DEVNAME(sc), state);
 	error = acpi_sleep_cpu(sc, state);
 	sc->sc_state = ACPI_STATE_S0;
 	/* Resume */

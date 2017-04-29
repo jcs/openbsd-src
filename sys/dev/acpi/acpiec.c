@@ -91,8 +91,7 @@ void
 acpiec_wait(struct acpiec_softc *sc, u_int8_t mask, u_int8_t val)
 {
 	static int acpiecnowait;
-	u_int8_t stat;
-	int tries = 0;
+	u_int8_t		stat;
 
 	dnprintf(40, "%s: EC wait_ns for: %b == %02x\n",
 	    DEVNAME(sc), (int)mask,
@@ -101,7 +100,7 @@ acpiec_wait(struct acpiec_softc *sc, u_int8_t mask, u_int8_t val)
 	while (((stat = acpiec_status(sc)) & mask) != val) {
 		if (stat & EC_STAT_SCI_EVT)
 			sc->sc_gotsci = 1;
-		if (cold || (stat & EC_STAT_BURST) || tries++ < 100)
+		if (cold || (stat & EC_STAT_BURST))
 			delay(1);
 		else
 			tsleep(&acpiecnowait, PWAIT, "acpiec", 1);
@@ -171,6 +170,9 @@ acpiec_read_1(struct acpiec_softc *sc, u_int8_t addr)
 {
 	u_int8_t		val;
 
+	if ((acpiec_status(sc) & EC_STAT_SCI_EVT) == EC_STAT_SCI_EVT)
+		sc->sc_gotsci = 1;
+
 	acpiec_write_cmd(sc, EC_CMD_RD);
 	acpiec_write_data(sc, addr);
 
@@ -182,6 +184,9 @@ acpiec_read_1(struct acpiec_softc *sc, u_int8_t addr)
 void
 acpiec_write_1(struct acpiec_softc *sc, u_int8_t addr, u_int8_t data)
 {
+	if ((acpiec_status(sc) & EC_STAT_SCI_EVT) == EC_STAT_SCI_EVT)
+		sc->sc_gotsci = 1;
+
 	acpiec_write_cmd(sc, EC_CMD_WR);
 	acpiec_write_data(sc, addr);
 	acpiec_write_data(sc, data);

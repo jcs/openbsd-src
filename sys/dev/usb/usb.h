@@ -602,7 +602,7 @@ typedef struct usb_port_status usb_port_status_t;
 #define USB_POWER_DOWN_TIME	200 /* ms */
 #define USB_PORT_POWER_DOWN_TIME	100 /* ms */
 
-#if 1
+#if 0
 /* These are the values from the spec. */
 #define USB_PORT_RESET_DELAY	10  /* ms */
 #define USB_PORT_ROOT_RESET_DELAY 50  /* ms */

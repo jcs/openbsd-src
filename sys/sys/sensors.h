@@ -52,7 +52,6 @@ enum sensor_type {
 	SENSOR_DISTANCE,		/* distance (uMeter) */
 	SENSOR_PRESSURE,		/* pressure (mPa) */
 	SENSOR_ACCEL,			/* acceleration (u m/s^2) */
-	SENSOR_STRING,			/* raw string */
 	SENSOR_MAX_TYPES
 };
 
@@ -79,7 +78,6 @@ static const char * const sensor_type_s[SENSOR_MAX_TYPES + 1] = {
 	"distance",
 	"pressure",
 	"acceleration",
-	"string",
 	"undefined"
 };
 #endif	/* !_KERNEL */
@@ -117,7 +115,6 @@ struct sensor {
 	int flags;			/* sensor flags */
 #define SENSOR_FINVALID		0x0001	/* sensor is invalid */
 #define SENSOR_FUNKNOWN		0x0002	/* sensor value is unknown */
-	char string[32];		/* current string value */
 };
 
 /* Sensor device data:
@@ -142,7 +139,6 @@ struct ksensor {
 	enum sensor_status status;	/* sensor status */
 	int numt;			/* sensor number of .type type */
 	int flags;			/* sensor flags, ie. SENSOR_FINVALID */
-	char string[32];		/* current string value */
 };
 SLIST_HEAD(ksensors_head, ksensor);
 
