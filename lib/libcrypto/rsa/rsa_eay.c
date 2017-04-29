@@ -1,4 +1,4 @@
-/* $OpenBSD: rsa_eay.c,v 1.46 2017/01/29 17:49:23 beck Exp $ */
+/* $OpenBSD: rsa_eay.c,v 1.48 2017/04/28 22:46:40 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *

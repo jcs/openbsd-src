@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.205 2017/04/20 15:21:53 deraadt Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.207 2017/04/29 08:02:56 mpi Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -258,6 +258,7 @@ const uint64_t pledge_syscalls[SYS_MAXSYSCALL] = {
 	 */
 	[SYS___tfork] = PLEDGE_STDIO,
 	[SYS_sched_yield] = PLEDGE_STDIO,
+	[SYS_futex] = PLEDGE_STDIO,
 	[SYS___thrsleep] = PLEDGE_STDIO,
 	[SYS___thrwakeup] = PLEDGE_STDIO,
 	[SYS___threxit] = PLEDGE_STDIO,

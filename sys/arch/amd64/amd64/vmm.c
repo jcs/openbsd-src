@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.132 2017/04/02 20:21:44 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.137 2017/04/28 10:09:37 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -23,6 +23,7 @@
 #include <sys/device.h>
 #include <sys/pool.h>
 #include <sys/proc.h>
+#include <sys/user.h>
 #include <sys/ioctl.h>
 #include <sys/queue.h>
 #include <sys/rwlock.h>
@@ -31,6 +32,7 @@
 
 #include <uvm/uvm_extern.h>
 
+#include <machine/fpu.h>
 #include <machine/pmap.h>
 #include <machine/biosvar.h>
 #include <machine/segments.h>
@@ -145,6 +147,7 @@ int vcpu_vmx_check_cap(struct vcpu *, uint32_t, uint32_t, int);
 int vcpu_vmx_compute_ctrl(uint64_t, uint16_t, uint32_t, uint32_t, uint32_t *);
 int vmx_get_exit_info(uint64_t *, uint64_t *);
 int vmx_handle_exit(struct vcpu *);
+int vmx_handle_xsetbv(struct vcpu *);
 int vmm_handle_cpuid(struct vcpu *);
 int vmx_handle_rdmsr(struct vcpu *);
 int vmx_handle_wrmsr(struct vcpu *);
@@ -360,7 +363,7 @@ vmm_attach(struct device *parent, struct device *self, void *aux)
 
 	pool_init(&vm_pool, sizeof(struct vm), 0, IPL_NONE, PR_WAITOK,
 	    "vmpool", NULL);
-	pool_init(&vcpu_pool, sizeof(struct vcpu), 0, IPL_NONE, PR_WAITOK,
+	pool_init(&vcpu_pool, sizeof(struct vcpu), 64, IPL_NONE, PR_WAITOK,
 	    "vcpupl", NULL);
 
 	vmm_softc = sc;
@@ -427,7 +430,7 @@ vmmioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 		ret = vm_rwregs((struct vm_rwregs_params *)data, 1);
 		break;
 	default:
-		DPRINTF("vmmioctl: unknown ioctl code 0x%lx\n", cmd);
+		DPRINTF("%s: unknown ioctl code 0x%lx\n", __func__, cmd);
 		ret = ENOTTY;
 	}
 
@@ -502,7 +505,7 @@ vm_resetcpu(struct vm_resetcpu_params *vrp)
 
 	/* Not found? exit. */
 	if (error != 0) {
-		DPRINTF("vm_resetcpu: vm id %u not found\n",
+		DPRINTF("%s: vm id %u not found\n", __func__,
 		    vrp->vrp_vm_id);
 		return (error);
 	}
@@ -515,25 +518,25 @@ vm_resetcpu(struct vm_resetcpu_params *vrp)
 	rw_exit_read(&vm->vm_vcpu_lock);
 
 	if (vcpu == NULL) {
-		DPRINTF("vm_resetcpu: vcpu id %u of vm %u not found\n",
+		DPRINTF("%s: vcpu id %u of vm %u not found\n", __func__,
 		    vrp->vrp_vcpu_id, vrp->vrp_vm_id);
 		return (ENOENT);
 	}
 
 	if (vcpu->vc_state != VCPU_STATE_STOPPED) {
-		DPRINTF("vm_resetcpu: reset of vcpu %u on vm %u attempted "
-		    "while vcpu was in state %u (%s)\n", vrp->vrp_vcpu_id,
-		    vrp->vrp_vm_id, vcpu->vc_state,
+		DPRINTF("%s: reset of vcpu %u on vm %u attempted "
+		    "while vcpu was in state %u (%s)\n", __func__, 
+		    vrp->vrp_vcpu_id, vrp->vrp_vm_id, vcpu->vc_state,
 		    vcpu_state_decode(vcpu->vc_state));
 		
 		return (EBUSY);
 	}
 
-	DPRINTF("vm_resetcpu: resetting vm %d vcpu %d to power on defaults\n",
+	DPRINTF("%s: resetting vm %d vcpu %d to power on defaults\n", __func__,
 	    vm->vm_id, vcpu->vc_id);
 
 	if (vcpu_reset_regs(vcpu, &vrp->vrp_init_state)) {
-		printf("vm_resetcpu: failed\n");
+		printf("%s: failed\n", __func__);
 #ifdef VMM_DEBUG
 		dump_vcpu(vcpu);
 #endif /* VMM_DEBUG */
@@ -1095,7 +1098,7 @@ vm_impl_init_vmx(struct vm *vm, struct proc *p)
 	/* Create a new pmap for this VM */
 	pmap = pmap_create();
 	if (!pmap) {
-		printf("vm_impl_init_vmx: pmap_create failed\n");
+		printf("%s: pmap_create failed\n", __func__);
 		return (ENOMEM);
 	}
 
@@ -1111,21 +1114,20 @@ vm_impl_init_vmx(struct vm *vm, struct proc *p)
 	    VM_MAP_ISVMSPACE | VM_MAP_PAGEABLE);
 
 	if (!vm->vm_map) {
-		printf("vm_impl_init_vmx: uvm_map_create failed\n");
+		printf("%s: uvm_map_create failed\n", __func__);
 		pmap_destroy(pmap);
 		return (ENOMEM);
 	}
 
 	/* Map the new map with an anon */
-	DPRINTF("vm_impl_init_vmx: created vm_map @ %p\n", vm->vm_map);
+	DPRINTF("%s: created vm_map @ %p\n", __func__, vm->vm_map);
 	for (i = 0; i < vm->vm_nmemranges; i++) {
 		vmr = &vm->vm_memranges[i];
 		ret = uvm_share(vm->vm_map, vmr->vmr_gpa,
 		    PROT_READ | PROT_WRITE | PROT_EXEC,
 		    &p->p_vmspace->vm_map, vmr->vmr_va, vmr->vmr_size);
 		if (ret) {
-			printf("vm_impl_init_vmx: uvm_share failed (%d)\n",
-			    ret);
+			printf("%s: uvm_share failed (%d)\n", __func__, ret);
 			/* uvm_map_deallocate calls pmap_destroy for us */
 			uvm_map_deallocate(vm->vm_map);
 			vm->vm_map = NULL;
@@ -1136,7 +1138,7 @@ vm_impl_init_vmx(struct vm *vm, struct proc *p)
 	/* Convert the low 512GB of the pmap to EPT */
 	ret = pmap_convert(pmap, PMAP_TYPE_EPT);
 	if (ret) {
-		printf("vm_impl_init_vmx: pmap_convert failed\n");
+		printf("%s: pmap_convert failed\n", __func__);
 		/* uvm_map_deallocate calls pmap_destroy for us */
 		uvm_map_deallocate(vm->vm_map);
 		vm->vm_map = NULL;
@@ -1174,7 +1176,7 @@ vm_impl_init_svm(struct vm *vm, struct proc *p)
 	/* Create a new pmap for this VM */
 	pmap = pmap_create();
 	if (!pmap) {
-		printf("vm_impl_init_svm: pmap_create failed\n");
+		printf("%s: pmap_create failed\n", __func__);
 		return (ENOMEM);
 	}
 
@@ -1192,21 +1194,20 @@ vm_impl_init_svm(struct vm *vm, struct proc *p)
 	    VM_MAP_ISVMSPACE | VM_MAP_PAGEABLE);
 
 	if (!vm->vm_map) {
-		printf("vm_impl_init_svm: uvm_map_create failed\n");
+		printf("%s: uvm_map_create failed\n", __func__);
 		pmap_destroy(pmap);
 		return (ENOMEM);
 	}
 
 	/* Map the new map with an anon */
-	DPRINTF("vm_impl_init_svm: created vm_map @ %p\n", vm->vm_map);
+	DPRINTF("%s: created vm_map @ %p\n", __func__, vm->vm_map);
 	for (i = 0; i < vm->vm_nmemranges; i++) {
 		vmr = &vm->vm_memranges[i];
 		ret = uvm_share(vm->vm_map, vmr->vmr_gpa,
 		    PROT_READ | PROT_WRITE | PROT_EXEC,
 		    &p->p_vmspace->vm_map, vmr->vmr_va, vmr->vmr_size);
 		if (ret) {
-			printf("vm_impl_init_svm: uvm_share failed (%d)\n",
-			    ret);
+			printf("%s: uvm_share failed (%d)\n", __func__, ret);
 			/* uvm_map_deallocate calls pmap_destroy for us */
 			uvm_map_deallocate(vm->vm_map);
 			vm->vm_map = NULL;
@@ -2054,8 +2055,10 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	if (vcpu_vmx_check_cap(vcpu, IA32_VMX_PROCBASED_CTLS,
 	    IA32_VMX_ACTIVATE_SECONDARY_CONTROLS, 1)) {
 		if (vcpu_vmx_check_cap(vcpu, IA32_VMX_PROCBASED2_CTLS,
-		    IA32_VMX_ENABLE_VPID, 1))
+		    IA32_VMX_ENABLE_VPID, 1)) {
 			want1 |= IA32_VMX_ENABLE_VPID;
+			vcpu->vc_vmx_vpid_enabled = 1;
+		}
 	}
 
 	if (vmm_softc->mode == VMM_MODE_EPT)
@@ -2375,6 +2378,9 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	/* XXX CR0 shadow */
 	/* XXX CR4 shadow */
 
+	/* xcr0 power on default sets bit 0 (x87 state) */
+	vcpu->vc_gueststate.vg_xcr0 = XCR0_X87;
+
 	/* Flush the VMCS */
 	if (vmclear(&vcpu->vc_control_pa)) {
 		ret = EINVAL;
@@ -2500,7 +2506,7 @@ vcpu_init_vmx(struct vcpu *vcpu)
 	}
 
 	/* Host CR0 */
-	cr0 = rcr0();
+	cr0 = rcr0() & ~CR0_TS;
 	if (vmwrite(VMCS_HOST_IA32_CR0, cr0)) {
 		ret = EINVAL;
 		goto exit;
@@ -2837,6 +2843,9 @@ vcpu_deinit(struct vcpu *vcpu)
  * vm_teardown
  *
  * Tears down (destroys) the vm indicated by 'vm'.
+ *
+ * Parameters:
+ *  vm: vm to be torn down
  */
 void
 vm_teardown(struct vm *vm)
@@ -3116,6 +3125,14 @@ vcpu_vmx_compute_ctrl(uint64_t ctrlval, uint16_t ctrl, uint32_t want1,
  * vm_get_info
  *
  * Returns information about the VM indicated by 'vip'.
+ *
+ * Parameters:
+ *  vip: information structure identifying the VM to queery
+ *
+ * Return values:
+ *  0: the operation succeeded
+ *  ENOMEM: memory allocation error during processng
+ *  EFAULT: error copying data to user process
  */
 int
 vm_get_info(struct vm_info_params *vip)
@@ -3179,6 +3196,13 @@ vm_get_info(struct vm_info_params *vip)
  * vm_terminate
  *
  * Terminates the VM indicated by 'vtp'.
+ *
+ * Parameters:
+ *  vtp: structure defining the VM to terminate
+ *
+ * Return values:
+ *  0: the VM was terminated
+ *  !0: the VM could not be located
  */
 int
 vm_terminate(struct vm_terminate_params *vtp)
@@ -3229,6 +3253,18 @@ vm_terminate(struct vm_terminate_params *vtp)
  * vm_run
  *
  * Run the vm / vcpu specified by 'vrp'
+ *
+ * Parameters:
+ *  vrp: structure defining the VM to run
+ *
+ * Return value:
+ *  ENOENT: the VM defined in 'vrp' could not be located
+ *  EBUSY: the VM defined in 'vrp' is already running
+ *  EFAULT: error copying data from userspace (vmd) on return from previous
+ *      exit.
+ *  EAGAIN: help is needed from vmd(8) (device I/O or exit vmm(4) cannot
+ *      handle in-kernel.)
+ *  0: the run loop exited and no help is needed from vmd(8)
  */
 int
 vm_run(struct vm_run_params *vrp)
@@ -3342,6 +3378,13 @@ vm_run(struct vm_run_params *vrp)
  * such as:
  * - the VM was requested to terminate
  * - the proc running this VCPU has pending signals
+ *
+ * Parameters:
+ *  vcpu: the VCPU to check
+ *
+ * Return values:
+ *  1: the VM owning this VCPU should stop
+ *  0: no stop is needed
  */
 int
 vcpu_must_stop(struct vcpu *vcpu)
@@ -3353,6 +3396,42 @@ vcpu_must_stop(struct vcpu *vcpu)
 	if (CURSIG(p) != 0)
 		return (1);
 	return (0);
+}
+
+/*
+ * vmm_fpusave
+ *
+ * Modified version of fpusave_cpu from fpu.c that only saves the FPU context
+ * and does not call splipi/splx. Must be called with interrupts disabled.
+ */
+void
+vmm_fpusave(void)
+{
+	struct proc *p;
+	struct cpu_info *ci = curcpu();
+
+	p = ci->ci_fpcurproc;
+	if (p == NULL)
+		return;
+
+	if (ci->ci_fpsaving != 0)
+		panic("%s: recursive save!", __func__);
+	/*
+	 * Set ci->ci_fpsaving, so that any pending exception will be
+	 * thrown away.  (It will be caught again if/when the FPU
+	 * state is restored.)
+	 */
+	ci->ci_fpsaving = 1;
+	if (xsave_mask)
+		xsave(&p->p_addr->u_pcb.pcb_savefpu, xsave_mask);
+	else
+		fxsave(&p->p_addr->u_pcb.pcb_savefpu);
+	ci->ci_fpsaving = 0;
+
+	p->p_addr->u_pcb.pcb_cr0 |= CR0_TS;
+
+	p->p_addr->u_pcb.pcb_fpcpu = NULL;
+	ci->ci_fpcurproc = NULL;
 }
 
 /*
@@ -3405,6 +3484,8 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 		case VMX_EXIT_EPT_VIOLATION:
 			break;
 		case VMX_EXIT_CPUID:
+			break;
+		case VMX_EXIT_XSETBV:
 			break;
 #ifdef VMM_DEBUG
 		case VMX_EXIT_TRIPLE_FAULT:
@@ -3508,31 +3589,99 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 			 * Disable window exiting
 			 */
 			if (vmread(VMCS_PROCBASED_CTLS, &procbased)) {
-				printf("vcpu_run_vmx: can't read"
-				    "procbased ctls on exit\n");
+				printf("%s: can't read procbased ctls on "
+				    "exit\n", __func__);
 				ret = EINVAL;
 				break;
 			} else {
 				procbased &= ~IA32_VMX_INTERRUPT_WINDOW_EXITING;
 				if (vmwrite(VMCS_PROCBASED_CTLS, procbased)) {
-					printf("vcpu_run_vmx: can't write"
-					   " procbased ctls on exit\n");
+					printf("%s: can't write procbased ctls "
+					    "on exit\n", __func__);
 					ret = EINVAL;
 					break;
 				}
 			}
 		}
 
-		/* Invalidate old TLB mappings */
-		vid.vid_vpid = vcpu->vc_parent->vm_id;
-		vid.vid_addr = 0;
-		invvpid(IA32_VMX_INVVPID_SINGLE_CTX_GLB, &vid);
+		if (vcpu->vc_vmx_vpid_enabled) {
+			/* Invalidate old TLB mappings */
+			vid.vid_vpid = vcpu->vc_parent->vm_id;
+			vid.vid_addr = 0;
+			invvpid(IA32_VMX_INVVPID_SINGLE_CTX_GLB, &vid);
+		}
 
 		/* Start / resume the VCPU */
 		KERNEL_ASSERT_LOCKED();
+
+		/* Disable interrupts and save the current FPU state. */
+		disable_intr();
+		clts();
+		vmm_fpusave();
+
+		/* Initialize the guest FPU if not inited already */
+		if (!vcpu->vc_fpuinited) {
+			fninit();
+			bzero(&vcpu->vc_g_fpu.fp_fxsave,
+			    sizeof(vcpu->vc_g_fpu.fp_fxsave));
+			vcpu->vc_g_fpu.fp_fxsave.fx_fcw =
+			    __INITIAL_NPXCW__;
+			vcpu->vc_g_fpu.fp_fxsave.fx_mxcsr =
+			    __INITIAL_MXCSR__;
+			fxrstor(&vcpu->vc_g_fpu.fp_fxsave);
+
+			vcpu->vc_fpuinited = 1;
+		}
+
+		if (xsave_mask) {
+			/* Restore guest XCR0 and FPU context */
+			if (vcpu->vc_gueststate.vg_xcr0 & ~xsave_mask) {
+				DPRINTF("%s: guest attempted to set invalid "
+				    "bits in xcr0\n", __func__);
+				ret = EINVAL;
+				stts();
+				enable_intr();
+				break;
+			}
+
+			/* Restore guest %xcr0 */
+			xrstor(&vcpu->vc_g_fpu, xsave_mask);
+			xsetbv(0, vcpu->vc_gueststate.vg_xcr0);
+		} else
+			fxrstor(&vcpu->vc_g_fpu.fp_fxsave);
+
 		KERNEL_UNLOCK();
 		ret = vmx_enter_guest(&vcpu->vc_control_pa,
 		    &vcpu->vc_gueststate, resume);
+
+		/*
+		 * On exit, interrupts are disabled, and we are running with
+		 * the guest FPU state still possibly on the CPU. Save the FPU
+		 * state before re-enabling interrupts.
+		 */
+		if (xsave_mask) {
+			/* Save guest %xcr0 */
+			vcpu->vc_gueststate.vg_xcr0 = xgetbv(0);
+
+			/* Restore host %xcr0 */
+			xsetbv(0, xsave_mask);
+
+			/*
+			 * Save full copy of FPU state - guest content is
+			 * always a subset of host's save area (see xsetbv
+			 * exit handler)
+			 */	
+			xsave(&vcpu->vc_g_fpu, xsave_mask);
+		} else
+			fxsave(&vcpu->vc_g_fpu);
+
+		/*
+		 * FPU state is invalid, set CR0_TS to force DNA trap on next
+		 * access.
+		 */
+		stts();
+
+		enable_intr();
 
 		exit_reason = VM_EXIT_NONE;
 		if (ret == 0) {
@@ -3544,9 +3693,10 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 			    &vcpu->vc_gueststate.vg_rip, &exit_reason);
 			if (vmread(VMCS_GUEST_IA32_RFLAGS,
 			    &vcpu->vc_gueststate.vg_rflags)) {
-				printf("vcpu_run_vmx: can't read guest rflags"
-				   " during exit\n");
+				printf("%s: can't read guest rflags during "
+				    "exit\n", __func__);
 				ret = EINVAL;
+				KERNEL_LOCK();
 				break;
                         }
 		}
@@ -3562,13 +3712,13 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 		if (ret == 0) {
 			resume = 1;
 			if (!(exitinfo & VMX_EXIT_INFO_HAVE_RIP)) {
-				printf("vcpu_run_vmx: cannot read guest rip\n");
+				printf("%s: cannot read guest rip\n", __func__);
 				ret = EINVAL;
 				break;
 			}
 
 			if (!(exitinfo & VMX_EXIT_INFO_HAVE_REASON)) {
-				printf("vcpu_run_vmx: cant read exit reason\n");
+				printf("%s: cant read exit reason\n", __func__);
 				ret = EINVAL;
 				break;
 			}
@@ -3610,16 +3760,16 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 			 */
 			if (vcpu->vc_irqready == 0 && vcpu->vc_intr) {
 				if (vmread(VMCS_PROCBASED_CTLS, &procbased)) {
-					printf("vcpu_run_vmx: can't read"
-					   " procbased ctls on intwin exit\n");
+					printf("%s: can't read procbased ctls "
+					    "on intwin exit\n", __func__);
 					ret = EINVAL;
 					break;
 				}
 
 				procbased |= IA32_VMX_INTERRUPT_WINDOW_EXITING;
 				if (vmwrite(VMCS_PROCBASED_CTLS, procbased)) {
-					printf("vcpu_run_vmx: can't write"
-					   " procbased ctls on intwin exit\n");
+					printf("%s: can't write procbased ctls "
+					    "on intwin exit\n", __func__);
 					ret = EINVAL;
 					break;
 				}
@@ -3648,8 +3798,8 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 				yield();
 			}
 		} else if (ret == VMX_FAIL_LAUNCH_INVALID_VMCS) {
-			printf("vcpu_run_vmx: failed launch with invalid "
-			    "vmcs\n");
+			printf("%s: failed launch with invalid vmcs\n",
+			    __func__);
 #ifdef VMM_DEBUG
 			vmx_vcpu_dump_regs(vcpu);
 			dump_vcpu(vcpu);
@@ -3657,24 +3807,24 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 			ret = EINVAL;
 		} else if (ret == VMX_FAIL_LAUNCH_VALID_VMCS) {
 			exit_reason = vcpu->vc_gueststate.vg_exit_reason;
-			printf("vcpu_run_vmx: failed launch with valid "
-			    "vmcs, code=%lld (%s)\n", exit_reason,
+			printf("%s: failed launch with valid vmcs, code=%lld "
+			    "(%s)\n", __func__, exit_reason,
 			    vmx_instruction_error_decode(exit_reason));
 
 			if (vmread(VMCS_INSTRUCTION_ERROR, &insn_error)) {
-				printf("vcpu_run_vmx: can't read"
-				    " insn error field\n");
+				printf("%s: can't read insn error field\n",
+				    __func__);
 			} else
-				printf("vcpu_run_vmx: insn error code = "
-				    "%lld\n", insn_error);
+				printf("%s: insn error code = %lld\n",
+				    __func__, insn_error);
 #ifdef VMM_DEBUG
 			vmx_vcpu_dump_regs(vcpu);
 			dump_vcpu(vcpu);
 #endif /* VMM_DEBUG */
 			ret = EINVAL;
 		} else {
-			printf("vcpu_run_vmx: failed launch for unknown "
-			    "reason %d\n", ret);
+			printf("%s: failed launch for unknown reason %d\n",
+			    __func__, ret);
 #ifdef VMM_DEBUG
 			vmx_vcpu_dump_regs(vcpu);
 			dump_vcpu(vcpu);
@@ -3715,7 +3865,7 @@ vmx_handle_intr(struct vcpu *vcpu)
 	vaddr_t handler;
 
 	if (vmread(VMCS_EXIT_INTERRUPTION_INFO, &eii)) {
-		printf("vmx_handle_intr: can't obtain intr info\n");
+		printf("%s: can't obtain intr info\n", __func__);
 		return;
 	}
 
@@ -3788,8 +3938,8 @@ vmx_handle_exit(struct vcpu *vcpu)
 	switch (exit_reason) {
 	case VMX_EXIT_INT_WINDOW:
 		if (!(rflags & PSL_I)) {
-			DPRINTF("vmx_handle_exit: impossible interrupt window"
-			   " exit config\n");
+			DPRINTF("%s: impossible interrupt window exit "
+			    "config\n", __func__);
 			ret = EINVAL;
 			break;
 		}
@@ -3828,9 +3978,13 @@ vmx_handle_exit(struct vcpu *vcpu)
 		ret = vmx_handle_wrmsr(vcpu);
 		update_rip = 1;
 		break;
+	case VMX_EXIT_XSETBV:
+		ret = vmx_handle_xsetbv(vcpu);
+		update_rip = 1;
+		break;
 	case VMX_EXIT_TRIPLE_FAULT:
 #ifdef VMM_DEBUG
-		DPRINTF("vmx_handle_exit: vm %d vcpu %d triple fault\n",
+		DPRINTF("%s: vm %d vcpu %d triple fault\n", __func__,
 		    vcpu->vc_parent->vm_id, vcpu->vc_id);
 		vmx_vcpu_dump_regs(vcpu);
 		dump_vcpu(vcpu);
@@ -3840,7 +3994,7 @@ vmx_handle_exit(struct vcpu *vcpu)
 		update_rip = 0;
 		break;
 	default:
-		DPRINTF("vmx_handle_exit: unhandled exit %lld (%s)\n",
+		DPRINTF("%s: unhandled exit %lld (%s)\n", __func__,
 		    exit_reason, vmx_exit_reason_decode(exit_reason));
 		return (EINVAL);
 	}
@@ -3848,7 +4002,7 @@ vmx_handle_exit(struct vcpu *vcpu)
 	if (update_rip) {
 		if (vmwrite(VMCS_GUEST_IA32_RIP,
 		    vcpu->vc_gueststate.vg_rip)) {
-			printf("vmx_handle_exit: can't advance rip\n");
+			printf("%s: can't advance rip\n", __func__);
 			return (EINVAL);
 		}
 
@@ -3934,7 +4088,7 @@ int
 vmx_get_exit_qualification(uint64_t *exit_qualification)
 {
 	if (vmread(VMCS_GUEST_EXIT_QUALIFICATION, exit_qualification)) {
-		printf("vmm_get_exit_qualification: cant extract exit qual\n");
+		printf("%s: cant extract exit qual\n", __func__);
 		return (EINVAL);
 	}
 
@@ -3992,14 +4146,15 @@ vmx_fault_page(struct vcpu *vcpu, paddr_t gpa)
 
 	fault_type = vmx_get_guest_faulttype();
 	if (fault_type == -1) {
-		printf("vmx_fault_page: invalid fault type\n");
+		printf("%s: invalid fault type\n", __func__);
 		return (EINVAL);
 	}
 
 	ret = uvm_fault(vcpu->vc_parent->vm_map, gpa, fault_type,
 	    PROT_READ | PROT_WRITE | PROT_EXEC);
+
 	if (ret)
-		printf("vmx_fault_page: uvm_fault returns %d\n", ret);
+		printf("%s: uvm_fault returns %d\n", __func__, ret);
 
 	return (ret);
 }
@@ -4018,7 +4173,7 @@ vmx_handle_np_fault(struct vcpu *vcpu)
 
 	ret = 0;
 	if (vmread(VMCS_GUEST_PHYSICAL_ADDRESS, &gpa)) {
-		printf("vmm_handle_np_fault: cannot extract faulting pa\n");
+		printf("%s: cannot extract faulting pa\n", __func__);
 		return (EINVAL);
 	}
 
@@ -4051,12 +4206,12 @@ vmx_handle_inout(struct vcpu *vcpu)
 	int ret;
 
 	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
-		printf("vmx_handle_inout: can't obtain instruction length\n");
+		printf("%s: can't obtain instruction length\n", __func__);
 		return (EINVAL);
 	}
 
 	if (vmx_get_exit_qualification(&exit_qual)) {
-		printf("vmx_handle_inout: can't get exit qual\n");
+		printf("%s: can't get exit qual\n", __func__);
 		return (EINVAL);
 	}
 
@@ -4100,7 +4255,7 @@ vmx_handle_inout(struct vcpu *vcpu)
 		break;
 	default:
 		/* Read from unsupported ports returns FFs */
-		if (vcpu->vc_exit.vei.vei_dir == 1) {
+		if (vcpu->vc_exit.vei.vei_dir == VEI_DIR_IN) {
 			if (vcpu->vc_exit.vei.vei_size == 4)
 				vcpu->vc_gueststate.vg_rax = 0xFFFFFFFF;
 			else if (vcpu->vc_exit.vei.vei_size == 2)
@@ -4279,19 +4434,19 @@ vmx_handle_cr(struct vcpu *vcpu)
 
 		break;
 	case CR_READ:
-		DPRINTF("vmx_handle_cr: mov from cr%d @ %llx\n",
-		    crnum, vcpu->vc_gueststate.vg_rip);
+		DPRINTF("%s: mov from cr%d @ %llx\n", __func__, crnum,
+		    vcpu->vc_gueststate.vg_rip);
 		break;
 	case CR_CLTS:
-		DPRINTF("vmx_handle_cr: clts instruction @ %llx\n",
+		DPRINTF("%s: clts instruction @ %llx\n", __func__,
 		    vcpu->vc_gueststate.vg_rip);
 		break;
 	case CR_LMSW:
-		DPRINTF("vmx_handle_cr: lmsw instruction @ %llx\n",
+		DPRINTF("%s: lmsw instruction @ %llx\n", __func__,
 		    vcpu->vc_gueststate.vg_rip);
 		break;
 	default:
-		DPRINTF("vmx_handle_cr: unknown cr access @ %llx\n",
+		DPRINTF("%s: unknown cr access @ %llx\n", __func__,
 		    vcpu->vc_gueststate.vg_rip);
 	}
 
@@ -4351,6 +4506,62 @@ vmx_handle_rdmsr(struct vcpu *vcpu)
 	return (0);
 }
 
+/*
+ * vmx_handle_xsetbv
+ *
+ * Handler for xsetbv instructions. We allow the guest VM to set xcr0 values
+ * limited to the xsave_mask in use in the host.
+ *
+ * Parameters:
+ *  vcpu: vcpu structure containing instruction info causing the exit
+ *
+ * Return value:
+ *  0: The operation was successful
+ *  EINVAL: An error occurred
+ */
+int
+vmx_handle_xsetbv(struct vcpu *vcpu)
+{
+	uint64_t insn_length;
+	uint64_t *rax, *rdx, *rcx;;
+
+	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
+		printf("%s: can't obtain instruction length\n", __func__);
+		return (EINVAL);
+	}
+
+	/* All XSETBV instructions are 0x0F 0x01 0xD1 */
+	KASSERT(insn_length == 3);
+
+	rax = &vcpu->vc_gueststate.vg_rax;
+	rcx = &vcpu->vc_gueststate.vg_rcx;
+	rdx = &vcpu->vc_gueststate.vg_rdx;
+
+	if (*rcx != 0) {
+		DPRINTF("%s: guest specified invalid xcr register number "
+		    "%lld\n", __func__, *rcx);
+		/* XXX this should #GP(0) instead of killing the guest */
+		return (EINVAL);
+	}
+
+	/*
+	 * No bits in %edx are currently supported. Check this, and validate
+	 * against the host mask.
+	 */
+	if (*rdx != 0 || (*rax & ~xsave_mask)) {
+		DPRINTF("%s: guest specified invalid xcr0 content "
+		    "(0x%llx:0x%llx)\n", __func__, *rdx, *rax);
+		/* XXX this should #GP(0) instead of killing the guest */
+		return (EINVAL);
+	}
+
+	vcpu->vc_gueststate.vg_xcr0 = *rax;
+
+	vcpu->vc_gueststate.vg_rip += insn_length;
+
+	return (0);
+}
+	
 /*
  * vmx_handle_wrmsr
  *
@@ -4414,6 +4625,7 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 {
 	uint64_t insn_length;
 	uint64_t *rax, *rbx, *rcx, *rdx;
+	uint32_t eax, ebx, ecx, edx;
 
 	if (vmm_softc->mode == VMM_MODE_VMX ||
 	    vmm_softc->mode == VMM_MODE_EPT) {
@@ -4432,9 +4644,11 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 	rcx = &vcpu->vc_gueststate.vg_rcx;
 	rdx = &vcpu->vc_gueststate.vg_rdx;
 
+	CPUID_LEAF(rax, 0, eax, ebx, ecx, edx);
+
 	switch (*rax) {
 	case 0x00:	/* Max level and vendor ID */
-		*rax = 0x07; /* cpuid_level */
+		*rax = 0x0d; /* cpuid_level */
 		*rbx = *((uint32_t *)&cpu_vendor);
 		*rdx = *((uint32_t *)&cpu_vendor + 1);
 		*rcx = *((uint32_t *)&cpu_vendor + 2);
@@ -4581,13 +4795,19 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		*rcx = 0;
 		*rdx = 0;
 		break;
-	case 0x0d:	/* Processor ext. state information (not supported) */
-		DPRINTF("%s: function 0x0d (ext. state info) not supported\n",
-		    __func__);
-		*rax = 0;
-		*rbx = 0;
-		*rcx = 0;
-		*rdx = 0;
+	case 0x0d:	/* Processor ext. state information */
+		if (*rcx == 0) {
+			*rax = xsave_mask;
+			*rbx = ebx;
+			*rcx = ecx;
+			*rdx = edx;
+		} else {
+			CPUID_LEAF(rax, *rcx, eax, ebx, ecx, edx);
+			*rax = eax;
+			*rbx = ebx;
+			*rcx = ecx;
+			*rdx = edx;
+		}
 		break;
 	case 0x0f:	/* QoS info (not supported) */
 		DPRINTF("%s: function 0x0f (QoS info) not supported\n",

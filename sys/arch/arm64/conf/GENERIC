@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.22 2017/03/10 03:27:50 jsg Exp $
+# $OpenBSD: GENERIC,v 1.24 2017/04/29 17:24:41 kettenis Exp $
 #
 # GENERIC machine description file
 #
@@ -35,6 +35,7 @@ config		bsd	swap generic
 
 # The main bus device
 mainbus0	at root
+cpu0		at mainbus?
 simplebus*	at fdt?
 
 scsibus*	at scsi?
@@ -46,6 +47,7 @@ uk*		at scsibus?
 
 ampintc*	at fdt?
 ampintcmsi*	at fdt?
+agintc*		at fdt?
 agtimer*	at fdt?
 ahci*		at fdt?
 pciecam*	at fdt?
