@@ -602,10 +602,8 @@ ubcmtp_ioctl(void *v, unsigned long cmd, caddr_t data, int flag, struct proc *p)
 
 	switch (cmd) {
 	case WSMOUSEIO_GTYPE:
-		/* so we can specify our own finger/w values to the
-		 * xf86-input-synaptics driver like pms(4) */
+		/* to use xf86-input-ws */
 		*(u_int *)data = WSMOUSE_TYPE_USB;
-		//WSMOUSE_TYPE_ELANTECH;
 		break;
 
 	case WSMOUSEIO_GCALIBCOORDS:
