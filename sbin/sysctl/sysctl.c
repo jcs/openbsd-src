@@ -2567,9 +2567,6 @@ print_sensor(struct sensor *s)
 		case SENSOR_ACCEL:
 			printf("%2.4f m/s^2", s->value / 1000000.0);
 			break;
-		case SENSOR_STRING:
-			printf("%s", s->string);
-			break;
 		default:
 			printf("unknown");
 		}
