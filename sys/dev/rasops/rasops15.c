@@ -71,27 +71,24 @@ static int	stamp_mutex;	/* XXX see note in readme */
 void
 rasops15_init(struct rasops_info *ri)
 {
-	if (ri->ri_font->stride == ri->ri_font->fontwidth)
-		ri->ri_ops.putchar = rasops15_putchar;
-	else {
-		switch (ri->ri_font->fontwidth) {
+
+	switch (ri->ri_font->fontwidth) {
 #ifndef RASOPS_SMALL
-		case 8:
-			ri->ri_ops.putchar = rasops15_putchar8;
-			break;
+	case 8:
+		ri->ri_ops.putchar = rasops15_putchar8;
+		break;
 
-		case 12:
-			ri->ri_ops.putchar = rasops15_putchar12;
-			break;
+	case 12:
+		ri->ri_ops.putchar = rasops15_putchar12;
+		break;
 
-		case 16:
-			ri->ri_ops.putchar = rasops15_putchar16;
-			break;
+	case 16:
+		ri->ri_ops.putchar = rasops15_putchar16;
+		break;
 #endif	/* !RASOPS_SMALL */
-		default:
-			ri->ri_ops.putchar = rasops15_putchar;
-			break;
-		}
+	default:
+		ri->ri_ops.putchar = rasops15_putchar;
+		break;
 	}
 
 	if (ri->ri_rnum == 0) {
@@ -149,24 +146,13 @@ rasops15_putchar(void *cookie, int row, int col, u_int uc, long attr)
 
 		while (height--) {
 			dp = rp;
+			fb = fr[3] | (fr[2] << 8) | (fr[1] << 16) | (fr[0] << 24);
 			fr += ri->ri_font->stride;
 			rp += ri->ri_stride;
 
-			if (ri->ri_font->stride != width)
-				/* monochrome font */
-				fb = fr[3] | (fr[2] << 8) | (fr[1] << 16) |
-				    (fr[0] << 24);
-
 			for (cnt = width; cnt; cnt--) {
-				if (ri->ri_font->stride == width)
-					*(int16_t *)dp = (int16_t)clr[
-					    fr[width - cnt] >= 0x50 ? 1 : 0];
-				else {
-					*(int16_t *)dp =
-					    (int16_t)clr[(fb >> 31) & 1];
-					fb <<= 1;
-				}
-
+				*(int16_t *)dp = (int16_t)clr[(fb >> 31) & 1];
+				fb <<= 1;
 				dp += 2;
 			}
 		}

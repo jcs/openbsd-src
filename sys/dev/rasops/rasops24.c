@@ -152,31 +152,20 @@ rasops24_putchar(void *cookie, int row, int col, u_int uc, long attr)
 
 		while (height--) {
 			dp = rp;
+			fb = fr[3] | (fr[2] << 8) | (fr[1] << 16) |
+			    (fr[0] << 24);
 			fr += ri->ri_font->stride;
 			rp += ri->ri_stride;
 
-			if (ri->ri_font->stride != width)
-				fb = fr[3] | (fr[2] << 8) | (fr[1] << 16) |
-				    (fr[0] << 24);
-
-			for (cnt = width; cnt; cnt--) {
-				if (ri->ri_font->stride == width) {
-					*dp++ = clr[fr[width - cnt] >= 0x50 ?
-					    1 : 0];
-					*dp++ = clr[0];
-					*dp++ = clr[0];
+			for (cnt = width; cnt; cnt--, fb <<= 1) {
+				if ((fb >> 31) & 1) {
+					*dp++ = clr[1] >> 16;
+					*dp++ = clr[1] >> 8;
+					*dp++ = clr[1];
 				} else {
-					if ((fb >> 31) & 1) {
-						*dp++ = clr[1] >> 16;
-						*dp++ = clr[1] >> 8;
-						*dp++ = clr[1];
-					} else {
-						*dp++ = clr[0] >> 16;
-						*dp++ = clr[0] >> 8;
-						*dp++ = clr[0];
-					}
-
-					fb <<= 1;
+					*dp++ = clr[0] >> 16;
+					*dp++ = clr[0] >> 8;
+					*dp++ = clr[0];
 				}
 			}
 		}
