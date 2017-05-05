@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_state.c,v 1.5 2017/04/24 23:06:09 schwarze Exp $ */
+/*	$OpenBSD: mdoc_state.c,v 1.8 2017/05/05 15:16:25 schwarze Exp $ */
 /*
  * Copyright (c) 2014, 2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
  *
@@ -16,6 +16,7 @@
  */
 #include <sys/types.h>
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -154,11 +155,8 @@ static	const state_handler __state_handlers[MDOC_MAX - MDOC_Dd] = {
 	NULL,		/* En */
 	NULL,		/* Dx */
 	NULL,		/* %Q */
-	NULL,		/* br */
-	NULL,		/* sp */
 	NULL,		/* %U */
 	NULL,		/* Ta */
-	NULL,		/* ll */
 };
 static const state_handler *const state_handlers = __state_handlers - MDOC_Dd;
 
@@ -168,9 +166,10 @@ mdoc_state(struct roff_man *mdoc, struct roff_node *n)
 {
 	state_handler handler;
 
-	if (n->tok == TOKEN_NONE)
+	if (n->tok == TOKEN_NONE || n->tok < ROFF_MAX)
 		return;
 
+	assert(n->tok >= MDOC_Dd && n->tok < MDOC_MAX);
 	if ( ! (mdoc_macros[n->tok].flags & MDOC_PROLOGUE))
 		mdoc->flags |= MDOC_PBODY;
 

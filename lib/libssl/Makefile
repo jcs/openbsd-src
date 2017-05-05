@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.32 2017/03/05 14:39:53 jsing Exp $
+# $OpenBSD: Makefile,v 1.35 2017/04/30 04:44:58 jsing Exp $
 
 .include <bsd.own.mk>
 .ifndef NOMAN
@@ -12,10 +12,11 @@ CLEANFILES=${PC_FILES} ${VERSION_SCRIPT}
 LIB=	ssl
 
 CFLAGS+= -Wall -Wundef
-.if ${COMPILER_VERSION:L} != "gcc3"
+.if ${COMPILER_VERSION:L} == "gcc4"
 CFLAGS+= -Werror
 .endif
 CFLAGS+= -DLIBRESSL_INTERNAL
+
 CFLAGS+= -I${.CURDIR}
 
 LDADD+= -L${BSDOBJDIR}/lib/libcrypto -lcrypto

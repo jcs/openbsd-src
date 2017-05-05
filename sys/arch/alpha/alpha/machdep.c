@@ -1,4 +1,4 @@
-/* $OpenBSD: machdep.c,v 1.178 2017/04/27 11:48:08 mpi Exp $ */
+/* $OpenBSD: machdep.c,v 1.180 2017/04/30 16:45:45 mpi Exp $ */
 /* $NetBSD: machdep.c,v 1.210 2000/06/01 17:12:38 thorpej Exp $ */
 
 /*-
@@ -762,11 +762,7 @@ nobootinfo:
 	ddb_init();
 
 	if (boothowto & RB_KDB)
-		Debugger();
-#endif
-#ifdef KGDB
-	if (boothowto & RB_KDB)
-		kgdb_connect(0);
+		db_enter();
 #endif
 	/*
 	 * Figure out our clock frequency, from RPB fields.

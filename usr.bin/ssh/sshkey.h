@@ -1,4 +1,4 @@
-/* $OpenBSD: sshkey.h,v 1.15 2017/03/10 04:07:20 djm Exp $ */
+/* $OpenBSD: sshkey.h,v 1.17 2017/05/03 21:08:09 naddy Exp $ */
 
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
@@ -47,7 +47,6 @@ struct sshbuf;
 
 /* Key types */
 enum sshkey_types {
-	KEY_RSA1,
 	KEY_RSA,
 	KEY_DSA,
 	KEY_ECDSA,
@@ -179,8 +178,6 @@ int	sshkey_private_deserialize(struct sshbuf *buf,  struct sshkey **keyp);
 int	sshkey_private_to_fileblob(struct sshkey *key, struct sshbuf *blob,
     const char *passphrase, const char *comment,
     int force_new_format, const char *new_format_cipher, int new_format_rounds);
-int	sshkey_parse_public_rsa1_fileblob(struct sshbuf *blob,
-    struct sshkey **keyp, char **commentp);
 int	sshkey_parse_private_fileblob(struct sshbuf *buffer,
     const char *passphrase, struct sshkey **keyp, char **commentp);
 int	sshkey_parse_private_fileblob_type(struct sshbuf *blob, int type,

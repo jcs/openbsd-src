@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_man.c,v 1.107 2017/04/24 23:06:09 schwarze Exp $ */
+/*	$OpenBSD: mdoc_man.c,v 1.111 2017/05/05 15:16:25 schwarze Exp $ */
 /*
  * Copyright (c) 2011-2017 Ingo Schwarze <schwarze@openbsd.org>
  *
@@ -18,6 +18,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mandoc_aux.h"
@@ -30,10 +31,13 @@
 
 #define	DECL_ARGS const struct roff_meta *meta, struct roff_node *n
 
+typedef	int	(*int_fp)(DECL_ARGS);
+typedef	void	(*void_fp)(DECL_ARGS);
+
 struct	manact {
-	int		(*cond)(DECL_ARGS); /* DON'T run actions */
-	int		(*pre)(DECL_ARGS); /* pre-node action */
-	void		(*post)(DECL_ARGS); /* post-node action */
+	int_fp		  cond; /* DON'T run actions */
+	int_fp		  pre; /* pre-node action */
+	void_fp		  post; /* post-node action */
 	const char	 *prefix; /* pre-node string constant */
 	const char	 *suffix; /* post-node string constant */
 };
@@ -67,7 +71,6 @@ static	void	  post_nm(DECL_ARGS);
 static	void	  post_percent(DECL_ARGS);
 static	void	  post_pf(DECL_ARGS);
 static	void	  post_sect(DECL_ARGS);
-static	void	  post_sp(DECL_ARGS);
 static	void	  post_vt(DECL_ARGS);
 static	int	  pre__t(DECL_ARGS);
 static	int	  pre_an(DECL_ARGS);
@@ -77,7 +80,7 @@ static	int	  pre_bd(DECL_ARGS);
 static	int	  pre_bf(DECL_ARGS);
 static	int	  pre_bk(DECL_ARGS);
 static	int	  pre_bl(DECL_ARGS);
-static	int	  pre_br(DECL_ARGS);
+static	void	  pre_br(DECL_ARGS);
 static	int	  pre_dl(DECL_ARGS);
 static	int	  pre_en(DECL_ARGS);
 static	int	  pre_enc(DECL_ARGS);
@@ -90,19 +93,20 @@ static	int	  pre_fd(DECL_ARGS);
 static	int	  pre_fl(DECL_ARGS);
 static	int	  pre_fn(DECL_ARGS);
 static	int	  pre_fo(DECL_ARGS);
-static	int	  pre_ft(DECL_ARGS);
+static	void	  pre_ft(DECL_ARGS);
+static	int	  pre_Ft(DECL_ARGS);
 static	int	  pre_in(DECL_ARGS);
 static	int	  pre_it(DECL_ARGS);
 static	int	  pre_lk(DECL_ARGS);
 static	int	  pre_li(DECL_ARGS);
-static	int	  pre_ll(DECL_ARGS);
+static	void	  pre_ll(DECL_ARGS);
 static	int	  pre_nm(DECL_ARGS);
 static	int	  pre_no(DECL_ARGS);
 static	int	  pre_ns(DECL_ARGS);
 static	int	  pre_pp(DECL_ARGS);
 static	int	  pre_rs(DECL_ARGS);
 static	int	  pre_sm(DECL_ARGS);
-static	int	  pre_sp(DECL_ARGS);
+static	void	  pre_sp(DECL_ARGS);
 static	int	  pre_sect(DECL_ARGS);
 static	int	  pre_sy(DECL_ARGS);
 static	void	  pre_syn(const struct roff_node *);
@@ -116,6 +120,13 @@ static	void	  print_width(const struct mdoc_bl *,
 			const struct roff_node *);
 static	void	  print_count(int *);
 static	void	  print_node(DECL_ARGS);
+
+static	const void_fp roff_manacts[ROFF_MAX] = {
+	pre_br,
+	pre_ft,
+	pre_ll,
+	pre_sp,
+};
 
 static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
 	{ NULL, NULL, NULL, NULL, NULL }, /* Dd */
@@ -145,14 +156,14 @@ static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
 	{ NULL, pre_fd, post_fd, NULL, NULL }, /* Fd */
 	{ NULL, pre_fl, post_fl, NULL, NULL }, /* Fl */
 	{ NULL, pre_fn, post_fn, NULL, NULL }, /* Fn */
-	{ NULL, pre_ft, post_font, NULL, NULL }, /* Ft */
+	{ NULL, pre_Ft, post_font, NULL, NULL }, /* Ft */
 	{ NULL, pre_sy, post_font, NULL, NULL }, /* Ic */
 	{ NULL, pre_in, post_in, NULL, NULL }, /* In */
 	{ NULL, pre_li, post_font, NULL, NULL }, /* Li */
 	{ cond_head, pre_enc, NULL, "\\- ", NULL }, /* Nd */
 	{ NULL, pre_nm, post_nm, NULL, NULL }, /* Nm */
 	{ cond_body, pre_enc, post_enc, "[", "]" }, /* Op */
-	{ NULL, pre_ft, post_font, NULL, NULL }, /* Ot */
+	{ NULL, pre_Ft, post_font, NULL, NULL }, /* Ot */
 	{ NULL, pre_em, post_font, NULL, NULL }, /* Pa */
 	{ NULL, pre_ex, NULL, NULL, NULL }, /* Rv */
 	{ NULL, NULL, NULL, NULL, NULL }, /* St */
@@ -236,11 +247,8 @@ static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
 	{ cond_body, pre_en, post_en, NULL, NULL }, /* En */
 	{ NULL, NULL, NULL, NULL, NULL }, /* Dx */
 	{ NULL, NULL, post_percent, NULL, NULL }, /* %Q */
-	{ NULL, pre_br, NULL, NULL, NULL }, /* br */
-	{ NULL, pre_sp, post_sp, NULL, NULL }, /* sp */
 	{ NULL, NULL, post_percent, NULL, NULL }, /* %U */
 	{ NULL, NULL, NULL, NULL, NULL }, /* Ta */
-	{ NULL, pre_ll, post_sp, NULL, NULL }, /* ll */
 };
 static	const struct manact *const manacts = __manacts - MDOC_Dd;
 
@@ -649,7 +657,11 @@ print_node(DECL_ARGS)
 			outflags &= ~(MMAN_spc | MMAN_spc_force);
 		else if (outflags & MMAN_Sm)
 			outflags |= MMAN_spc;
+	} else if (n->tok < ROFF_MAX) {
+		(*roff_manacts[n->tok])(meta, n);
+		return;
 	} else {
+		assert(n->tok >= MDOC_Dd && n->tok < MDOC_MAX);
 		/*
 		 * Conditionally run the pre-node action handler for a
 		 * node.
@@ -1053,12 +1065,10 @@ post_bl(DECL_ARGS)
 
 }
 
-static int
+static void
 pre_br(DECL_ARGS)
 {
-
 	outflags |= MMAN_br;
-	return 0;
 }
 
 static int
@@ -1303,12 +1313,20 @@ post_fo(DECL_ARGS)
 }
 
 static int
-pre_ft(DECL_ARGS)
+pre_Ft(DECL_ARGS)
 {
 
 	pre_syn(n);
 	font_push('I');
 	return 1;
+}
+
+static void
+pre_ft(DECL_ARGS)
+{
+	print_line(".ft", 0);
+	print_word(n->child->string);
+	outflags |= MMAN_nl;
 }
 
 static int
@@ -1543,12 +1561,13 @@ pre_lk(DECL_ARGS)
 	return 0;
 }
 
-static int
+static void
 pre_ll(DECL_ARGS)
 {
-
 	print_line(".ll", 0);
-	return 1;
+	if (n->child != NULL)
+		print_word(n->child->string);
+	outflags |= MMAN_nl;
 }
 
 static int
@@ -1672,22 +1691,17 @@ pre_sm(DECL_ARGS)
 	return 0;
 }
 
-static int
+static void
 pre_sp(DECL_ARGS)
 {
-
-	if (MMAN_PP & outflags) {
+	if (outflags & MMAN_PP) {
 		outflags &= ~MMAN_PP;
 		print_line(".PP", 0);
-	} else
+	} else {
 		print_line(".sp", 0);
-	return 1;
-}
-
-static void
-post_sp(DECL_ARGS)
-{
-
+		if (n->child != NULL)
+			print_word(n->child->string);
+	}
 	outflags |= MMAN_nl;
 }
 

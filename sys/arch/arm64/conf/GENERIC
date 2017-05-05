@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.24 2017/04/29 17:24:41 kettenis Exp $
+# $OpenBSD: GENERIC,v 1.29 2017/05/05 17:43:47 kettenis Exp $
 #
 # GENERIC machine description file
 #
@@ -50,8 +50,12 @@ ampintcmsi*	at fdt?
 agintc*		at fdt?
 agtimer*	at fdt?
 ahci*		at fdt?
+ehci*		at fdt?
 pciecam*	at fdt?
 pci*		at pciecam?
+sdhc*		at fdt?
+sdmmc*		at sdhc?
+xhci*		at fdt?
 
 # NS16550 compatible serial ports
 com*		at fdt?
@@ -78,6 +82,11 @@ bcmdog*		at fdt?
 dwctwo*		at fdt?
 usb*		at dwctwo?
 
+# Rockchip SoCs
+rkclock*	at fdt? early 1
+rkgrf*		at fdt? early 1
+rkpinctrl*	at fdt? early 1
+
 # Sunxi SoCs
 sxipio*		at fdt? early 1	# GPIO pins for leds & PHYs
 gpio*		at sxipio?
@@ -85,7 +94,6 @@ sxiccmu*	at fdt? early 1	# Clock Control Module/Unit
 sxirtc*		at fdt?		# Real Time Clock
 sximmc*		at fdt?		# SD/MMC card controller
 sdmmc*		at sximmc?	# SD/MMC bus
-ehci*		at fdt?		# EHCI (shim)
 
 # PCI
 ppb*		at pci?			# PCI-PCI bridges

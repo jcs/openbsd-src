@@ -1,4 +1,4 @@
-/*	$OpenBSD: zs.c,v 1.27 2015/02/05 12:04:58 miod Exp $	*/
+/*	$OpenBSD: zs.c,v 1.29 2017/04/30 16:45:45 mpi Exp $	*/
 /*	$NetBSD: zs.c,v 1.29 2001/05/30 15:24:24 lukem Exp $	*/
 
 /*-
@@ -670,8 +670,6 @@ zs_write_data(cs, val)
  * XXX - I think I like the mvme167 code better. -gwr
  ****************************************************************/
 
-extern void Debugger(void);
-
 /*
  * Handle user request to enter kernel debugger.
  */
@@ -689,14 +687,12 @@ zs_abort(cs)
 		ZS_DELAY();
 	} while (rr0 & ZSRR0_BREAK);
 
-#if defined(KGDB)
-	zskgdb(cs);
-#elif defined(DDB)
+#if defined(DDB)
 	{
 		extern int db_active;
 		
 		if (!db_active)
-			Debugger();
+			db_enter();
 		else
 			/* Debugger is probably hozed */
 			callrom();

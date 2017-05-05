@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_macro.c,v 1.78 2017/04/24 23:06:09 schwarze Exp $ */
+/*	$OpenBSD: man_macro.c,v 1.82 2017/05/05 15:16:25 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2012-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -59,8 +59,6 @@ const	struct man_macro __man_macros[MAN_MAX - MAN_TH] = {
 	{ in_line_eoln, MAN_SCOPED | MAN_JOIN }, /* I */
 	{ in_line_eoln, 0 }, /* IR */
 	{ in_line_eoln, 0 }, /* RI */
-	{ in_line_eoln, MAN_NSCOPED }, /* br */
-	{ in_line_eoln, MAN_NSCOPED }, /* sp */
 	{ in_line_eoln, MAN_NSCOPED }, /* nf */
 	{ in_line_eoln, MAN_NSCOPED }, /* fi */
 	{ blk_close, MAN_BSCOPE }, /* RE */
@@ -70,13 +68,11 @@ const	struct man_macro __man_macros[MAN_MAX - MAN_TH] = {
 	{ in_line_eoln, MAN_NSCOPED }, /* PD */
 	{ in_line_eoln, 0 }, /* AT */
 	{ in_line_eoln, 0 }, /* in */
-	{ in_line_eoln, 0 }, /* ft */
 	{ in_line_eoln, 0 }, /* OP */
 	{ in_line_eoln, MAN_BSCOPE }, /* EX */
 	{ in_line_eoln, MAN_BSCOPE }, /* EE */
 	{ blk_exp, MAN_BSCOPE }, /* UR */
 	{ blk_close, MAN_BSCOPE }, /* UE */
-	{ in_line_eoln, 0 }, /* ll */
 };
 const	struct man_macro *const man_macros = __man_macros - MAN_TH;
 
@@ -326,15 +322,13 @@ in_line_eoln(MACRO_PROT_ARGS)
 	n = man->last;
 
 	for (;;) {
-		if (buf[*pos] != '\0' && (tok == MAN_br ||
-		    tok == MAN_fi || tok == MAN_nf)) {
+		if (buf[*pos] != '\0' && (tok == MAN_fi || tok == MAN_nf)) {
 			mandoc_vmsg(MANDOCERR_ARG_SKIP,
 			    man->parse, line, *pos, "%s %s",
 			    roff_name[tok], buf + *pos);
 			break;
 		}
-		if (buf[*pos] != '\0' && man->last != n &&
-		    (tok == MAN_PD || tok == MAN_ft || tok == MAN_sp)) {
+		if (buf[*pos] != '\0' && man->last != n && tok == MAN_PD) {
 			mandoc_vmsg(MANDOCERR_ARG_EXCESS,
 			    man->parse, line, *pos, "%s ... %s",
 			    roff_name[tok], buf + *pos);

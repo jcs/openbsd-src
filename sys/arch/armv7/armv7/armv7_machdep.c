@@ -1,4 +1,4 @@
-/*	$OpenBSD: armv7_machdep.c,v 1.47 2017/03/24 13:04:16 patrick Exp $ */
+/*	$OpenBSD: armv7_machdep.c,v 1.49 2017/05/02 21:39:45 kettenis Exp $ */
 /*	$NetBSD: lubbock_machdep.c,v 1.2 2003/07/15 00:25:06 lukem Exp $ */
 
 /*
@@ -232,11 +232,6 @@ void (*powerdownfn)(void);
 __dead void
 boot(int howto)
 {
-#ifdef DIAGNOSTIC
-	/* info */
-	printf("boot: howto=%08x curproc=%p\n", howto, curproc);
-#endif
-
 	if (cold) {
 		if ((howto & RB_USERREQ) == 0)
 			howto |= RB_HALT;
@@ -790,7 +785,7 @@ initarm(void *arg0, void *arg1, void *arg2, paddr_t loadaddr)
 	ddb_init();
 
 	if (boothowto & RB_KDB)
-		Debugger();
+		db_enter();
 #endif
 	printf("board type: %u\n", board_id);
 

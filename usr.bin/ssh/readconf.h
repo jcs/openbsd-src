@@ -1,4 +1,4 @@
-/* $OpenBSD: readconf.h,v 1.118 2017/04/28 03:20:27 dtucker Exp $ */
+/* $OpenBSD: readconf.h,v 1.121 2017/04/30 23:18:22 djm Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -37,9 +37,6 @@ typedef struct {
 	char   *xauth_location;	/* Location for xauth program */
 	struct ForwardOptions fwd_opts;	/* forwarding options */
 	int     use_privileged_port;	/* Don't use privileged port if false. */
-	int     rhosts_rsa_authentication;	/* Try rhosts with RSA
-						 * authentication. */
-	int     rsa_authentication;	/* Try RSA authentication. */
 	int     pubkey_authentication;	/* Try ssh2 pubkey authentication. */
 	int     hostbased_authentication;	/* ssh2's rhosts_rsa */
 	int     challenge_response_authentication;
@@ -54,8 +51,6 @@ typedef struct {
 	int     check_host_ip;	/* Also keep track of keys for IP address */
 	int     strict_host_key_checking;	/* Strict host key checking. */
 	int     compression;	/* Compress packets in both directions. */
-	int     compression_level;	/* Compression level 1 (fast) to 9
-					 * (best). */
 	int     tcp_keep_alive;	/* Set SO_KEEPALIVE. */
 	int	ip_qos_interactive;	/* IP ToS/DSCP/class for interactive */
 	int	ip_qos_bulk;		/* IP ToS/DSCP/class for bulk traffic */
@@ -70,12 +65,10 @@ typedef struct {
 					 * aborting connection attempt */
 	int     number_of_password_prompts;	/* Max number of password
 						 * prompts. */
-	int     cipher;		/* Cipher to use. */
 	char   *ciphers;	/* SSH2 ciphers in order of preference. */
 	char   *macs;		/* SSH2 macs in order of preference. */
 	char   *hostkeyalgorithms;	/* SSH2 server key types in order of preference. */
 	char   *kex_algorithms;	/* SSH2 kex methods in order of preference. */
-	int	protocol;	/* Protocol in order of preference. */
 	char   *hostname;	/* Real host to connect. */
 	char   *host_key_alias;	/* hostname alias for .ssh/known_hosts */
 	char   *proxy_command;	/* Proxy command for connecting the host. */

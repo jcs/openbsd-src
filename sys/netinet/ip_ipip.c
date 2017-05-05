@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_ipip.c,v 1.74 2017/04/14 20:46:31 bluhm Exp $ */
+/*	$OpenBSD: ip_ipip.c,v 1.76 2017/05/04 17:58:46 bluhm Exp $ */
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -156,7 +156,7 @@ ipip_input(struct mbuf **mp, int *offp, struct ifnet *gifp, int proto)
 
 	/* Bring the IP header in the first mbuf, if not there already */
 	if (m->m_len < hlen) {
-		if ((m = m_pullup(m, hlen)) == NULL) {
+		if ((m = *mp = m_pullup(m, hlen)) == NULL) {
 			DPRINTF(("ipip_input(): m_pullup() failed\n"));
 			ipipstat_inc(ipips_hdrops);
 			return IPPROTO_DONE;
@@ -210,7 +210,7 @@ ipip_input(struct mbuf **mp, int *offp, struct ifnet *gifp, int proto)
 	 * Bring the inner header into the first mbuf, if not there already.
 	 */
 	if (m->m_len < hlen) {
-		if ((m = m_pullup(m, hlen)) == NULL) {
+		if ((m = *mp = m_pullup(m, hlen)) == NULL) {
 			DPRINTF(("ipip_input(): m_pullup() failed\n"));
 			ipipstat_inc(ipips_hdrops);
 			return IPPROTO_DONE;
@@ -294,8 +294,7 @@ ipip_input(struct mbuf **mp, int *offp, struct ifnet *gifp, int proto)
 			sin6->sin6_addr = ip6->ip6_src;
 #endif /* INET6 */
 		}
-		rt = rtalloc((struct sockaddr *)&ss, 0,
-		    m->m_pkthdr.ph_rtableid);
+		rt = rtalloc(sstosa(&ss), 0, m->m_pkthdr.ph_rtableid);
 		if ((rt != NULL) && (rt->rt_flags & RTF_LOCAL)) {
 			ipipstat_inc(ipips_spoof);
 			m_freem(m);

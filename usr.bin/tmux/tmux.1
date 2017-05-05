@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.545 2017/04/28 13:39:59 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.548 2017/05/05 11:59:47 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: April 28 2017 $
+.Dd $Mdocdate: May 5 2017 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -3563,6 +3563,7 @@ The following variables are available, where appropriate:
 .It Li "pane_left" Ta "" Ta "Left of pane"
 .It Li "pane_pid" Ta "" Ta "PID of first process in pane"
 .It Li "pane_right" Ta "" Ta "Right of pane"
+.It Li "pane_search_string" Ta "" Ta "Last search string in copy mode"
 .It Li "pane_start_command" Ta "" Ta "Command pane started with"
 .It Li "pane_synchronized" Ta "" Ta "If pane is synchronized"
 .It Li "pane_tabs" Ta "" Ta "Pane tab positions"
@@ -3585,6 +3586,7 @@ The following variables are available, where appropriate:
 .It Li "session_id" Ta "" Ta "Unique session ID"
 .It Li "session_many_attached" Ta "" Ta "1 if multiple clients attached"
 .It Li "session_name" Ta "#S" Ta "Name of session"
+.It Li "session_stack" Ta "" Ta "Window indexes in most recent order"
 .It Li "session_width" Ta "" Ta "Width of session"
 .It Li "session_windows" Ta "" Ta "Number of windows in session"
 .It Li "socket_path" Ta "" Ta "Server socket path"
@@ -3604,6 +3606,7 @@ The following variables are available, where appropriate:
 .It Li "window_name" Ta "#W" Ta "Name of window"
 .It Li "window_panes" Ta "" Ta "Number of panes in window"
 .It Li "window_silence_flag" Ta "" Ta "1 if window has silence alert"
+.It Li "window_stack_index" Ta "" Ta "Index in session most recent stack"
 .It Li "window_visible_layout" Ta "" Ta "Window layout description, respecting zoomed window panes"
 .It Li "window_width" Ta "" Ta "Width of window"
 .It Li "window_zoomed_flag" Ta "" Ta "1 if window is zoomed"
@@ -4230,6 +4233,11 @@ A notification will never occur inside an output block.
 .Pp
 The following notifications are defined:
 .Bl -tag -width Ds
+.It Ic %client-session-changed Ar client Ar session-id Ar name
+The client is now attached to the session with ID
+.Ar session-id ,
+which is named
+.Ar name .
 .It Ic %exit Op Ar reason
 The
 .Nm
@@ -4252,6 +4260,10 @@ and the window flags are
 A window pane produced output.
 .Ar value
 escapes non-printable characters and backslash as octal \\xxx.
+.It Ic %pane-mode-changed Ar pane-id
+The pane with ID
+.Ar pane-id
+has changed mode.
 .It Ic %session-changed Ar session-id Ar name
 The client is now attached to the session with ID
 .Ar session-id ,
@@ -4260,6 +4272,11 @@ which is named
 .It Ic %session-renamed Ar name
 The current session was renamed to
 .Ar name .
+.It Ic %session-window-changed Ar session-id Ar window-id
+The session with ID
+.Ar session-id
+changed its active window to the window with ID
+.Ar window-id .
 .It Ic %sessions-changed
 A session was created or destroyed.
 .It Ic %unlinked-window-add Ar window-id
@@ -4274,6 +4291,11 @@ was linked to the current session.
 The window with ID
 .Ar window-id
 closed.
+.It Ic %window-pane-changed Ar window-id Ar pane-id
+The active pane in the window with ID
+.Ar window-id
+changed to the pane with ID
+.Ar pane-id .
 .It Ic %window-renamed Ar window-id Ar name
 The window with ID
 .Ar window-id

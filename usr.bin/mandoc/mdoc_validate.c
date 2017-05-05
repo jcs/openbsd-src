@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_validate.c,v 1.238 2017/04/29 12:43:55 schwarze Exp $ */
+/*	$OpenBSD: mdoc_validate.c,v 1.242 2017/05/05 15:16:25 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -225,11 +225,8 @@ static	const v_post __mdoc_valids[MDOC_MAX - MDOC_Dd] = {
 	post_en,	/* En */
 	post_xx,	/* Dx */
 	NULL,		/* %Q */
-	post_par,	/* br */
-	post_par,	/* sp */
 	NULL,		/* %U */
 	NULL,		/* Ta */
-	NULL,		/* ll */
 };
 static	const v_post *const mdoc_valids = __mdoc_valids - MDOC_Dd;
 
@@ -325,6 +322,20 @@ mdoc_node_validate(struct roff_man *mdoc)
 
 		/* Call the macro's postprocessor. */
 
+		if (n->tok < ROFF_MAX) {
+			switch(n->tok) {
+			case ROFF_br:
+			case ROFF_sp:
+				post_par(mdoc);
+				break;
+			default:
+				roff_validate(mdoc);
+				break;
+			}
+			break;
+		}
+
+		assert(n->tok >= MDOC_Dd && n->tok < MDOC_MAX);
 		p = mdoc_valids + n->tok;
 		if (*p)
 			(*p)(mdoc);
@@ -1298,7 +1309,7 @@ post_bl_block(POST_ARGS)
 			switch (nc->tok) {
 			case MDOC_Pp:
 			case MDOC_Lp:
-			case MDOC_br:
+			case ROFF_br:
 				break;
 			default:
 				nc = NULL;
@@ -2052,7 +2063,7 @@ post_prevpar(POST_ARGS)
 
 	if (n->prev->tok != MDOC_Pp &&
 	    n->prev->tok != MDOC_Lp &&
-	    n->prev->tok != MDOC_br)
+	    n->prev->tok != ROFF_br)
 		return;
 	if (n->tok == MDOC_Bl && n->norm->Bl.comp)
 		return;
@@ -2073,10 +2084,10 @@ post_par(POST_ARGS)
 	struct roff_node *np;
 
 	np = mdoc->last;
-	if (np->tok != MDOC_br && np->tok != MDOC_sp)
+	if (np->tok != ROFF_br && np->tok != ROFF_sp)
 		post_prevpar(mdoc);
 
-	if (np->tok == MDOC_sp) {
+	if (np->tok == ROFF_sp) {
 		if (np->child != NULL && np->child->next != NULL)
 			mandoc_vmsg(MANDOCERR_ARG_EXCESS, mdoc->parse,
 			    np->child->next->line, np->child->next->pos,
@@ -2091,8 +2102,8 @@ post_par(POST_ARGS)
 		if (np->tok != MDOC_Sh && np->tok != MDOC_Ss)
 			return;
 	} else if (np->tok != MDOC_Pp && np->tok != MDOC_Lp &&
-	    (mdoc->last->tok != MDOC_br ||
-	     (np->tok != MDOC_sp && np->tok != MDOC_br)))
+	    (mdoc->last->tok != ROFF_br ||
+	     (np->tok != ROFF_sp && np->tok != ROFF_br)))
 		return;
 
 	mandoc_vmsg(MANDOCERR_PAR_SKIP, mdoc->parse,

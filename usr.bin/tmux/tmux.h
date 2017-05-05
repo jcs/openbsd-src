@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.755 2017/04/28 19:13:55 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.758 2017/05/04 07:16:43 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -43,6 +43,7 @@ struct client;
 struct cmdq_item;
 struct cmdq_list;
 struct environ;
+struct format_job_tree;
 struct input_ctx;
 struct mode_key_cmdstr;
 struct mouse_event;
@@ -1290,6 +1291,7 @@ struct client {
 	struct timeval	 activity_time;
 
 	struct environ	*environ;
+	struct format_job_tree	*jobs;
 
 	char		*title;
 	const char	*cwd;
@@ -1501,7 +1503,8 @@ char		*paste_make_sample(struct paste_buffer *);
 #define FORMAT_PANE 0x80000000U
 #define FORMAT_WINDOW 0x40000000U
 struct format_tree;
-struct format_tree *format_create(struct cmdq_item *, int, int);
+struct format_tree *format_create(struct client *, struct cmdq_item *, int,
+		     int);
 void		 format_free(struct format_tree *);
 void printflike(3, 4) format_add(struct format_tree *, const char *,
 		     const char *, ...);
@@ -1517,6 +1520,7 @@ void		 format_defaults_pane(struct format_tree *,
 		     struct window_pane *);
 void		 format_defaults_paste_buffer(struct format_tree *,
 		     struct paste_buffer *);
+void		 format_lost_client(struct client *);
 
 /* hooks.c */
 struct hook;
@@ -2167,6 +2171,7 @@ void		 window_copy_vadd(struct window_pane *, const char *, va_list);
 void		 window_copy_pageup(struct window_pane *, int);
 void		 window_copy_start_drag(struct client *, struct mouse_event *);
 int		 window_copy_scroll_position(struct window_pane *);
+const char	*window_copy_search_string(struct window_pane *);
 
 /* window-choose.c */
 extern const struct window_mode window_choose_mode;
@@ -2203,7 +2208,9 @@ void	control_write_buffer(struct client *, struct evbuffer *);
 /* control-notify.c */
 void	control_notify_input(struct client *, struct window_pane *,
 	    struct evbuffer *);
+void	control_notify_pane_mode_changed(int);
 void	control_notify_window_layout_changed(struct window *);
+void	control_notify_window_pane_changed(struct window *);
 void	control_notify_window_unlinked(struct session *, struct window *);
 void	control_notify_window_linked(struct session *, struct window *);
 void	control_notify_window_renamed(struct window *);
@@ -2211,6 +2218,7 @@ void	control_notify_client_session_changed(struct client *);
 void	control_notify_session_renamed(struct session *);
 void	control_notify_session_created(struct session *);
 void	control_notify_session_closed(struct session *);
+void	control_notify_session_window_changed(struct session *);
 
 /* session.c */
 extern struct sessions sessions;

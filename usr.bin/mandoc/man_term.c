@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_term.c,v 1.145 2017/04/24 23:06:09 schwarze Exp $ */
+/*	$OpenBSD: man_term.c,v 1.150 2017/05/05 15:16:25 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -78,12 +78,9 @@ static	int		  pre_SS(DECL_ARGS);
 static	int		  pre_TP(DECL_ARGS);
 static	int		  pre_UR(DECL_ARGS);
 static	int		  pre_alternate(DECL_ARGS);
-static	int		  pre_ft(DECL_ARGS);
 static	int		  pre_ign(DECL_ARGS);
 static	int		  pre_in(DECL_ARGS);
 static	int		  pre_literal(DECL_ARGS);
-static	int		  pre_ll(DECL_ARGS);
-static	int		  pre_sp(DECL_ARGS);
 
 static	void		  post_IP(DECL_ARGS);
 static	void		  post_HP(DECL_ARGS);
@@ -114,8 +111,6 @@ static	const struct termact __termacts[MAN_MAX - MAN_TH] = {
 	{ pre_I, NULL, 0 }, /* I */
 	{ pre_alternate, NULL, 0 }, /* IR */
 	{ pre_alternate, NULL, 0 }, /* RI */
-	{ pre_sp, NULL, MAN_NOTEXT }, /* br */
-	{ pre_sp, NULL, MAN_NOTEXT }, /* sp */
 	{ pre_literal, NULL, 0 }, /* nf */
 	{ pre_literal, NULL, 0 }, /* fi */
 	{ NULL, NULL, 0 }, /* RE */
@@ -125,13 +120,11 @@ static	const struct termact __termacts[MAN_MAX - MAN_TH] = {
 	{ pre_PD, NULL, MAN_NOTEXT }, /* PD */
 	{ pre_ign, NULL, 0 }, /* AT */
 	{ pre_in, NULL, MAN_NOTEXT }, /* in */
-	{ pre_ft, NULL, MAN_NOTEXT }, /* ft */
 	{ pre_OP, NULL, 0 }, /* OP */
 	{ pre_literal, NULL, 0 }, /* EX */
 	{ pre_literal, NULL, 0 }, /* EE */
 	{ pre_UR, post_UR, 0 }, /* UR */
 	{ NULL, NULL, 0 }, /* UE */
-	{ pre_ll, NULL, MAN_NOTEXT }, /* ll */
 };
 static	const struct termact *termacts = __termacts - MAN_TH;
 
@@ -214,14 +207,6 @@ static int
 pre_ign(DECL_ARGS)
 {
 
-	return 0;
-}
-
-static int
-pre_ll(DECL_ARGS)
-{
-
-	term_setwidth(p, n->child != NULL ? n->child->string : NULL);
 	return 0;
 }
 
@@ -361,41 +346,6 @@ pre_OP(DECL_ARGS)
 }
 
 static int
-pre_ft(DECL_ARGS)
-{
-	const char	*cp;
-
-	if (NULL == n->child) {
-		term_fontlast(p);
-		return 0;
-	}
-
-	cp = n->child->string;
-	switch (*cp) {
-	case '4':
-	case '3':
-	case 'B':
-		term_fontrepl(p, TERMFONT_BOLD);
-		break;
-	case '2':
-	case 'I':
-		term_fontrepl(p, TERMFONT_UNDER);
-		break;
-	case 'P':
-		term_fontlast(p);
-		break;
-	case '1':
-	case 'C':
-	case 'R':
-		term_fontrepl(p, TERMFONT_NONE);
-		break;
-	default:
-		break;
-	}
-	return 0;
-}
-
-static int
 pre_in(DECL_ARGS)
 {
 	struct roffsu	 su;
@@ -433,57 +383,6 @@ pre_in(DECL_ARGS)
 		p->offset = v;
 	if (p->offset > SHRT_MAX)
 		p->offset = term_len(p, p->defindent);
-
-	return 0;
-}
-
-static int
-pre_sp(DECL_ARGS)
-{
-	struct roffsu	 su;
-	int		 i, len;
-
-	if ((NULL == n->prev && n->parent)) {
-		switch (n->parent->tok) {
-		case MAN_SH:
-		case MAN_SS:
-		case MAN_PP:
-		case MAN_LP:
-		case MAN_P:
-			return 0;
-		default:
-			break;
-		}
-	}
-
-	if (n->tok == MAN_br)
-		len = 0;
-	else if (n->child == NULL)
-		len = 1;
-	else {
-		if ( ! a2roffsu(n->child->string, &su, SCALE_VS))
-			su.scale = 1.0;
-		len = term_vspan(p, &su);
-	}
-
-	if (len == 0)
-		term_newln(p);
-	else if (len < 0)
-		p->skipvsp -= len;
-	else
-		for (i = 0; i < len; i++)
-			term_vspace(p);
-
-	/*
-	 * Handle an explicit break request in the same way
-	 * as an overflowing line.
-	 */
-
-	if (p->flags & TERMP_BRIND) {
-		p->offset = p->rmargin;
-		p->rmargin = p->maxrmargin;
-		p->flags &= ~(TERMP_NOBREAK | TERMP_BRIND);
-	}
 
 	return 0;
 }
@@ -985,6 +884,12 @@ print_man_node(DECL_ARGS)
 		break;
 	}
 
+	if (n->tok < ROFF_MAX) {
+		roff_term_pre(p, n);
+		return;
+	}
+
+	assert(n->tok >= MAN_TH && n->tok <= MAN_MAX);
 	if ( ! (MAN_NOTEXT & termacts[n->tok].flags))
 		term_fontrepl(p, TERMFONT_NONE);
 

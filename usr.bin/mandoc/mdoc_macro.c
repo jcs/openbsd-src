@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_macro.c,v 1.177 2017/04/29 12:43:55 schwarze Exp $ */
+/*	$OpenBSD: mdoc_macro.c,v 1.180 2017/05/05 15:16:25 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010, 2012-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -195,11 +195,8 @@ const	struct mdoc_macro __mdoc_macros[MDOC_MAX - MDOC_Dd] = {
 	{ blk_part_imp, MDOC_CALLABLE | MDOC_PARSED | MDOC_JOIN }, /* En */
 	{ in_line_argn, MDOC_CALLABLE | MDOC_PARSED }, /* Dx */
 	{ in_line_eoln, MDOC_JOIN }, /* %Q */
-	{ in_line_eoln, 0 }, /* br */
-	{ in_line_eoln, 0 }, /* sp */
 	{ in_line_eoln, 0 }, /* %U */
 	{ phrase_ta, MDOC_CALLABLE | MDOC_PARSED | MDOC_JOIN }, /* Ta */
-	{ in_line_eoln, MDOC_PROLOGUE }, /* ll */
 };
 const	struct mdoc_macro *const mdoc_macros = __mdoc_macros - MDOC_Dd;
 
@@ -249,9 +246,8 @@ lookup(struct roff_man *mdoc, int from, int line, int ppos, const char *p)
 		if (res != TOKEN_NONE) {
 			if (mdoc_macros[res].flags & MDOC_CALLABLE)
 				return res;
-			if (res != MDOC_br && res != MDOC_sp && res != MDOC_ll)
-				mandoc_msg(MANDOCERR_MACRO_CALL,
-				    mdoc->parse, line, ppos, p);
+			mandoc_msg(MANDOCERR_MACRO_CALL,
+			    mdoc->parse, line, ppos, p);
 		}
 	}
 	return TOKEN_NONE;
@@ -680,8 +676,8 @@ blk_exp_close(MACRO_PROT_ARGS)
 			 * Stray .Ec without previous .Eo:
 			 * Break the output line, keep the arguments.
 			 */
-			roff_elem_alloc(mdoc, line, ppos, MDOC_br);
-			rew_elem(mdoc, MDOC_br);
+			roff_elem_alloc(mdoc, line, ppos, ROFF_br);
+			rew_elem(mdoc, ROFF_br);
 		}
 	} else if (endbody == NULL) {
 		rew_last(mdoc, body);
@@ -1021,8 +1017,8 @@ blk_full(MACRO_PROT_ARGS)
 		if (tok == MDOC_It && (n == NULL || n->tok != MDOC_Bl)) {
 			mandoc_vmsg(MANDOCERR_IT_STRAY, mdoc->parse,
 			    line, ppos, "It %s", buf + *pos);
-			roff_elem_alloc(mdoc, line, ppos, MDOC_br);
-			rew_elem(mdoc, MDOC_br);
+			roff_elem_alloc(mdoc, line, ppos, ROFF_br);
+			rew_elem(mdoc, ROFF_br);
 			return;
 		}
 	}

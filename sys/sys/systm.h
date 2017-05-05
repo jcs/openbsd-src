@@ -1,4 +1,4 @@
-/*	$OpenBSD: systm.h,v 1.126 2017/04/20 13:20:17 visa Exp $	*/
+/*	$OpenBSD: systm.h,v 1.128 2017/04/30 16:45:46 mpi Exp $	*/
 /*	$NetBSD: systm.h,v 1.50 1996/06/09 04:55:09 briggs Exp $	*/
 
 /*-
@@ -338,9 +338,9 @@ extern int (*mountroot)(void);
 #define memmove(d, s, n)	__builtin_memmove((d), (s), (n))
 #endif
 
-#if defined(DDB) || defined(KGDB)
+#if defined(DDB)
 /* debugger entry points */
-void	Debugger(void);	/* in DDB only */
+void	db_enter(void);	/* in DDB only */
 #endif
 
 #ifdef BOOT_CONFIG

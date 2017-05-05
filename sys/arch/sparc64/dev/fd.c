@@ -1,4 +1,4 @@
-/*	$OpenBSD: fd.c,v 1.46 2016/06/07 06:37:33 dlg Exp $	*/
+/*	$OpenBSD: fd.c,v 1.48 2017/05/04 22:47:27 deraadt Exp $	*/
 /*	$NetBSD: fd.c,v 1.112 2003/08/07 16:29:35 agc Exp $	*/
 
 /*-
@@ -1420,7 +1420,7 @@ loop:
 
 	case DSKCHGWAIT:
 		timeout_del(&fdc->fdctimeout_to);
-		disk_unbusy(&fd->sc_dk, 0, 0);
+		disk_unbusy(&fd->sc_dk, 0, 0, 0);
 		if (fdc->sc_nstat != 2 || (st0 & 0xf8) != 0x20 ||
 		    cyl != 1 * fd->sc_type->step) {
 			fdcstatus(fdc, "dskchg seek failed");
@@ -1459,7 +1459,7 @@ loop:
 				printf("fdcintr: block %lld != blkno %lld\n",
 				    (long long)block, (long long)fd->sc_blkno);
 #if defined(FD_DEBUG) && defined(DDB)
-				 Debugger();
+				 db_enter();
 #endif
 			}
 		}
@@ -1525,7 +1525,7 @@ loop:
 		/*FALLTHROUGH*/
 	case SEEKCOMPLETE:
 		/* no data on seek */
-		disk_unbusy(&fd->sc_dk, 0, 0);
+		disk_unbusy(&fd->sc_dk, 0, 0, 0);
 
 		/* Make sure seek really happened. */
 		if (fdc->sc_nstat != 2 || (st0 & 0xf8) != 0x20 ||
@@ -1570,7 +1570,7 @@ loop:
 	case IOCLEANUPWAIT: /* IO FAILED, cleanup succeeded */
 		timeout_del(&fdc->fdctimeout_to);
 		disk_unbusy(&fd->sc_dk, (bp->b_bcount - bp->b_resid),
-		    (bp->b_flags & B_READ));
+		    bp->b_blkno, (bp->b_flags & B_READ));
 		fdcretry(fdc);
 		goto loop;
 
@@ -1578,7 +1578,7 @@ loop:
 		timeout_del(&fdc->fdctimeout_to);
 
 		disk_unbusy(&fd->sc_dk, (bp->b_bcount - bp->b_resid),
-		    (bp->b_flags & B_READ));
+		    bp->b_blkno, (bp->b_flags & B_READ));
 
 		if (fdc->sc_nstat != 7 || st1 != 0 ||
 		    ((st0 & 0xf8) != 0 &&

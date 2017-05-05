@@ -1,4 +1,4 @@
-/*	$OpenBSD: pluart.c,v 1.2 2017/04/11 15:16:14 kettenis Exp $	*/
+/*	$OpenBSD: pluart.c,v 1.4 2017/04/30 16:45:45 mpi Exp $	*/
 
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>
@@ -146,7 +146,6 @@ struct pluart_softc {
 #define COM_HW_FIFO     0x02
 #define COM_HW_SIR      0x20
 #define COM_HW_CONSOLE  0x40
-#define COM_HW_KGDB     0x80
 	u_int8_t	sc_swflags;
 #define COM_SW_SOFTCAR  0x01
 #define COM_SW_CLOCAL   0x02
@@ -315,7 +314,7 @@ pluart_intr(void *arg)
 #ifdef DDB
 			if (ISSET(sc->sc_hwflags, COM_HW_CONSOLE)) {
 				if (db_console)
-					Debugger();
+					db_enter();
 				continue;
 			}
 #endif

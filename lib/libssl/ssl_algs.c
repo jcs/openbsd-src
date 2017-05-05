@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_algs.c,v 1.24 2017/03/01 14:01:24 jsing Exp $ */
+/* $OpenBSD: ssl_algs.c,v 1.26 2017/04/29 22:31:42 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
