@@ -1,4 +1,4 @@
-/* $OpenBSD: tls.c,v 1.61 2017/04/05 03:19:22 beck Exp $ */
+/* $OpenBSD: tls.c,v 1.63 2017/05/07 01:59:34 jsing Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -49,6 +49,8 @@ tls_init(void)
 
 	if ((tls_config_default = tls_config_new()) == NULL)
 		return (-1);
+
+	tls_config_default->refcount++;
 
 	tls_initialised = 1;
 
@@ -230,9 +232,8 @@ tls_new(void)
 	if ((ctx = calloc(1, sizeof(*ctx))) == NULL)
 		return (NULL);
 
-	ctx->config = tls_config_default;
-
 	tls_reset(ctx);
+	tls_configure(ctx, tls_config_default);
 
 	return (ctx);
 }
@@ -243,6 +244,9 @@ tls_configure(struct tls *ctx, struct tls_config *config)
 	if (config == NULL)
 		config = tls_config_default;
 
+	config->refcount++;
+
+	tls_config_free(ctx->config);
 	ctx->config = config;
 
 	if ((ctx->flags & TLS_SERVER) != 0)
@@ -521,6 +525,9 @@ tls_reset(struct tls *ctx)
 {
 	struct tls_sni_ctx *sni, *nsni;
 
+	tls_config_free(ctx->config);
+	ctx->config = NULL;
+
 	SSL_CTX_free(ctx->ssl_ctx);
 	SSL_free(ctx->ssl_conn);
 	X509_free(ctx->ssl_peer_cert);
@@ -617,6 +624,11 @@ tls_handshake(struct tls *ctx)
 
 	if ((ctx->flags & (TLS_CLIENT | TLS_SERVER_CONN)) == 0) {
 		tls_set_errorx(ctx, "invalid operation for context");
+		goto out;
+	}
+
+	if ((ctx->state & TLS_HANDSHAKE_COMPLETE) != 0) {
+		tls_set_errorx(ctx, "handshake already completed");
 		goto out;
 	}
 

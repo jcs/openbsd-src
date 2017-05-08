@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.178 2017/05/04 09:03:42 stsp Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.181 2017/05/08 14:27:28 stsp Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>
@@ -241,7 +241,7 @@ struct iwm_nvm_section {
 	uint8_t *data;
 };
 
-int	iwm_is_mimo_plcp(uint8_t);
+int	iwm_is_mimo_ht_plcp(uint8_t);
 int	iwm_is_mimo_mcs(int);
 int	iwm_store_cscheme(struct iwm_softc *, uint8_t *, size_t);
 int	iwm_firmware_store_section(struct iwm_softc *, enum iwm_ucode_type,
@@ -908,6 +908,11 @@ iwm_nic_lock(struct iwm_softc *sc)
 {
 	int rv = 0;
 
+	if (sc->sc_nic_locks > 0) {
+		sc->sc_nic_locks++;
+		return 1; /* already locked */
+	}
+
 	IWM_SETBITS(sc, IWM_CSR_GP_CNTRL,
 	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_ACCESS_REQ);
 
@@ -919,6 +924,7 @@ iwm_nic_lock(struct iwm_softc *sc)
 	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY
 	     | IWM_CSR_GP_CNTRL_REG_FLAG_GOING_TO_SLEEP, 15000)) {
 	    	rv = 1;
+		sc->sc_nic_locks++;
 	} else {
 		printf("%s: acquiring device failed\n", DEVNAME(sc));
 		IWM_WRITE(sc, IWM_CSR_RESET, IWM_CSR_RESET_REG_FLAG_FORCE_NMI);
@@ -930,8 +936,12 @@ iwm_nic_lock(struct iwm_softc *sc)
 void
 iwm_nic_unlock(struct iwm_softc *sc)
 {
-	IWM_CLRBITS(sc, IWM_CSR_GP_CNTRL,
-	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_ACCESS_REQ);
+	if (sc->sc_nic_locks > 0) {
+		if (--sc->sc_nic_locks == 0)
+			IWM_CLRBITS(sc, IWM_CSR_GP_CNTRL,
+			    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_ACCESS_REQ);
+	} else
+		printf("%s: NIC already unlocked\n", DEVNAME(sc));
 }
 
 void
@@ -1211,6 +1221,11 @@ iwm_reset_tx_ring(struct iwm_softc *sc, struct iwm_tx_ring *ring)
 	bus_dmamap_sync(sc->sc_dmat, ring->desc_dma.map, 0,
 	    ring->desc_dma.size, BUS_DMASYNC_PREWRITE);
 	sc->qfullmsk &= ~(1 << ring->qid);
+	/* 7000 family NICs are locked while commands are in progress. */
+	if (ring->qid == IWM_CMD_QUEUE && ring->queued > 0) {
+		if (sc->sc_device_family == IWM_DEVICE_FAMILY_7000)
+			iwm_nic_unlock(sc);
+	}
 	ring->queued = 0;
 	ring->cur = 0;
 }
@@ -1589,6 +1604,10 @@ iwm_stop_device(struct iwm_softc *sc)
 	/* Make sure (redundant) we've released our request to stay awake */
 	IWM_CLRBITS(sc, IWM_CSR_GP_CNTRL,
 	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_ACCESS_REQ);
+	if (sc->sc_nic_locks > 0)
+		printf("%s: %d active NIC locks forcefully cleared\n",
+		    DEVNAME(sc), sc->sc_nic_locks);
+	sc->sc_nic_locks = 0;
 
 	/* Stop the device, and put it in low power state */
 	iwm_apm_stop(sc);
@@ -3611,6 +3630,7 @@ iwm_send_cmd(struct iwm_softc *sc, struct iwm_host_cmd *hcmd)
 	int group_id;
 	size_t hdrlen, datasz;
 	uint8_t *data;
+	int generation = sc->sc_generation;
 
 	code = hcmd->id;
 	async = hcmd->flags & IWM_CMD_ASYNC;
@@ -3632,7 +3652,7 @@ iwm_send_cmd(struct iwm_softc *sc, struct iwm_host_cmd *hcmd)
 	 * Is the hardware still available?  (after e.g. above wait).
 	 */
 	s = splnet();
-	if (sc->sc_flags & IWM_FLAG_STOPPED) {
+	if (generation != sc->sc_generation) {
 		err = ENXIO;
 		goto out;
 	}
@@ -3724,26 +3744,27 @@ iwm_send_cmd(struct iwm_softc *sc, struct iwm_host_cmd *hcmd)
 	    (char *)(void *)desc - (char *)(void *)ring->desc_dma.vaddr,
 	    sizeof (*desc), BUS_DMASYNC_PREWRITE);
 
-	IWM_SETBITS(sc, IWM_CSR_GP_CNTRL,
-	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_ACCESS_REQ);
-	if (!iwm_poll_bit(sc, IWM_CSR_GP_CNTRL,
-	    IWM_CSR_GP_CNTRL_REG_VAL_MAC_ACCESS_EN,
-	    (IWM_CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY |
-	     IWM_CSR_GP_CNTRL_REG_FLAG_GOING_TO_SLEEP), 15000)) {
-		printf("%s: acquiring device failed\n", DEVNAME(sc));
-		err = EBUSY;
-		goto out;
+	/*
+	 * Wake up the NIC to make sure that the firmware will see the host
+	 * command - we will let the NIC sleep once all the host commands
+	 * returned. This needs to be done only on 7000 family NICs.
+	 */
+	if (sc->sc_device_family == IWM_DEVICE_FAMILY_7000) {
+		if (ring->queued == 0 && !iwm_nic_lock(sc)) {
+			err = EBUSY;
+			goto out;
+		}
 	}
 
 #if 0
 	iwm_update_sched(sc, ring->qid, ring->cur, 0, 0);
 #endif
 	/* Kick command ring. */
+	ring->queued++;
 	ring->cur = (ring->cur + 1) % IWM_TX_RING_COUNT;
 	IWM_WRITE(sc, IWM_HBUS_TARG_WRPTR, ring->qid << 8 | ring->cur);
 
 	if (!async) {
-		int generation = sc->sc_generation;
 		err = tsleep(desc, PCATCH, "iwmcmd", hz);
 		if (err == 0) {
 			/* if hardware is no longer up, return error */
@@ -3859,6 +3880,18 @@ iwm_cmd_done(struct iwm_softc *sc, struct iwm_rx_packet *pkt)
 		data->m = NULL;
 	}
 	wakeup(&ring->desc[pkt->hdr.idx]);
+
+	if (ring->queued == 0) {
+		DPRINTF(("%s: unexpected firmware response to command 0x%x\n",
+		    DEVNAME(sc), IWM_WIDE_ID(pkt->hdr.flags, pkt->hdr.code)));
+	} else if (--ring->queued == 0) {
+		/* 
+		 * 7000 family NICs are locked while commands are in progress.
+		 * All commands are now done so we may unlock the NIC again.
+		 */
+		if (sc->sc_device_family == IWM_DEVICE_FAMILY_7000)
+			iwm_nic_unlock(sc);
+	}
 }
 
 #if 0
@@ -5375,8 +5408,9 @@ iwm_setrates(struct iwm_node *in)
 		if (j >= nitems(lq->rs_table))
 			break;
 		tab = 0;
-		if ((ni->ni_flags & IEEE80211_NODE_HT) &&
-		    ht_plcp != IWM_RATE_HT_SISO_MCS_INV_PLCP) {
+		if (ni->ni_flags & IEEE80211_NODE_HT) {
+		    	if (ht_plcp == IWM_RATE_HT_SISO_MCS_INV_PLCP)
+				continue;
 	 		/* Do not mix SISO and MIMO HT rates. */
 			if ((mimo && !iwm_is_mimo_ht_plcp(ht_plcp)) ||
 			    (!mimo && iwm_is_mimo_ht_plcp(ht_plcp)))
@@ -5392,8 +5426,7 @@ iwm_setrates(struct iwm_node *in)
 					break;
 				}
 			}
-		}
-		if (tab == 0 && plcp != IWM_RATE_INVM_PLCP) {
+		} else if (plcp != IWM_RATE_INVM_PLCP) {
 			for (i = ni->ni_txrate; i >= 0; i--) {
 				if (iwm_rates[ridx].rate == (rs->rs_rates[i] &
 				    IEEE80211_RATE_VAL)) {
@@ -5416,10 +5449,16 @@ iwm_setrates(struct iwm_node *in)
 		lq->rs_table[j++] = htole32(tab);
 	}
 
+	lq->mimo_delim = (mimo ? j : 0);
+
 	/* Fill the rest with the lowest possible rate */
-	i = j > 0 ? j - 1 : 0;
-	while (j < nitems(lq->rs_table))
-		lq->rs_table[j++] = lq->rs_table[i];
+	while (j < nitems(lq->rs_table)) {
+		tab = iwm_rates[ridx_min].plcp;
+		if (IWM_RIDX_IS_CCK(ridx_min))
+			tab |= IWM_RATE_MCS_CCK_MSK;
+		tab |= IWM_RATE_MCS_ANT_A_MSK;
+		lq->rs_table[j++] = htole32(tab);
+	}
 
 	lq->single_stream_ant_msk = IWM_ANT_A;
 	lq->dual_stream_ant_msk = IWM_ANT_AB;
@@ -6733,9 +6772,6 @@ iwm_notif_intr(struct iwm_softc *sc)
 
 		ADVANCE_RXQ(sc);
 	}
-
-	IWM_CLRBITS(sc, IWM_CSR_GP_CNTRL,
-	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_ACCESS_REQ);
 
 	/*
 	 * Tell the firmware what we have processed.

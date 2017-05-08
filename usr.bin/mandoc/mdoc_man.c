@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_man.c,v 1.111 2017/05/05 15:16:25 schwarze Exp $ */
+/*	$OpenBSD: mdoc_man.c,v 1.113 2017/05/08 15:33:43 schwarze Exp $ */
 /*
  * Copyright (c) 2011-2017 Ingo Schwarze <schwarze@openbsd.org>
  *
@@ -99,10 +99,10 @@ static	int	  pre_in(DECL_ARGS);
 static	int	  pre_it(DECL_ARGS);
 static	int	  pre_lk(DECL_ARGS);
 static	int	  pre_li(DECL_ARGS);
-static	void	  pre_ll(DECL_ARGS);
 static	int	  pre_nm(DECL_ARGS);
 static	int	  pre_no(DECL_ARGS);
 static	int	  pre_ns(DECL_ARGS);
+static	void	  pre_onearg(DECL_ARGS);
 static	int	  pre_pp(DECL_ARGS);
 static	int	  pre_rs(DECL_ARGS);
 static	int	  pre_sm(DECL_ARGS);
@@ -110,6 +110,7 @@ static	void	  pre_sp(DECL_ARGS);
 static	int	  pre_sect(DECL_ARGS);
 static	int	  pre_sy(DECL_ARGS);
 static	void	  pre_syn(const struct roff_node *);
+static	void	  pre_ta(DECL_ARGS);
 static	int	  pre_vt(DECL_ARGS);
 static	int	  pre_xr(DECL_ARGS);
 static	void	  print_word(const char *);
@@ -124,8 +125,10 @@ static	void	  print_node(DECL_ARGS);
 static	const void_fp roff_manacts[ROFF_MAX] = {
 	pre_br,
 	pre_ft,
-	pre_ll,
+	pre_onearg,
 	pre_sp,
+	pre_ta,
+	pre_onearg,
 };
 
 static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
@@ -441,7 +444,6 @@ static void
 print_line(const char *s, int newflags)
 {
 
-	outflags &= ~MMAN_br;
 	outflags |= MMAN_nl;
 	print_word(s);
 	outflags |= newflags;
@@ -1562,9 +1564,12 @@ pre_lk(DECL_ARGS)
 }
 
 static void
-pre_ll(DECL_ARGS)
+pre_onearg(DECL_ARGS)
 {
-	print_line(".ll", 0);
+	outflags |= MMAN_nl;
+	print_word(".");
+	outflags &= ~MMAN_spc;
+	print_word(roff_name[n->tok]);
 	if (n->child != NULL)
 		print_word(n->child->string);
 	outflags |= MMAN_nl;
@@ -1711,6 +1716,15 @@ pre_sy(DECL_ARGS)
 
 	font_push('B');
 	return 1;
+}
+
+static void
+pre_ta(DECL_ARGS)
+{
+	print_line(".ta", 0);
+	for (n = n->child; n != NULL; n = n->next)
+		print_word(n->string);
+	outflags |= MMAN_nl;
 }
 
 static int

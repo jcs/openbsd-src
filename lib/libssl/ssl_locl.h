@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_locl.h,v 1.178 2017/03/10 16:03:27 jsing Exp $ */
+/* $OpenBSD: ssl_locl.h,v 1.181 2017/05/07 04:22:24 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -431,6 +431,21 @@ typedef struct ssl_session_internal_st {
 } SSL_SESSION_INTERNAL;
 #define SSI(s) (s->session->internal)
 
+typedef struct ssl_handshake_st {
+	/* state contains one of the SSL3_ST_* values. */
+	int state;
+
+	/* used when SSL_ST_FLUSH_DATA is entered */
+	int next_state;
+
+	/*  new_cipher is the cipher being negotiated in this handshake. */
+	const SSL_CIPHER *new_cipher;
+
+	/* key_block is the record-layer key block for TLS 1.2 and earlier. */
+	int key_block_len;
+	unsigned char *key_block;
+} SSL_HANDSHAKE;
+
 typedef struct ssl_ctx_internal_st {
 	uint16_t min_version;
 	uint16_t max_version;
@@ -764,7 +779,6 @@ typedef struct ssl_internal_st {
 		 	 * 2 if we are a server and are inside a handshake
 	                 * (i.e. not just sending a HelloRequest) */
 
-	int state;	/* where we are */
 	int rstate;	/* where we are when reading */
 
 	int mac_packet;
@@ -824,6 +838,8 @@ typedef struct ssl3_state_internal_st {
 
 	int in_read_app_data;
 
+	SSL_HANDSHAKE hs;
+
 	struct	{
 		/* actually only needs to be 16+20 */
 		unsigned char cert_verify_md[EVP_MAX_MD_SIZE*2];
@@ -837,16 +853,11 @@ typedef struct ssl3_state_internal_st {
 		unsigned long message_size;
 		int message_type;
 
-		/* used to hold the new cipher we are going to use */
-		const SSL_CIPHER *new_cipher;
 		DH *dh;
 
 		EC_KEY *ecdh; /* holds short lived ECDH key */
 
 		uint8_t *x25519;
-
-		/* used when SSL_ST_FLUSH_DATA is entered */
-		int next_state;
 
 		int reuse_message;
 
@@ -855,9 +866,6 @@ typedef struct ssl3_state_internal_st {
 		int ctype_num;
 		char ctype[SSL3_CT_NUMBER];
 		STACK_OF(X509_NAME) *ca_names;
-
-		int key_block_length;
-		unsigned char *key_block;
 
 		const EVP_CIPHER *new_sym_enc;
 		const EVP_AEAD *new_aead;
@@ -1061,6 +1069,10 @@ const char *ssl_version_string(int ver);
 int ssl_enabled_version_range(SSL *s, uint16_t *min_ver, uint16_t *max_ver);
 int ssl_supported_version_range(SSL *s, uint16_t *min_ver, uint16_t *max_ver);
 int ssl_max_shared_version(SSL *s, uint16_t peer_ver, uint16_t *max_ver);
+int ssl_version_set_min(const SSL_METHOD *meth, uint16_t ver, uint16_t max_ver,
+    uint16_t *out_ver);
+int ssl_version_set_max(const SSL_METHOD *meth, uint16_t ver, uint16_t min_ver,
+    uint16_t *out_ver);
 uint16_t ssl_max_server_version(SSL *s);
 
 const SSL_METHOD *dtls1_get_client_method(int ver);
@@ -1369,9 +1381,9 @@ int ssl3_cbc_digest_record(const EVP_MD_CTX *ctx, unsigned char *md_out,
     unsigned mac_secret_length);
 int SSL_state_func_code(int _state);
 
-#define SSLerror(s, r)  ERR_PUT_error(ERR_LIB_SSL,			\
-    (SSL_state_func_code(s->internal->state)),(r),__FILE__,__LINE__)
+#define SSLerror(s, r) SSL_error_internal(s, r, __FILE__, __LINE__)
 #define SSLerrorx(r) ERR_PUT_error(ERR_LIB_SSL,(0xfff),(r),__FILE__,__LINE__)
+void SSL_error_internal(const SSL *s, int r, char *f, int l);
 
 __END_HIDDEN_DECLS
 

@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_internal.h,v 1.58 2017/05/04 11:31:45 claudio Exp $ */
+/* $OpenBSD: tls_internal.h,v 1.60 2017/05/07 03:27:06 jsing Exp $ */
 /*
  * Copyright (c) 2014 Jeremie Courreges-Anglas <jca@openbsd.org>
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
@@ -75,6 +75,8 @@ struct tls_ticket_key {
 struct tls_config {
 	struct tls_error error;
 
+	int refcount;
+
 	char *alpn;
 	size_t alpn_len;
 	const char *ca_path;
@@ -122,8 +124,9 @@ struct tls_conninfo {
 #define TLS_SERVER_CONN		(1 << 2)
 
 #define TLS_EOF_NO_CLOSE_NOTIFY	(1 << 0)
-#define TLS_HANDSHAKE_COMPLETE	(1 << 1)
-#define TLS_SSL_NEEDS_SHUTDOWN  (1 << 2)
+#define TLS_CONNECTED		(1 << 1)
+#define TLS_HANDSHAKE_COMPLETE	(1 << 2)
+#define TLS_SSL_NEEDS_SHUTDOWN	(1 << 3)
 
 struct tls_ocsp_result {
 	const char *result_msg;

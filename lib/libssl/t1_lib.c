@@ -1,4 +1,4 @@
-/* $OpenBSD: t1_lib.c,v 1.115 2017/02/07 02:08:38 beck Exp $ */
+/* $OpenBSD: t1_lib.c,v 1.117 2017/05/07 04:22:24 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -967,7 +967,7 @@ skip_ext:
 		 * includes the 5-byte record header in the buffer, while the
 		 * code in s3_clnt.c does not.
 		 */
-		if (s->internal->state == SSL23_ST_CW_CLNT_HELLO_A)
+		if (S3I(s)->hs.state == SSL23_ST_CW_CLNT_HELLO_A)
 			hlen -= 5;
 		if (hlen > 0xff && hlen < 0x200) {
 			hlen = 0x200 - hlen;
@@ -998,8 +998,8 @@ ssl_add_serverhello_tlsext(SSL *s, unsigned char *p, unsigned char *limit)
 	unsigned char *ret = p;
 	int next_proto_neg_seen;
 
-	alg_a = S3I(s)->tmp.new_cipher->algorithm_auth;
-	alg_k = S3I(s)->tmp.new_cipher->algorithm_mkey;
+	alg_a = S3I(s)->hs.new_cipher->algorithm_auth;
+	alg_k = S3I(s)->hs.new_cipher->algorithm_mkey;
 	using_ecc = ((alg_k & SSL_kECDHE) || (alg_a & SSL_aECDSA)) &&
 	    SSI(s)->tlsext_ecpointformatlist != NULL;
 
@@ -1107,8 +1107,8 @@ ssl_add_serverhello_tlsext(SSL *s, unsigned char *p, unsigned char *limit)
 	}
 #endif
 
-	if (((S3I(s)->tmp.new_cipher->id & 0xFFFF) == 0x80 ||
-	    (S3I(s)->tmp.new_cipher->id & 0xFFFF) == 0x81) &&
+	if (((S3I(s)->hs.new_cipher->id & 0xFFFF) == 0x80 ||
+	    (S3I(s)->hs.new_cipher->id & 0xFFFF) == 0x81) &&
 	    (SSL_get_options(s) & SSL_OP_CRYPTOPRO_TLSEXT_BUG)) {
 		static const unsigned char cryptopro_ext[36] = {
 			0xfd, 0xe8, /*65000*/
@@ -1986,8 +1986,8 @@ ssl_check_serverhello_tlsext(SSL *s)
 	 * suite, then if server returns an EC point formats lists extension
 	 * it must contain uncompressed.
 	 */
-	unsigned long alg_k = S3I(s)->tmp.new_cipher->algorithm_mkey;
-	unsigned long alg_a = S3I(s)->tmp.new_cipher->algorithm_auth;
+	unsigned long alg_k = S3I(s)->hs.new_cipher->algorithm_mkey;
+	unsigned long alg_a = S3I(s)->hs.new_cipher->algorithm_auth;
 	if ((s->internal->tlsext_ecpointformatlist != NULL) &&
 	    (s->internal->tlsext_ecpointformatlist_length > 0) &&
 	    (SSI(s)->tlsext_ecpointformatlist != NULL) &&

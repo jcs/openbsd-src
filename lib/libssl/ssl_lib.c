@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_lib.c,v 1.158 2017/02/28 14:08:49 jsing Exp $ */
+/* $OpenBSD: ssl_lib.c,v 1.161 2017/05/07 04:22:24 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -183,8 +183,6 @@ SSL_clear(SSL *s)
 
 	s->internal->type = 0;
 
-	s->internal->state = SSL_ST_BEFORE|((s->server) ? SSL_ST_ACCEPT : SSL_ST_CONNECT);
-
 	s->version = s->method->internal->version;
 	s->client_version = s->version;
 	s->internal->rwstate = SSL_NOTHING;
@@ -211,6 +209,8 @@ SSL_clear(SSL *s)
 			return (0);
 	} else
 		s->method->internal->ssl_clear(s);
+
+	S3I(s)->hs.state = SSL_ST_BEFORE|((s->server) ? SSL_ST_ACCEPT : SSL_ST_CONNECT);
 
 	return (1);
 }
@@ -2088,7 +2088,7 @@ ssl_set_cert_masks(CERT *c, const SSL_CIPHER *cipher)
 int
 ssl_check_srvr_ecc_cert_and_alg(X509 *x, SSL *s)
 {
-	const SSL_CIPHER	*cs = S3I(s)->tmp.new_cipher;
+	const SSL_CIPHER	*cs = S3I(s)->hs.new_cipher;
 	unsigned long		 alg_a;
 
 	alg_a = cs->algorithm_auth;
@@ -2116,9 +2116,9 @@ ssl_get_server_send_pkey(const SSL *s)
 	int		 i;
 
 	c = s->cert;
-	ssl_set_cert_masks(c, S3I(s)->tmp.new_cipher);
+	ssl_set_cert_masks(c, S3I(s)->hs.new_cipher);
 
-	alg_a = S3I(s)->tmp.new_cipher->algorithm_auth;
+	alg_a = S3I(s)->hs.new_cipher->algorithm_auth;
 
 	if (alg_a & SSL_aECDSA) {
 		i = SSL_PKEY_ECC;
@@ -2189,9 +2189,9 @@ ssl_get_auto_dh(SSL *s)
 
 	if (s->cert->dh_tmp_auto == 2) {
 		keylen = 1024;
-	} else if (S3I(s)->tmp.new_cipher->algorithm_auth & SSL_aNULL) {
+	} else if (S3I(s)->hs.new_cipher->algorithm_auth & SSL_aNULL) {
 		keylen = 1024;
-		if (S3I(s)->tmp.new_cipher->strength_bits == 256)
+		if (S3I(s)->hs.new_cipher->strength_bits == 256)
 			keylen = 3072;
 	} else {
 		if ((cpk = ssl_get_server_send_pkey(s)) == NULL)
@@ -2397,7 +2397,7 @@ SSL_set_accept_state(SSL *s)
 {
 	s->server = 1;
 	s->internal->shutdown = 0;
-	s->internal->state = SSL_ST_ACCEPT|SSL_ST_BEFORE;
+	S3I(s)->hs.state = SSL_ST_ACCEPT|SSL_ST_BEFORE;
 	s->internal->handshake_func = s->method->internal->ssl_accept;
 	/* clear the current cipher */
 	ssl_clear_cipher_ctx(s);
@@ -2410,7 +2410,7 @@ SSL_set_connect_state(SSL *s)
 {
 	s->server = 0;
 	s->internal->shutdown = 0;
-	s->internal->state = SSL_ST_CONNECT|SSL_ST_BEFORE;
+	S3I(s)->hs.state = SSL_ST_CONNECT|SSL_ST_BEFORE;
 	s->internal->handshake_func = s->method->internal->ssl_connect;
 	/* clear the current cipher */
 	ssl_clear_cipher_ctx(s);
@@ -2544,7 +2544,7 @@ SSL_dup(SSL *s)
 	ret->internal->quiet_shutdown = s->internal->quiet_shutdown;
 	ret->internal->shutdown = s->internal->shutdown;
 	/* SSL_dup does not really work at any state, though */
-	ret->internal->state = s->internal->state;
+	S3I(ret)->hs.state = S3I(s)->hs.state;
 	ret->internal->rstate = s->internal->rstate;
 
 	/*
@@ -2804,13 +2804,13 @@ void (*SSL_get_info_callback(const SSL *ssl))(const SSL *ssl, int type, int val)
 int
 SSL_state(const SSL *ssl)
 {
-	return (ssl->internal->state);
+	return (S3I(ssl)->hs.state);
 }
 
 void
 SSL_set_state(SSL *ssl, int state)
 {
-	ssl->internal->state = state;
+	S3I(ssl)->hs.state = state;
 }
 
 void
@@ -2969,6 +2969,33 @@ SSL_cache_hit(SSL *s)
 	return (s->internal->hit);
 }
 
+int
+SSL_CTX_set_min_proto_version(SSL_CTX *ctx, uint16_t version)
+{
+	return ssl_version_set_min(ctx->method, version,
+	    ctx->internal->max_version, &ctx->internal->min_version);
+}
+
+int
+SSL_CTX_set_max_proto_version(SSL_CTX *ctx, uint16_t version)
+{
+	return ssl_version_set_max(ctx->method, version,
+	    ctx->internal->min_version, &ctx->internal->max_version);
+}
+
+int
+SSL_set_min_proto_version(SSL *ssl, uint16_t version)
+{
+	return ssl_version_set_min(ssl->method, version,
+	    ssl->internal->max_version, &ssl->internal->min_version);
+}
+
+int
+SSL_set_max_proto_version(SSL *ssl, uint16_t version)
+{
+	return ssl_version_set_max(ssl->method, version,
+	    ssl->internal->min_version, &ssl->internal->max_version);
+}
 
 static int
 ssl_cipher_id_cmp_BSEARCH_CMP_FN(const void *a_, const void *b_)
