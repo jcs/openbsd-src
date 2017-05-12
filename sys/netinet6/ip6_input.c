@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_input.c,v 1.184 2017/05/08 08:46:39 rzalamena Exp $	*/
+/*	$OpenBSD: ip6_input.c,v 1.186 2017/05/12 14:04:09 bluhm Exp $	*/
 /*	$KAME: ip6_input.c,v 1.188 2001/03/29 05:34:31 itojun Exp $	*/
 
 /*
@@ -296,9 +296,9 @@ ip6_input(struct mbuf *m)
 	}
 
 #if NPF > 0
-        /*
-         * Packet filter
-         */
+	/*
+	 * Packet filter
+	 */
 	odst = ip6->ip6_dst;
 	if (pf_test(AF_INET6, PF_IN, ifp, &m) != PF_PASS)
 		goto bad;
@@ -469,6 +469,24 @@ ip6_input(struct mbuf *m)
 		KERNEL_UNLOCK();
 		goto out;
 	}
+
+#ifdef IPSEC
+	if (ipsec_in_use) {
+		int rv;
+
+		KERNEL_LOCK();
+		rv = ip_input_ipsec_fwd_check(m, off, AF_INET6);
+		KERNEL_UNLOCK();
+		if (rv != 0) {
+			ipstat_inc(ips_cantforward);
+			goto bad;
+		}
+		/*
+		 * Fall through, forward packet. Outbound IPsec policy
+		 * checking will occur in ip6_forward().
+		 */
+	}
+#endif /* IPSEC */
 
 	ip6_forward(m, rt, srcrt);
 	if_put(ifp);
@@ -1400,10 +1418,10 @@ ip6_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 #endif
 	case IPV6CTL_MTUDISCTIMEOUT:
 		error = sysctl_int(oldp, oldlenp, newp, newlen,
-		   &ip6_mtudisc_timeout);
+		    &ip6_mtudisc_timeout);
 		if (icmp6_mtudisc_timeout_q != NULL)
 			rt_timer_queue_change(icmp6_mtudisc_timeout_q,
-					      ip6_mtudisc_timeout);
+			    ip6_mtudisc_timeout);
 		return (error);
 	case IPV6CTL_IFQUEUE:
 		return (sysctl_niq(name + 1, namelen - 1,

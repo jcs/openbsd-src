@@ -1,4 +1,4 @@
-/*	$OpenBSD: generic3a_machdep.c,v 1.4 2017/02/19 08:59:41 visa Exp $	*/
+/*	$OpenBSD: generic3a_machdep.c,v 1.7 2017/05/10 16:04:21 visa Exp $	*/
 
 /*
  * Copyright (c) 2009, 2010, 2012 Miodrag Vallat.
@@ -25,6 +25,7 @@
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/proc.h>
+#include <sys/timetc.h>
 
 #include <mips64/archtype.h>
 #include <mips64/loongson3.h>
@@ -46,6 +47,15 @@
 #include <loongson/dev/htbvar.h>
 #include <loongson/dev/leiocvar.h>
 
+#define HPET_FREQ		14318780
+#define HPET_MMIO_BASE		0x20000
+
+#define HPET_CONFIGURATION	0x10
+#define HPET_MAIN_COUNTER	0xf0
+
+#define HPET_REGVAL32(x) \
+	REGVAL32(LS3_HT1_MEM_BASE(0) + HPET_MMIO_BASE + (x))
+
 #define IRQ_CASCADE 2
 
 void	 generic3a_device_register(struct device *, void *);
@@ -65,7 +75,9 @@ paddr_t	 ls3_ipi_base[MAXCPUS];
 int	(*ls3_ipi_handler)(void *);
 #endif /* MULTIPROCESSOR */
 
+void	 rs780e_pci_attach_hook(pci_chipset_tag_t);
 void	 rs780e_setup(void);
+void	 rs780sb_setup(pci_chipset_tag_t, int);
 
 void	 rs780e_isa_attach_hook(struct device *, struct device *,
 	    struct isabus_attach_args *iba);
@@ -78,6 +90,17 @@ void	 rs780e_set_imask(uint32_t);
 void	 rs780e_irq_mask(int);
 void	 rs780e_irq_unmask(int);
 
+u_int	 rs780e_get_timecount(struct timecounter *);
+
+struct timecounter rs780e_timecounter = {
+	.tc_get_timecount = rs780e_get_timecount,
+	.tc_poll_pps = NULL,
+	.tc_counter_mask = 0xffffffffu,	/* truncated to 32 bits */
+	.tc_frequency = HPET_FREQ,
+	.tc_name = "hpet",
+	.tc_quality = 100
+};
+
 /* Firmware entry points */
 void	(*generic3a_reboot_entry)(void);
 void	(*generic3a_poweroff_entry)(void);
@@ -87,6 +110,10 @@ struct mips_isa_chipset rs780e_isa_chipset = {
 	.ic_attach_hook = rs780e_isa_attach_hook,
 	.ic_intr_establish = rs780e_isa_intr_establish,
 	.ic_intr_disestablish = rs780e_isa_intr_disestablish
+};
+
+const struct htb_config rs780e_htb_config = {
+	.hc_attach_hook = rs780e_pci_attach_hook
 };
 
 const struct legacy_io_range rs780e_legacy_ranges[] = {
@@ -102,6 +129,8 @@ const struct legacy_io_range rs780e_legacy_ranges[] = {
 	/* pckbc */
 	{ IO_KBD,	IO_KBD },
 	{ IO_KBD + 4,	IO_KBD + 4 },
+	/* SMBus */
+	{ 0x1000,	0x100f },
 
 	{ 0, 0 }
 };
@@ -111,6 +140,7 @@ const struct platform rs780e_platform = {
 	.vendor = "Loongson",
 	.product = "LS3A with RS780E",
 
+	.htb_config = &rs780e_htb_config,
 	.isa_chipset = &rs780e_isa_chipset,
 	.legacy_io_ranges = rs780e_legacy_ranges,
 
@@ -335,11 +365,38 @@ generic3a_ipi_intr(uint32_t hwpend, struct trapframe *frame)
  */
 
 void
+rs780e_pci_attach_hook(pci_chipset_tag_t pc)
+{
+	pcireg_t id, tag;
+	int dev, sbdev = -1;
+
+	for (dev = pci_bus_maxdevs(pc, 0); dev >= 0; dev--) {
+		tag = pci_make_tag(pc, 0, dev, 0);
+		id = pci_conf_read(pc, tag, PCI_ID_REG);
+		if (id == PCI_ID_CODE(PCI_VENDOR_ATI,
+		    PCI_PRODUCT_ATI_SBX00_SMB)) {
+			sbdev = dev;
+			break;
+		}
+	}
+
+	if (sbdev != -1)
+		rs780sb_setup(pc, sbdev);
+}
+
+void
 rs780e_setup(void)
 {
 	generic3a_setup();
 
 	htb_early_setup();
+}
+
+void
+rs780sb_setup(pci_chipset_tag_t pc, int dev)
+{
+	pcitag_t tag;
+	pcireg_t reg;
 
 	/*
 	 * Set up the PIC in the southbridge.
@@ -360,6 +417,32 @@ rs780e_setup(void)
 	REGVAL8(HTB_IO_BASE + IO_ICU2 + PIC_OCW1) = 0xff;
 
 	loongson3_register_ht_pic(&rs780e_pic);
+
+	/*
+	 * Set up the HPET.
+	 *
+	 * Unfortunately, PMON does not initialize the MMIO base address or
+	 * the tick period, even though it should because it has a complete
+	 * view of the system's resources.
+	 * Use the same address as in Linux in the hope of avoiding
+	 * address space conflicts.
+	 */
+
+	tag = pci_make_tag(pc, 0, dev, 0);
+
+	/* Set base address for HPET MMIO. */
+	pci_conf_write(pc, tag, 0xb4, HPET_MMIO_BASE);
+
+	/* Enable decoding of HPET MMIO. */
+	reg = pci_conf_read(pc, tag, 0x40);
+	reg |= 1u << 28;
+	pci_conf_write(pc, tag, 0x40, reg);
+
+	/* Enable the HPET. */
+	reg = HPET_REGVAL32(HPET_CONFIGURATION);
+	HPET_REGVAL32(HPET_CONFIGURATION) = reg | 1u;
+
+	tc_init(&rs780e_timecounter);
 }
 
 void
@@ -420,4 +503,10 @@ void
 rs780e_irq_unmask(int irq)
 {
 	rs780e_set_imask(rs780e_imask | (1u << irq));
+}
+
+u_int
+rs780e_get_timecount(struct timecounter *arg)
+{
+	return HPET_REGVAL32(HPET_MAIN_COUNTER);
 }

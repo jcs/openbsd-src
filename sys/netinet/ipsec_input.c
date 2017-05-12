@@ -1,4 +1,4 @@
-/*	$OpenBSD: ipsec_input.c,v 1.148 2017/05/05 11:04:18 bluhm Exp $	*/
+/*	$OpenBSD: ipsec_input.c,v 1.150 2017/05/12 14:31:23 bluhm Exp $	*/
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -172,15 +172,22 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto,
 	}
 
 	/* Retrieve the SPI from the relevant IPsec header */
-	if (sproto == IPPROTO_ESP)
+	switch (sproto) {
+	case IPPROTO_ESP:
 		m_copydata(m, skip, sizeof(u_int32_t), (caddr_t) &spi);
-	else if (sproto == IPPROTO_AH)
+		break;
+	case IPPROTO_AH:
 		m_copydata(m, skip + sizeof(u_int32_t), sizeof(u_int32_t),
 		    (caddr_t) &spi);
-	else if (sproto == IPPROTO_IPCOMP) {
+		break;
+	case IPPROTO_IPCOMP:
 		m_copydata(m, skip + sizeof(u_int16_t), sizeof(u_int16_t),
 		    (caddr_t) &cpi);
 		spi = ntohl(htons(cpi));
+		break;
+	default:
+		panic("%s: unknown/unsupported security protocol %d",
+		    __func__, sproto);
 	}
 
 	/*
@@ -526,7 +533,8 @@ ipsec_common_input_cb(struct mbuf *m, struct tdb *tdbp, int skip, int protoff)
 		m_tag_prepend(m, mtag);
 	}
 
-	if (sproto == IPPROTO_ESP) {
+	switch (sproto) {
+	case IPPROTO_ESP:
 		/* Packet is confidential ? */
 		if (tdbp->tdb_encalgxform)
 			m->m_flags |= M_CONF;
@@ -534,10 +542,16 @@ ipsec_common_input_cb(struct mbuf *m, struct tdb *tdbp, int skip, int protoff)
 		/* Check if we had authenticated ESP. */
 		if (tdbp->tdb_authalgxform)
 			m->m_flags |= M_AUTH;
-	} else if (sproto == IPPROTO_AH) {
+		break;
+	case IPPROTO_AH:
 		m->m_flags |= M_AUTH;
-	} else if (sproto == IPPROTO_IPCOMP) {
+		break;
+	case IPPROTO_IPCOMP:
 		m->m_flags |= M_COMP;
+		break;
+	default:
+		panic("%s: unknown/unsupported security protocol %d",
+		    __func__, sproto);
 	}
 
 #if NPF > 0
@@ -567,18 +581,6 @@ ipsec_common_input_cb(struct mbuf *m, struct tdb *tdbp, int skip, int protoff)
 	}
 #endif
 
-	switch (sproto) {
-	case IPPROTO_ESP:
-	case IPPROTO_AH:
-	case IPPROTO_IPCOMP:
-		break;
-	default:
-		DPRINTF(("ipsec_common_input_cb(): unknown/unsupported"
-		    " security protocol %d\n", sproto));
-		m_freem(m);
-		return;
-	}
-
 	/* Call the appropriate IPsec transform callback. */
 	switch (af) {
 	case AF_INET:
@@ -591,6 +593,32 @@ ipsec_common_input_cb(struct mbuf *m, struct tdb *tdbp, int skip, int protoff)
 		return;
 #ifdef INET6
 	case AF_INET6:
+#if NPF > 0
+		/*
+		 * In the IPv4 case all packets run through ipv4_input()
+		 * twice.  As the ip6_local() shortcut avoids this, IPv6
+		 * packets in transport mode have to be be passed to pf
+		 * explicitly.  In tunnel mode the inner IP header will
+		 * run through ip_input() and pf already.
+		 */
+		if ((tdbp->tdb_flags & TDBF_TUNNELING) == 0) {
+			struct ifnet *ifp;
+
+			/* This is the enc0 interface unless for ipcomp. */
+			if ((ifp = if_get(m->m_pkthdr.ph_ifidx)) == NULL) {
+				m_freem(m);
+				return;
+			}
+			if (pf_test(AF_INET6, PF_IN, ifp, &m) != PF_PASS) {
+				if_put(ifp);
+				m_freem(m);
+				return;
+			}
+			if_put(ifp);
+			if (m == NULL)
+				return;
+		}
+#endif
 		ip6_local(m, skip, prot);
 		return;
 #endif /* INET6 */

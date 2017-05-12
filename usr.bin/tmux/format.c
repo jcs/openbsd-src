@@ -1,4 +1,4 @@
-/* $OpenBSD: format.c,v 1.134 2017/05/07 22:27:57 nicm Exp $ */
+/* $OpenBSD: format.c,v 1.136 2017/05/12 13:27:57 nicm Exp $ */
 
 /*
  * Copyright (c) 2011 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -203,12 +203,12 @@ format_job_update(struct job *job)
 	free(fj->out);
 	fj->out = line;
 
-	log_debug("%s: %s: %s", __func__, fj->cmd, fj->out);
+	log_debug("%s: %p %s: %s", __func__, fj, fj->cmd, fj->out);
 
 	t = time (NULL);
 	if (fj->status && fj->last != t) {
-		TAILQ_FOREACH(c, &clients, entry)
-		    server_status_client(c);
+		if (fj->client != NULL)
+			server_status_client(fj->client);
 		fj->last = t;
 	}
 }
@@ -233,10 +233,11 @@ format_job_complete(struct job *job)
 	} else
 		buf = line;
 
+	log_debug("%s: %p %s: %s", __func__, fj, fj->cmd, buf);
+
 	if (*buf != '\0' || !fj->updated) {
 		free(fj->out);
 		fj->out = buf;
-		log_debug("%s: %s: %s", __func__, fj->cmd, fj->out);
 	} else
 		free(buf);
 
@@ -1376,8 +1377,8 @@ format_defaults_pane(struct format_tree *ft, struct window_pane *wp)
 
 	format_add(ft, "pane_synchronized", "%d",
 	    !!options_get_number(wp->window->options, "synchronize-panes"));
-	format_add(ft, "pane_search_string", "%s",
-	    window_copy_search_string(wp));
+	if (wp->searchstr != NULL)
+		format_add(ft, "pane_search_string", "%s", wp->searchstr);
 
 	format_add(ft, "pane_tty", "%s", wp->tty);
 	format_add(ft, "pane_pid", "%ld", (long) wp->pid);

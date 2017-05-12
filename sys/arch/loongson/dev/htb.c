@@ -1,4 +1,4 @@
-/*	$OpenBSD: htb.c,v 1.1 2016/11/17 14:41:21 visa Exp $	*/
+/*	$OpenBSD: htb.c,v 1.3 2017/05/10 15:21:02 visa Exp $	*/
 
 /*
  * Copyright (c) 2016 Visa Hankala
@@ -38,6 +38,7 @@
 struct htb_softc {
 	struct device		 sc_dev;
 	struct mips_pci_chipset	 sc_pc;
+	const struct htb_config	*sc_config;
 };
 
 int	 htb_match(struct device *, void *, void *);
@@ -172,6 +173,8 @@ htb_attach(struct device *parent, struct device *self, void *aux)
 
 	printf("\n");
 
+	sc->sc_config = sys_platform->htb_config;
+
 	pc->pc_conf_v = sc;
 	pc->pc_attach_hook = htb_attach_hook;
 	pc->pc_bus_maxdevs = htb_bus_maxdevs;
@@ -225,6 +228,12 @@ void
 htb_attach_hook(struct device *parent, struct device *self,
     struct pcibus_attach_args *pba)
 {
+	pci_chipset_tag_t pc = pba->pba_pc;
+	struct htb_softc *sc = pc->pc_conf_v;
+	const struct htb_config *hc = sc->sc_config;
+
+	if (pba->pba_bus == 0)
+		hc->hc_attach_hook(pc);
 }
 
 int
@@ -393,7 +402,7 @@ int
 htb_mem_map(bus_space_tag_t t, bus_addr_t offs, bus_size_t size, int flags,
     bus_space_handle_t *bshp)
 {
-	if (offs < HTB_MEM_BASE || offs >= HTB_MEM_BASE + HTB_MEM_SIZE)
+	if (offs < HTB_MEM_BASE || offs + size > HTB_MEM_BASE + HTB_MEM_SIZE)
 		return EINVAL;
 
 	*bshp = t->bus_base + offs;

@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.760 2017/05/07 22:27:57 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.767 2017/05/12 13:00:56 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -672,6 +672,7 @@ struct screen_write_ctx {
 	struct screen_write_collect_item *item;
 	struct screen_write_collect_line *list;
 	u_int			 scrolled;
+	u_int                    bg;
 
 	u_int			 cells;
 	u_int			 written;
@@ -792,6 +793,7 @@ struct window_pane {
 	struct event	 modetimer;
 	time_t		 modelast;
 	u_int		 modeprefix;
+	char		*searchstr;
 
 	TAILQ_ENTRY(window_pane) entry;
 	RB_ENTRY(window_pane) tree_entry;
@@ -1306,6 +1308,7 @@ struct client {
 
 	size_t		 written;
 	size_t		 discarded;
+	size_t		 redraw;
 
 	void		(*stdin_callback)(struct client *, int, void *);
 	void		*stdin_callback_data;
@@ -1344,6 +1347,7 @@ struct client {
 #define CLIENT_STATUSFORCE 0x80000
 #define CLIENT_DOUBLECLICK 0x100000
 #define CLIENT_TRIPLECLICK 0x200000
+#define CLIENT_SIZECHANGED 0x400000
 	int		 flags;
 	struct key_table *keytable;
 
@@ -1619,7 +1623,7 @@ void	environ_put(struct environ *, const char *);
 void	environ_unset(struct environ *, const char *);
 void	environ_update(struct options *, struct environ *, struct environ *);
 void	environ_push(struct environ *);
-void	environ_log(struct environ *, const char *);
+void printflike(2, 3) environ_log(struct environ *, const char *, ...);
 struct environ *environ_for_session(struct session *, int);
 
 /* tty.c */
@@ -1800,8 +1804,8 @@ void	 key_bindings_add(const char *, key_code, int, struct cmd_list *);
 void	 key_bindings_remove(const char *, key_code);
 void	 key_bindings_remove_table(const char *);
 void	 key_bindings_init(void);
-void	 key_bindings_dispatch(struct key_binding *, struct client *,
-	     struct mouse_event *, struct cmd_find_state *);
+void	 key_bindings_dispatch(struct key_binding *, struct cmdq_item *,
+	     struct client *, struct mouse_event *, struct cmd_find_state *);
 
 /* key-string.c */
 key_code	 key_string_lookup_string(const char *);
@@ -1928,7 +1932,7 @@ void	 grid_destroy(struct grid *);
 int	 grid_compare(struct grid *, struct grid *);
 void	 grid_collect_history(struct grid *, u_int);
 void	 grid_scroll_history(struct grid *, u_int);
-void	 grid_scroll_history_region(struct grid *, u_int, u_int);
+void	 grid_scroll_history_region(struct grid *, u_int, u_int, u_int);
 void	 grid_clear_history(struct grid *);
 const struct grid_line *grid_peek_line(struct grid *, u_int);
 void	 grid_get_cell(struct grid *, u_int, u_int, struct grid_cell *);
@@ -1953,8 +1957,8 @@ void	 grid_view_set_cells(struct grid *, u_int, u_int,
 	     const struct grid_cell *, const char *, size_t);
 void	 grid_view_clear_history(struct grid *, u_int);
 void	 grid_view_clear(struct grid *, u_int, u_int, u_int, u_int, u_int);
-void	 grid_view_scroll_region_up(struct grid *, u_int, u_int);
-void	 grid_view_scroll_region_down(struct grid *, u_int, u_int);
+void	 grid_view_scroll_region_up(struct grid *, u_int, u_int, u_int);
+void	 grid_view_scroll_region_down(struct grid *, u_int, u_int, u_int);
 void	 grid_view_insert_lines(struct grid *, u_int, u_int, u_int);
 void	 grid_view_insert_lines_region(struct grid *, u_int, u_int, u_int,
 	u_int);
@@ -1994,17 +1998,17 @@ void	 screen_write_cursorleft(struct screen_write_ctx *, u_int);
 void	 screen_write_alignmenttest(struct screen_write_ctx *);
 void	 screen_write_insertcharacter(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_deletecharacter(struct screen_write_ctx *, u_int, u_int);
-void	 screen_write_clearcharacter(struct screen_write_ctx *, u_int);
+void	 screen_write_clearcharacter(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_insertline(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_deleteline(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_clearline(struct screen_write_ctx *, u_int);
 void	 screen_write_clearendofline(struct screen_write_ctx *, u_int);
 void	 screen_write_clearstartofline(struct screen_write_ctx *, u_int);
 void	 screen_write_cursormove(struct screen_write_ctx *, u_int, u_int);
-void	 screen_write_reverseindex(struct screen_write_ctx *);
+void	 screen_write_reverseindex(struct screen_write_ctx *, u_int);
 void	 screen_write_scrollregion(struct screen_write_ctx *, u_int, u_int);
-void	 screen_write_linefeed(struct screen_write_ctx *, int);
-void	 screen_write_scrollup(struct screen_write_ctx *, u_int);
+void	 screen_write_linefeed(struct screen_write_ctx *, int, u_int);
+void	 screen_write_scrollup(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_carriagereturn(struct screen_write_ctx *);
 void	 screen_write_clearendofscreen(struct screen_write_ctx *, u_int);
 void	 screen_write_clearstartofscreen(struct screen_write_ctx *, u_int);
@@ -2175,7 +2179,6 @@ void		 window_copy_vadd(struct window_pane *, const char *, va_list);
 void		 window_copy_pageup(struct window_pane *, int);
 void		 window_copy_start_drag(struct client *, struct mouse_event *);
 int		 window_copy_scroll_position(struct window_pane *);
-const char	*window_copy_search_string(struct window_pane *);
 
 /* window-choose.c */
 extern const struct window_mode window_choose_mode;
