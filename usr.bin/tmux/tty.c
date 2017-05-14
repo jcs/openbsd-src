@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.279 2017/05/12 14:13:54 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.283 2017/05/13 07:41:59 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -830,17 +830,30 @@ tty_clear_area(struct tty *tty, const struct window_pane *wp, u_int py,
 			return;
 		}
 
+		/* Full lines can be scrolled away to clear them. */
+		if (px == 0 &&
+		    px + nx >= tty->sx &&
+		    ny > 2 &&
+		    tty_term_has(tty->term, TTYC_CSR) &&
+		    tty_term_has(tty->term, TTYC_INDN)) {
+			tty_region(tty, py, py + ny - 1);
+			tty_margin_off(tty);
+			tty_putcode1(tty, TTYC_INDN, ny - 1);
+			return;
+		}
+
 		/*
 		 * If margins are supported, can just scroll the area off to
 		 * clear it.
 		 */
 		if (nx > 2 &&
 		    ny > 2 &&
+		    tty_term_has(tty->term, TTYC_CSR) &&
 		    tty_use_margin(tty) &&
 		    tty_term_has(tty->term, TTYC_INDN)) {
 			tty_region(tty, py, py + ny - 1);
 			tty_margin(tty, px, px + nx - 1);
-			tty_putcode1(tty, TTYC_INDN, ny);
+			tty_putcode1(tty, TTYC_INDN, ny - 1);
 			return;
 		}
 	}
@@ -1132,11 +1145,10 @@ void
 tty_cmd_clearstartofline(struct tty *tty, const struct tty_ctx *ctx)
 {
 	struct window_pane	*wp = ctx->wp;
-	u_int			 nx, py = ctx->yoff + ctx->ocy;
+	u_int			 py = ctx->yoff + ctx->ocy;
 
 	tty_default_attributes(tty, wp, ctx->bg);
 
-	nx = screen_size_x(wp->screen) - ctx->ocx;
 	tty_clear_line(tty, wp, py, ctx->xoff, ctx->ocx + 1, ctx->bg);
 }
 
