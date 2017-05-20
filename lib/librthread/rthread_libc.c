@@ -152,22 +152,13 @@ _thread_mutex_destroy(void **mutex)
 /*
  * the malloc lock
  */
-#ifndef FUTEX
 #define MALLOC_LOCK_INITIALIZER(n) { \
 	_SPINLOCK_UNLOCKED,	\
 	TAILQ_HEAD_INITIALIZER(malloc_lock[n].lockers), \
 	PTHREAD_MUTEX_DEFAULT,	\
 	NULL,			\
 	0,			\
-	-1 }
-#else
-#define MALLOC_LOCK_INITIALIZER(n) { \
-	_SPINLOCK_UNLOCKED,	\
-	PTHREAD_MUTEX_DEFAULT,	\
-	NULL,			\
-	0,			\
-	-1 }
-#endif
+	-1 }			\
 
 static struct pthread_mutex malloc_lock[_MALLOC_MUTEXES] = {
 	MALLOC_LOCK_INITIALIZER(0),
@@ -201,9 +192,7 @@ _thread_malloc_reinit(void)
 
 	for (i = 0; i < _MALLOC_MUTEXES; i++) {
 		malloc_lock[i].lock = _SPINLOCK_UNLOCKED;
-#ifndef FUTEX
 		TAILQ_INIT(&malloc_lock[i].lockers);
-#endif
 		malloc_lock[i].owner = NULL;
 		malloc_lock[i].count = 0;
 	}

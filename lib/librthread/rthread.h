@@ -59,9 +59,7 @@ TAILQ_HEAD(pthread_queue, pthread);
 
 struct pthread_mutex {
 	_atomic_lock_t lock;
-#ifndef FUTEX
 	struct pthread_queue lockers;
-#endif
 	int type;
 	pthread_t owner;
 	int count;
@@ -75,13 +73,8 @@ struct pthread_mutex_attr {
 };
 
 struct pthread_cond {
-#ifndef FUTEX
 	_atomic_lock_t lock;
 	struct pthread_queue waiters;
-#else
-	int seq;
-	int pad;
-#endif
 	struct pthread_mutex *mutex;
 	clockid_t clock;
 };
