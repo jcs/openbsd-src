@@ -136,6 +136,7 @@ iic*	at nviic?
 amdpm*	at pci?			# AMD-7xx/8111 and NForce SMBus controller
 iic*	at amdpm?
 dwiic*	at acpi?		# DesignWare Synopsys i2c controller
+dwiic*	at pci?
 iic*	at dwiic?
 
 itherm*	at pci?			# Intel 3400 Thermal Sensor

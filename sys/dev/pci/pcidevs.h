@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1816 2017/04/20 14:43:59 jsg Exp 
+ *	OpenBSD: pcidevs,v 1.1817 2017/05/05 11:26:35 jmatthew Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -4907,6 +4907,8 @@
 #define	PCI_PRODUCT_INTEL_200SERIES_U_LPC_3	0x9d53		/* 200 Series LPC */
 #define	PCI_PRODUCT_INTEL_200SERIES_Y_LPC_2	0x9d56		/* 200 Series LPC */
 #define	PCI_PRODUCT_INTEL_200SERIES_U_LPC_4	0x9d58		/* 200 Series LPC */
+#define	PCI_PRODUCT_INTEL_100SERIES_LP_I2C_1	0x9d60		/* 100 Series I2C */
+#define	PCI_PRODUCT_INTEL_100SERIES_LP_I2C_2	0x9d61		/* 100 Series I2C */
 #define	PCI_PRODUCT_INTEL_100SERIES_LP_HDA	0x9d70		/* 100 Series HD Audio */
 #define	PCI_PRODUCT_INTEL_200SERIES_U_HDA	0x9d71		/* 200 Series HD Audio */
 #define	PCI_PRODUCT_INTEL_PINEVIEW_DMI	0xa000		/* Pineview DMI */
