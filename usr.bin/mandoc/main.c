@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.192 2017/04/18 15:59:56 schwarze Exp $ */
+/*	$OpenBSD: main.c,v 1.194 2017/05/17 23:39:15 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2012, 2014-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -920,8 +920,6 @@ toptions(struct curparse *curp, char *arg)
 		curp->outtype = OUTT_UTF8;
 	else if (0 == strcmp(arg, "locale"))
 		curp->outtype = OUTT_LOCALE;
-	else if (0 == strcmp(arg, "xhtml"))
-		curp->outtype = OUTT_HTML;
 	else if (0 == strcmp(arg, "ps"))
 		curp->outtype = OUTT_PS;
 	else if (0 == strcmp(arg, "pdf"))
@@ -938,15 +936,16 @@ static int
 woptions(struct curparse *curp, char *arg)
 {
 	char		*v, *o;
-	const char	*toks[7];
+	const char	*toks[8];
 
 	toks[0] = "stop";
 	toks[1] = "all";
-	toks[2] = "warning";
-	toks[3] = "error";
-	toks[4] = "unsupp";
-	toks[5] = "fatal";
-	toks[6] = NULL;
+	toks[2] = "style";
+	toks[3] = "warning";
+	toks[4] = "error";
+	toks[5] = "unsupp";
+	toks[6] = "fatal";
+	toks[7] = NULL;
 
 	while (*arg) {
 		o = arg;
@@ -956,15 +955,18 @@ woptions(struct curparse *curp, char *arg)
 			break;
 		case 1:
 		case 2:
-			curp->wlevel = MANDOCLEVEL_WARNING;
+			curp->wlevel = MANDOCLEVEL_STYLE;
 			break;
 		case 3:
-			curp->wlevel = MANDOCLEVEL_ERROR;
+			curp->wlevel = MANDOCLEVEL_WARNING;
 			break;
 		case 4:
-			curp->wlevel = MANDOCLEVEL_UNSUPP;
+			curp->wlevel = MANDOCLEVEL_ERROR;
 			break;
 		case 5:
+			curp->wlevel = MANDOCLEVEL_UNSUPP;
+			break;
+		case 6:
 			curp->wlevel = MANDOCLEVEL_BADARG;
 			break;
 		default:
@@ -972,7 +974,6 @@ woptions(struct curparse *curp, char *arg)
 			return 0;
 		}
 	}
-
 	return 1;
 }
 

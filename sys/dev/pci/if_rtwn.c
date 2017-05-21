@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_rtwn.c,v 1.26 2017/02/01 12:46:40 stsp Exp $	*/
+/*	$OpenBSD: if_rtwn.c,v 1.28 2017/05/19 11:30:40 stsp Exp $	*/
 
 /*-
  * Copyright (c) 2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -1023,7 +1023,12 @@ rtwn_tx(void *cookie, struct mbuf *m, struct ieee80211_node *ni)
 
 		/* Use AMMR rate for data. */
 		txd->txdw4 |= htole32(R92C_TXDW4_DRVRATE);
-		txd->txdw5 |= htole32(SM(R92C_TXDW5_DATARATE, ni->ni_txrate));
+		if (ic->ic_fixed_rate != -1)
+			txd->txdw5 |= htole32(SM(R92C_TXDW5_DATARATE,
+			    ic->ic_fixed_rate));
+		else
+			txd->txdw5 |= htole32(SM(R92C_TXDW5_DATARATE,
+			    ni->ni_txrate));
 		txd->txdw5 |= htole32(SM(R92C_TXDW5_DATARATE_FBLIMIT, 0x1f));
 	} else {
 		txd->txdw1 |= htole32(
@@ -1756,9 +1761,8 @@ rtwn_tx_report(struct rtwn_pci_softc *sc, uint8_t *buf, int len)
 	over = (rpt->rptb6 & R92C_RPTB6_RETRY_OVER);
 
 	if (packets > 0) {
-		if (tx_ok)
-			sc->amn.amn_txcnt += packets;
-		if (tries > 1 || drop || expire || over)
+		sc->amn.amn_txcnt += packets;
+		if (!tx_ok || tries > 1 || drop || expire || over)
 			sc->amn.amn_retrycnt++;
 	}
 }

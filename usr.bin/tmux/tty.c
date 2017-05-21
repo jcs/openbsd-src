@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.283 2017/05/13 07:41:59 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.285 2017/05/15 16:44:04 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -71,8 +71,6 @@ static void	tty_default_colours(struct grid_cell *,
 static void	tty_default_attributes(struct tty *, const struct window_pane *,
 		    u_int);
 
-#define tty_use_acs(tty) \
-	(tty_term_has((tty)->term, TTYC_ACSC) && !((tty)->flags & TTY_UTF8))
 #define tty_use_margin(tty) \
 	((tty)->term_type == TTY_VT420)
 
@@ -278,7 +276,8 @@ tty_open(struct tty *tty, char **cause)
 void
 tty_start_tty(struct tty *tty)
 {
-	struct termios	tio;
+	struct client	*c = tty->client;
+	struct termios	 tio;
 
 	if (tty->fd != -1 && tcgetattr(tty->fd, &tty->tio) == 0) {
 		setblocking(tty->fd, 0);
@@ -299,9 +298,13 @@ tty_start_tty(struct tty *tty)
 	tty_putcode(tty, TTYC_SMCUP);
 
 	tty_putcode(tty, TTYC_SMKX);
-	if (tty_use_acs(tty))
-		tty_putcode(tty, TTYC_ENACS);
 	tty_putcode(tty, TTYC_CLEAR);
+
+	if (tty_acs_needed(tty)) {
+		log_debug("%s: using capabilities for ACS", c->name);
+		tty_putcode(tty, TTYC_ENACS);
+	} else
+		log_debug("%s: using UTF-8 for ACS", c->name);
 
 	tty_putcode(tty, TTYC_CNORM);
 	if (tty_term_has(tty->term, TTYC_KMOUS))
@@ -351,7 +354,7 @@ tty_stop_tty(struct tty *tty)
 		return;
 
 	tty_raw(tty, tty_term_string2(tty->term, TTYC_CSR, 0, ws.ws_row - 1));
-	if (tty_use_acs(tty))
+	if (tty_acs_needed(tty))
 		tty_raw(tty, tty_term_string(tty->term, TTYC_RMACS));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_SGR0));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_RMKX));
@@ -838,7 +841,7 @@ tty_clear_area(struct tty *tty, const struct window_pane *wp, u_int py,
 		    tty_term_has(tty->term, TTYC_INDN)) {
 			tty_region(tty, py, py + ny - 1);
 			tty_margin_off(tty);
-			tty_putcode1(tty, TTYC_INDN, ny - 1);
+			tty_putcode1(tty, TTYC_INDN, ny);
 			return;
 		}
 
@@ -853,7 +856,7 @@ tty_clear_area(struct tty *tty, const struct window_pane *wp, u_int py,
 		    tty_term_has(tty->term, TTYC_INDN)) {
 			tty_region(tty, py, py + ny - 1);
 			tty_margin(tty, px, px + nx - 1);
-			tty_putcode1(tty, TTYC_INDN, ny - 1);
+			tty_putcode1(tty, TTYC_INDN, ny);
 			return;
 		}
 	}
@@ -1214,7 +1217,7 @@ void
 tty_cmd_scrollup(struct tty *tty, const struct tty_ctx *ctx)
 {
 	struct window_pane	*wp = ctx->wp;
-	u_int			 i, lines;
+	u_int			 i;
 
 	if ((!tty_pane_full_width(tty, ctx) && !tty_use_margin(tty)) ||
 	    tty_fake_bce(tty, wp, 8) ||
@@ -1228,21 +1231,12 @@ tty_cmd_scrollup(struct tty *tty, const struct tty_ctx *ctx)
 	tty_region_pane(tty, ctx, ctx->orupper, ctx->orlower);
 	tty_margin_pane(tty, ctx);
 
-	/*
-	 * Konsole has a bug where it will ignore SU if the parameter is more
-	 * than the height of the scroll region. Clamping the parameter doesn't
-	 * hurt in any case.
-	 */
-	lines = tty->rlower - tty->rupper;
-	if (lines > ctx->num)
-		lines = ctx->num;
-
-	if (lines == 1 || !tty_term_has(tty->term, TTYC_INDN)) {
+	if (ctx->num == 1 || !tty_term_has(tty->term, TTYC_INDN)) {
 		tty_cursor(tty, tty->rright, tty->rlower);
-		for (i = 0; i < lines; i++)
+		for (i = 0; i < ctx->num; i++)
 			tty_putc(tty, '\n');
 	} else
-		tty_putcode1(tty, TTYC_INDN, lines);
+		tty_putcode1(tty, TTYC_INDN, ctx->num);
 }
 
 void
@@ -1426,7 +1420,7 @@ tty_reset(struct tty *tty)
 	struct grid_cell	*gc = &tty->cell;
 
 	if (!grid_cells_equal(gc, &grid_default_cell)) {
-		if ((gc->attr & GRID_ATTR_CHARSET) && tty_use_acs(tty))
+		if ((gc->attr & GRID_ATTR_CHARSET) && tty_acs_needed(tty))
 			tty_putcode(tty, TTYC_RMACS);
 		tty_putcode(tty, TTYC_SGR0);
 		memcpy(gc, &grid_default_cell, sizeof *gc);
@@ -1776,7 +1770,7 @@ tty_attributes(struct tty *tty, const struct grid_cell *gc,
 		tty_putcode(tty, TTYC_INVIS);
 	if (changed & GRID_ATTR_STRIKETHROUGH)
 		tty_putcode(tty, TTYC_SMXX);
-	if ((changed & GRID_ATTR_CHARSET) && tty_use_acs(tty))
+	if ((changed & GRID_ATTR_CHARSET) && tty_acs_needed(tty))
 		tty_putcode(tty, TTYC_SMACS);
 }
 

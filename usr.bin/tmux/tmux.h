@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.767 2017/05/12 13:00:56 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.770 2017/05/17 15:20:23 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -401,6 +401,7 @@ enum tty_code_code {
 	TTYC_SS,	/* set cursor style, Ss */
 	TTYC_TC,	/* 24-bit "true" colour, Tc */
 	TTYC_TSL,	/* to_status_line, tsl */
+	TTYC_U8,
 	TTYC_VPA,	/* row_address, cv */
 	TTYC_XENL,	/* eat_newline_glitch, xn */
 	TTYC_XT,	/* xterm(1)-compatible title, XT */
@@ -1283,6 +1284,8 @@ struct cmd_entry {
 };
 
 /* Client connection. */
+typedef int (*prompt_input_cb)(struct client *, void *, const char *, int);
+typedef void (*prompt_free_cb)(void *);
 struct client {
 	const char	*name;
 	struct tmuxpeer	*peer;
@@ -1352,7 +1355,8 @@ struct client {
 	struct key_table *keytable;
 
 	struct event	 identify_timer;
-	void		(*identify_callback)(struct client *, struct window_pane *);
+	void		(*identify_callback)(struct client *,
+			     struct window_pane *);
 	void		*identify_callback_data;
 
 	char		*message_string;
@@ -1363,8 +1367,8 @@ struct client {
 	char		*prompt_string;
 	struct utf8_data *prompt_buffer;
 	size_t		 prompt_index;
-	int		 (*prompt_callbackfn)(void *, const char *, int);
-	void		 (*prompt_freefn)(void *);
+	prompt_input_cb	 prompt_inputcb;
+	prompt_free_cb	 prompt_freecb;
 	void		*prompt_data;
 	u_int		 prompt_hindex;
 	enum { PROMPT_ENTRY, PROMPT_COMMAND } prompt_mode;
@@ -1701,6 +1705,7 @@ int		 tty_term_flag(struct tty_term *, enum tty_code_code);
 const char	*tty_term_describe(struct tty_term *, enum tty_code_code);
 
 /* tty-acs.c */
+int		 tty_acs_needed(struct tty *);
 const char	*tty_acs_get(struct tty *, u_char);
 
 /* tty-keys.c */
@@ -1887,7 +1892,7 @@ void printflike(2, 3) status_message_set(struct client *, const char *, ...);
 void	 status_message_clear(struct client *);
 int	 status_message_redraw(struct client *);
 void	 status_prompt_set(struct client *, const char *, const char *,
-	     int (*)(void *, const char *, int), void (*)(void *), void *, int);
+	     prompt_input_cb, prompt_free_cb, void *, int);
 void	 status_prompt_clear(struct client *);
 int	 status_prompt_redraw(struct client *);
 int	 status_prompt_key(struct client *, key_code);

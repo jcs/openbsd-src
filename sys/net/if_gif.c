@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gif.c,v 1.94 2017/05/04 15:00:24 bluhm Exp $	*/
+/*	$OpenBSD: if_gif.c,v 1.96 2017/05/18 10:56:45 bluhm Exp $	*/
 /*	$KAME: if_gif.c,v 1.43 2001/02/20 08:51:07 itojun Exp $	*/
 
 /*
@@ -47,6 +47,7 @@
 #include <netinet/ip.h>
 #include <netinet/ip_ether.h>
 #include <netinet/ip_var.h>
+#include <netinet/ip_ipip.h>
 #include <netinet/ip_ipsp.h>
 
 #ifdef INET6
@@ -129,9 +130,9 @@ gif_clone_create(struct if_clone *ifc, int unit)
 #if NBPFILTER > 0
 	bpfattach(&sc->gif_if.if_bpf, &sc->gif_if, DLT_LOOP, sizeof(u_int32_t));
 #endif
-	s = splnet();
+	NET_LOCK(s);
 	LIST_INSERT_HEAD(&gif_softc_list, sc, gif_list);
-	splx(s);
+	NET_UNLOCK(s);
 
 	return (0);
 }
@@ -142,9 +143,9 @@ gif_clone_destroy(struct ifnet *ifp)
 	struct gif_softc *sc = ifp->if_softc;
 	int s;
 
-	s = splnet();
+	NET_LOCK(s);
 	LIST_REMOVE(sc, gif_list);
-	splx(s);
+	NET_UNLOCK(s);
 
 	if_detach(ifp);
 
@@ -323,7 +324,6 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	int error = 0, size;
 	struct sockaddr *dst, *src;
 	struct sockaddr *sa;
-	int s;
 	struct gif_softc *sc2;
 
 	switch (cmd) {
@@ -466,10 +466,8 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		bcopy((caddr_t)dst, (caddr_t)sa, dst->sa_len);
 		sc->gif_pdst = sa;
 
-		s = splnet();
 		ifp->if_flags |= IFF_RUNNING;
 		if_up(ifp);		/* send up RTM_IFINFO */
-		splx(s);
 
 		error = 0;
 		break;
@@ -753,12 +751,12 @@ in_gif_input(struct mbuf **mp, int *offp, int proto, int af)
 		gifp->if_ipackets++;
 		gifp->if_ibytes += m->m_pkthdr.len;
 		/* We have a configured GIF */
-		return ipip_input(mp, offp, gifp, proto);
+		return ipip_input_gif(mp, offp, proto, af, gifp);
 	}
 
 inject:
 	/* No GIF interface was configured */
-	return ip4_input(mp, offp, proto, af);
+	return ipip_input(mp, offp, proto, af);
 }
 
 #ifdef INET6
@@ -878,11 +876,11 @@ int in6_gif_input(struct mbuf **mp, int *offp, int proto, int af)
 	        m->m_pkthdr.ph_ifidx = gifp->if_index;
 		gifp->if_ipackets++;
 		gifp->if_ibytes += m->m_pkthdr.len;
-		return ipip_input(mp, offp, gifp, proto);
+		return ipip_input_gif(mp, offp, proto, af, gifp);
 	}
 
 inject:
 	/* No GIF tunnel configured */
-	return ip4_input(mp, offp, proto, af);
+	return ipip_input(mp, offp, proto, af);
 }
 #endif /* INET6 */
