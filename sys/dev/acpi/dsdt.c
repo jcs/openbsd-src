@@ -1610,6 +1610,21 @@ aml_print_resource(union acpi_resource *crs, void *arg)
 			crs->lr_qword._gra, crs->lr_qword._min, crs->lr_qword._max,
 			crs->lr_qword._tra, crs->lr_qword._len);
 		break;
+	case LR_GPIO:
+		printf("gpio\ttype:%.2x flags:%.2x tflag:%.2x ppi:%.2x drs:%.4x dbt:%.4x pin_off:%.4x residx:%.2x res_off:%.4x vd_off:%.4x vd_len:%.4x\n",
+			crs->lr_gpio.type, crs->lr_gpio.flags,
+			crs->lr_gpio.tflags, crs->lr_gpio._ppi,
+			crs->lr_gpio._drs, crs->lr_gpio._dbt,
+			crs->lr_gpio.pin_off, crs->lr_gpio.residx,
+			crs->lr_gpio.res_off, crs->lr_gpio.vd_off,
+			crs->lr_gpio.vd_len);
+		break;
+	case LR_SERBUS:
+		printf("serbus\ttype:%.2x flags:%.2x tflag:%.2x trevid:%.2x tlength:%.4x tdata:%.2x\n",
+			crs->lr_serbus.type, crs->lr_serbus.flags,
+			crs->lr_serbus.tflags, crs->lr_serbus.trevid,
+			crs->lr_serbus.tlength, crs->lr_serbus.tdata[0]);
+		break;
 	default:
 		printf("unknown type: %x\n", typ);
 		break;
