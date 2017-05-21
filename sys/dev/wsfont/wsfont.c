@@ -44,6 +44,8 @@
 
 #undef HAVE_FONT
 
+#define FONT_BOLD8x16_ISO1
+
 #ifdef FONT_QVSS8x15
 #define HAVE_FONT 1
 #include <dev/wsfont/qvss8x15.h>
