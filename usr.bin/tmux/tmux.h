@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.770 2017/05/17 15:20:23 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.774 2017/05/29 20:42:53 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1328,6 +1328,8 @@ struct client {
 	struct event	 status_timer;
 	struct screen	 status;
 
+	struct screen	*old_status;
+
 #define CLIENT_TERMINAL 0x1
 #define CLIENT_LOGIN 0x2
 #define CLIENT_EXIT 0x4
@@ -1376,6 +1378,7 @@ struct client {
 #define PROMPT_SINGLE 0x1
 #define PROMPT_NUMERIC 0x2
 #define PROMPT_INCREMENTAL 0x4
+#define PROMPT_NOFORMAT 0x8
 	int		 prompt_flags;
 
 	struct session	*session;
@@ -1836,6 +1839,7 @@ void	 server_update_socket(void);
 void	 server_add_accept(int);
 
 /* server-client.c */
+u_int	 server_client_how_many(void);
 void	 server_client_set_identify(struct client *);
 void	 server_client_clear_identify(struct client *, struct window_pane *);
 void	 server_client_set_key_table(struct client *, const char *);
@@ -2121,7 +2125,8 @@ void		 window_pane_key(struct window_pane *, struct client *,
 		     struct session *, key_code, struct mouse_event *);
 int		 window_pane_outside(struct window_pane *);
 int		 window_pane_visible(struct window_pane *);
-char		*window_pane_search(struct window_pane *, const char *,
+u_int		 window_pane_search(struct window_pane *, const char *);
+char		*window_pane_search_old(struct window_pane *, const char *,
 		     u_int *);
 const char	*window_printable_flags(struct winlink *);
 struct window_pane *window_pane_find_up(struct window_pane *);

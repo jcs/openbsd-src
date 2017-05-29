@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# $OpenBSD: ypbind,v 1.5 2015/10/18 03:51:11 deraadt Exp $
+# $OpenBSD: ypbind,v 1.7 2017/05/27 19:55:48 ajacoutot Exp $
 
 daemon="/usr/sbin/ypbind"
 

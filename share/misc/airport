@@ -1,4 +1,4 @@
-#	$OpenBSD: airport,v 1.58 2017/04/28 13:50:02 benno Exp $
+#	$OpenBSD: airport,v 1.64 2017/05/29 00:05:28 henning Exp $
 #	@(#)airport	8.1 (Berkeley) 6/8/93
 #
 # Some of this information from the Airport Search Engine at
@@ -6,6 +6,7 @@
 # available at http://www.mapping.com/airportcodes.shtml
 #
 # Only use the IATA airport codes, and only add ones you have been to.
+# Only add airports. No trains or buses!
 #
 # Airport Code : Airport
 AAA:Anaa, Anaa, French Polynesia
@@ -214,6 +215,7 @@ BMA:Stockholm-Bromma, Uppland, Sweden
 BMG:Monroe County, Bloomington, Indiana, USA
 BMI:Central Illinois Regional, Bloomington, Illinois, USA
 BNA:Nashville International, Nashville, Tennessee, USA
+BND:Bandar Abbas International, Bandar Abbas, Iran
 BNE:Brisbane International, Queensland, Australia
 BNJ:Hangelar, Bonn, Germany
 BNN:Bronnoysun, Bronnoysund, Norway
@@ -715,6 +717,7 @@ HUY:Humberside, England, United Kingdom
 HVB:Hervey Bay, Queensland, Australia
 HVN:New Haven Tweed, Connecticut, USA
 HVR:City County, Havre, Montana, USA
+HWD:Hayward Executive Airport, Hayward, California, USA
 HWN:Hwange National Park, Zimbabwe
 HYA:Barnstable County, Hyannis, Massachusetts, USA
 HYD:Begumpet, Hyderabad, India
@@ -947,7 +950,7 @@ LED:Pulkovo, St. Petersburg, Russia
 LEH:Le Havre, France
 LEI:Almeria, Spain
 LEJ:Leipzig/Halle, Germany
-LET:Gen Av Cob0, Leticia, Colombia
+LET:Gen Av Cobo, Leticia, Colombia
 LEX:Blue Grass Field, Lexington, Kentucky, USA
 LFT:Lafayette, Louisiana, USA
 LFW:Lome, Togo
@@ -1820,59 +1823,21 @@ WMH:Mountain Home, Arkansas, USA
 WNA:Napakiak, Alaska, USA
 WRL:Worland, Wyoming, USA
 WRO:Strachowice, Wroclaw, Poland
-XAW:Capreol / Via Rail Service, Ontario, Canada
 XAZ:Cambellton, New Brunswick, Canada
 XBR:Brockville, Ontario, Canada
-XCI:Chambord / Via Rail Service, Quebec, Canada
 XCM:Chatham, Ontario, Canada
-XDL:Chandler / Via Rail Service, Quebec, Canada
 XDM:Drummondville, Quebec, Canada
-XDU:Hervey / Via Rail Service, Quebec, Canada
-XEE:Lac Edouard / Via Rail Service, Quebec, Canada
-XEH:Ladysmith / Via Rail Service, British Columbia, Canada
-XEJ:Langford / Via Rail Service, British Columbia, Canada
-XEK:Melville / Via Rail Service, Saskatchewan, Canada
-XEL:New Carlisle / Via Rail Service, Quebec, Canada
-XEM:New Richmond / Via Rail Service, Quebec, Canada
-XEY:Newcastle / Via Rail Service, New Brunswick, Canada
 XFD:Stratford, Ontario, Canada
-XFE:Parent / Via Rail Service, Quebec, Canada
-XFG:Perce / Via Rail Service, Quebec, Canada
-XFL:Shawinigan / Via Rail Service, Quebec, Canada
-XFM:Shawnigan / Via Rail Service, British Columbia, Canada
-XFO:Taschereau / Via Rail Service, Quebec, Canada
-XFQ:Weymont / Via Rail Service, Quebec, Canada
-XFS:Alexandria / Via Rail Service, Ontario, Canada
-XFV:Brantford / Via Rail Service, Ontario, Canada
-XGJ:Cobourg / Via Rail Service, Ontario, Canada
-XGK:Coteau / Via Rail Service, Quebec, Canada
-XGY:Grimsby / Via Rail Service, Ontario, Canada
-XHM:Georgetown / Via Rail Service, Ontario, Canada
-XHS:Chemainus / Via Rail Service, British Columbia, Canada
-XIA:Guelph / Via Rail Service, Ontario, Canada
-XIB:Ingersoll / Via Rail Service, Ontario, Canada
-XID:Maxville / Via Rail Service, Ontario, Canada
-XIO:St Marys / Via Rail Service, Ontario, Canada
-XIP:Woodstock / Via Rail Service, Ontario, Canada
+XFW:Flugplatz Hamburg-Finkenwerder, Hamburg, Germany
 XIY:Xianyang, Xi An, China
-XJL:Joliette / Via Rail Service, Quebec, Canada
-XJQ:Jonquiere / Via Rail Service, Quebec, Canada
 XLV:Niagara Falls, Ontario, Canada
 XLZ:Truro, Nova Scotia, Canada
 XMN:Xiamen International, China
-XOK:Oakville / Via Rail Service, Ontario, Canada
-XPB:Parksville / Via Rail Service, British Columbia, Canada
-XPN:Brampton / Via Rail Service, Ontario, Canada
 XQP:Quepos, Costa Rica
 XQU:Qualicum, British Columbia, Canada
 XRY:La Parra, Jerez De La Frontera, Spain
 XSC:South Caicos, Turks And Caicos Islands
-XTY:Strathroy / Via Rail Service, Ontario, Canada
-XVV:Belleville / Via Rail Service, Ontario, Canada
-XWY:Wyoming / Via Rail Service, Ontario, Canada
 XYT:Montaudran, Toulouse, France
-XZB:Casselman / Via Rail Service, Ontario, Canada
-XZC:Glencoe / Via Rail Service, Ontario, Canada
 YAM:Sault Ste Marie, Ontario, Canada
 YAP:Yap, Caroline Islands, Micronesia
 YAZ:Tofino, British Columbia, Canada
@@ -2043,6 +2008,7 @@ ZGI:Gods River, Manitoba, Canada
 ZGS:Gethsemani, Quebec, Canada
 ZHA:Zhanjiang, China
 ZHO:Houston, British Columbia, Canada
+ZIA:Zhukovsky International, Moscow, Russia
 ZIH:Ixtapa/Zihuatanejo International, Guerrero, Mexico
 ZKG:Kegaska, Quebec, Canada
 ZLO:Aeropuerto International, Manzanillo, Colima, Mexico

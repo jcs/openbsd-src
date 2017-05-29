@@ -1,4 +1,4 @@
-/* $OpenBSD: pfkeyv2.h,v 1.74 2017/02/28 16:46:27 bluhm Exp $ */
+/* $OpenBSD: pfkeyv2.h,v 1.77 2017/05/29 14:28:01 claudio Exp $ */
 /*
  *	@(#)COPYRIGHT	1.1 (NRL) January 1998
  *
@@ -367,43 +367,13 @@ struct mbuf;
 #define EXTLEN(x) (((struct sadb_ext *)(x))->sadb_ext_len * sizeof(uint64_t))
 #define PADUP(x) (((x) + sizeof(uint64_t) - 1) & ~(sizeof(uint64_t) - 1))
 
-struct pfkey_version {
-	int protocol;
-	int (*create)(struct socket *socket);
-	int (*release)(struct socket *socket);
-	int (*send)(struct socket *socket, void *message, int len);
-	int (*sysctl)(int *, u_int, void *, size_t *, void *, size_t);
-};
-
-struct pfkeyv2_socket {
-	struct pfkeyv2_socket *next;
-	struct socket *socket;
-	int flags;
-	uint32_t pid;
-	uint32_t registration;    /* Increase size if SATYPE_MAX > 31 */
-	uint rdomain;
-};
-
-struct dump_state {
-	struct sadb_msg *sadb_msg;
-	struct socket *socket;
-};
-
-int pfkeyv2_init(void);
-int pfkeyv2_cleanup(void);
 int pfkeyv2_parsemessage(void *, int, void **);
 int pfkeyv2_expire(struct tdb *, u_int16_t);
 int pfkeyv2_acquire(struct ipsec_policy *, union sockaddr_union *,
     union sockaddr_union *, u_int32_t *, struct sockaddr_encap *);
 
-int pfkey_register(struct pfkey_version *version);
-int pfkey_unregister(struct pfkey_version *version);
-int pfkey_sendup(struct socket *socket, struct mbuf *packet, int more);
-
-int pfkeyv2_create(struct socket *);
 int pfkeyv2_get(struct tdb *, void **, void **, int *);
 int pfkeyv2_policy(struct ipsec_acquire *, void **, void **);
-int pfkeyv2_release(struct socket *);
 int pfkeyv2_send(struct socket *, void *, int);
 int pfkeyv2_sendmessage(void **, int, struct socket *, u_int8_t, int, u_int);
 int pfkeyv2_dump_policy(struct ipsec_policy *, void **, void **, int *);

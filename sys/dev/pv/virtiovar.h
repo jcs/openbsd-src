@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtiovar.h,v 1.1 2017/01/21 11:23:10 reyk Exp $	*/
+/*	$OpenBSD: virtiovar.h,v 1.3 2017/05/27 10:24:31 sf Exp $	*/
 /*	$NetBSD: virtiovar.h,v 1.1 2011/10/30 12:12:21 hannken Exp $	*/
 
 /*
@@ -110,7 +110,6 @@ struct virtqueue {
 	unsigned int		vq_bytesize;
 	bus_dmamap_t		vq_dmamap;
 
-	int			vq_maxsegsize;
 	int			vq_maxnsegs;
 
 	/* free entry management */
@@ -204,6 +203,7 @@ void virtio_enqueue_commit(struct virtio_softc*, struct virtqueue*, int, int);
 #define		virtio_notify(sc,vq)	virtio_enqueue_commit(sc, vq, -1, 1)
 
 int virtio_enqueue_abort(struct virtqueue*, int);
+void virtio_enqueue_trim(struct virtqueue*, int, int);
 
 int virtio_dequeue(struct virtio_softc*, struct virtqueue*, int *, int *);
 int virtio_dequeue_commit(struct virtqueue*, int);

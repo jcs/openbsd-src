@@ -1,4 +1,4 @@
-.\"	$OpenBSD: smtpd.conf.5,v 1.168 2017/02/13 12:23:47 gilles Exp $
+.\"	$OpenBSD: smtpd.conf.5,v 1.172 2017/05/28 11:17:33 jmc Exp $
 .\"
 .\" Copyright (c) 2008 Janne Johansson <jj@openbsd.org>
 .\" Copyright (c) 2009 Jacek Masiulaniec <jacekm@dobremiasto.net>
@@ -17,7 +17,7 @@
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
 .\"
-.Dd $Mdocdate: February 13 2017 $
+.Dd $Mdocdate: May 28 2017 $
 .Dt SMTPD.CONF 5
 .Os
 .Sh NAME
@@ -235,12 +235,19 @@ table, see
 .Xc
 This rule applies to mail destined to
 .Dq localhost
-and to the default server name.
-See the
+and to the default server name
+(the
 .Sx FILES
 entry for
 .Pa /etc/mail/mailname
-below for details of how the server name is determined.
+details how the server name is determined).
+This is the default,
+and may be omitted.
+.Pp
+If specified, the table
+.Ar aliases
+is used for looking up alternative destinations for addresses in these
+.Ar domains .
 .It Xo
 .Ic for
 .Op Ic \&!
@@ -648,7 +655,32 @@ Changing the default value might degrade performance.
 .It Xo
 .Ic listen on socket
 .Op Ic mask-source
-.br
+.Xc
+Specify a
+.Ic socket
+to listen on for incoming connections.
+This directive is used to modify the behavior of the listener handling
+messages submitted through the local enqueuer, for example via the
+.Xr mail 1
+utility.
+It is optional: if unspecified then
+.Xr smtpd 8
+will simply listen for connections on the
+.Ic socket
+as if it was configured with no option.
+Clients connecting through the
+.Ic socket
+will always be tagged with the 'local'
+.Ic tag .
+.Pp
+If the
+.Ic mask-source
+parameter is used, then the listener will skip the
+.Ic from
+part when prepending the
+.Dq Received
+header.
+.It Xo
 .Bk -words
 .Ic listen on Ar interface
 .Op Ar family
@@ -660,38 +692,17 @@ Changing the default value might degrade performance.
 .Op Ic tag Ar tag
 .Op Ic hostname Ar hostname
 .Op Ic hostnames No < Ns Ar names Ns >
-.Op Ic senders No < Ns Ar users Ns > Op masquerade
+.Op Ic senders No < Ns Ar users Ns > Op Cm masquerade
 .Op Ic mask-source
 .Op Ic received-auth
 .Op Ic no-dsn
 .Ek
 .Xc
-.Pp
-Specify a
-.Ic socket
-or an
+Specify an
 .Ar interface
+and optional
+.Ar port
 to listen on for incoming connections.
-The
-.Ic listen on socket
-directive is used to modify the behavior of the listener handling
-messages submitted through the local enqueuer, for example via the
-.Xr mail 1
-utility.
-This is an optional directive: if unspecified then
-.Xr smtpd 8
-will simply listen for connections on the
-.Ic socket
-as if it was configured with no option.
-Clients connecting through the
-.Ic socket
-will always be tagged with the 'local'
-.Ic tag .
-.Pp
-To listen on a specific network interface, specify an
-.Ar interface
-and an optional
-.Ar port .
 An interface group, an IP address or a domain name may
 be used in place of
 .Ar interface .
@@ -788,7 +799,9 @@ parameter is used, then
 will look up a mapping of username to email addresses to see whether
 the authenticated user is allowed to submit mail
 as the sender that was provided in the SMTP session.
-In addition, if the masquerade option is provided,
+In addition, if the
+.Cm masquerade
+option is provided,
 the From header will be rewritten
 to match the sender provided in the SMTP session.
 .Pp

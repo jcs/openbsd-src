@@ -1,4 +1,4 @@
-/* $OpenBSD: channels.c,v 1.359 2017/04/30 23:28:41 djm Exp $ */
+/* $OpenBSD: channels.c,v 1.361 2017/05/26 19:35:50 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -236,8 +236,6 @@ channel_lookup(int id)
 	case SSH_CHANNEL_DYNAMIC:
 	case SSH_CHANNEL_OPENING:
 	case SSH_CHANNEL_OPEN:
-	case SSH_CHANNEL_INPUT_DRAINING:
-	case SSH_CHANNEL_OUTPUT_DRAINING:
 	case SSH_CHANNEL_ABANDONED:
 	case SSH_CHANNEL_MUX_PROXY:
 		return (c);
@@ -604,9 +602,6 @@ channel_still_open(void)
 		case SSH_CHANNEL_MUX_CLIENT:
 		case SSH_CHANNEL_MUX_PROXY:
 			return 1;
-		case SSH_CHANNEL_INPUT_DRAINING:
-		case SSH_CHANNEL_OUTPUT_DRAINING:
-			fatal("cannot happen: OUT_DRAIN");
 		default:
 			fatal("%s: bad channel type %d", __func__, c->type);
 			/* NOTREACHED */
@@ -647,9 +642,6 @@ channel_find_open(void)
 		case SSH_CHANNEL_OPEN:
 		case SSH_CHANNEL_X11_OPEN:
 			return i;
-		case SSH_CHANNEL_INPUT_DRAINING:
-		case SSH_CHANNEL_OUTPUT_DRAINING:
-			fatal("cannot happen: OUT_DRAIN");
 		default:
 			fatal("%s: bad channel type %d", __func__, c->type);
 			/* NOTREACHED */
@@ -696,8 +688,6 @@ channel_open_message(void)
 		case SSH_CHANNEL_DYNAMIC:
 		case SSH_CHANNEL_OPEN:
 		case SSH_CHANNEL_X11_OPEN:
-		case SSH_CHANNEL_INPUT_DRAINING:
-		case SSH_CHANNEL_OUTPUT_DRAINING:
 		case SSH_CHANNEL_MUX_PROXY:
 		case SSH_CHANNEL_MUX_CLIENT:
 			snprintf(buf, sizeof buf,
@@ -2593,7 +2583,6 @@ channel_input_ieof(int type, u_int32_t seq, void *ctxt)
 	return 0;
 }
 
-/* proto version 1.5 overloads CLOSE_CONFIRMATION with OCLOSE */
 /* ARGSUSED */
 int
 channel_input_oclose(int type, u_int32_t seq, void *ctxt)
@@ -2607,26 +2596,6 @@ channel_input_oclose(int type, u_int32_t seq, void *ctxt)
 		return 0;
 	packet_check_eom();
 	chan_rcvd_oclose(c);
-	return 0;
-}
-
-/* ARGSUSED */
-int
-channel_input_close_confirmation(int type, u_int32_t seq, void *ctxt)
-{
-	int id = packet_get_int();
-	Channel *c = channel_lookup(id);
-
-	if (c == NULL)
-		packet_disconnect("Received close confirmation for "
-		    "out-of-range channel %d.", id);
-	if (channel_proxy_upstream(c, type, seq, ctxt))
-		return 0;
-	packet_check_eom();
-	if (c->type != SSH_CHANNEL_CLOSED && c->type != SSH_CHANNEL_ABANDONED)
-		packet_disconnect("Received close confirmation for "
-		    "non-closed channel %d (type %d).", id, c->type);
-	channel_free(c);
 	return 0;
 }
 

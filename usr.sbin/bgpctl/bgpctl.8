@@ -1,4 +1,4 @@
-.\" $OpenBSD: bgpctl.8,v 1.73 2017/02/13 14:48:44 phessler Exp $
+.\" $OpenBSD: bgpctl.8,v 1.76 2017/05/29 20:23:18 benno Exp $
 .\"
 .\" Copyright (c) 2003 Henning Brauer <henning@openbsd.org>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: February 13 2017 $
+.Dd $Mdocdate: May 29 2017 $
 .Dt BGPCTL 8
 .Os
 .Sh NAME
@@ -44,11 +44,20 @@ Show neighbors' IP addresses instead of their description.
 .It Fl s Ar socket
 Use
 .Ar socket
-instead of the default
-.Pa /var/run/bgpd.sock
 to communicate with
-.Xr bgpd 8 .
-.El
+.Xr bgpd 8
+instead of the default
+.Pa /var/run/bgpd.sock.<rdomain>
+where
+.Ar <rdomain>
+is the routing domain
+.Nm
+is running in.
+To administer
+.Xr bgpd 8
+in a different routing domain, run
+.Nm
+in said routing domain.
 .Pp
 The commands are as follows:
 .Bl -tag -width xxxxxx

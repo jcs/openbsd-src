@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.43 2017/01/23 04:57:13 deraadt Exp $	*/
+/*	$OpenBSD: main.c,v 1.48 2017/05/29 04:40:35 deraadt Exp $	*/
 
 /*-
  * Copyright (c) 1980, 1993
@@ -65,7 +65,6 @@ char	hostname[HOST_NAME_MAX+1];
 char	globalhostname[HOST_NAME_MAX+1];
 struct	utsname kerninfo;
 char	name[LOGIN_NAME_MAX];
-char	dev[] = _PATH_DEV;
 char	ttyn[32];
 char	*portselector(void);
 
@@ -195,7 +194,7 @@ main(int argc, char *argv[])
 	} else {
 		int i;
 
-		snprintf(ttyn, sizeof ttyn, "%s%s", dev, argv[2]);
+		snprintf(ttyn, sizeof ttyn, "%s%s", _PATH_DEV, argv[2]);
 		if (strcmp(argv[0], "+") != 0) {
 			chown(ttyn, 0, 0);
 			chmod(ttyn, 0600);
@@ -359,6 +358,11 @@ getname(void)
 			}
 			exit(0);
 		}
+		/* Handle 'printables' we cannot erase */
+		if (cs == CTRL('L') || cs == CTRL('K'))
+			continue;
+		if (cs == '\t')
+			cs = ' ';
 		if ((c = cs&0177) == 0)
 			return (0);
 
@@ -372,23 +376,24 @@ getname(void)
 			lower = 1;
 		else if (isupper(c))
 			upper = 1;
-		else if (c == ERASE || c == '#' || c == '\b') {
+		else if (c == ERASE || c == '\b') {
 			if (np > name) {
-				np--;
-				if (cfgetospeed(&tmode) >= 1200)
+				if (*--np == '\033')
+					xputs("\b\b  \b\b");
+				else if (isprint(*np))
 					xputs("\b \b");
-				else
-					putchr(cs);
 			}
 			continue;
-		} else if (c == KILL || c == '@') {
-			putchr(cs);
+		} else if (c == KILL) {
 			putchr('\r');
-			if (cfgetospeed(&tmode) < 1200)
-				putchr('\n');
-			/* this is the way they do it down under ... */
-			else if (np > name)
-				xputs("                                     \r");
+			putf(LM);
+			while (np > name) {
+				if (*--np == '\033')
+					xputs("  ");
+				else if (isprint(*np))
+					putchr(' ');
+			}
+			putchr('\r');
 			prompt();
 			np = name;
 			continue;
@@ -397,7 +402,11 @@ getname(void)
 		if (IG && (c <= ' ' || c > 0176))
 			continue;
 		*np++ = c;
-		putchr(cs);
+		if (c == '\033') {
+			putchr('^');
+			putchr('[');
+		} else
+			putchr(cs);
 	}
 	signal(SIGINT, SIG_IGN);
 	if (interrupt_flag) {

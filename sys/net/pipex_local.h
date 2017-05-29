@@ -1,4 +1,4 @@
-/*	$OpenBSD: pipex_local.h,v 1.25 2017/05/04 15:00:24 bluhm Exp $	*/
+/*	$OpenBSD: pipex_local.h,v 1.28 2017/05/28 21:57:19 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2009 Internet Initiative Japan Inc.
@@ -77,7 +77,7 @@ struct pipex_mppe {
 
 #ifdef PIPEX_PPPOE
 struct pipex_pppoe_session {
-	struct ifnet *over_ifp;                 /* ether interface */
+	u_int	 over_ifidx;                 /* ether interface */
 };
 #endif /* PIPEX_PPPOE */
 
@@ -393,7 +393,7 @@ Static void                  pipex_ip_input (struct mbuf *, struct pipex_session
 #ifdef INET6
 Static void                  pipex_ip6_input (struct mbuf *, struct pipex_session *);
 #endif
-Static struct mbuf           *pipex_common_input(struct pipex_session *, struct mbuf *, int, int);
+Static struct mbuf           *pipex_common_input(struct pipex_session *, struct mbuf *, int, int, int);
 
 #ifdef PIPEX_PPPOE
 Static void                  pipex_pppoe_output (struct mbuf *, struct pipex_session *);
@@ -428,7 +428,6 @@ Static void                  pipex_session_log (struct pipex_session *, int, con
 Static uint32_t              pipex_sockaddr_hash_key(struct sockaddr *);
 Static int                   pipex_sockaddr_compar_addr(struct sockaddr *, struct sockaddr *);
 Static int                   pipex_ppp_enqueue (struct mbuf *, struct pipex_session *, struct mbuf_queue *);
-Static void                  pipex_ppp_dequeue (void);
 Static void                  pipex_timer_start (void);
 Static void                  pipex_timer_stop (void);
 Static void                  pipex_timer (void *);

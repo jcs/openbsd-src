@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.h,v 1.6 2017/03/20 16:15:37 florian Exp $	*/
+/*	$OpenBSD: slaacd.h,v 1.15 2017/05/28 09:35:56 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -64,6 +64,15 @@ enum imsg_type {
 	IMSG_RA,
 	IMSG_CTL_SEND_SOLICITATION,
 	IMSG_PROPOSAL,
+	IMSG_PROPOSAL_ACK,
+	IMSG_CONFIGURE_ADDRESS,
+	IMSG_DEL_ADDRESS,
+	IMSG_CTL_SHOW_INTERFACE_INFO_ADDR_PROPOSALS,
+	IMSG_CTL_SHOW_INTERFACE_INFO_ADDR_PROPOSAL,
+	IMSG_FAKE_ACK,
+	IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSALS,
+	IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSAL,
+	IMSG_CONFIGURE_DFR,
 };
 
 extern const char* imsg_type_name[];
@@ -95,7 +104,7 @@ struct ctl_engine_info_ra {
 	uint8_t			 curhoplimit;
 	int			 managed;
 	int			 other;
-	enum rpref		 rpref;
+	char			 rpref[sizeof("MEDIUM")];
 	uint16_t		 router_lifetime;	/* in seconds */
 	uint32_t		 reachable_time;	/* in milliseconds */
 	uint32_t		 retrans_time;		/* in milliseconds */
@@ -108,9 +117,6 @@ struct ctl_engine_info_ra_prefix {
 	int			autonomous;
 	uint32_t		vltime;
 	uint32_t		pltime;
-	struct sockaddr_in6	addr;
-	struct sockaddr_in6	priv_addr;
-	struct in6_addr		mask;
 };
 
 struct ctl_engine_info_ra_rdns {
@@ -123,12 +129,50 @@ struct ctl_engine_info_ra_dnssl {
 	char			dnssl[SLAACD_MAX_DNSSL];
 };
 
+struct ctl_engine_info_address_proposal {
+	int64_t			 id;
+	char			 state[sizeof("PROPOSAL_NEARLY_EXPIRED")];
+	int			 next_timeout;
+	int			 timeout_count;
+	struct timespec		 when;
+	struct timespec		 uptime;
+	struct sockaddr_in6	 addr;
+	struct in6_addr		 prefix;
+	int			 privacy;
+	uint8_t			 prefix_len;
+	uint32_t		 vltime;
+	uint32_t		 pltime;
+};
+
+struct ctl_engine_info_dfr_proposal {
+	int64_t			 id;
+	char			 state[sizeof("PROPOSAL_NEARLY_EXPIRED")];
+	int			 next_timeout;
+	int			 timeout_count;
+	struct timespec		 when;
+	struct timespec		 uptime;
+	struct sockaddr_in6	 addr;
+	uint32_t		 router_lifetime;
+	char			 rpref[sizeof("MEDIUM")];
+};
+
 struct imsg_ifinfo {
 	uint32_t		if_index;
 	int			running;
 	int			autoconfprivacy;
 	struct ether_addr	hw_address;
 	struct sockaddr_in6	ll_address;
+};
+
+struct imsg_del_addr {
+	uint32_t		if_index;
+	struct sockaddr_in6	addr;
+};
+
+struct imsg_proposal_ack {
+	int64_t		 id;
+	pid_t		 pid;
+	uint32_t	 if_index;
 };
 
 struct imsg_ra {

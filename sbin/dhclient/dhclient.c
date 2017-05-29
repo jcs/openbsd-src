@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.415 2017/04/12 14:08:15 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.418 2017/05/26 14:57:41 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -158,6 +158,8 @@ struct client_lease *packet_to_lease(struct interface_info *, struct in_addr,
 void go_daemon(void);
 int rdaemon(int);
 void	take_charge(struct interface_info *);
+void	set_default_client_identifier(struct interface_info *);
+struct client_lease *get_recorded_lease(struct interface_info *);
 
 #define	ROUNDUP(a) \
 	    ((a) > 0 ? (1 + (((a) - 1) | (sizeof(long) - 1))) : sizeof(long))
@@ -443,7 +445,6 @@ int
 main(int argc, char *argv[])
 {
 	struct interface_info *ifi;
-	struct option_data *opt;
 	struct ifreq ifr;
 	struct ieee80211_nwid nwid;
 	struct stat sb;
@@ -575,24 +576,8 @@ main(int argc, char *argv[])
 	 * Set default client identifier, if needed, *before* reading
 	 * the leases file! Changes to the lladdr will trigger a restart
 	 * and go through here again.
-	 *
-	 * Check both len && data so
-	 *
-	 *     send dhcp-client-identifier "";
-	 *
-	 * can be used to suppress sending the default client
-	 * identifier.
 	 */
-	opt = &config->send_options[DHO_DHCP_CLIENT_IDENTIFIER];
-	if (opt->len == 0 && opt->data == NULL) {
-		opt->data = calloc(1, ETHER_ADDR_LEN + 1);
-		if (opt->data == NULL)
-			fatalx("no memory for default client identifier");
-		opt->data[0] = HTYPE_ETHER;
-		memcpy(&opt->data[1], ifi->hw_address.ether_addr_octet,
-		    ETHER_ADDR_LEN);
-		opt->len = ETHER_ADDR_LEN + 1;
-	}
+	set_default_client_identifier(ifi);
 
 	if ((pw = getpwnam("_dhcp")) == NULL)
 		fatalx("no such user: _dhcp");
@@ -774,9 +759,7 @@ state_reboot(void *xifi)
 	struct interface_info *ifi = xifi;
 	struct client_state *client = ifi->client;
 	char ifname[IF_NAMESIZE];
-	struct client_lease *lp;
 	time_t cur_time;
-	int i;
 
 	cancel_timeout();
 	deleting.s_addr = INADDR_ANY;
@@ -789,30 +772,8 @@ state_reboot(void *xifi)
 		else if (addressinuse(ifi, client->active->address, ifname) &&
 		    strncmp(ifname, ifi->name, IF_NAMESIZE) != 0)
 			client->active = NULL;
-	}
-
-	/* Run through the list of leases and see if one can be used. */
-	i = DHO_DHCP_CLIENT_IDENTIFIER;
-	TAILQ_FOREACH(lp, &client->leases, next) {
-		if (lp->ssid_len != ifi->ssid_len)
-			continue;
-		if (memcmp(lp->ssid, ifi->ssid, lp->ssid_len) != 0)
-			continue;
-		if ((lp->options[i].len != 0) && ((lp->options[i].len !=
-		    config->send_options[i].len) ||
-		    memcmp(lp->options[i].data, config->send_options[i].data,
-		    lp->options[i].len)))
-			continue;
-		if (addressinuse(ifi, lp->address, ifname) &&
-		    strncmp(ifname, ifi->name, IF_NAMESIZE) != 0)
-			continue;
-		if (client->active || lp->is_static)
-			break;
-		if (lp->expiry > cur_time) {
-			client->active = lp;
-			break;
-		}
-	}
+	} else
+		client->active = get_recorded_lease(ifi);
 
 	/* If we don't remember an active lease, go straight to INIT. */
 	if (!client->active || client->active->is_bootp) {
@@ -1500,37 +1461,15 @@ state_panic(void *xifi)
 {
 	struct interface_info *ifi = xifi;
 	struct client_state *client = ifi->client;
-	char ifname[IF_NAMESIZE];
 	struct client_lease *lp;
-	time_t cur_time;
 
-	time(&cur_time);
 	log_info("No acceptable DHCPOFFERS received.");
 
-	/* Run through the list of leases and see if one can be used. */
-	time(&cur_time);
-	TAILQ_FOREACH(lp, &client->leases, next) {
-		if (lp->ssid_len != ifi->ssid_len)
-			continue;
-		if (memcmp(lp->ssid, ifi->ssid, lp->ssid_len) != 0)
-			continue;
-		if (addressinuse(ifi, lp->address, ifname) &&
-		    strncmp(ifname, ifi->name, IF_NAMESIZE) != 0)
-			continue;
-		if (lp->is_static) {
-			set_lease_times(lp);
-			log_info("Trying static lease %s",
-			    inet_ntoa(lp->address));
-		} else if (lp->expiry <= cur_time) {
-			continue;
-		} else
-			log_info("Trying recorded lease %s",
-			    inet_ntoa(lp->address));
-
+	lp = get_recorded_lease(ifi);
+	if (lp) {
 		client->new = lp;
 		client->state = S_REQUESTING;
 		bind_lease(ifi);
-
 		return;
 	}
 
@@ -2120,10 +2059,10 @@ res_hnok(const char *name)
 		} else if (pch == '.' || nch == '.' || nch == '\0') {
 			if (!isalnum(ch))
 				return (0);
-		} else if (!isalnum(ch) && ch != '-' && ch != '_')
-				return (0);
-		else if (ch == '_' && warn == 0) {
-				log_warnx("warning: hostname %s contains an "
+		} else if (!isalnum(ch) && ch != '-' && ch != '_') {
+			return (0);
+		} else if (ch == '_' && warn == 0) {
+			log_warnx("warning: hostname %s contains an "
 			    "underscore which violates RFC 952", name);
 			warn++;
 		}
@@ -2691,5 +2630,68 @@ take_charge(struct interface_info *ifi)
 		}
 		if ((fds[0].revents & (POLLIN | POLLHUP)))
 			routehandler(ifi);
+	}
+}
+
+struct client_lease *
+get_recorded_lease(struct interface_info *ifi)
+{
+	char			 ifname[IF_NAMESIZE];
+	time_t			 cur_time;
+	struct client_state	*client = ifi->client;
+	struct client_lease	*lp;
+	int			 i;
+
+	time(&cur_time);
+
+	/* Run through the list of leases and see if one can be used. */
+	i = DHO_DHCP_CLIENT_IDENTIFIER;
+	TAILQ_FOREACH(lp, &client->leases, next) {
+		if (lp->ssid_len != ifi->ssid_len)
+			continue;
+		if (memcmp(lp->ssid, ifi->ssid, lp->ssid_len) != 0)
+			continue;
+		if ((lp->options[i].len != 0) && ((lp->options[i].len !=
+		    config->send_options[i].len) ||
+		    memcmp(lp->options[i].data, config->send_options[i].data,
+		    lp->options[i].len)))
+			continue;
+		if (addressinuse(ifi, lp->address, ifname) &&
+		    strncmp(ifname, ifi->name, IF_NAMESIZE) != 0)
+			continue;
+		else if (lp->expiry <= cur_time)
+			continue;
+
+		if (lp->is_static)
+			set_lease_times(lp);
+		break;
+	}
+
+	return (lp);
+}
+
+void
+set_default_client_identifier(struct interface_info *ifi)
+{
+	struct option_data *opt;
+
+	/*
+	 *
+	 * Check both len && data so
+	 *
+	 *     send dhcp-client-identifier "";
+	 *
+	 * can be used to suppress sending the default client
+	 * identifier.
+	 */
+	opt = &config->send_options[DHO_DHCP_CLIENT_IDENTIFIER];
+	if (opt->len == 0 && opt->data == NULL) {
+		opt->data = calloc(1, ETHER_ADDR_LEN + 1);
+		if (opt->data == NULL)
+			fatalx("no memory for default client identifier");
+		opt->data[0] = HTYPE_ETHER;
+		memcpy(&opt->data[1], ifi->hw_address.ether_addr_octet,
+		    ETHER_ADDR_LEN);
+		opt->len = ETHER_ADDR_LEN + 1;
 	}
 }

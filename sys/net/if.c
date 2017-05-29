@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.497 2017/05/16 12:24:01 mpi Exp $	*/
+/*	$OpenBSD: if.c,v 1.500 2017/05/29 06:08:21 mpi Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -960,6 +960,10 @@ if_netisr(void *unused)
 		if (n & (1 << NETISR_PPPOE))
 			pppoeintr();
 #endif
+#ifdef PIPEX
+		if (n & (1 << NETISR_PIPEX))
+			pipexintr();
+#endif
 		t |= n;
 	}
 
@@ -977,8 +981,7 @@ if_deactivate(struct ifnet *ifp)
 {
 	int s;
 
-	s = splnet();
-
+	NET_LOCK(s);
 	/*
 	 * Call detach hooks from head to tail.  To make sure detach
 	 * hooks are executed in the reverse order they were added, all
@@ -991,8 +994,7 @@ if_deactivate(struct ifnet *ifp)
 	if (ifp->if_carp && ifp->if_type != IFT_CARP)
 		carp_ifdetach(ifp);
 #endif
-
-	splx(s);
+	NET_UNLOCK(s);
 }
 
 /*
@@ -1557,15 +1559,14 @@ if_linkstate_task(void *xifidx)
 	struct ifnet *ifp;
 	int s;
 
-	ifp = if_get(ifidx);
-	if (ifp == NULL)
-		return;
-
 	NET_LOCK(s);
-	if_linkstate(ifp);
-	NET_UNLOCK(s);
 
+	ifp = if_get(ifidx);
+	if (ifp != NULL)
+		if_linkstate(ifp);
 	if_put(ifp);
+
+	NET_UNLOCK(s);
 }
 
 void

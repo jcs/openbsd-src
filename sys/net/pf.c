@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1026 2017/05/20 22:56:43 sashan Exp $ */
+/*	$OpenBSD: pf.c,v 1.1031 2017/05/29 14:18:32 mpi Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -114,6 +114,8 @@ struct pf_queuehead	*pf_queues_inactive;
 
 struct pf_status	 pf_status;
 
+int			 pf_hdr_limit = 20;  /* arbitrary limit, tune in ddb */
+
 SHA2_CTX		 pf_tcp_secret_ctx;
 u_char			 pf_tcp_secret[16];
 int			 pf_tcp_secret_init;
@@ -222,6 +224,8 @@ u_int16_t		 pf_calc_mss(struct pf_addr *, sa_family_t, int,
 static __inline int	 pf_set_rt_ifp(struct pf_state *, struct pf_addr *,
 			    sa_family_t);
 struct pf_divert	*pf_get_divert(struct mbuf *);
+int			 pf_walk_header(struct pf_pdesc *, struct ip *,
+			    u_short *);
 int			 pf_walk_option6(struct pf_pdesc *, struct ip6_hdr *,
 			    int, int, u_short *);
 int			 pf_walk_header6(struct pf_pdesc *, struct ip6_hdr *,
@@ -236,8 +240,10 @@ struct pf_state		*pf_find_state(struct pfi_kif *,
 			    struct pf_state_key_cmp *, u_int, struct mbuf *);
 int			 pf_src_connlimit(struct pf_state **);
 int			 pf_match_rcvif(struct mbuf *, struct pf_rule *);
-int			 pf_step_into_anchor(struct pf_test_ctx *, struct pf_rule *);
-int			 pf_match_rule(struct pf_test_ctx *, struct pf_ruleset *);
+int			 pf_step_into_anchor(struct pf_test_ctx *,
+			    struct pf_rule *);
+int			 pf_match_rule(struct pf_test_ctx *,
+			    struct pf_ruleset *);
 void			 pf_counters_inc(int, struct pf_pdesc *,
 			    struct pf_state *, struct pf_rule *,
 			    struct pf_rule *);
@@ -1314,12 +1320,8 @@ pf_remove_state(struct pf_state *cur)
 	}
 	RB_REMOVE(pf_state_tree_id, &tree_id, cur);
 #if NPFLOW > 0
-	if (cur->state_flags & PFSTATE_PFLOW) {
-		/* XXXSMP breaks atomicity */
-		rw_exit_write(&netlock);
+	if (cur->state_flags & PFSTATE_PFLOW)
 		export_pflow(cur);
-		rw_enter_write(&netlock);
-	}
 #endif	/* NPFLOW > 0 */
 #if NPFSYNC > 0
 	pfsync_delete_state(cur);
@@ -3574,7 +3576,7 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_ruleset *ruleset)
 					ctx->test_status = PF_TEST_FAIL;
 					break;
 				}
-#if NPFLOG > 0 
+#if NPFLOG > 0
 				if (r->log) {
 					REASON_SET(&ctx->reason, PFRES_MATCH);
 					PFLOG_PACKET(ctx->pd, ctx->reason, r,
@@ -3583,7 +3585,7 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_ruleset *ruleset)
 #endif	/* NPFLOG > 0 */
 			} else {
 				/*
- 				 * found matching r
+				 * found matching r
 				 */
 				*ctx->rm = r;
 				/*
@@ -4986,9 +4988,10 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **state,
 			}
 
 			/* offset of protocol header that follows h2 */
-			pd2.off = ipoff2 + (h2.ip_hl << 2);
+			pd2.off = ipoff2;
+			if (pf_walk_header(&pd2, &h2, reason) != PF_PASS)
+				return (PF_DROP);
 
-			pd2.proto = h2.ip_p;
 			pd2.tot_len = ntohs(h2.ip_len);
 			pd2.src = (struct pf_addr *)&h2.ip_src;
 			pd2.dst = (struct pf_addr *)&h2.ip_dst;
@@ -5611,6 +5614,8 @@ void *
 pf_pull_hdr(struct mbuf *m, int off, void *p, int len,
     u_short *actionp, u_short *reasonp, sa_family_t af)
 {
+	int iplen = 0;
+
 	switch (af) {
 	case AF_INET: {
 		struct ip	*h = mtod(m, struct ip *);
@@ -5625,28 +5630,22 @@ pf_pull_hdr(struct mbuf *m, int off, void *p, int len,
 			}
 			return (NULL);
 		}
-		if (m->m_pkthdr.len < off + len ||
-		    ntohs(h->ip_len) < off + len) {
-			ACTION_SET(actionp, PF_DROP);
-			REASON_SET(reasonp, PFRES_SHORT);
-			return (NULL);
-		}
+		iplen = ntohs(h->ip_len);
 		break;
 	}
 #ifdef INET6
 	case AF_INET6: {
 		struct ip6_hdr	*h = mtod(m, struct ip6_hdr *);
 
-		if (m->m_pkthdr.len < off + len ||
-		    (ntohs(h->ip6_plen) + sizeof(struct ip6_hdr)) <
-		    (unsigned)(off + len)) {
-			ACTION_SET(actionp, PF_DROP);
-			REASON_SET(reasonp, PFRES_SHORT);
-			return (NULL);
-		}
+		iplen = ntohs(h->ip6_plen) + sizeof(struct ip6_hdr);
 		break;
 	}
 #endif /* INET6 */
+	}
+	if (m->m_pkthdr.len < off + len || iplen < off + len) {
+		ACTION_SET(actionp, PF_DROP);
+		REASON_SET(reasonp, PFRES_SHORT);
+		return (NULL);
 	}
 	m_copydata(m, off, len, p);
 	return (p);
@@ -6113,6 +6112,49 @@ pf_get_divert(struct mbuf *m)
 	return ((struct pf_divert *)(mtag + 1));
 }
 
+int
+pf_walk_header(struct pf_pdesc *pd, struct ip *h, u_short *reason)
+{
+	struct ip6_ext		 ext;
+	u_int32_t		 hlen, end;
+	int			 hdr_cnt;
+
+	hlen = h->ip_hl << 2;
+	if (hlen < sizeof(struct ip) || hlen > ntohs(h->ip_len)) {
+		REASON_SET(reason, PFRES_SHORT);
+		return (PF_DROP);
+	}
+	end = pd->off + ntohs(h->ip_len);
+	pd->off += hlen;
+	pd->proto = h->ip_p;
+	/* stop walking over non initial fragments */
+	if ((h->ip_off & htons(IP_OFFMASK)) != 0)
+		return (PF_PASS);
+
+	for (hdr_cnt = 0; hdr_cnt < pf_hdr_limit; hdr_cnt++) {
+		switch (pd->proto) {
+		case IPPROTO_AH:
+			/* fragments may be short */
+			if ((h->ip_off & htons(IP_MF | IP_OFFMASK)) != 0 &&
+			    end < pd->off + sizeof(ext))
+				return (PF_PASS);
+			if (!pf_pull_hdr(pd->m, pd->off, &ext, sizeof(ext),
+			    NULL, reason, AF_INET)) {
+				DPFPRINTF(LOG_NOTICE, "IP short exthdr");
+				return (PF_DROP);
+			}
+			pd->off += (ext.ip6e_len + 2) * 4;
+			pd->proto = ext.ip6e_nxt;
+			break;
+		default:
+			return (PF_PASS);
+		}
+	}
+	DPFPRINTF(LOG_NOTICE, "IPv4 nested authentication header limit");
+	REASON_SET(reason, PFRES_IPOPTIONS);
+	return (PF_DROP);
+}
+
 #ifdef INET6
 int
 pf_walk_option6(struct pf_pdesc *pd, struct ip6_hdr *h, int off, int end,
@@ -6183,14 +6225,14 @@ pf_walk_header6(struct pf_pdesc *pd, struct ip6_hdr *h, u_short *reason)
 	struct ip6_ext		 ext;
 	struct ip6_rthdr	 rthdr;
 	u_int32_t		 end;
-	int			 hdr_cnt = 0, fraghdr_cnt = 0, rthdr_cnt = 0;
+	int			 hdr_cnt, fraghdr_cnt = 0, rthdr_cnt = 0;
 
 	pd->off += sizeof(struct ip6_hdr);
 	end = pd->off + ntohs(h->ip6_plen);
 	pd->fragoff = pd->extoff = pd->jumbolen = 0;
 	pd->proto = h->ip6_nxt;
-	for (;;) {
-		hdr_cnt++;
+
+	for (hdr_cnt = 0; hdr_cnt < pf_hdr_limit; hdr_cnt++) {
 		switch (pd->proto) {
 		case IPPROTO_FRAGMENT:
 			if (fraghdr_cnt++) {
@@ -6245,7 +6287,7 @@ pf_walk_header6(struct pf_pdesc *pd, struct ip6_hdr *h, u_short *reason)
 			/* FALLTHROUGH */
 		case IPPROTO_HOPOPTS:
 			/* RFC2460 4.1:  Hop-by-Hop only after IPv6 header */
-			if (pd->proto == IPPROTO_HOPOPTS && hdr_cnt > 1) {
+			if (pd->proto == IPPROTO_HOPOPTS && hdr_cnt > 0) {
 				DPFPRINTF(LOG_NOTICE, "IPv6 hopopts not first");
 				REASON_SET(reason, PFRES_IPOPTIONS);
 				return (PF_DROP);
@@ -6303,6 +6345,9 @@ pf_walk_header6(struct pf_pdesc *pd, struct ip6_hdr *h, u_short *reason)
 			return (PF_PASS);
 		}
 	}
+	DPFPRINTF(LOG_NOTICE, "IPv6 nested extension header limit");
+	REASON_SET(reason, PFRES_IPOPTIONS);
+	return (PF_DROP);
 }
 #endif /* INET6 */
 
@@ -6330,26 +6375,23 @@ pf_setup_pdesc(struct pf_pdesc *pd, sa_family_t af, int dir,
 		}
 
 		h = mtod(pd->m, struct ip *);
-		pd->off = h->ip_hl << 2;
-
-		if (pd->off < sizeof(struct ip) ||
-		    pd->off > ntohs(h->ip_len) ||
-		    pd->m->m_pkthdr.len < ntohs(h->ip_len)) {
+		if (pd->m->m_pkthdr.len < ntohs(h->ip_len)) {
 			REASON_SET(reason, PFRES_SHORT);
 			return (PF_DROP);
 		}
 
+		if (pf_walk_header(pd, h, reason) != PF_PASS)
+			return (PF_DROP);
+
 		pd->src = (struct pf_addr *)&h->ip_src;
 		pd->dst = (struct pf_addr *)&h->ip_dst;
-		pd->virtual_proto = pd->proto = h->ip_p;
 		pd->tot_len = ntohs(h->ip_len);
 		pd->tos = h->ip_tos & ~IPTOS_ECN_MASK;
 		pd->ttl = h->ip_ttl;
 		if (h->ip_hl > 5)	/* has options */
 			pd->badopts++;
-
-		if (h->ip_off & htons(IP_MF | IP_OFFMASK))
-			pd->virtual_proto = PF_VPROTO_FRAGMENT;
+		pd->virtual_proto = (h->ip_off & htons(IP_MF | IP_OFFMASK)) ?
+		     PF_VPROTO_FRAGMENT : pd->proto;
 
 		break;
 	}
@@ -6364,8 +6406,6 @@ pf_setup_pdesc(struct pf_pdesc *pd, sa_family_t af, int dir,
 		}
 
 		h = mtod(pd->m, struct ip6_hdr *);
-		pd->off = 0;
-
 		if (pd->m->m_pkthdr.len <
 		    sizeof(struct ip6_hdr) + ntohs(h->ip6_plen)) {
 			REASON_SET(reason, PFRES_SHORT);
@@ -6388,13 +6428,11 @@ pf_setup_pdesc(struct pf_pdesc *pd, sa_family_t af, int dir,
 
 		pd->src = (struct pf_addr *)&h->ip6_src;
 		pd->dst = (struct pf_addr *)&h->ip6_dst;
-		pd->virtual_proto = pd->proto;
 		pd->tot_len = ntohs(h->ip6_plen) + sizeof(struct ip6_hdr);
 		pd->tos = (ntohl(h->ip6_flow) & 0x0fc00000) >> 20;
 		pd->ttl = h->ip6_hlim;
-
-		if (pd->fragoff != 0)
-			pd->virtual_proto = PF_VPROTO_FRAGMENT;
+		pd->virtual_proto = (pd->fragoff != 0) ?
+			PF_VPROTO_FRAGMENT : pd->proto;
 
 		break;
 	}

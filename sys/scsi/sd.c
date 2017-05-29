@@ -1,8 +1,8 @@
-/*	$OpenBSD: sd.c,v 1.270 2017/05/04 22:47:27 deraadt Exp $	*/
+/*	$OpenBSD: sd.c,v 1.273 2017/05/29 14:08:49 sf Exp $	*/
 /*	$NetBSD: sd.c,v 1.111 1997/04/02 02:29:41 mycroft Exp $	*/
 
 /*-
- * Copyright (c) 1998 The NetBSD Foundation, Inc.
+ * Copyright (c) 1998, 2003, 2004 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -96,7 +96,7 @@ int	sd_vpd_block_limits(struct sd_softc *, int);
 int	sd_vpd_thin(struct sd_softc *, int);
 int	sd_thin_params(struct sd_softc *, int);
 int	sd_get_parms(struct sd_softc *, struct disk_parms *, int);
-void	sd_flush(struct sd_softc *, int);
+int	sd_flush(struct sd_softc *, int);
 
 void	viscpy(u_char *, u_char *, int);
 
@@ -511,10 +511,11 @@ sdclose(dev_t dev, int flag, int fmt, struct proc *p)
 
 	disk_closepart(&sc->sc_dk, part, fmt);
 
-	if (sc->sc_dk.dk_openmask == 0) {
-		if ((sc->flags & SDF_DIRTY) != 0)
-			sd_flush(sc, 0);
+	if (((flag & FWRITE) != 0 || sc->sc_dk.dk_openmask == 0) &&
+	    (sc->flags & SDF_DIRTY) != 0)
+		sd_flush(sc, 0);
 
+	if (sc->sc_dk.dk_openmask == 0) {
 		if (sc->flags & SDF_DYING) {
 			error = ENXIO;
 			goto die;
@@ -762,16 +763,6 @@ sd_buf_done(struct scsi_xfer *xs)
 		bp->b_resid = xs->resid;
 		break;
 
-	case XS_NO_CCB:
-		/* The adapter is busy, requeue the buf and try it later. */
-		disk_unbusy(&sc->sc_dk, bp->b_bcount - xs->resid, bp->b_blkno,
-		    bp->b_flags & B_READ);
-		bufq_requeue(&sc->sc_bufq, bp);
-		scsi_xs_put(xs);
-		SET(sc->flags, SDF_WAITING);
-		timeout_add(&sc->sc_timeout, 1);
-		return;
-
 	case XS_SENSE:
 	case XS_SHORTSENSE:
 #ifdef SCSIDEBUG
@@ -997,6 +988,15 @@ sdioctl(dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
 		/* FALLTHROUGH */
 	case DIOCGCACHE:
 		error = sd_ioctl_cache(sc, cmd, (struct dk_cache *)addr);
+		goto exit;
+
+	case DIOCCACHESYNC:
+		if (!ISSET(flag, FWRITE)) {
+			error = EBADF;
+			goto exit;
+		}
+		if ((sc->flags & SDF_DIRTY) != 0 || *(int *)addr != 0)
+			error = sd_flush(sc, 0);
 		goto exit;
 
 	default:
@@ -1876,19 +1876,20 @@ die:
 	return (SDGP_RESULT_OFFLINE);
 }
 
-void
+int
 sd_flush(struct sd_softc *sc, int flags)
 {
 	struct scsi_link *link;
 	struct scsi_xfer *xs;
 	struct scsi_synchronize_cache *cmd;
+	int error;
 
 	if (sc->flags & SDF_DYING)
-		return;
+		return (ENXIO);
 	link = sc->sc_link;
 
 	if (link->quirks & SDEV_NOSYNCCACHE)
-		return;
+		return (0);
 
 	/*
 	 * Issue a SYNCHRONIZE CACHE. Address 0, length 0 means "all remaining
@@ -1899,7 +1900,7 @@ sd_flush(struct sd_softc *sc, int flags)
 	xs = scsi_xs_get(link, flags);
 	if (xs == NULL) {
 		SC_DEBUG(link, SDEV_DB1, ("cache sync failed to get xs\n"));
-		return;
+		return (EIO);
 	}
 
 	cmd = (struct scsi_synchronize_cache *)xs->cmd;
@@ -1909,10 +1910,14 @@ sd_flush(struct sd_softc *sc, int flags)
 	xs->timeout = 100000;
 	xs->flags |= SCSI_IGNORE_ILLEGAL_REQUEST;
 
-	if (scsi_xs_sync(xs) == 0)
-		sc->flags &= ~SDF_DIRTY;
-	else
-		SC_DEBUG(link, SDEV_DB1, ("cache sync failed\n"));
+	error = scsi_xs_sync(xs);
 
 	scsi_xs_put(xs);
+
+	if (error)
+		SC_DEBUG(link, SDEV_DB1, ("cache sync failed\n"));
+	else
+		sc->flags &= ~SDF_DIRTY;
+
+	return (error);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.181 2017/05/08 14:27:28 stsp Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.184 2017/05/28 11:03:48 stsp Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>
@@ -2963,11 +2963,11 @@ iwm_load_cpu_sections_8000(struct iwm_softc *sc, struct iwm_fw_sects *fws,
 			IWM_WRITE(sc, IWM_FH_UCODE_LOAD_STATUS, val);
 			sec_num = (sec_num << 1) | 0x1;
 			iwm_nic_unlock(sc);
-
-			/*
-			 * The firmware won't load correctly without this delay.
-			 */
-			DELAY(8000);
+		} else {
+			err = EBUSY;
+			printf("%s: could not load firmware chunk %d "
+			    "(error %d)\n", DEVNAME(sc), i, err);
+			return err;
 		}
 	}
 
@@ -2979,6 +2979,11 @@ iwm_load_cpu_sections_8000(struct iwm_softc *sc, struct iwm_fw_sects *fws,
 		else
 			IWM_WRITE(sc, IWM_FH_UCODE_LOAD_STATUS, 0xFFFFFFFF);
 		iwm_nic_unlock(sc);
+	} else {
+		err = EBUSY;
+		printf("%s: could not finalize firmware loading (error %d)\n",
+		    DEVNAME(sc), err);
+		return err;
 	}
 
 	return 0;
@@ -5679,6 +5684,10 @@ iwm_endscan_cb(void *arg)
 	struct iwm_softc *sc = arg;
 	struct ieee80211com *ic = &sc->sc_ic;
 
+	/* Check if device was reset while scanning. */
+	if (ic->ic_state != IEEE80211_S_SCAN)
+		return;
+
 	sc->sc_flags &= ~IWM_FLAG_SCANNING;
 	ieee80211_end_scan(&ic->ic_if);
 }
@@ -6047,7 +6056,6 @@ iwm_init(struct ifnet *ifp)
 		return 0;
 	}
 	sc->sc_generation++;
-	sc->sc_flags &= ~IWM_FLAG_STOPPED;
 
 	err = iwm_init_hw(sc);
 	if (err) {
@@ -6139,7 +6147,6 @@ iwm_stop(struct ifnet *ifp, int disable)
 	struct iwm_node *in = (void *)ic->ic_bss;
 
 	sc->sc_flags &= ~IWM_FLAG_HW_INITED;
-	sc->sc_flags |= IWM_FLAG_STOPPED;
 	sc->sc_generation++;
 	ic->ic_scan_lock = IEEE80211_SCAN_UNLOCKED;
 	ifp->if_flags &= ~IFF_RUNNING;
@@ -6156,6 +6163,7 @@ iwm_stop(struct ifnet *ifp, int disable)
 	task_del(systq, &sc->ba_task);
 	task_del(systq, &sc->htprot_task);
 
+	sc->sc_flags &= ~IWM_FLAG_SCANNING;
 	sc->sc_newstate(ic, IEEE80211_S_INIT, -1);
 
 	timeout_del(&sc->sc_calib_to);

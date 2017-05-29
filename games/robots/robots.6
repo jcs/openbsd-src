@@ -1,4 +1,4 @@
-.\"	$OpenBSD: robots.6,v 1.16 2015/12/04 19:21:26 jmc Exp $
+.\"	$OpenBSD: robots.6,v 1.18 2017/05/28 22:27:10 tedu Exp $
 .\"
 .\" Copyright (c) 1991, 1993
 .\"	The Regents of the University of California.  All rights reserved.
@@ -29,7 +29,7 @@
 .\"
 .\"	@(#)robots.6	8.1 (Berkeley) 5/31/93
 .\"
-.Dd $Mdocdate: December 4 2015 $
+.Dd $Mdocdate: May 28 2017 $
 .Dt ROBOTS 6
 .Os
 .Sh NAME
@@ -55,13 +55,13 @@ you start on the next field.
 This keeps up until they finally get you.
 .Pp
 Robots are represented on the screen by a
-.Sq \+ ,
+.Sq + ,
 the junk heaps from their collisions by a
-.Sq \(** ,
+.Sq * ,
 and you
 (the good guy)
 by a
-.Sq \@ .
+.Sq @ .
 .Pp
 The commands are:
 .Bl -tag -width indent -compact
@@ -85,7 +85,7 @@ move one square down and right
 (also space) do nothing for one turn
 .It Ic HJKLBNYU
 run as far as possible in the given direction
-.It Ic \>
+.It Ic >
 do nothing for as long as possible
 .It Ic t
 teleport to a random location
@@ -148,8 +148,3 @@ The score file.
 .El
 .Sh AUTHORS
 .An Ken Arnold
-.Sh BUGS
-Bugs?
-You
-.Em crazy ,
-man?!?

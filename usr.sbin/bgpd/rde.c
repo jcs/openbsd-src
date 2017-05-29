@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.c,v 1.361 2017/01/25 03:21:55 claudio Exp $ */
+/*	$OpenBSD: rde.c,v 1.368 2017/05/29 13:10:40 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -76,7 +76,7 @@ void		 rde_update_log(const char *, u_int16_t,
 void		 rde_as4byte_fixup(struct rde_peer *, struct rde_aspath *);
 void		 rde_reflector(struct rde_peer *, struct rde_aspath *);
 
-void		 rde_dump_rib_as(struct prefix *, struct rde_aspath *,pid_t,
+void		 rde_dump_rib_as(struct prefix *, struct rde_aspath *, pid_t,
 		     int);
 void		 rde_dump_filter(struct prefix *,
 		     struct ctl_show_rib_request *);
@@ -86,8 +86,14 @@ void		 rde_dump_upcall(struct rib_entry *, void *);
 void		 rde_dump_prefix_upcall(struct rib_entry *, void *);
 void		 rde_dump_ctx_new(struct ctl_show_rib_request *, pid_t,
 		     enum imsg_type);
-void		 rde_dump_mrt_new(struct mrt *, pid_t, int);
+void		 rde_dump_ctx_throttle(pid_t pid, int throttle);
+void		 rde_dump_runner(void);
+int		 rde_dump_pending(void);
 void		 rde_dump_done(void *);
+void		 rde_dump_mrt_new(struct mrt *, pid_t, int);
+void		 rde_dump_rib_free(struct rib *);
+void		 rde_dump_mrt_free(struct rib *);
+void		 rde_rib_free(struct rib_desc *);
 
 int		 rde_rdomain_import(struct rde_aspath *, struct rdomain *);
 void		 rde_reload_done(void);
@@ -131,15 +137,19 @@ struct imsgbuf		*ibuf_main;
 struct rde_memstats	 rdemem;
 
 struct rde_dump_ctx {
+	LIST_ENTRY(rde_dump_ctx)	entry;
 	struct rib_context		ribctx;
 	struct ctl_show_rib_request	req;
 	sa_family_t			af;
+	u_int8_t			throttled;
 };
 
+LIST_HEAD(, rde_dump_ctx) rde_dump_h = LIST_HEAD_INITIALIZER(rde_dump_h);
+
 struct rde_mrt_ctx {
-	struct mrt		mrt;
-	struct rib_context	ribctx;
 	LIST_ENTRY(rde_mrt_ctx)	entry;
+	struct rib_context	ribctx;
+	struct mrt		mrt;
 };
 
 LIST_HEAD(, rde_mrt_ctx) rde_mrts = LIST_HEAD_INITIALIZER(rde_mrts);
@@ -248,7 +258,7 @@ rde_main(int debug, int verbose)
 		set_pollfd(&pfd[PFD_PIPE_SESSION], ibuf_se);
 		set_pollfd(&pfd[PFD_PIPE_SESSION_CTL], ibuf_se_ctl);
 
-		if (rib_dump_pending() &&
+		if (rde_dump_pending() &&
 		    ibuf_se_ctl && ibuf_se_ctl->w.queued == 0)
 			timeout = 0;
 
@@ -261,7 +271,6 @@ rde_main(int debug, int verbose)
 				i++;
 			} else if (mctx->mrt.state == MRT_STATE_REMOVE) {
 				close(mctx->mrt.wbuf.fd);
-				LIST_REMOVE(&mctx->ribctx, entry);
 				LIST_REMOVE(mctx, entry);
 				free(mctx);
 				rde_mrt_cnt--;
@@ -307,10 +316,14 @@ rde_main(int debug, int verbose)
 		rde_update_queue_runner();
 		for (aid = AID_INET6; aid < AID_MAX; aid++)
 			rde_update6_queue_runner(aid);
-		if (rib_dump_pending() &&
+		if (rde_dump_pending() &&
 		    ibuf_se_ctl && ibuf_se_ctl->w.queued <= 10)
-			rib_dump_runner();
+			rde_dump_runner();
 	}
+
+	/* do not clean up on shutdown on production, it takes ages. */
+	if (debug)
+		rde_shutdown();
 
 	/* close pipes */
 	if (ibuf_se) {
@@ -327,14 +340,9 @@ rde_main(int debug, int verbose)
 	close(ibuf_main->fd);
 	free(ibuf_main);
 
-	/* do not clean up on shutdown on production, it takes ages. */
-	if (debug)
-		rde_shutdown();
-
 	while ((mctx = LIST_FIRST(&rde_mrts)) != NULL) {
 		msgbuf_clear(&mctx->mrt.wbuf);
 		close(mctx->mrt.wbuf.fd);
-		LIST_REMOVE(&mctx->ribctx, entry);
 		LIST_REMOVE(mctx, entry);
 		free(mctx);
 	}
@@ -611,6 +619,25 @@ badnet:
 			memcpy(&verbose, imsg.data, sizeof(verbose));
 			log_setverbose(verbose);
 			break;
+		case IMSG_XON:
+			if (imsg.hdr.peerid) {
+				peer = peer_get(imsg.hdr.peerid);
+				if (peer)
+					peer->throttled = 0;
+				break;
+			} else {
+				rde_dump_ctx_throttle(imsg.hdr.pid, 0);
+			}
+			break;
+		case IMSG_XOFF:
+			if (imsg.hdr.peerid) {
+				peer = peer_get(imsg.hdr.peerid);
+				if (peer)
+					peer->throttled = 1;
+			} else {
+				rde_dump_ctx_throttle(imsg.hdr.pid, 1);
+			}
+			break;
 		default:
 			break;
 		}
@@ -737,7 +764,7 @@ rde_dispatch_imsg_parent(struct imsgbuf *ibuf)
 				 */
 				in_rules = ribd->in_rules;
 				ribd->in_rules = NULL;
-				rib_free(rib);
+				rde_rib_free(ribd);
 				rib = rib_new(rn.name, rn.rtableid, rn.flags);
 				ribd->in_rules = in_rules;
 			} else
@@ -1103,7 +1130,9 @@ rde_update_dispatch(struct imsg *imsg)
 	p += 2 + attrpath_len;
 
 	/* aspath needs to be loop free nota bene this is not a hard error */
-	if (peer->conf.ebgp && !aspath_loopfree(asp->aspath, conf->as))
+	if (peer->conf.ebgp &&
+	    peer->conf.enforce_local_as == ENFORCE_AS_ON &&
+	    !aspath_loopfree(asp->aspath, peer->conf.local_as))
 		asp->flags |= F_ATTR_LOOP;
 
 	/* parse nlri prefix */
@@ -2356,7 +2385,7 @@ rde_dump_ctx_new(struct ctl_show_rib_request *req, pid_t pid,
 	memcpy(&ctx->req, req, sizeof(struct ctl_show_rib_request));
 	ctx->req.pid = pid;
 	ctx->req.type = type;
-	ctx->ribctx.ctx_count = RDE_RUNNER_ROUNDS;
+	ctx->ribctx.ctx_count = CTL_MSG_HIGH_MARK;
 	ctx->ribctx.ctx_rib = rib;
 	switch (ctx->req.type) {
 	case IMSG_CTL_SHOW_NETWORK:
@@ -2390,7 +2419,9 @@ rde_dump_ctx_new(struct ctl_show_rib_request *req, pid_t pid,
 			re = rib_get(rib, &req->prefix, req->prefixlen);
 		if (re)
 			rde_dump_upcall(re, ctx);
-		rde_dump_done(ctx);
+		imsg_compose(ibuf_se_ctl, IMSG_CTL_END, 0, ctx->req.pid,
+		    -1, NULL, 0);
+		free(ctx);
 		return;
 	default:
 		fatalx("rde_dump_ctx_new: unsupported imsg type");
@@ -2398,7 +2429,46 @@ rde_dump_ctx_new(struct ctl_show_rib_request *req, pid_t pid,
 	ctx->ribctx.ctx_done = rde_dump_done;
 	ctx->ribctx.ctx_arg = ctx;
 	ctx->ribctx.ctx_aid = ctx->req.aid;
+	LIST_INSERT_HEAD(&rde_dump_h, ctx, entry);
 	rib_dump_r(&ctx->ribctx);
+}
+
+void
+rde_dump_ctx_throttle(pid_t pid, int throttle)
+{
+	struct rde_dump_ctx	*ctx;
+
+	LIST_FOREACH(ctx, &rde_dump_h, entry) {
+		if (ctx->req.pid == pid) {
+			ctx->throttled = throttle;
+			return;
+		}
+	}
+}
+
+void
+rde_dump_runner(void)
+{
+	struct rde_dump_ctx	*ctx, *next;
+
+	for (ctx = LIST_FIRST(&rde_dump_h); ctx != NULL; ctx = next) {
+		next = LIST_NEXT(ctx, entry);
+		if (!ctx->throttled)
+			rib_dump_r(&ctx->ribctx);
+	}
+}
+
+int
+rde_dump_pending(void)
+{
+	struct rde_dump_ctx	*ctx;
+
+	/* return true if there is at least one unthrottled context */
+	LIST_FOREACH(ctx, &rde_dump_h, entry)
+		if (!ctx->throttled)
+			return (1);
+
+	return (0);
 }
 
 void
@@ -2408,7 +2478,20 @@ rde_dump_done(void *arg)
 
 	imsg_compose(ibuf_se_ctl, IMSG_CTL_END, 0, ctx->req.pid,
 	    -1, NULL, 0);
+	LIST_REMOVE(ctx, entry);
 	free(ctx);
+}
+
+void
+rde_dump_rib_free(struct rib *rib)
+{
+	struct rde_dump_ctx	*ctx, *next;
+
+	for (ctx = LIST_FIRST(&rde_dump_h); ctx != NULL; ctx = next) {
+		next = LIST_NEXT(ctx, entry);
+		if (ctx->ribctx.ctx_rib == rib)
+			rde_dump_done(ctx);
+	}
 }
 
 void
@@ -2435,7 +2518,7 @@ rde_dump_mrt_new(struct mrt *mrt, pid_t pid, int fd)
 	if (ctx->mrt.type == MRT_TABLE_DUMP_V2)
 		mrt_dump_v2_hdr(&ctx->mrt, conf, &peerlist);
 
-	ctx->ribctx.ctx_count = RDE_RUNNER_ROUNDS;
+	ctx->ribctx.ctx_count = CTL_MSG_HIGH_MARK;
 	ctx->ribctx.ctx_rib = rib;
 	ctx->ribctx.ctx_upcall = mrt_dump_upcall;
 	ctx->ribctx.ctx_done = mrt_done;
@@ -2444,6 +2527,28 @@ rde_dump_mrt_new(struct mrt *mrt, pid_t pid, int fd)
 	LIST_INSERT_HEAD(&rde_mrts, ctx, entry);
 	rde_mrt_cnt++;
 	rib_dump_r(&ctx->ribctx);
+}
+
+void
+rde_dump_mrt_free(struct rib *rib)
+{
+	struct rde_mrt_ctx	*ctx, *next;
+
+	for (ctx = LIST_FIRST(&rde_mrts); ctx != NULL; ctx = next) {
+		next = LIST_NEXT(ctx, entry);
+		if (ctx->ribctx.ctx_rib == rib)
+			mrt_done(&ctx->mrt);
+	}
+}
+
+void
+rde_rib_free(struct rib_desc *rd)
+{
+	/* abort pending rib_dumps */
+	rde_dump_rib_free(&rd->rib);
+	rde_dump_mrt_free(&rd->rib);
+
+	rib_free(&rd->rib);
 }
 
 /*
@@ -2847,7 +2952,7 @@ rde_reload_done(void)
 
 		switch (ribs[rid].state) {
 		case RECONF_DELETE:
-			rib_free(&ribs[rid].rib);
+			rde_rib_free(&ribs[rid]);
 			break;
 		case RECONF_KEEP:
 			if (rde_filter_equal(ribs[rid].in_rules,
@@ -3387,6 +3492,9 @@ peer_recv_eor(struct rde_peer *peer, u_int8_t aid)
 	if (imsg_compose(ibuf_se, IMSG_SESSION_RESTARTED, peer->conf.id,
 	    0, -1, &aid, sizeof(aid)) == -1)
 		fatal("%s %d imsg_compose error", __func__, __LINE__);
+
+	log_peer_info(&peer->conf, "received %s EOR marker",
+	    aid2str(aid));
 }
 
 void
@@ -3428,6 +3536,9 @@ peer_send_eor(struct rde_peer *peer, u_int8_t aid)
 			fatal("%s %d imsg_compose error in peer_send_eor",
 			    __func__, __LINE__);
 	}
+
+	log_peer_info(&peer->conf, "sending %s EOR marker",
+	    aid2str(aid));
 }
 
 /*

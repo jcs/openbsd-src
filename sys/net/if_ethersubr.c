@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ethersubr.c,v 1.242 2017/01/24 10:08:30 krw Exp $	*/
+/*	$OpenBSD: if_ethersubr.c,v 1.244 2017/05/28 12:51:34 yasuoka Exp $	*/
 /*	$NetBSD: if_ethersubr.c,v 1.19 1996/05/07 02:40:30 thorpej Exp $	*/
 
 /*
@@ -232,7 +232,7 @@ ether_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 		break;
 #endif
 #ifdef MPLS
-       case AF_MPLS:
+	case AF_MPLS:
 		if (rt)
 			dst = rt_key(rt);
 		else
@@ -416,14 +416,15 @@ decapsulate:
 #ifdef PIPEX
 		if (pipex_enable) {
 			struct pipex_session *session;
+			int s;
 
-			KERNEL_LOCK();
+			NET_LOCK(s);
 			if ((session = pipex_pppoe_lookup_session(m)) != NULL) {
 				pipex_pppoe_input(m, session);
-				KERNEL_UNLOCK();
+				NET_UNLOCK(s);
 				return (1);
 			}
-			KERNEL_UNLOCK();
+			NET_UNLOCK(s);
 		}
 #endif
 		if (etype == ETHERTYPE_PPPOEDISC)

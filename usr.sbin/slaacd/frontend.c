@@ -1,4 +1,4 @@
-/*	$OpenBSD: frontend.c,v 1.4 2017/03/20 16:13:27 florian Exp $	*/
+/*	$OpenBSD: frontend.c,v 1.13 2017/05/29 08:59:42 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -54,13 +54,16 @@
 #include "frontend.h"
 #include "control.h"
 
-#define	ALLROUTER	"ff02::2"
+#define	ROUTE_SOCKET_BUF_SIZE	16384
+#define	ALLROUTER		"ff02::2"
 
 __dead void	 frontend_shutdown(void);
 void		 frontend_sig_handler(int, short, void *);
 void		 update_iface(uint32_t, char*);
 void		 frontend_startup(void);
 void		 route_receive(int, short, void *);
+void		 handle_route_message(struct rt_msghdr *, struct sockaddr **);
+void		 get_rtaddrs(int, struct sockaddr *, struct sockaddr **);
 void		 icmp6_receive(int, short, void *);
 int		 get_flags(char *);
 int		 get_xflags(char *);
@@ -129,7 +132,7 @@ frontend(int debug, int verbose, char *sockname)
 		fatal("chdir(\"/\")");
 
 	slaacd_process = PROC_FRONTEND;
-	setproctitle(log_procnames[slaacd_process]);
+	setproctitle("%s", log_procnames[slaacd_process]);
 	log_procinit(log_procnames[slaacd_process]);
 
 	if ((icmp6sock = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) < 0)
@@ -161,7 +164,8 @@ frontend(int debug, int verbose, char *sockname)
 	    sizeof(filt)) == -1)
 		fatal("ICMP6_FILTER");
 
-	rtfilter = ROUTE_FILTER(RTM_IFINFO) | ROUTE_FILTER(RTM_NEWADDR);
+	rtfilter = ROUTE_FILTER(RTM_IFINFO) | ROUTE_FILTER(RTM_NEWADDR) |
+	    ROUTE_FILTER(RTM_DELADDR) | ROUTE_FILTER(RTM_PROPOSAL);
 	if (setsockopt(routesock, PF_ROUTE, ROUTE_MSGFILTER,
 	    &rtfilter, sizeof(rtfilter)) < 0)
 		fatal("setsockopt(ROUTE_MSGFILTER)");
@@ -425,11 +429,19 @@ frontend_dispatch_engine(int fd, short event, void *bula)
 		case IMSG_CTL_SHOW_INTERFACE_INFO_RA_PREFIX:
 		case IMSG_CTL_SHOW_INTERFACE_INFO_RA_RDNS:
 		case IMSG_CTL_SHOW_INTERFACE_INFO_RA_DNSSL:
+		case IMSG_CTL_SHOW_INTERFACE_INFO_ADDR_PROPOSALS:
+		case IMSG_CTL_SHOW_INTERFACE_INFO_ADDR_PROPOSAL:
+		case IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSALS:
+		case IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSAL:
 			control_imsg_relay(&imsg);
 			break;
 		case IMSG_CTL_SEND_SOLICITATION:
 			if_index = *((uint32_t *)imsg.data);
 			send_solicitation(if_index);
+			break;
+		case IMSG_FAKE_ACK:
+			frontend_imsg_compose_engine(IMSG_PROPOSAL_ACK,
+			   0, 0, imsg.data, sizeof(struct imsg_proposal_ack));
 			break;
 		default:
 			log_debug("%s: error handling imsg %d", __func__,
@@ -514,30 +526,56 @@ frontend_startup(void)
 void
 route_receive(int fd, short events, void *arg)
 {
-	static uint8_t		 buf[2048];
+	static uint8_t			 buf[ROUTE_SOCKET_BUF_SIZE];
 
-	struct if_msghdr	*ifm;
-	struct rt_msghdr	*rtm;
-	ssize_t			 n;
-	int			 flags, xflags, if_index;
-	char			 ifnamebuf[IFNAMSIZ];
-	char			*if_name;
+	struct rt_msghdr		*rtm;
+	struct sockaddr			*sa, *rti_info[RTAX_MAX];
+	size_t				 len, offset;
+	ssize_t				 n;
+	char				*next;
 
-	do {
-		n = read(fd, buf, sizeof(buf));
-	} while (n == -1 && errno == EINTR);
-
-	if (n < 0) {
-		log_debug("read(routesock)");
+	if ((n = read(fd, &buf, sizeof(buf))) == -1) {
+		if (errno == EAGAIN || errno == EINTR)
+			return;
+		log_warn("dispatch_rtmsg: read error");
 		return;
 	}
 
-	rtm = (struct rt_msghdr *) buf;
-	if ((size_t)n < sizeof(rtm->rtm_msglen) || n < rtm->rtm_msglen ||
-	    rtm->rtm_version != RTM_VERSION) {
-		log_debug("invalid route message");
+	if (n == 0) {
+		log_warnx("routing socket closed");
 		return;
 	}
+
+	len = n;
+	for (offset = 0; offset < len; offset += rtm->rtm_msglen) {
+		next = buf + offset;
+		rtm = (struct rt_msghdr *)next;
+		if (len < offset + sizeof(u_short) ||
+		    len < offset + rtm->rtm_msglen)
+			fatalx("rtmsg_process: partial rtm in buffer");
+		if (rtm->rtm_version != RTM_VERSION)
+			continue;
+
+		sa = (struct sockaddr *)(next + rtm->rtm_hdrlen);
+		get_rtaddrs(rtm->rtm_addrs, sa, rti_info);
+
+		handle_route_message(rtm, rti_info);
+	}
+}
+
+void
+handle_route_message(struct rt_msghdr *rtm, struct sockaddr **rti_info)
+{
+	struct if_msghdr		*ifm;
+	struct imsg_proposal_ack	 proposal_ack;
+	struct imsg_del_addr		 del_addr;
+	struct sockaddr_rtlabel		*rl;
+	int64_t				 id, pid;
+	int				 flags, xflags, if_index;
+	char				 ifnamebuf[IFNAMSIZ];
+	char				*if_name;
+	char				**ap, *argv[4], *p;
+	const char			*errstr;
 
 	switch (rtm->rtm_type) {
 	case RTM_IFINFO:
@@ -567,9 +605,92 @@ route_receive(int fd, short events, void *arg)
 		log_debug("RTM_NEWADDR: %s[%u]", if_name, ifm->ifm_index);
 		update_iface(ifm->ifm_index, if_name);
 		break;
+	case RTM_DELADDR:
+		ifm = (struct if_msghdr *)rtm;
+		if_name = if_indextoname(ifm->ifm_index, ifnamebuf);
+		if (rtm->rtm_addrs & RTA_IFA && rti_info[RTAX_IFA]->sa_family
+		    == AF_INET6) {
+			del_addr.if_index = ifm->ifm_index;
+			memcpy(&del_addr.addr, rti_info[RTAX_IFA], sizeof(
+			    del_addr.addr));
+			frontend_imsg_compose_engine(IMSG_DEL_ADDRESS,
+				    0, 0, &del_addr, sizeof(del_addr));
+			log_debug("RTM_DELADDR: %s[%u]", if_name,
+			    ifm->ifm_index);
+		}
+		break;
+	case RTM_PROPOSAL:
+		ifm = (struct if_msghdr *)rtm;
+		if_name = if_indextoname(ifm->ifm_index, ifnamebuf);
+
+		if ((rtm->rtm_flags & (RTF_DONE | RTF_PROTO1)) ==
+		    (RTF_DONE | RTF_PROTO1) && rtm->rtm_addrs == RTA_LABEL) {
+			rl = (struct sockaddr_rtlabel *)rti_info[RTAX_LABEL];
+			/* XXX validate rl */
+
+			p = rl->sr_label;
+
+			for (ap = argv; ap < &argv[3] && (*ap =
+			     strsep(&p, " ")) != NULL;) {
+				if (**ap != '\0')
+					ap++;
+			}
+			*ap = NULL;
+
+			if (argv[0] != NULL && strncmp(argv[0], "slaacd:",
+			    strlen("slaacd:")) == 0 && argv[1] != NULL &&
+			    argv[2] != NULL && argv[3] == NULL) {
+				id = strtonum(argv[1], 0, INT64_MAX, &errstr);
+				if (errstr != NULL) {
+					log_warn("%s: proposal seq is %s: %s",
+					    __func__, errstr, argv[1]);
+					break;
+				}
+				pid = strtonum(argv[2], 0, INT32_MAX, &errstr);
+				if (errstr != NULL) {
+					log_warn("%s: pid is %s: %s",
+					    __func__, errstr, argv[2]);
+					break;
+				}
+				proposal_ack.id = id;
+				proposal_ack.pid = pid;
+				proposal_ack.if_index = ifm->ifm_index;
+
+				frontend_imsg_compose_engine(IMSG_PROPOSAL_ACK,
+				    0, 0, &proposal_ack, sizeof(proposal_ack));
+			} else {
+				log_debug("cannot parse: %s", rl->sr_label);
+			}
+		} else {
+#if 0
+			log_debug("%s: got flags %x, expcted %x", __func__,
+			    rtm->rtm_flags, (RTF_DONE | RTF_PROTO1));
+#endif
+		}
+
+		break;
 	default:
 		log_debug("unexpected RTM: %d", rtm->rtm_type);
 		break;
+	}
+
+}
+
+#define	ROUNDUP(a)	\
+    (((a) & (sizeof(long) - 1)) ? (1 + ((a) | (sizeof(long) - 1))) : (a))
+
+void
+get_rtaddrs(int addrs, struct sockaddr *sa, struct sockaddr **rti_info)
+{
+	int	i;
+
+	for (i = 0; i < RTAX_MAX; i++) {
+		if (addrs & (1 << i)) {
+			rti_info[i] = sa;
+			sa = (struct sockaddr *)((char *)(sa) +
+			    ROUNDUP(sa->sa_len));
+		} else
+			rti_info[i] = NULL;
 	}
 }
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ca.c,v 1.24 2017/04/06 12:20:48 gsoares Exp $	*/
+/*	$OpenBSD: ca.c,v 1.26 2017/05/28 10:39:15 benno Exp $	*/
 
 /*
  * Copyright (c) 2014 Reyk Floeter <reyk@openbsd.org>
@@ -82,62 +82,112 @@ ca_init(struct privsep *ps, struct privsep_proc *p, void *arg)
 	env->sc_id = getpid() & 0xffff;
 }
 
+static void
+hash_string(char *d, size_t dlen, char *hash, size_t hashlen)
+{
+	static const char	hex[] = "0123456789abcdef";
+	size_t			off, i;
+
+	if (hashlen < 2 * dlen + sizeof("SHA256:"))
+		fatalx("%s hash buffer to small", __func__);
+
+	off = strlcpy(hash, "SHA256:", hashlen);
+
+	for (i = 0; i < dlen; i++) {
+		hash[off++] = hex[(d[i] >> 4) & 0x0f];
+		hash[off++] = hex[d[i] & 0x0f];
+	}
+	hash[off] = 0;
+}
+
 void
 ca_launch(void)
 {
+	char		 d[EVP_MAX_MD_SIZE], hash[TLS_CERT_HASH_SIZE];
 	BIO		*in = NULL;
 	EVP_PKEY	*pkey = NULL;
 	struct relay	*rlay;
+	X509		*cert = NULL;
+	int		 dlen;
 
 	TAILQ_FOREACH(rlay, env->sc_relays, rl_entry) {
 		if ((rlay->rl_conf.flags & (F_TLS|F_TLSCLIENT)) == 0)
 			continue;
 
+		if (rlay->rl_conf.tls_cert_len) {
+			if ((in = BIO_new_mem_buf(rlay->rl_tls_cert,
+			    rlay->rl_conf.tls_cert_len)) == NULL)
+				fatalx("ca_launch: cert");
+
+			if ((cert = PEM_read_bio_X509(in, NULL,
+			    NULL, NULL)) == NULL)
+				fatalx("ca_launch: cert");
+
+			if (X509_digest(cert, EVP_sha256(), d, &dlen) != 1)
+				fatalx("ca_launch: cert");
+
+			hash_string(d, dlen, hash, sizeof(hash));
+
+			BIO_free(in);
+			X509_free(cert);
+			purge_key(&rlay->rl_tls_cert,
+			    rlay->rl_conf.tls_cert_len);
+		}
 		if (rlay->rl_conf.tls_key_len) {
 			if ((in = BIO_new_mem_buf(rlay->rl_tls_key,
 			    rlay->rl_conf.tls_key_len)) == NULL)
-				fatalx("ca_launch: key");
+				fatalx("%s: key", __func__);
 
 			if ((pkey = PEM_read_bio_PrivateKey(in,
 			    NULL, NULL, NULL)) == NULL)
-				fatalx("ca_launch: PEM");
+				fatalx("%s: PEM", __func__);
 			BIO_free(in);
 
 			rlay->rl_tls_pkey = pkey;
 
-			if (pkey_add(env, pkey,
-			    rlay->rl_conf.tls_keyid) == NULL)
+			if (pkey_add(env, pkey, hash) == NULL)
 				fatalx("tls pkey");
 
 			purge_key(&rlay->rl_tls_key,
 			    rlay->rl_conf.tls_key_len);
 		}
-		if (rlay->rl_conf.tls_cert_len) {
-			purge_key(&rlay->rl_tls_cert,
-			    rlay->rl_conf.tls_cert_len);
+
+		if (rlay->rl_conf.tls_cacert_len) {
+			if ((in = BIO_new_mem_buf(rlay->rl_tls_cacert,
+			    rlay->rl_conf.tls_cacert_len)) == NULL)
+				fatalx("ca_launch: cacert");
+
+			if ((cert = PEM_read_bio_X509(in, NULL,
+			    NULL, NULL)) == NULL)
+				fatalx("ca_launch: cacert");
+
+			if (X509_digest(cert, EVP_sha256(), d, &dlen) != 1)
+				fatalx("ca_launch: cacert");
+
+			hash_string(d, dlen, hash, sizeof(hash));
+
+			BIO_free(in);
+			X509_free(cert);
+			purge_key(&rlay->rl_tls_cacert,
+			    rlay->rl_conf.tls_cacert_len);
 		}
 		if (rlay->rl_conf.tls_cakey_len) {
 			if ((in = BIO_new_mem_buf(rlay->rl_tls_cakey,
 			    rlay->rl_conf.tls_cakey_len)) == NULL)
-				fatalx("ca_launch: key");
+				fatalx("%s: key", __func__);
 
 			if ((pkey = PEM_read_bio_PrivateKey(in,
 			    NULL, NULL, NULL)) == NULL)
-				fatalx("ca_launch: PEM");
+				fatalx("%s: PEM", __func__);
 			BIO_free(in);
 
 			rlay->rl_tls_capkey = pkey;
 
-			if (pkey_add(env, pkey,
-			    rlay->rl_conf.tls_cakeyid) == NULL)
+			if (pkey_add(env, pkey, hash) == NULL)
 				fatalx("ca pkey");
 
 			purge_key(&rlay->rl_tls_cakey,
 			    rlay->rl_conf.tls_cakey_len);
-		}
-		if (rlay->rl_conf.tls_cacert_len) {
-			purge_key(&rlay->rl_tls_cacert,
-			    rlay->rl_conf.tls_cacert_len);
 		}
 	}
 }
@@ -181,21 +231,19 @@ ca_dispatch_relay(int fd, struct privsep_proc *p, struct imsg *imsg)
 		IMSG_SIZE_CHECK(imsg, (&cko));
 		bcopy(imsg->data, &cko, sizeof(cko));
 		if (cko.cko_proc > env->sc_conf.prefork_relay)
-			fatalx("ca_dispatch_relay: "
-			    "invalid relay proc");
+			fatalx("%s: invalid relay proc", __func__);
 		if (IMSG_DATA_SIZE(imsg) != (sizeof(cko) + cko.cko_flen))
-			fatalx("ca_dispatch_relay: "
-			    "invalid key operation");
-		if ((pkey = pkey_find(env, cko.cko_id)) == NULL ||
+			fatalx("%s: invalid key operation", __func__);
+		if ((pkey = pkey_find(env, cko.cko_hash)) == NULL ||
 		    (rsa = EVP_PKEY_get1_RSA(pkey)) == NULL)
-			fatalx("ca_dispatch_relay: "
-			    "invalid relay key or id");
+			fatalx("%s: invalid relay key or id", __func__);
 
-		DPRINTF("%s:%d: key id %d", __func__, __LINE__, cko.cko_id);
+		DPRINTF("%s:%d: key hash %s proc %d",
+		    __func__, __LINE__, cko.cko_hash, cko.cko_proc);
 
 		from = (u_char *)imsg->data + sizeof(cko);
 		if ((to = calloc(1, cko.cko_tlen)) == NULL)
-			fatalx("ca_dispatch_relay: calloc");
+			fatalx("%s: calloc", __func__);
 
 		switch (imsg->hdr.type) {
 		case IMSG_CA_PRIVENC:
@@ -259,7 +307,7 @@ rsae_send_imsg(int flen, const u_char *from, u_char *to, RSA *rsa,
 	struct pollfd	 pfd[1];
 	struct ctl_keyop cko;
 	int		 ret = 0;
-	objid_t		*id;
+	char		*hash;
 	struct iovec	 iov[2];
 	struct imsgbuf	*ibuf;
 	struct imsgev	*iev;
@@ -267,7 +315,7 @@ rsae_send_imsg(int flen, const u_char *from, u_char *to, RSA *rsa,
 	int		 n, done = 0, cnt = 0;
 	u_char		*toptr;
 
-	if ((id = RSA_get_ex_data(rsa, 0)) == NULL)
+	if ((hash = RSA_get_ex_data(rsa, 0)) == NULL)
 		return (0);
 
 	iev = proc_iev(ps, PROC_CA, ps->ps_instance);
@@ -277,7 +325,7 @@ rsae_send_imsg(int flen, const u_char *from, u_char *to, RSA *rsa,
 	 * XXX this could be nicer...
 	 */
 
-	cko.cko_id = *id;
+	(void)strlcpy(cko.cko_hash, hash, sizeof(cko.cko_hash));
 	cko.cko_proc = ps->ps_instance;
 	cko.cko_flen = flen;
 	cko.cko_tlen = RSA_size(rsa);
@@ -294,16 +342,16 @@ rsae_send_imsg(int flen, const u_char *from, u_char *to, RSA *rsa,
 	 */
 	imsg_composev(ibuf, cmd, 0, 0, -1, iov, cnt);
 	if (imsg_flush(ibuf) == -1)
-		log_warn("rsae_send_imsg: imsg_flush");
+		log_warn("%s: imsg_flush", __func__);
 
 	pfd[0].fd = ibuf->fd;
 	pfd[0].events = POLLIN;
 	while (!done) {
 		switch (poll(pfd, 1, RELAY_TLS_PRIV_TIMEOUT)) {
 		case -1:
-			fatal("rsae_send_imsg: poll");
+			fatal("%s: poll", __func__);
 		case 0:
-			log_warnx("rsae_send_imsg: poll timeout");
+			log_warnx("%s: poll timeout", __func__);
 			break;
 		default:
 			break;
@@ -490,6 +538,5 @@ ca_engine_init(struct relayd *x_env)
 	return;
 
  fail:
-	ssl_error(__func__, errstr);
-	fatalx("%s", errstr);
+	fatalx("%s: %s", __func__, errstr);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: db_trace.c,v 1.25 2017/04/20 12:41:43 visa Exp $	*/
+/*	$OpenBSD: db_trace.c,v 1.27 2017/05/29 06:14:10 mpi Exp $	*/
 /*	$NetBSD: db_trace.c,v 1.18 1996/05/03 19:42:01 christos Exp $	*/
 
 /*
@@ -34,9 +34,6 @@
 
 #include <machine/db_machdep.h>
 
-#ifdef DDBCTF
-#include <ddb/db_extern.h>
-#endif
 #include <ddb/db_sym.h>
 #include <ddb/db_access.h>
 #include <ddb/db_variables.h>
@@ -77,7 +74,7 @@ struct db_variable *db_eregs = db_regs + nitems(db_regs);
 #define	INTERRUPT	3
 #define	AST		4
 
-int db_numargs(struct callframe *, const char *);
+int db_numargs(struct callframe *, db_sym_t);
 void db_nextframe(struct callframe **, db_addr_t *, int *, int,
     int (*pr)(const char *, ...));
 
@@ -85,15 +82,17 @@ void db_nextframe(struct callframe **, db_addr_t *, int *, int,
  * Figure out how many arguments were passed into the frame at "fp".
  */
 int
-db_numargs(struct callframe *fp, const char *sym)
+db_numargs(struct callframe *fp, db_sym_t sym)
 {
-#ifdef DDBCTF
-	return db_ctf_func_numargs(sym);
-#else
 	int	*argp;
 	int	inst;
 	int	args;
 	extern char	etext[];
+
+#ifdef DDBCTF
+	if ((args = db_ctf_func_numargs(sym)) != -1)
+		return args;
+#endif /* DDBCTF */
 
 	argp = (int *)db_get_value((int)&fp->f_retaddr, 4, FALSE);
 	if (argp < (int *)VM_MIN_KERNEL_ADDRESS || argp > (int *)etext) {
@@ -107,8 +106,7 @@ db_numargs(struct callframe *fp, const char *sym)
 		else
 			args = 5;
 	}
-	return (args);
-#endif
+	return args;
 }
 
 /*
@@ -259,7 +257,7 @@ db_stack_trace_print(db_expr_t addr, boolean_t have_addr, db_expr_t count,
 			narg = 0;
 		else {
 			is_trap = NONE;
-			narg = db_numargs(frame, name);
+			narg = db_numargs(frame, sym);
 		}
 
 		(*pr)("%s(", name);

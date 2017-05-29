@@ -1,6 +1,6 @@
 #!/bin/ksh
 #
-# $OpenBSD: syspatch.sh,v 1.103 2017/05/18 12:02:06 ajacoutot Exp $
+# $OpenBSD: syspatch.sh,v 1.112 2017/05/27 09:05:25 ajacoutot Exp $
 #
 # Copyright (c) 2016, 2017 Antoine Jacoutot <ajacoutot@openbsd.org>
 #
@@ -31,20 +31,21 @@ usage()
 
 apply_patch()
 {
-	local _explodir _file _files _patch=$1 _ret=0
+	local _edir _file _files _patch=$1 _ret=0 _s
 	[[ -n ${_patch} ]]
 
-	_explodir=${_TMP}/${_patch}
+	_edir=${_TMP}/${_patch}
 
 	fetch_and_verify "syspatch${_patch}.tgz"
 
 	trap '' INT
 	echo "Installing patch ${_patch##${_OSrev}-}"
-	install -d ${_explodir} ${_PDIR}/${_patch}
+	install -d ${_edir} ${_PDIR}/${_patch}
 
-	_files="$(tar xvzphf ${_TMP}/syspatch${_patch}.tgz -C ${_explodir})"
+	! ${_BSDMP} && [[ ! -f /bsd.mp ]] && _s="-s /^bsd.mp$//"
+	_files="$(tar -xvzphf ${_TMP}/syspatch${_patch}.tgz -C ${_edir} ${_s})"
+
 	checkfs ${_files}
-
 	create_rollback ${_patch} "${_files}"
 
 	# create_rollback(): tar(1) was fed with an empty list of files; that is
@@ -56,9 +57,9 @@ apply_patch()
 	for _file in ${_files}; do
 		((_ret == 0)) || break
 		if [[ ${_file} == @(bsd|bsd.mp) ]]; then
-			install_kernel ${_explodir}/${_file} || _ret=$?
+			install_kernel ${_edir}/${_file} || _ret=$?
 		else
-			install_file ${_explodir}/${_file} /${_file} || _ret=$?
+			install_file ${_edir}/${_file} /${_file} || _ret=$?
 		fi
 	done
 
@@ -66,6 +67,8 @@ apply_patch()
 		sp_err "Failed to apply patch ${_patch##${_OSrev}-}" 0
 		rollback_patch; return ${_ret}
 	fi
+	# don't fill up /tmp when installing multiple patches at once; non-fatal
+	rm -rf ${_edir} ${_TMP}/syspatch${_patch}.tgz
 	trap exit INT
 }
 
@@ -142,11 +145,12 @@ create_rollback()
 
 fetch_and_verify()
 {
-	local _tgz=$1
+	local _tgz=$1 _title="Get/Verify"
 	[[ -n ${_tgz} ]]
 
-	unpriv -f "${_TMP}/${_tgz}" ftp -VD "Get/Verify" -o \
-		"${_TMP}/${_tgz}" "${_MIRROR}/${_tgz}"
+	[[ -t 0 ]] || echo "${_title} ${_tgz}"
+	unpriv -f "${_TMP}/${_tgz}" ftp -VD "${_title}" -o "${_TMP}/${_tgz}" \
+		"${_MIRROR}/${_tgz}"
 
 	(cd ${_TMP} && sha256 -qC ${_TMP}/SHA256 ${_tgz})
 }
@@ -159,7 +163,7 @@ install_file()
 
 	eval $(stat -f "_fmode=%OMp%OLp _fown=%Su _fgrp=%Sg" ${_src})
 
-	install -DFS -m ${_fmode} -o ${_fown} -g ${_fgrp} ${_src} ${_dst}
+	install -DFSp -m ${_fmode} -o ${_fown} -g ${_fgrp} ${_src} ${_dst}
 }
 
 install_kernel()
@@ -171,7 +175,7 @@ install_kernel()
 		[[ ${_kern##*/} == bsd ]] && _bsd=bsd.sp || _bsd=bsd
 	fi
 
-	install -FS ${_kern} /${_bsd:-${_kern##*/}}
+	install -FSp ${_kern} /${_bsd:-${_kern##*/}}
 }
 
 ls_installed()
@@ -205,35 +209,39 @@ ls_missing()
 
 rollback_patch()
 {
-	local _explodir _file _files _patch _ret=0
+	local _edir _file _files _patch _ret=0
 
 	_patch="$(ls_installed | tail -1)"
 	[[ -n ${_patch} ]] || return # function used as a while condition
 
-	_explodir=${_TMP}/${_patch}-rollback
+	_edir=${_TMP}/${_patch}-rollback
 	_patch=${_OSrev}-${_patch}
 
+	trap '' INT
 	echo "Reverting patch ${_patch##${_OSrev}-}"
-	install -d ${_explodir}
+	install -d ${_edir}
 
-	_files="$(tar xvzphf ${_PDIR}/${_patch}/rollback.tgz -C ${_explodir})"
+	_files="$(tar xvzphf ${_PDIR}/${_patch}/rollback.tgz -C ${_edir})"
 	checkfs ${_files} ${_PDIR} # check for read-only /var/syspatch
 
 	for _file in ${_files}; do
 		((_ret == 0)) || break
 		if [[ ${_file} == @(bsd|bsd.mp) ]]; then
-			install_kernel ${_explodir}/${_file} || _ret=$?
+			install_kernel ${_edir}/${_file} || _ret=$?
 			# remove the backup kernel if all kernel syspatches have
-			# been reverted; non-fatal (`-f')
+			# been reverted; non-fatal
 			cmp -s /bsd /bsd.syspatch${_OSrev} &&
 				rm -f /bsd.syspatch${_OSrev}
 		else
-			install_file ${_explodir}/${_file} /${_file} || _ret=$?
+			install_file ${_edir}/${_file} /${_file} || _ret=$?
 		fi
 	done
 
-	((_ret == 0)) && rm -r ${_PDIR}/${_patch} ||
+	((_ret != 0)) || rm -r ${_PDIR}/${_patch} || _ret=$?
+	((_ret == 0)) ||
 		sp_err "Failed to revert patch ${_patch##${_OSrev}-}" ${_ret}
+	rm -rf ${_edir} # don't fill up /tmp when using `-R'; non-fatal
+	trap exit INT
 }
 
 sp_cleanup()
@@ -286,7 +294,7 @@ _OSrev=${_KERNV[0]%.*}${_KERNV[0]#*.}
 [[ -n ${_OSrev} ]]
 
 _MIRROR=$(while read _line; do _line=${_line%%#*}; [[ -n ${_line} ]] &&
-	print -r -- "${_line}"; done </etc/installurl | tail -1)
+	print -r -- "${_line}"; done </etc/installurl | tail -1) 2>/dev/null
 [[ ${_MIRROR} == @(file|http|https)://*/*[!/] ]] ||
 	sp_err "${0##*/}: invalid URL configured in /etc/installurl"
 
@@ -305,7 +313,7 @@ while getopts clRr arg; do
 	case ${arg} in
 		c) ls_missing ;;
 		l) ls_installed ;;
-		R) while rollback_patch; do :; done ;;
+		R) while [[ -n $(ls_installed) ]]; do rollback_patch; done ;;
 		r) rollback_patch ;;
 		*) usage ;;
 	esac

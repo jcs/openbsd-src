@@ -1,4 +1,4 @@
-/*	$OpenBSD: lapic.c,v 1.45 2016/11/01 01:13:19 yasuoka Exp $	*/
+/*	$OpenBSD: lapic.c,v 1.47 2017/05/29 14:19:49 mpi Exp $	*/
 /* $NetBSD: lapic.c,v 1.2 2003/05/08 01:04:35 fvdl Exp $ */
 
 /*-
@@ -571,7 +571,7 @@ lapic_delay(int usec)
 			deltat -= otick - tick;
 		otick = tick;
 
-		x86_pause();
+		CPU_BUSY_CYCLE();
 	}
 }
 

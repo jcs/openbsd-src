@@ -1,4 +1,4 @@
-/*	$OpenBSD: printconf.c,v 1.100 2017/01/24 04:22:42 benno Exp $	*/
+/*	$OpenBSD: printconf.c,v 1.103 2017/05/27 18:12:23 phessler Exp $	*/
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -94,6 +94,8 @@ print_community(int as, int type)
 		printf("*:");
 	else if (as == COMMUNITY_NEIGHBOR_AS)
 		printf("neighbor-as:");
+	else if (as == COMMUNITY_LOCAL_AS)
+		printf("local-as:");
 	else
 		printf("%u:", (unsigned int)as);
 
@@ -101,6 +103,8 @@ print_community(int as, int type)
 		printf("* ");
 	else if (type == COMMUNITY_NEIGHBOR_AS)
 		printf("neighbor-as ");
+	else if (type == COMMUNITY_LOCAL_AS)
+		printf("local-as");
 	else
 		printf("%d ", type);
 }
@@ -112,6 +116,8 @@ print_largecommunity(int64_t as, int64_t ld1, int64_t ld2)
 		printf("*:");
 	else if (as == COMMUNITY_NEIGHBOR_AS)
 		printf("neighbor-as:");
+	else if (as == COMMUNITY_LOCAL_AS)
+		printf("local-as:");
 	else
 		printf("%lld:", as);
 
@@ -119,6 +125,8 @@ print_largecommunity(int64_t as, int64_t ld1, int64_t ld2)
 		printf("*:");
 	else if (ld1 == COMMUNITY_NEIGHBOR_AS)
 		printf("neighbor-as:");
+	else if (ld1 == COMMUNITY_LOCAL_AS)
+		printf("local-as:");
 	else
 		printf("%lld:", ld1);
 
@@ -126,6 +134,8 @@ print_largecommunity(int64_t as, int64_t ld1, int64_t ld2)
 		printf("* ");
 	else if (ld2 == COMMUNITY_NEIGHBOR_AS)
 		printf("neighbor-as ");
+	else if (ld2 == COMMUNITY_LOCAL_AS)
+		printf("local-as ");
 	else
 		printf("%lld ", ld2);
 
@@ -414,6 +424,12 @@ print_peer(struct peer_config *p, struct bgpd_config *conf, const char *c)
 		printf("%s\trib \"%s\"\n", c, p->rib);
 	if (p->remote_as)
 		printf("%s\tremote-as %s\n", c, log_as(p->remote_as));
+	if (p->local_as != conf->as) {
+		printf("%s\tlocal-as %s", c, log_as(p->local_as));
+		if (p->local_as > USHRT_MAX && p->local_short_as != AS_TRANS)
+			printf(" %u", p->local_short_as);
+		printf("\n");
+	}
 	if (p->down)
 		printf("%s\tdown\n", c);
 	if (p->distance > 1)
@@ -454,6 +470,10 @@ print_peer(struct peer_config *p, struct bgpd_config *conf, const char *c)
 		printf("%s\tenforce neighbor-as yes\n", c);
 	else
 		printf("%s\tenforce neighbor-as no\n", c);
+	if (p->enforce_local_as == ENFORCE_AS_ON)
+		printf("%s\tenforce local-as yes\n", c);
+	else
+		printf("%s\tenforce local-as no\n", c);
 	if (p->reflector_client) {
 		if (conf->clusterid == 0)
 			printf("%s\troute-reflector\n", c);

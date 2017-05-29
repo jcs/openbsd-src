@@ -1,4 +1,4 @@
-/*	$OpenBSD: session.c,v 1.359 2017/02/13 14:48:44 phessler Exp $ */
+/*	$OpenBSD: session.c,v 1.364 2017/05/29 14:22:51 benno Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -95,6 +95,7 @@ void	session_dispatch_imsg(struct imsgbuf *, int, u_int *);
 void	session_up(struct peer *);
 void	session_down(struct peer *);
 void	session_demote(struct peer *, int);
+int	session_link_state_is_up(int, int, int);
 
 int		 la_cmp(struct listen_addr *, struct listen_addr *);
 struct peer	*getpeerbyip(struct sockaddr *);
@@ -195,7 +196,6 @@ session_main(int debug, int verbose)
 	u_int			 pfd_elms = 0, peer_l_elms = 0, mrt_l_elms = 0;
 	u_int			 listener_cnt, ctl_cnt, mrt_cnt;
 	u_int			 new_cnt;
-	u_int32_t		 ctl_queued;
 	struct passwd		*pw;
 	struct peer		*p, **peer_l = NULL, *last, *next;
 	struct mrt		*m, *xm, **mrt_l = NULL;
@@ -356,17 +356,7 @@ session_main(int debug, int verbose)
 
 		set_pollfd(&pfd[PFD_PIPE_MAIN], ibuf_main);
 		set_pollfd(&pfd[PFD_PIPE_ROUTE], ibuf_rde);
-
-		ctl_queued = 0;
-		TAILQ_FOREACH(ctl_conn, &ctl_conns, entry)
-			ctl_queued += ctl_conn->ibuf.w.queued;
-
-		/*
-		 * Do not act as unlimited buffer. Don't read in more
-		 * messages if the ctl sockets are getting full.
-		 */
-		if (ctl_queued < SESSION_CTL_QUEUE_MAX)
-			set_pollfd(&pfd[PFD_PIPE_ROUTE_CTL], ibuf_rde_ctl);
+		set_pollfd(&pfd[PFD_PIPE_ROUTE_CTL], ibuf_rde_ctl);
 
 		if (pauseaccept == 0) {
 			pfd[PFD_SOCK_CTL].fd = csock;
@@ -555,23 +545,6 @@ session_main(int debug, int verbose)
 			control_dispatch_msg(&pfd[j], &ctl_cnt);
 	}
 
-	/* close pipes */
-	if (ibuf_rde) {
-		msgbuf_write(&ibuf_rde->w);
-		msgbuf_clear(&ibuf_rde->w);
-		close(ibuf_rde->fd);
-		free(ibuf_rde);
-	}
-	if (ibuf_rde_ctl) {
-		msgbuf_clear(&ibuf_rde_ctl->w);
-		close(ibuf_rde_ctl->fd);
-		free(ibuf_rde_ctl);
-	}
-	msgbuf_write(&ibuf_main->w);
-	msgbuf_clear(&ibuf_main->w);
-	close(ibuf_main->fd);
-	free(ibuf_main);
-
 	while ((p = peers) != NULL) {
 		peers = p->next;
 		strlcpy(p->conf.shutcomm,
@@ -597,6 +570,22 @@ session_main(int debug, int verbose)
 	free(mrt_l);
 	free(pfd);
 
+	/* close pipes */
+	if (ibuf_rde) {
+		msgbuf_write(&ibuf_rde->w);
+		msgbuf_clear(&ibuf_rde->w);
+		close(ibuf_rde->fd);
+		free(ibuf_rde);
+	}
+	if (ibuf_rde_ctl) {
+		msgbuf_clear(&ibuf_rde_ctl->w);
+		close(ibuf_rde_ctl->fd);
+		free(ibuf_rde_ctl);
+	}
+	msgbuf_write(&ibuf_main->w);
+	msgbuf_clear(&ibuf_main->w);
+	close(ibuf_main->fd);
+	free(ibuf_main);
 
 	control_shutdown(csock);
 	control_shutdown(rcsock);
@@ -1389,6 +1378,13 @@ session_sendmsg(struct bgp_msg *msg, struct peer *p)
 	}
 
 	ibuf_close(&p->wbuf, msg->buf);
+	if (!p->throttled && p->wbuf.queued > SESS_MSG_HIGH_MARK) {
+		if (imsg_compose(ibuf_rde, IMSG_XOFF, p->conf.id, 0, -1,
+		    NULL, 0) == -1)
+			log_peer_warn(&p->conf, "imsg_compose XOFF");
+		p->throttled = 1;
+	}
+
 	free(msg);
 	return (0);
 }
@@ -1467,7 +1463,7 @@ session_open(struct peer *p)
 	if (p->capa.ann.as4byte) {	/* 4 bytes data */
 		u_int32_t	nas;
 
-		nas = htonl(conf->as);
+		nas = htonl(p->conf.local_as);
 		errs += session_capa_add(opb, CAPA_AS4BYTE, sizeof(nas));
 		errs += ibuf_add(opb, &nas, sizeof(nas));
 	}
@@ -1484,7 +1480,7 @@ session_open(struct peer *p)
 	}
 
 	msg.version = 4;
-	msg.myas = htons(conf->short_as);
+	msg.myas = htons(p->conf.local_short_as);
 	if (p->conf.holdtime)
 		msg.holdtime = htons(p->conf.holdtime);
 	else
@@ -1774,6 +1770,12 @@ session_dispatch_msg(struct pollfd *pfd, struct peer *p)
 			bgp_fsm(p, EVNT_CON_FATAL);
 			return (1);
 		}
+		if (p->throttled && p->wbuf.queued < SESS_MSG_LOW_MARK) {
+			if (imsg_compose(ibuf_rde, IMSG_XON, p->conf.id, 0, -1,
+			    NULL, 0) == -1)
+				log_peer_warn(&p->conf, "imsg_compose XON");
+			p->throttled = 0;
+		}
 		if (!(pfd->revents & POLLIN))
 			return (1);
 	}
@@ -2017,6 +2019,14 @@ parse_open(struct peer *peer)
 	memcpy(&short_as, p, sizeof(short_as));
 	p += sizeof(short_as);
 	as = peer->short_as = ntohs(short_as);
+	if (as == 0) {
+		log_peer_warnx(&peer->conf,
+		    "peer requests unacceptable AS %u", as);
+		session_notification(peer, ERR_OPEN, ERR_OPEN_AS,
+		    NULL, 0);
+		change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
+		return (-1);
+	}
 
 	memcpy(&oholdtime, p, sizeof(oholdtime));
 	p += sizeof(oholdtime);
@@ -2128,7 +2138,7 @@ parse_open(struct peer *peer)
 	/* if remote-as is zero and it's a cloned neighbor, accept any */
 	if (peer->template && !peer->conf.remote_as && as != AS_TRANS) {
 		peer->conf.remote_as = as;
-		peer->conf.ebgp = (peer->conf.remote_as != conf->as);
+		peer->conf.ebgp = (peer->conf.remote_as != peer->conf.local_as);
 		if (!peer->conf.ebgp)
 			/* force enforce_as off for iBGP sessions */
 			peer->conf.enforce_as = ENFORCE_AS_OFF;
@@ -2477,6 +2487,14 @@ parse_capabilities(struct peer *peer, u_char *d, u_int16_t dlen, u_int32_t *as)
 			}
 			memcpy(&remote_as, capa_val, sizeof(remote_as));
 			*as = ntohl(remote_as);
+			if (*as == 0) {
+				log_peer_warnx(&peer->conf,
+				    "peer requests unacceptable AS %u", *as);
+				session_notification(peer, ERR_OPEN, ERR_OPEN_AS,
+				    NULL, 0);
+				change_state(peer, STATE_IDLE, EVNT_RCVD_OPEN);
+				return (-1);
+			}
 			peer->capa.peer.as4byte = 1;
 			break;
 		default:
@@ -2791,8 +2809,8 @@ session_dispatch_imsg(struct imsgbuf *ibuf, int idx, u_int *listener_cnt)
 			    sizeof(struct kif))
 				fatalx("IFINFO imsg with wrong len");
 			kif = imsg.data;
-			depend_ok = (kif->flags & IFF_UP) &&
-			    LINK_STATE_IS_UP(kif->link_state);
+			depend_ok = session_link_state_is_up(kif->flags,
+			    kif->if_type, kif->link_state);
 
 			for (p = peers; p != NULL; p = p->next)
 				if (!strcmp(p->conf.if_depend, kif->ifname)) {
@@ -3110,7 +3128,7 @@ session_template_clone(struct peer *p, struct sockaddr *ip, u_int32_t id,
 
 	if (as) {
 		p->conf.remote_as = as;
-		p->conf.ebgp = (p->conf.remote_as != conf->as);
+		p->conf.ebgp = (p->conf.remote_as != p->conf.local_as);
 		if (!p->conf.ebgp)
 			/* force enforce_as off for iBGP sessions */
 			p->conf.enforce_as = ENFORCE_AS_OFF;
@@ -3258,4 +3276,23 @@ session_stop(struct peer *peer, u_int8_t subcode)
 		break;
 	}
 	bgp_fsm(peer, EVNT_STOP);
+}
+
+/*
+ * return 1 when the interface is up
+ * and the link state is up or unknwown
+ * except when this is a carp interface, then
+ * return 1 only when link state is up
+ */
+int
+session_link_state_is_up(int flags, int type, int link_state)
+{
+	if (!(flags & IFF_UP))
+		return (0);
+
+	if (type == IFT_CARP &&
+	    link_state == LINK_STATE_UNKNOWN)
+		return (0);
+
+	return LINK_STATE_IS_UP(link_state);
 }

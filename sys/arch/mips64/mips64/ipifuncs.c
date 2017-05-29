@@ -1,4 +1,4 @@
-/* $OpenBSD: ipifuncs.c,v 1.14 2017/04/30 16:45:45 mpi Exp $ */
+/* $OpenBSD: ipifuncs.c,v 1.17 2017/05/28 17:12:48 visa Exp $ */
 /* $NetBSD: ipifuncs.c,v 1.40 2008/04/28 20:23:10 martin Exp $ */
 
 /*-
@@ -189,8 +189,7 @@ smp_rendezvous_action(void)
 		;
 
 	/* action function */
-	if (local_action_func != NULL)
-		local_action_func(local_func_arg);
+	(*local_action_func)(local_func_arg);
 
 	/* spin on exit rendezvous */
 	atomic_setbits_int(&smp_rv_waiters[1], cpumask);
@@ -203,9 +202,8 @@ smp_rendezvous_cpus(unsigned long map,
 {
 	unsigned int cpumask = 1 << cpu_number();
 
-	if (ncpus == 1) {
-		if (action_func != NULL)
-			action_func(arg);
+	if (cpumask == map) {
+		(*action_func)(arg);
 		return;
 	}
 
@@ -221,14 +219,17 @@ smp_rendezvous_cpus(unsigned long map,
 	mips_sync();
 
 	/* signal other processors, which will enter the IPI with interrupts off */
-	mips64_multicast_ipi(map & ~cpumask, MIPS64_IPI_RENDEZVOUS);
+	mips64_multicast_ipi(map, MIPS64_IPI_RENDEZVOUS);
 
 	/* Check if the current CPU is in the map */
 	if (map & cpumask)
 		smp_rendezvous_action();
 
 	while (smp_rv_waiters[1] != smp_rv_map)
-		;
+		continue;
+
+	smp_rv_action_func = NULL;
+
 	/* release lock */
 	mtx_leave(&smp_ipi_mtx);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacctl.c,v 1.1 2017/04/10 13:35:42 florian Exp $	*/
+/*	$OpenBSD: slaacctl.c,v 1.6 2017/05/28 09:35:56 florian Exp $	*/
 
 /*
  * Copyright (c) 2005 Claudio Jeker <claudio@openbsd.org>
@@ -174,6 +174,8 @@ show_interface_msg(struct imsg *imsg)
 	struct ctl_engine_info_ra_prefix	*cei_ra_prefix;
 	struct ctl_engine_info_ra_rdns		*cei_ra_rdns;
 	struct ctl_engine_info_ra_dnssl		*cei_ra_dnssl;
+	struct ctl_engine_info_address_proposal	*cei_addr_proposal;
+	struct ctl_engine_info_dfr_proposal	*cei_dfr_proposal;
 	struct tm				*t;
 	struct timespec				 now, diff;
 	char					 buf[IF_NAMESIZE], *bufp;
@@ -220,12 +222,13 @@ show_interface_msg(struct imsg *imsg)
 		printf("\t\tCur Hop Limit: %3u, M: %d, O: %d, Router Lifetime:"
 		    " %5us\n", cei_ra->curhoplimit, cei_ra->managed ? 1: 0,
 		    cei_ra->other ? 1 : 0, cei_ra->router_lifetime);
+		printf("\t\tDefault Router Preference: %s\n", cei_ra->rpref);
 		printf("\t\tReachable Time: %9ums, Retrans Timer: %9ums\n",
 		    cei_ra->reachable_time, cei_ra->retrans_time);
 		break;
 	case IMSG_CTL_SHOW_INTERFACE_INFO_RA_PREFIX:
 		cei_ra_prefix = imsg->data;
-		printf("\t\tprefix: %s/%hhu\n", inet_ntop(AF_INET6,
+		printf("\t\tprefix: %s/%u\n", inet_ntop(AF_INET6,
 		    &cei_ra_prefix->prefix, ntopbuf, INET6_ADDRSTRLEN),
 			    cei_ra_prefix->prefix_len);
 		printf("\t\t\tOn-link: %d, Autonomous address-configuration: %d"
@@ -233,23 +236,6 @@ show_interface_msg(struct imsg *imsg)
 		    cei_ra_prefix->autonomous ? 1 : 0);
 		printf("\t\t\tvltime: %9u, pltime: %9u\n",
 		    cei_ra_prefix->vltime, cei_ra_prefix->pltime);
-		if (getnameinfo((struct sockaddr *)&cei_ra_prefix->addr,
-		    cei_ra_prefix->addr.sin6_len, hbuf, sizeof(hbuf), NULL, 0,
-		    NI_NUMERICHOST | NI_NUMERICSERV))
-			err(1, "cannot generated address");
-		printf("\t\t\t        address: %s\n", hbuf);
-		if (!IN6_IS_ADDR_UNSPECIFIED(
-		    &cei_ra_prefix->priv_addr.sin6_addr)) {
-			if (getnameinfo((struct sockaddr *)
-			    &cei_ra_prefix->priv_addr,
-			    cei_ra_prefix->priv_addr.sin6_len, hbuf,
-			    sizeof(hbuf), NULL, 0, NI_NUMERICHOST |
-			    NI_NUMERICSERV))
-				err(1, "cannot generated address");
-			printf("\t\t\tprivacy address: %s\n", hbuf);
-		}
-		printf("\t\t\t           mask: %s\n", inet_ntop(AF_INET6,
-		    &cei_ra_prefix->mask, ntopbuf, INET6_ADDRSTRLEN));
 		break;
 	case IMSG_CTL_SHOW_INTERFACE_INFO_RA_RDNS:
 		cei_ra_rdns = imsg->data;
@@ -261,6 +247,65 @@ show_interface_msg(struct imsg *imsg)
 		cei_ra_dnssl = imsg->data;
 		printf("\t\tsearch: %s, lifetime: %u\n", cei_ra_dnssl->dnssl,
 		    cei_ra_dnssl->lifetime);
+		break;
+	case IMSG_CTL_SHOW_INTERFACE_INFO_ADDR_PROPOSALS:
+		printf("\tAddress proposals\n");
+		break;
+	case IMSG_CTL_SHOW_INTERFACE_INFO_ADDR_PROPOSAL:
+		cei_addr_proposal = imsg->data;
+
+		if (getnameinfo((struct sockaddr *)&cei_addr_proposal->addr,
+		    cei_addr_proposal->addr.sin6_len, hbuf, sizeof(hbuf),
+		    NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV))
+			err(1, "cannot get router IP");
+
+		printf("\t\tid: %4lld, state: %15s, privacy: %s\n",
+		    cei_addr_proposal->id, cei_addr_proposal->state,
+		    cei_addr_proposal->privacy ? "y" : "n");
+		printf("\t\tvltime: %10u, pltime: %10u\n",
+		    cei_addr_proposal->vltime, cei_addr_proposal->pltime);
+
+		if (clock_gettime(CLOCK_MONOTONIC, &now))
+			err(1, "clock_gettime");
+
+		timespecsub(&now, &cei_addr_proposal->uptime, &diff);
+
+		t = localtime(&cei_addr_proposal->when.tv_sec);
+		strftime(whenbuf, sizeof(whenbuf), "%F %T", t);
+		printf("\t\tupdated: %s.%09ld; %lld.%09lds ago\n",
+		    whenbuf, cei_addr_proposal->when.tv_nsec, diff.tv_sec,
+		    diff.tv_nsec);
+		printf("\t\t%s, %s/%u\n", hbuf, inet_ntop(AF_INET6,
+		    &cei_addr_proposal->prefix, ntopbuf, INET6_ADDRSTRLEN),
+		    cei_addr_proposal->prefix_len);
+		break;
+	case IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSALS:
+		printf("\tDefault router proposals\n");
+		break;
+	case IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSAL:
+		cei_dfr_proposal = imsg->data;
+
+		if (getnameinfo((struct sockaddr *)&cei_dfr_proposal->addr,
+		    cei_dfr_proposal->addr.sin6_len, hbuf, sizeof(hbuf),
+		    NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV))
+			err(1, "cannot get router IP");
+
+		printf("\t\tid: %4lld, state: %15s\n",
+		    cei_dfr_proposal->id, cei_dfr_proposal->state);
+		printf("\t\trouter lifetime: %10u\n",
+		    cei_dfr_proposal->router_lifetime);
+		printf("\t\tPreference: %s\n", cei_dfr_proposal->rpref);
+		if (clock_gettime(CLOCK_MONOTONIC, &now))
+			err(1, "clock_gettime");
+
+		timespecsub(&now, &cei_dfr_proposal->uptime, &diff);
+
+		t = localtime(&cei_dfr_proposal->when.tv_sec);
+		strftime(whenbuf, sizeof(whenbuf), "%F %T", t);
+		printf("\t\tupdated: %s.%09ld; %lld.%09lds ago\n",
+		    whenbuf, cei_dfr_proposal->when.tv_nsec, diff.tv_sec,
+		    diff.tv_nsec);
+
 		break;
 	case IMSG_CTL_END:
 		printf("\n");
