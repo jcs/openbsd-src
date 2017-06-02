@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_attr.c,v 1.98 2017/05/26 20:55:30 phessler Exp $ */
+/*	$OpenBSD: rde_attr.c,v 1.100 2017/05/31 10:44:00 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -1253,23 +1253,23 @@ community_ext_conv(struct filter_extcommunity *c, u_int16_t neighas,
 
 	com = (u_int64_t)c->type << 56;
 	switch (c->type & EXT_COMMUNITY_VALUE) {
-	case EXT_COMMUNITY_TWO_AS:
+	case EXT_COMMUNITY_TRANS_TWO_AS:
 		com |= (u_int64_t)c->subtype << 48;
 		com |= (u_int64_t)c->data.ext_as.as << 32;
 		com |= c->data.ext_as.val;
 		break;
-	case EXT_COMMUNITY_IPV4:
+	case EXT_COMMUNITY_TRANS_IPV4:
 		com |= (u_int64_t)c->subtype << 48;
 		ip = ntohl(c->data.ext_ip.addr.s_addr);
 		com |= (u_int64_t)ip << 16;
 		com |= c->data.ext_ip.val;
 		break;
-	case EXT_COMMUNITY_FOUR_AS:
+	case EXT_COMMUNITY_TRANS_FOUR_AS:
 		com |= (u_int64_t)c->subtype << 48;
 		com |= (u_int64_t)c->data.ext_as4.as4 << 16;
 		com |= c->data.ext_as4.val;
 		break;
-	case EXT_COMMUNITY_OPAQUE:
+	case EXT_COMMUNITY_TRANS_OPAQUE:
 		com |= (u_int64_t)c->subtype << 48;
 		com |= c->data.ext_opaq & EXT_COMMUNITY_OPAQUE_MAX;
 		break;
@@ -1298,10 +1298,10 @@ community_ext_matchone(struct filter_extcommunity *c, u_int16_t neighas,
 		return (0);
 
 	switch (c->type & EXT_COMMUNITY_VALUE) {
-	case EXT_COMMUNITY_TWO_AS:
-	case EXT_COMMUNITY_IPV4:
-	case EXT_COMMUNITY_FOUR_AS:
-	case EXT_COMMUNITY_OPAQUE:
+	case EXT_COMMUNITY_TRANS_TWO_AS:
+	case EXT_COMMUNITY_TRANS_IPV4:
+	case EXT_COMMUNITY_TRANS_FOUR_AS:
+	case EXT_COMMUNITY_TRANS_OPAQUE:
 		com = (u_int64_t)c->subtype << 48;
 		mask = 0xffULL << 48;
 		if ((com & mask) != (community & mask))
@@ -1317,7 +1317,7 @@ community_ext_matchone(struct filter_extcommunity *c, u_int16_t neighas,
 
 
 	switch (c->type & EXT_COMMUNITY_VALUE) {
-	case EXT_COMMUNITY_TWO_AS:
+	case EXT_COMMUNITY_TRANS_TWO_AS:
 		com = (u_int64_t)c->data.ext_as.as << 32;
 		mask = 0xffffULL << 32;
 		if ((com & mask) != (community & mask))
@@ -1328,7 +1328,7 @@ community_ext_matchone(struct filter_extcommunity *c, u_int16_t neighas,
 		if ((com & mask) == (community & mask))
 			return (1);
 		break;
-	case EXT_COMMUNITY_IPV4:
+	case EXT_COMMUNITY_TRANS_IPV4:
 		ip = ntohl(c->data.ext_ip.addr.s_addr);
 		com = (u_int64_t)ip << 16;
 		mask = 0xffffffff0000ULL;
@@ -1340,7 +1340,7 @@ community_ext_matchone(struct filter_extcommunity *c, u_int16_t neighas,
 		if ((com & mask) == (community & mask))
 			return (1);
 		break;
-	case EXT_COMMUNITY_FOUR_AS:
+	case EXT_COMMUNITY_TRANS_FOUR_AS:
 		com = (u_int64_t)c->data.ext_as4.as4 << 16;
 		mask = 0xffffffffULL << 16;
 		if ((com & mask) != (community & mask))
@@ -1351,7 +1351,7 @@ community_ext_matchone(struct filter_extcommunity *c, u_int16_t neighas,
 		if ((com & mask) == (community & mask))
 			return (1);
 		break;
-	case EXT_COMMUNITY_OPAQUE:
+	case EXT_COMMUNITY_TRANS_OPAQUE:
 		com = c->data.ext_opaq & EXT_COMMUNITY_OPAQUE_MAX;
 		mask = EXT_COMMUNITY_OPAQUE_MAX;
 		if ((com & mask) == (community & mask))
@@ -1504,4 +1504,36 @@ community_large_delete(struct rde_aspath *asp, int64_t as, int64_t ld1,
 	attr_free(asp, attr);
 	attr_optadd(asp, f, ATTR_LARGE_COMMUNITIES, n, len);
 	free(n);
+}
+
+
+u_char *
+community_ext_delete_non_trans(u_char *data, u_int16_t len, u_int16_t *newlen)
+{
+	u_int8_t	*ext = data, *newdata;
+	u_int16_t	l, nlen = 0;
+
+	for (l = 0; l < len; l += sizeof(u_int64_t)) {
+		if (!(ext[l] & EXT_COMMUNITY_TRANSITIVE))
+			nlen += sizeof(u_int64_t);
+	}
+
+	if (nlen == 0) {
+		*newlen = 0;
+		return NULL;
+	}
+
+	newdata = malloc(nlen);
+	if (newdata == NULL)
+		fatal("%s", __func__);;
+
+	for (l = 0, nlen = 0; l < len; l += sizeof(u_int64_t)) {
+		if (!(ext[l] & EXT_COMMUNITY_TRANSITIVE)) {
+			memcpy(newdata + nlen, ext + l, sizeof(u_int64_t));
+			nlen += sizeof(u_int64_t);
+		}
+	}
+
+	*newlen = nlen;
+	return newdata;
 }

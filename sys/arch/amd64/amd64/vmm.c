@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.146 2017/05/29 05:59:45 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.152 2017/05/30 20:31:24 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -154,7 +154,9 @@ int vmx_get_exit_info(uint64_t *, uint64_t *);
 int vmx_handle_exit(struct vcpu *);
 int svm_handle_exit(struct vcpu *);
 int svm_handle_msr(struct vcpu *);
+int vmm_handle_xsetbv(struct vcpu *, uint64_t *);
 int vmx_handle_xsetbv(struct vcpu *);
+int svm_handle_xsetbv(struct vcpu *);
 int vmm_handle_cpuid(struct vcpu *);
 int vmx_handle_rdmsr(struct vcpu *);
 int vmx_handle_wrmsr(struct vcpu *);
@@ -1717,6 +1719,7 @@ vcpu_reset_regs_svm(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	 * SKINIT instruction (SVM_INTERCEPT_SKINIT)
 	 * ICEBP instruction (SVM_INTERCEPT_ICEBP)
 	 * MWAIT instruction (SVM_INTERCEPT_MWAIT_UNCOND)
+	 * XSETBV instruction (SVM_INTERCEPT_XSETBV) (if available)
 	 */
 	vmcb->v_intercept1 = SVM_INTERCEPT_INTR | SVM_INTERCEPT_NMI |
 	    SVM_INTERCEPT_CPUID | SVM_INTERCEPT_HLT | SVM_INTERCEPT_INOUT |
@@ -1726,6 +1729,9 @@ vcpu_reset_regs_svm(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	    SVM_INTERCEPT_VMLOAD | SVM_INTERCEPT_VMSAVE | SVM_INTERCEPT_STGI |
 	    SVM_INTERCEPT_CLGI | SVM_INTERCEPT_SKINIT | SVM_INTERCEPT_ICEBP |
 	    SVM_INTERCEPT_MWAIT_UNCOND;
+
+	if (xsave_mask)
+		vmcb->v_intercept2 |= SVM_INTERCEPT_XSETBV;
 
 	/* Setup I/O bitmap */
 	memset((uint8_t *)vcpu->vc_svm_ioio_va, 0xFF, 3 * PAGE_SIZE);
@@ -1784,6 +1790,9 @@ vcpu_reset_regs_svm(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 
 	vmcb->v_efer |= (EFER_LME | EFER_LMA);
 	vmcb->v_cr4 |= CR4_PAE;
+
+	/* xcr0 power on default sets bit 0 (x87 state) */
+	vcpu->vc_gueststate.vg_xcr0 = XCR0_X87;
 
 exit:
 	return ret;
@@ -3672,6 +3681,29 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 			}
 		}
 
+		/* Inject event if present */
+		if (vcpu->vc_event != 0) {
+			eii = (vcpu->vc_event & 0xFF);
+			eii |= (1ULL << 31);	/* Valid */
+			eii |= (1ULL << 11);	/* Send error code */
+			eii |= (3ULL << 8);	/* Hardware Exception */
+			if (vmwrite(VMCS_ENTRY_INTERRUPTION_INFO, eii)) {
+				printf("%s: can't vector event to guest\n",
+				    __func__);
+				ret = EINVAL;
+				break;
+			}
+
+			if (vmwrite(VMCS_ENTRY_EXCEPTION_ERROR_CODE, 0)) {
+				printf("%s: can't write error code to guest\n",
+				    __func__);
+				ret = EINVAL;
+				break;
+			}
+
+			vcpu->vc_event = 0;
+		}
+
 		if (vcpu->vc_vmx_vpid_enabled) {
 			/* Invalidate old TLB mappings */
 			vid.vid_vpid = vcpu->vc_parent->vm_id;
@@ -3680,7 +3712,9 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 		}
 
 		/* Start / resume the VCPU */
+#ifdef VMM_DEBUG
 		KERNEL_ASSERT_LOCKED();
+#endif /* VMM_DEBUG */
 
 		/* Disable interrupts and save the current FPU state. */
 		disable_intr();
@@ -3781,12 +3815,16 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 			resume = 1;
 			if (!(exitinfo & VMX_EXIT_INFO_HAVE_RIP)) {
 				printf("%s: cannot read guest rip\n", __func__);
+				if (!locked)
+					KERNEL_LOCK();
 				ret = EINVAL;
 				break;
 			}
 
 			if (!(exitinfo & VMX_EXIT_INFO_HAVE_REASON)) {
 				printf("%s: cant read exit reason\n", __func__);
+				if (!locked)
+					KERNEL_LOCK();
 				ret = EINVAL;
 				break;
 			}
@@ -3914,6 +3952,9 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 	} else
 		ret = EINVAL;
 
+#ifdef VMM_DEBUG
+	KERNEL_ASSERT_LOCKED();
+#endif /* VMM_DEBUG */
 	return (ret);
 }
 
@@ -3949,12 +3990,29 @@ vmx_handle_intr(struct vcpu *vcpu)
  * svm_handle_hlt
  *
  * Handle HLT exits
+ *
+ * Parameters
+ *  vcpu: The VCPU that executed the HLT instruction
+ *
+ * Return Values:
+ *  EIO: The guest halted with interrupts disabled
+ *  EAGAIN: Normal return to vmd - vmd should halt scheduling this VCPU
+ *   until a virtual interrupt is ready to inject
  */
 int
 svm_handle_hlt(struct vcpu *vcpu)
 {
+	struct vmcb *vmcb = (struct vmcb *)vcpu->vc_control_va;
+	uint64_t rflags = vmcb->v_rflags;
+
 	/* All HLT insns are 1 byte */
 	vcpu->vc_gueststate.vg_rip += 1;
+
+	if (!(rflags & PSL_I)) {
+		DPRINTF("%s: guest halted with interrupts disabled\n",
+		    __func__);
+		return (EIO);
+	}
 
 	return (EAGAIN);
 }
@@ -3994,7 +4052,8 @@ vmx_handle_hlt(struct vcpu *vcpu)
 	KASSERT(insn_length == 1);
 
 	if (!(rflags & PSL_I)) {
-		DPRINTF("%s: guest halted with interrupts disabled\n", __func__);
+		DPRINTF("%s: guest halted with interrupts disabled\n",
+		    __func__);
 		return (EIO);
 	}
 
@@ -4066,6 +4125,10 @@ svm_handle_exit(struct vcpu *vcpu)
 		break;
 	case SVM_VMEXIT_MSR:
 		ret = svm_handle_msr(vcpu);
+		update_rip = 1;
+		break;
+	case SVM_VMEXIT_XSETBV:
+		ret = svm_handle_xsetbv(vcpu);
 		update_rip = 1;
 		break;
 	case SVM_VMEXIT_IOIO:
@@ -4323,7 +4386,8 @@ svm_fault_page(struct vcpu *vcpu, paddr_t gpa)
 	ret = uvm_fault(vcpu->vc_parent->vm_map, gpa, fault_type,
 	    PROT_READ | PROT_WRITE | PROT_EXEC);
 	if (ret)
-		printf("svm_fault_page: uvm_fault returns %d\n", ret);
+		printf("%s: uvm_fault returns %d, GPA=0x%llx, rip=0x%llx\n",
+		    __func__, ret, (uint64_t)gpa, vcpu->vc_gueststate.vg_rip);
 
 	return (ret);
 }
@@ -4380,7 +4444,8 @@ vmx_fault_page(struct vcpu *vcpu, paddr_t gpa)
 	    PROT_READ | PROT_WRITE | PROT_EXEC);
 
 	if (ret)
-		printf("%s: uvm_fault returns %d\n", __func__, ret);
+		printf("%s: uvm_fault returns %d, GPA=0x%llx, rip=0x%llx\n",
+		    __func__, ret, (uint64_t)gpa, vcpu->vc_gueststate.vg_rip);
 
 	return (ret);
 }
@@ -4810,8 +4875,7 @@ vmx_handle_rdmsr(struct vcpu *vcpu)
 /*
  * vmx_handle_xsetbv
  *
- * Handler for xsetbv instructions. We allow the guest VM to set xcr0 values
- * limited to the xsave_mask in use in the host.
+ * VMX-specific part of the xsetbv instruction exit handler
  *
  * Parameters:
  *  vcpu: vcpu structure containing instruction info causing the exit
@@ -4823,8 +4887,8 @@ vmx_handle_rdmsr(struct vcpu *vcpu)
 int
 vmx_handle_xsetbv(struct vcpu *vcpu)
 {
-	uint64_t insn_length;
-	uint64_t *rax, *rdx, *rcx;;
+	uint64_t insn_length, *rax;
+	int ret;
 
 	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
 		printf("%s: can't obtain instruction length\n", __func__);
@@ -4835,6 +4899,64 @@ vmx_handle_xsetbv(struct vcpu *vcpu)
 	KASSERT(insn_length == 3);
 
 	rax = &vcpu->vc_gueststate.vg_rax;
+
+	ret = vmm_handle_xsetbv(vcpu, rax);
+
+	vcpu->vc_gueststate.vg_rip += insn_length;
+
+	return ret;
+}
+
+/*
+ * svm_handle_xsetbv
+ *
+ * SVM-specific part of the xsetbv instruction exit handler
+ *
+ * Parameters:
+ *  vcpu: vcpu structure containing instruction info causing the exit
+ *
+ * Return value:
+ *  0: The operation was successful
+ *  EINVAL: An error occurred
+ */
+int
+svm_handle_xsetbv(struct vcpu *vcpu)
+{
+	uint64_t insn_length, *rax;
+	int ret;
+	struct vmcb *vmcb = (struct vmcb *)vcpu->vc_control_va;
+
+	/* All XSETBV instructions are 3 bytes */
+	insn_length = 3;
+
+	rax = &vmcb->v_rax;
+
+	ret = vmm_handle_xsetbv(vcpu, rax);
+
+	vcpu->vc_gueststate.vg_rip += insn_length;
+
+	return ret;
+}
+
+/*
+ * vmm_handle_xsetbv
+ *
+ * Handler for xsetbv instructions. We allow the guest VM to set xcr0 values
+ * limited to the xsave_mask in use in the host.
+ *
+ * Parameters:
+ *  vcpu: vcpu structure containing instruction info causing the exit
+ *  rax: pointer to guest %rax
+ *
+ * Return value:
+ *  0: The operation was successful
+ *  EINVAL: An error occurred
+ */
+int
+vmm_handle_xsetbv(struct vcpu *vcpu, uint64_t *rax)
+{
+	uint64_t *rdx, *rcx;
+
 	rcx = &vcpu->vc_gueststate.vg_rcx;
 	rdx = &vcpu->vc_gueststate.vg_rdx;
 
@@ -4857,8 +4979,6 @@ vmx_handle_xsetbv(struct vcpu *vcpu)
 	}
 
 	vcpu->vc_gueststate.vg_xcr0 = *rax;
-
-	vcpu->vc_gueststate.vg_rip += insn_length;
 
 	return (0);
 }
@@ -5395,14 +5515,91 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 			vmcb->v_intr_vector = 0;
 		}
 
+		/* Inject event if present */
+		if (vcpu->vc_event != 0) {
+			vmcb->v_eventinj = (vcpu->vc_event) | (1 << 31);
+			vmcb->v_eventinj |= (1ULL << 1); /* Send error code */
+			vmcb->v_eventinj |= (3ULL << 8); /* Hardware Exception */
+			vcpu->vc_event = 0;
+		}
+
 		/* Start / resume the VCPU */
+#ifdef VMM_DEBUG
 		KERNEL_ASSERT_LOCKED();
+#endif /* VMM_DEBUG */
+
+		/* Disable interrupts and save the current FPU state. */
+		disable_intr();
+		clts();
+		vmm_fpusave();
+
+		/* Initialize the guest FPU if not inited already */
+		if (!vcpu->vc_fpuinited) {
+			fninit();
+			bzero(&vcpu->vc_g_fpu.fp_fxsave,
+			    sizeof(vcpu->vc_g_fpu.fp_fxsave));
+			vcpu->vc_g_fpu.fp_fxsave.fx_fcw =
+			    __INITIAL_NPXCW__;
+			vcpu->vc_g_fpu.fp_fxsave.fx_mxcsr =
+			    __INITIAL_MXCSR__;
+			fxrstor(&vcpu->vc_g_fpu.fp_fxsave);
+
+			vcpu->vc_fpuinited = 1;
+		}
+
+		if (xsave_mask) {
+			/* Restore guest XCR0 and FPU context */
+			if (vcpu->vc_gueststate.vg_xcr0 & ~xsave_mask) {
+				DPRINTF("%s: guest attempted to set invalid "
+				    "bits in xcr0\n", __func__);
+				ret = EINVAL;
+				stts();
+				enable_intr();
+				break;
+			}
+
+			/* Restore guest %xcr0 */
+			xrstor(&vcpu->vc_g_fpu, xsave_mask);
+			xsetbv(0, vcpu->vc_gueststate.vg_xcr0);
+		} else
+			fxrstor(&vcpu->vc_g_fpu.fp_fxsave);
+
 		KERNEL_UNLOCK();
 
 		wrmsr(MSR_AMD_VM_HSAVE_PA, vcpu->vc_svm_hsa_pa);
 
 		ret = svm_enter_guest(vcpu->vc_control_pa,
 		    &vcpu->vc_gueststate, &gdt);
+
+		/*
+		 * On exit, interrupts are disabled, and we are running with
+		 * the guest FPU state still possibly on the CPU. Save the FPU
+		 * state before re-enabling interrupts.
+		 */
+		if (xsave_mask) {
+			/* Save guest %xcr0 */
+			vcpu->vc_gueststate.vg_xcr0 = xgetbv(0);
+
+			/* Restore host %xcr0 */
+			xsetbv(0, xsave_mask);
+
+			/*
+			 * Save full copy of FPU state - guest content is
+			 * always a subset of host's save area (see xsetbv
+			 * exit handler)
+			 */	
+			xsave(&vcpu->vc_g_fpu, xsave_mask);
+		} else
+			fxsave(&vcpu->vc_g_fpu);
+
+		/*
+		 * FPU state is invalid, set CR0_TS to force DNA trap on next
+		 * access.
+		 */
+		stts();
+
+		enable_intr();
+
 
 		vcpu->vc_gueststate.vg_rip = vmcb->v_rip;
 		vmcb->v_tlb_control = 0;
@@ -5474,6 +5671,10 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 	 * handling an exit, a guest interrupt is pending, or we failed in some
 	 * way to enter the guest.
 	 */
+
+#ifdef VMM_DEBUG
+	KERNEL_ASSERT_LOCKED();
+#endif /* VMM_DEBUG */
 	return (ret);
 }
 

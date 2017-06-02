@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwn.c,v 1.186 2017/04/26 07:53:17 stsp Exp $	*/
+/*	$OpenBSD: if_iwn.c,v 1.190 2017/06/02 11:18:16 stsp Exp $	*/
 
 /*-
  * Copyright (c) 2007-2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -179,6 +179,7 @@ void		iwn5000_update_sched(struct iwn_softc *, int, int, uint8_t,
 void		iwn5000_reset_sched(struct iwn_softc *, int, int);
 int		iwn_tx(struct iwn_softc *, struct mbuf *,
 		    struct ieee80211_node *);
+int		iwn_rval2ridx(int);
 void		iwn_start(struct ifnet *);
 void		iwn_watchdog(struct ifnet *);
 int		iwn_ioctl(struct ifnet *, u_long, caddr_t);
@@ -2503,18 +2504,32 @@ iwn_notif_intr(struct iwn_softc *sc)
 		{
 			struct iwn_beacon_missed *miss =
 			    (struct iwn_beacon_missed *)(desc + 1);
+			uint32_t missed;
+
+			if ((ic->ic_opmode != IEEE80211_M_STA) ||
+			    (ic->ic_state != IEEE80211_S_RUN))
+				break;
 
 			bus_dmamap_sync(sc->sc_dmat, data->map, sizeof (*desc),
 			    sizeof (*miss), BUS_DMASYNC_POSTREAD);
+			missed = letoh32(miss->consecutive);
+
 			/*
 			 * If more than 5 consecutive beacons are missed,
 			 * reinitialize the sensitivity state machine.
 			 */
-			DPRINTFN(2, ("beacons missed %d/%d\n",
-			    letoh32(miss->consecutive), letoh32(miss->total)));
-			if (ic->ic_state == IEEE80211_S_RUN &&
-			    letoh32(miss->consecutive) > 5)
+			if (missed > 5)
 				(void)iwn_init_sensitivity(sc);
+
+			/*
+			 * Rather than go directly to scan state, try to send a
+			 * directed probe request first. If that fails then the
+			 * state machine will drop us into scanning after timing
+			 * out waiting for a probe response.
+			 */
+			if (missed > ic->ic_bmissthres && !ic->ic_mgt_timer)
+				IEEE80211_SEND_MGMT(ic, ic->ic_bss,
+				    IEEE80211_FC0_SUBTYPE_PROBE_REQ, 0);
 			break;
 		}
 		case IWN_UC_READY:
@@ -2854,6 +2869,19 @@ iwn5000_reset_sched(struct iwn_softc *sc, int qid, int idx)
 }
 
 int
+iwn_rval2ridx(int rval)
+{
+	int ridx;
+
+	for (ridx = 0; ridx < nitems(iwn_rates); ridx++) {
+		if (rval == iwn_rates[ridx].rate)
+			break;
+	}
+
+	return ridx;
+}
+
+int
 iwn_tx(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
@@ -2896,8 +2924,7 @@ iwn_tx(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	/* Choose a TX rate index. */
 	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
 	    type != IEEE80211_FC0_TYPE_DATA)
-		ridx = (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan)) ?
-		    IWN_RIDX_OFDM6 : IWN_RIDX_CCK1;
+		ridx = iwn_rval2ridx(ieee80211_min_basic_rate(ic));
 	else if (ic->ic_fixed_mcs != -1)
 		ridx = sc->fixed_ridx;
 	else if (ic->ic_fixed_rate != -1)
@@ -3430,6 +3457,7 @@ iwn5000_add_node(struct iwn_softc *sc, struct iwn_node_info *node, int async)
 int
 iwn_set_link_quality(struct iwn_softc *sc, struct ieee80211_node *ni)
 {
+	struct ieee80211com *ic = &sc->sc_ic;
 	struct iwn_node *wn = (void *)ni;
 	struct ieee80211_rateset *rs = &ni->ni_rates;
 	struct iwn_cmd_link_quality linkq;
@@ -3466,11 +3494,8 @@ iwn_set_link_quality(struct iwn_softc *sc, struct ieee80211_node *ni)
 				break;
 		}
 
-		/* Fill the rest with the lowest legacy rate. */
-		if (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan))
-			rinfo = &iwn_rates[IWN_RIDX_OFDM6];
-		else
-			rinfo = &iwn_rates[IWN_RIDX_CCK1];
+		/* Fill the rest with the lowest basic rate. */
+		rinfo = &iwn_rates[iwn_rval2ridx(ieee80211_min_basic_rate(ic))];
 		while (i < IWN_MAX_TX_RETRIES) {
 			linkq.retry[i].plcp = rinfo->plcp;
 			linkq.retry[i].rflags = rinfo->flags;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.c,v 1.20 2017/05/29 20:31:31 florian Exp $	*/
+/*	$OpenBSD: slaacd.c,v 1.23 2017/05/30 22:04:46 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -76,6 +76,7 @@ const char* imsg_type_name[] = {
 	"IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSALS",
 	"IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSAL",
 	"IMSG_CONFIGURE_DFR",
+	"IMSG_WITHDRAW_DFR",
 };
 
 __dead void	usage(void);
@@ -89,7 +90,9 @@ void	main_dispatch_frontend(int, short, void *);
 void	main_dispatch_engine(int, short, void *);
 void	handle_proposal(struct imsg_proposal *);
 void	configure_interface(struct imsg_configure_address *);
-void	configure_gateway(struct imsg_configure_dfr *);
+void	configure_gateway(struct imsg_configure_dfr *, uint8_t);
+void	add_gateway(struct imsg_configure_dfr *);
+void	delete_gateway(struct imsg_configure_dfr *);
 
 static int	main_imsg_send_ipc_sockets(struct imsgbuf *, struct imsgbuf *);
 
@@ -220,7 +223,7 @@ main(int argc, char *argv[])
 	    pipe_main2frontend[1], debug, cmd_opts & OPT_VERBOSE, csock);
 
 	slaacd_process = PROC_MAIN;
-	
+
 	log_procinit(log_procnames[slaacd_process]);
 
 	if ((routesock = socket(PF_ROUTE, SOCK_RAW | SOCK_CLOEXEC |
@@ -462,7 +465,14 @@ main_dispatch_engine(int fd, short event, void *bula)
 				fatal("%s: IMSG_CONFIGURE_DFR wrong "
 				    "length: %d", __func__, imsg.hdr.len);
 			memcpy(&dfr, imsg.data, sizeof(dfr));
-			configure_gateway(&dfr);
+			add_gateway(&dfr);
+			break;
+		case IMSG_WITHDRAW_DFR:
+			if (imsg.hdr.len != IMSG_HEADER_SIZE + sizeof(dfr))
+				fatal("%s: IMSG_CONFIGURE_DFR wrong "
+				    "length: %d", __func__, imsg.hdr.len);
+			memcpy(&dfr, imsg.data, sizeof(dfr));
+			delete_gateway(&dfr);
 			break;
 		default:
 			log_debug("%s: error handling imsg %d", __func__,
@@ -651,7 +661,7 @@ configure_interface(struct imsg_configure_address *address)
 	}
 
 	memcpy(&in6_addreq.ifra_addr, &address->addr,
-	     sizeof(in6_addreq.ifra_addr));
+	    sizeof(in6_addreq.ifra_addr));
 	memcpy(&in6_addreq.ifra_prefixmask.sin6_addr, &address->mask,
 	    sizeof(in6_addreq.ifra_prefixmask.sin6_addr));
 	in6_addreq.ifra_prefixmask.sin6_family = AF_INET6;
@@ -678,7 +688,7 @@ configure_interface(struct imsg_configure_address *address)
 }
 
 void
-configure_gateway(struct imsg_configure_dfr *dfr)
+configure_gateway(struct imsg_configure_dfr *dfr, uint8_t rtm_type)
 {
 	struct rt_msghdr		 rtm;
 	struct sockaddr_in6		 dst, gw, mask;
@@ -689,12 +699,12 @@ configure_gateway(struct imsg_configure_dfr *dfr)
 	memset(&rtm, 0, sizeof(rtm));
 
 	rtm.rtm_version = RTM_VERSION;
-	rtm.rtm_type = RTM_ADD;
+	rtm.rtm_type = rtm_type;
 	rtm.rtm_msglen = sizeof(rtm);
 	rtm.rtm_tableid = 0; /* XXX imsg->rdomain; */
 	rtm.rtm_index = dfr->if_index;
 	rtm.rtm_seq = ++rtm_seq;
-	rtm.rtm_priority = RTP_BGP;
+	rtm.rtm_priority = RTP_DEFAULT;
 	rtm.rtm_addrs = RTA_DST | RTA_GATEWAY | RTA_NETMASK;
 	rtm.rtm_flags = RTF_UP | RTF_GATEWAY | RTF_STATIC;
 
@@ -742,5 +752,17 @@ configure_gateway(struct imsg_configure_dfr *dfr)
 	}
 
 	if (writev(routesock, iov, iovcnt) == -1)
-		log_warn("failed to send RTM_ADD");
+		log_warn("failed to send route message");
+}
+
+void
+add_gateway(struct imsg_configure_dfr *dfr)
+{
+	configure_gateway(dfr, RTM_ADD);
+}
+
+void
+delete_gateway(struct imsg_configure_dfr *dfr)
+{
+	configure_gateway(dfr, RTM_DELETE);
 }

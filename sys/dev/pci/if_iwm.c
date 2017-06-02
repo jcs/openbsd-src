@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.184 2017/05/28 11:03:48 stsp Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.190 2017/06/02 11:18:37 stsp Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>
@@ -368,6 +368,8 @@ void	iwm_rx_tx_cmd_single(struct iwm_softc *, struct iwm_rx_packet *,
 	    struct iwm_node *);
 void	iwm_rx_tx_cmd(struct iwm_softc *, struct iwm_rx_packet *,
 	    struct iwm_rx_data *);
+void	iwm_rx_bmiss(struct iwm_softc *, struct iwm_rx_packet *,
+	    struct iwm_rx_data *);
 int	iwm_binding_cmd(struct iwm_softc *, struct iwm_node *, uint32_t);
 void	iwm_phy_ctxt_cmd_hdr(struct iwm_softc *, struct iwm_phy_ctxt *,
 	    struct iwm_phy_context_cmd *, uint32_t, uint32_t);
@@ -416,6 +418,7 @@ int	iwm_lmac_scan(struct iwm_softc *);
 int	iwm_config_umac_scan(struct iwm_softc *);
 int	iwm_umac_scan(struct iwm_softc *);
 uint8_t	iwm_ridx2rate(struct ieee80211_rateset *, int);
+int	iwm_rval2ridx(int);
 void	iwm_ack_rates(struct iwm_softc *, struct iwm_node *, int *, int *);
 void	iwm_mac_ctxt_cmd_common(struct iwm_softc *, struct iwm_node *,
 	    struct iwm_mac_ctx_cmd *, uint32_t, int);
@@ -3535,6 +3538,35 @@ iwm_rx_tx_cmd(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
 	}
 }
 
+void
+iwm_rx_bmiss(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
+    struct iwm_rx_data *data)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct iwm_missed_beacons_notif *mbn = (void *)pkt->data;
+	uint32_t missed;
+
+	if ((ic->ic_opmode != IEEE80211_M_STA) ||
+	    (ic->ic_state != IEEE80211_S_RUN))
+		return;
+
+	bus_dmamap_sync(sc->sc_dmat, data->map, sizeof(*pkt),
+	    sizeof(*mbn), BUS_DMASYNC_POSTREAD);
+
+	missed = le32toh(mbn->consec_missed_beacons_since_last_rx);
+	if (missed > ic->ic_bmissthres && ic->ic_mgt_timer == 0) {
+		/*
+		 * Rather than go directly to scan state, try to send a
+		 * directed probe request first. If that fails then the
+		 * state machine will drop us into scanning after timing
+		 * out waiting for a probe response.
+		 */
+		IEEE80211_SEND_MGMT(ic, ic->ic_bss,
+		    IEEE80211_FC0_SUBTYPE_PROBE_REQ, 0);
+	}
+
+}
+
 int
 iwm_binding_cmd(struct iwm_softc *sc, struct iwm_node *in, uint32_t action)
 {
@@ -3957,8 +3989,7 @@ iwm_tx_fill_cmd(struct iwm_softc *sc, struct iwm_node *in,
 	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
 	    type != IEEE80211_FC0_TYPE_DATA) {
 		/* for non-data, use the lowest supported rate */
-		ridx = (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan)) ?
-		    IWM_RIDX_OFDM : IWM_RIDX_CCK;
+		ridx = iwm_rval2ridx(ieee80211_min_basic_rate(ic));
 		tx->data_retry_limit = IWM_MGMT_DFAULT_RETRY_LIMIT;
 	} else if (ic->ic_fixed_mcs != -1) {
 		ridx = sc->sc_fixed_ridx;
@@ -4983,6 +5014,19 @@ iwm_ridx2rate(struct ieee80211_rateset *rs, int ridx)
 	return 0;
 }
 
+int
+iwm_rval2ridx(int rval)
+{
+	int ridx;
+
+	for (ridx = 0; ridx < nitems(iwm_rates); ridx++) {
+		if (rval == iwm_rates[ridx].rate)
+			break;
+	}
+
+       return ridx;
+}
+
 void
 iwm_ack_rates(struct iwm_softc *sc, struct iwm_node *in, int *cck_rates,
     int *ofdm_rates)
@@ -5402,8 +5446,7 @@ iwm_setrates(struct iwm_node *in)
 	 * legacy/HT are assumed to be marked with an 'invalid' PLCP value.
 	 */
 	j = 0;
-	ridx_min = (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan)) ?
-	    IWM_RIDX_OFDM : IWM_RIDX_CCK;
+	ridx_min = iwm_rval2ridx(ieee80211_min_basic_rate(ic));
 	mimo = iwm_is_mimo_mcs(ni->ni_txmcs);
 	ridx_max = (mimo ? IWM_RIDX_MAX : IWM_LAST_HT_SISO_RATE);
 	for (ridx = ridx_max; ridx >= ridx_min; ridx--) {
@@ -6566,7 +6609,7 @@ iwm_notif_intr(struct iwm_softc *sc)
 			break;
 
 		case IWM_MISSED_BEACONS_NOTIFICATION:
-			/* OpenBSD does not provide ieee80211_beacon_miss() */
+			iwm_rx_bmiss(sc, pkt, data);
 			break;
 
 		case IWM_MFUART_LOAD_NOTIFICATION:

@@ -1,4 +1,4 @@
-/*	$OpenBSD: atascsi.h,v 1.50 2015/12/29 09:44:46 kettenis Exp $ */
+/*	$OpenBSD: atascsi.h,v 1.52 2017/05/31 05:54:06 jmatthew Exp $ */
 
 /*
  * Copyright (c) 2007 David Gwynne <dlg@openbsd.org>
@@ -50,12 +50,21 @@ struct scsi_link;
 #define ATA_C_DSM		0x06
 
 /*
- * ATA SET FEATURES subcommands
+ * ATA SET FEATURES subcommands (feature field)
  */
 #define ATA_SF_WRITECACHE_EN	0x02
 #define ATA_SF_XFERMODE		0x03
+#define ATA_SF_SATA_FEATURE_EN	0x10
 #define  ATA_SF_XFERMODE_UDMA	0x40
+#define ATA_SF_SATA_FEATURE_DIS	0x90
 #define ATA_SF_LOOKAHEAD_EN	0xaa
+
+/*
+ * ATA SET FEATURES args (count field)
+ */
+#define ATA_SF_SATA_DEVIPS	0x03	/* Device-initiated power management */
+#define ATA_SF_SATA_DEVAPS	0x07	/* Device Automatic Partial to Slumber transitions */
+#define ATA_SF_SATA_DEVSLEEP	0x09	/* DevSleep power management state */
 
 struct ata_identify {
 	u_int16_t	config;		/*   0 */
@@ -103,11 +112,18 @@ struct ata_identify {
 	u_int16_t	satacap;	/*  76 */
 #define ATA_SATACAP_GEN1	0x0002
 #define ATA_SATACAP_GEN2	0x0004
+#define ATA_SATACAP_GEN3	0x0008
 #define ATA_SATACAP_NCQ		0x0100
-#define ATA_SATACAP_PWRMGMT	0x0200
+#define ATA_SATACAP_HIPM	0x0200
+#define ATA_SATACAP_HOSTAPS	0x2000
+#define ATA_SATACAP_DEVAPS	0x4000
 	u_int16_t	reserved6;	/*  77 */
 	u_int16_t	satafsup;	/*  78 */
+#define ATA_SATAFSUP_DIPM	0x0008
+#define ATA_SATAFSUP_DEVSLP	0x0100
 	u_int16_t	satafen;	/*  79 */
+#define ATA_SATAFEN_DIPM	0x0008
+#define ATA_SATAFEN_DEVSLP	0x0100
 	u_int16_t	majver;		/*  80 */
 	u_int16_t	minver;		/*  81 */
 	u_int16_t	cmdset82;	/*  82 */
@@ -275,18 +291,20 @@ struct ata_log_page_10h {
 #define SATA_SStatus_DET_NODEV		0x000
 #define SATA_SStatus_DET_NOPHY		0x001
 #define SATA_SStatus_DET_DEV		0x003
-#define SATA_SStatus_DET_OFFLINE	0x008
+#define SATA_SStatus_DET_OFFLINE	0x004
 
 #define SATA_SStatus_SPD		0x0f0
 #define SATA_SStatus_SPD_NONE		0x000
 #define SATA_SStatus_SPD_1_5		0x010
 #define SATA_SStatus_SPD_3_0		0x020
+#define SATA_SStatus_SPD_6_0		0x030
 
 #define SATA_SStatus_IPM		0xf00
 #define SATA_SStatus_IPM_NODEV		0x000
 #define SATA_SStatus_IPM_ACTIVE		0x100
 #define SATA_SStatus_IPM_PARTIAL	0x200
 #define SATA_SStatus_IPM_SLUMBER	0x600
+#define SATA_SStatus_IPM_DEVSLEEP	0x800
 
 #define SATA_SIGNATURE_PORT_MULTIPLIER	0x96690101
 #define SATA_SIGNATURE_ATAPI		0xeb140101

@@ -1,4 +1,4 @@
-/*	$OpenBSD: vioblk.c,v 1.4 2017/05/26 15:26:28 sf Exp $	*/
+/*	$OpenBSD: vioblk.c,v 1.7 2017/05/30 19:28:09 sf Exp $	*/
 
 /*
  * Copyright (c) 2012 Stefan Fritsch.
@@ -54,6 +54,7 @@
 #include <sys/device.h>
 #include <sys/stat.h>
 #include <sys/buf.h>
+#include <sys/mutex.h>
 #include <dev/pv/virtioreg.h>
 #include <dev/pv/virtiovar.h>
 #include <dev/pv/vioblkreg.h>
@@ -90,6 +91,8 @@ struct virtio_blk_req {
 	int				 vr_len;
 	bus_dmamap_t			 vr_cmdsts;
 	bus_dmamap_t			 vr_payload;
+	SLIST_ENTRY(virtio_blk_req)	 vr_list;
+	int				 vr_qe_index;
 };
 
 struct vioblk_softc {
@@ -103,6 +106,8 @@ struct vioblk_softc {
 	struct scsi_adapter	 sc_switch;
 	struct scsi_link	 sc_link;
 	struct scsi_iopool	 sc_iopool;
+	struct mutex		 sc_vr_mtx;
+	SLIST_HEAD(, virtio_blk_req) sc_freelist;
 
 	int			 sc_notify_on_empty;
 
@@ -151,11 +156,8 @@ int vioblk_match(struct device *parent, void *match, void *aux)
 	return 0;
 }
 
-#if VIRTIO_DEBUG > 0
-#define DBGPRINT(fmt, args...) printf("%s: " fmt "\n", __func__, ## args)
-#else
-#define DBGPRINT(fmt, args...)		do {} while (0)
-#endif
+#define DNPRINTF(n,x...)				\
+    do { if (VIRTIO_DEBUG >= n) printf(x); } while(0)
 
 void
 vioblk_attach(struct device *parent, struct device *self, void *aux)
@@ -211,10 +213,6 @@ vioblk_attach(struct device *parent, struct device *self, void *aux)
 	}
 	qsize = sc->sc_vq[0].vq_num;
 	sc->sc_vq[0].vq_done = vioblk_vq_done;
-	if (vioblk_alloc_reqs(sc, qsize) < 0) {
-		printf("\nCan't alloc reqs\n");
-		goto err;
-	}
 
 	if (features & VIRTIO_F_NOTIFY_ON_EMPTY) {
 		virtio_stop_vq_intr(vsc, &sc->sc_vq[0]);
@@ -231,7 +229,15 @@ vioblk_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_switch.dev_probe = vioblk_dev_probe;
 	sc->sc_switch.dev_free = vioblk_dev_free;
 
+	SLIST_INIT(&sc->sc_freelist);
+	mtx_init(&sc->sc_vr_mtx, IPL_BIO);
 	scsi_iopool_init(&sc->sc_iopool, sc, vioblk_req_get, vioblk_req_put);
+
+	sc->sc_link.openings = vioblk_alloc_reqs(sc, qsize);
+	if (sc->sc_link.openings == 0) {
+		printf("\nCan't alloc reqs\n");
+		goto err;
+	}
 
 	sc->sc_link.adapter = &sc->sc_switch;
 	sc->sc_link.pool = &sc->sc_iopool;
@@ -239,8 +245,7 @@ vioblk_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_link.adapter_buswidth = 2;
 	sc->sc_link.luns = 1;
 	sc->sc_link.adapter_target = 2;
-	sc->sc_link.openings = qsize;
-	DBGPRINT("; qsize: %d", qsize);
+	DNPRINTF(1, "%s: qsize: %d\n", __func__, qsize);
 	if (features & VIRTIO_BLK_F_RO)
 		sc->sc_link.flags |= SDEV_READONLY;
 
@@ -270,28 +275,15 @@ void *
 vioblk_req_get(void *cookie)
 {
 	struct vioblk_softc *sc = cookie;
-	struct virtqueue *vq = &sc->sc_vq[0];
 	struct virtio_blk_req *vr = NULL;
-	int r, s, slot;
 
-	s = splbio();
+	mtx_enter(&sc->sc_vr_mtx);
+	vr = SLIST_FIRST(&sc->sc_freelist);
+	if (vr != NULL)
+		SLIST_REMOVE_HEAD(&sc->sc_freelist, vr_list);
+	mtx_leave(&sc->sc_vr_mtx);
 
-	r = virtio_enqueue_prep(vq, &slot);
-	if (r) {
-		DBGPRINT("virtio_enqueue_prep: %d, vq_num: %d, sc_queued: %d",
-		    r, vq->vq_num, sc->sc_queued);
-		splx(s);
-		return NULL;
-	}
-	vr = &sc->sc_reqs[slot];
-	r = virtio_enqueue_reserve(vq, slot, ALLOC_SEGS);
-	if (r) {
-		DBGPRINT("virtio_enqueue_reserve: %d", r);
-		splx(s);
-		return NULL;
-	}
-
-	splx(s);
+	DNPRINTF(2, "%s: %p\n", __func__, vr);
 
 	return vr;
 }
@@ -300,16 +292,19 @@ void
 vioblk_req_put(void *cookie, void *io)
 {
 	struct vioblk_softc *sc = cookie;
-	struct virtqueue *vq = &sc->sc_vq[0];
 	struct virtio_blk_req *vr = io;
-	int s, slot = vr - sc->sc_reqs;
 
-	s = splbio();
+	DNPRINTF(2, "%s: %p\n", __func__, vr);
 
-	virtio_enqueue_trim(vq, slot, ALLOC_SEGS);
-	virtio_dequeue_commit(vq, slot);
-
-	splx(s);
+	mtx_enter(&sc->sc_vr_mtx);
+	/*
+	 * Do *NOT* call virtio_dequeue_commit()!
+	 *
+	 * Descriptors are permanently associated with the vioscsi_req and
+	 * should not be placed on the free list!
+	 */
+	SLIST_INSERT_HEAD(&sc->sc_freelist, vr, vr_list);
+	mtx_leave(&sc->sc_vr_mtx);
 }
 
 int
@@ -317,6 +312,7 @@ vioblk_vq_done(struct virtqueue *vq)
 {
 	struct virtio_softc *vsc = vq->vq_owner;
 	struct vioblk_softc *sc = (struct vioblk_softc *)vsc->sc_child;
+	struct vq_entry *qe;
 	int slot;
 	int ret = 0;
 
@@ -330,7 +326,8 @@ vioblk_vq_done(struct virtqueue *vq)
 			if (virtio_dequeue(vsc, vq, &slot, NULL) != 0)
 				break;
 		}
-		vioblk_vq_done1(sc, vsc, vq, slot);
+		qe = &vq->vq_entries[slot];
+		vioblk_vq_done1(sc, vsc, vq, qe->qe_vr_index);
 		ret = 1;
 	}
 	return ret;
@@ -357,7 +354,7 @@ vioblk_vq_done1(struct vioblk_softc *sc, struct virtio_softc *vsc,
 
 
 	if (vr->vr_status != VIRTIO_BLK_S_OK) {
-		DBGPRINT("EIO");
+		DNPRINTF(1, "%s: EIO\n", __func__);
 		xs->error = XS_DRIVER_STUFFUP;
 		xs->resid = xs->datalen;
 	} else {
@@ -483,7 +480,7 @@ vioblk_scsi_cmd(struct scsi_xfer *xs)
 
 	s = splbio();
 	vr = xs->io;
-	slot = vr - sc->sc_reqs;
+	slot = vr->vr_qe_index;
 	if (operation != VIRTIO_BLK_T_FLUSH) {
 		len = MIN(xs->datalen, sector_count * VIRTIO_BLK_SECTOR_SIZE);
 		ret = bus_dmamap_load(vsc->sc_dmat, vr->vr_payload,
@@ -651,10 +648,17 @@ vioblk_dev_free(struct scsi_link *link)
 int
 vioblk_alloc_reqs(struct vioblk_softc *sc, int qsize)
 {
-	int allocsize, r, rsegs, i;
+	struct virtqueue *vq = &sc->sc_vq[0];
+	struct vring_desc *vd;
+	int allocsize, nreqs, r, rsegs, slot, i;
 	void *vaddr;
 
-	allocsize = sizeof(struct virtio_blk_req) * qsize;
+	if (vq->vq_indirect != NULL)
+		nreqs = qsize;
+	else
+		nreqs = qsize / ALLOC_SEGS;
+
+	allocsize = sizeof(struct virtio_blk_req) * nreqs;
 	r = bus_dmamem_alloc(sc->sc_virtio->sc_dmat, allocsize, 0, 0,
 	    &sc->sc_reqs_segs[0], 1, &rsegs, BUS_DMA_NOWAIT);
 	if (r != 0) {
@@ -670,15 +674,48 @@ vioblk_alloc_reqs(struct vioblk_softc *sc, int qsize)
 	}
 	sc->sc_reqs = vaddr;
 	memset(vaddr, 0, allocsize);
-	for (i = 0; i < qsize; i++) {
+	for (i = 0; i < nreqs; i++) {
+		/*
+		 * Assign descriptors and create the DMA maps for each
+		 * allocated request.
+		 */
 		struct virtio_blk_req *vr = &sc->sc_reqs[i];
+		r = virtio_enqueue_prep(vq, &slot);
+		if (r == 0)
+			r = virtio_enqueue_reserve(vq, slot, ALLOC_SEGS);
+		if (r != 0)
+			return i;
+
+		if (vq->vq_indirect == NULL) {
+			/*
+			 * The reserved slots must be a contiguous block
+			 * starting at vq_desc[slot].
+			 */
+			vd = &vq->vq_desc[slot];
+			for (r = 0; r < ALLOC_SEGS - 1; r++) {
+				DNPRINTF(2, "%s: vd[%d].next = %d should be "
+				    "%d\n", __func__, r, vd[r].next,
+				    (slot + r + 1));
+				if (vd[r].next != (slot + r + 1))
+					return i;
+			}
+			if (r == (ALLOC_SEGS -1) && vd[r].next != 0)
+				return i;
+			DNPRINTF(2, "%s: reserved slots are contiguous "
+			    "(good!)\n", __func__);
+		}
+
+		vr->vr_qe_index = slot;
+		vq->vq_entries[slot].qe_vr_index = i;
 		vr->vr_len = VIOBLK_DONE;
+
 		r = bus_dmamap_create(sc->sc_virtio->sc_dmat,
 		    offsetof(struct virtio_blk_req, vr_xs), 1,
 		    offsetof(struct virtio_blk_req, vr_xs), 0,
 		    BUS_DMA_NOWAIT|BUS_DMA_ALLOCNOW, &vr->vr_cmdsts);
 		if (r != 0) {
 			printf("cmd dmamap creation failed, err %d\n", r);
+			nreqs = i;
 			goto err_reqs;
 		}
 		r = bus_dmamap_load(sc->sc_virtio->sc_dmat, vr->vr_cmdsts,
@@ -686,6 +723,7 @@ vioblk_alloc_reqs(struct vioblk_softc *sc, int qsize)
 		    BUS_DMA_NOWAIT);
 		if (r != 0) {
 			printf("command dmamap load failed, err %d\n", r);
+			nreqs = i;
 			goto err_reqs;
 		}
 		r = bus_dmamap_create(sc->sc_virtio->sc_dmat, MAX_XFER,
@@ -693,13 +731,15 @@ vioblk_alloc_reqs(struct vioblk_softc *sc, int qsize)
 		    &vr->vr_payload);
 		if (r != 0) {
 			printf("payload dmamap creation failed, err %d\n", r);
+			nreqs = i;
 			goto err_reqs;
 		}
+		SLIST_INSERT_HEAD(&sc->sc_freelist, vr, vr_list);
 	}
-	return 0;
+	return nreqs;
 
 err_reqs:
-	for (i = 0; i < qsize; i++) {
+	for (i = 0; i < nreqs; i++) {
 		struct virtio_blk_req *vr = &sc->sc_reqs[i];
 		if (vr->vr_cmdsts) {
 			bus_dmamap_destroy(sc->sc_virtio->sc_dmat,
@@ -717,5 +757,5 @@ err_reqs:
 err_dmamem_alloc:
 	bus_dmamem_free(sc->sc_virtio->sc_dmat, &sc->sc_reqs_segs[0], 1);
 err_none:
-	return -1;
+	return 0;
 }

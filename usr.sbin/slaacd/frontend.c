@@ -1,4 +1,4 @@
-/*	$OpenBSD: frontend.c,v 1.13 2017/05/29 08:59:42 florian Exp $	*/
+/*	$OpenBSD: frontend.c,v 1.16 2017/05/31 07:14:58 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -74,8 +74,10 @@ struct imsgev			*iev_main;
 struct imsgev			*iev_engine;
 struct event			 ev_route;
 struct msghdr			 sndmhdr;
-struct iovec			 sndiov[2];
+struct iovec			 sndiov[4];
 struct nd_router_solicit	 rs;
+struct nd_opt_hdr		 nd_opt_hdr;
+struct ether_addr		 nd_opt_source_link_addr;
 struct sockaddr_in6		 dst;
 int		 icmp6sock, routesock, xflagssock;
 
@@ -228,20 +230,27 @@ frontend(int debug, int verbose, char *sockname)
 	rs.nd_rs_cksum = 0;
 	rs.nd_rs_reserved = 0;
 
+	nd_opt_hdr.nd_opt_type = ND_OPT_SOURCE_LINKADDR;
+	nd_opt_hdr.nd_opt_len = 1;
+
 	memset(&dst, 0, sizeof(dst));
-	dst.sin6_family = AF_INET6;	
+	dst.sin6_family = AF_INET6;
 	if (inet_pton(AF_INET6, ALLROUTER, &dst.sin6_addr.s6_addr) != 1)
 		fatal("inet_pton");
 
 	sndmhdr.msg_namelen = sizeof(struct sockaddr_in6);
 	sndmhdr.msg_iov = sndiov;
-	sndmhdr.msg_iovlen = 1;
+	sndmhdr.msg_iovlen = 3;
 	sndmhdr.msg_control = (caddr_t)sndcmsgbuf;
 	sndmhdr.msg_controllen = sndcmsglen;
 
 	sndmhdr.msg_name = (caddr_t)&dst;
 	sndmhdr.msg_iov[0].iov_base = (caddr_t)&rs;
 	sndmhdr.msg_iov[0].iov_len = sizeof(rs);
+	sndmhdr.msg_iov[1].iov_base = (caddr_t)&nd_opt_hdr;
+	sndmhdr.msg_iov[1].iov_len = sizeof(nd_opt_hdr);
+	sndmhdr.msg_iov[2].iov_base = (caddr_t)&nd_opt_source_link_addr;
+	sndmhdr.msg_iov[2].iov_len = sizeof(nd_opt_source_link_addr);
 
 	cm = CMSG_FIRSTHDR(&sndmhdr);
 
@@ -306,21 +315,17 @@ frontend_dispatch_main(int fd, short event, void *bula)
 	ssize_t			 n;
 	int			 shut = 0;
 
-	DEBUG_IMSG("%s", __func__);
-	
 	if (event & EV_READ) {
 		if ((n = imsg_read(ibuf)) == -1 && errno != EAGAIN)
 			fatal("imsg_read error");
 		if (n == 0)	/* Connection closed. */
 			shut = 1;
-		DEBUG_IMSG("%s: EV_READ, n=%ld", __func__, n);
 	}
 	if (event & EV_WRITE) {
 		if ((n = msgbuf_write(&ibuf->w)) == -1 && errno != EAGAIN)
 			fatal("msgbuf_write");
 		if (n == 0)	/* Connection closed. */
 			shut = 1;
-		DEBUG_IMSG("%s: EV_WRITE, n=%ld", __func__, n);
 	}
 
 	for (;;) {
@@ -329,8 +334,6 @@ frontend_dispatch_main(int fd, short event, void *bula)
 		if (n == 0)	/* No more messages. */
 			break;
 
-
-		DEBUG_IMSG("%s: %s", __func__, imsg_type_name[imsg.hdr.type]);
 		switch (imsg.hdr.type) {
 		case IMSG_SOCKET_IPC:
 			/*
@@ -397,21 +400,17 @@ frontend_dispatch_engine(int fd, short event, void *bula)
 	int			 shut = 0;
 	uint32_t		 if_index;
 
-	DEBUG_IMSG("%s", __func__);
-
 	if (event & EV_READ) {
 		if ((n = imsg_read(ibuf)) == -1 && errno != EAGAIN)
 			fatal("imsg_read error");
 		if (n == 0)	/* Connection closed. */
 			shut = 1;
-		DEBUG_IMSG("%s: EV_READ, n=%ld", __func__, n);
 	}
 	if (event & EV_WRITE) {
 		if ((n = msgbuf_write(&ibuf->w)) == -1 && errno != EAGAIN)
 			fatal("msgbuf_write");
 		if (n == 0)	/* Connection closed. */
 			shut = 1;
-		DEBUG_IMSG("%s: EV_WRITE, n=%ld", __func__, n);
 	}
 
 	for (;;) {
@@ -419,8 +418,6 @@ frontend_dispatch_engine(int fd, short event, void *bula)
 			fatal("%s: imsg_get error", __func__);
 		if (n == 0)	/* No more messages. */
 			break;
-
-		DEBUG_IMSG("%s: %s", __func__, imsg_type_name[imsg.hdr.type]);
 
 		switch (imsg.hdr.type) {
 		case IMSG_CTL_END:
@@ -500,6 +497,9 @@ update_iface(uint32_t if_index, char* if_name)
 	    IFF_RUNNING);
 	imsg_ifinfo.autoconfprivacy = !(xflags & IFXF_INET6_NOPRIVACY);
 	get_lladdr(if_name, &imsg_ifinfo.hw_address, &imsg_ifinfo.ll_address);
+
+	memcpy(&nd_opt_source_link_addr, &imsg_ifinfo.hw_address,
+	    sizeof(nd_opt_source_link_addr));
 
 	frontend_imsg_compose_engine(IMSG_UPDATE_IF, 0, 0, &imsg_ifinfo,
 	    sizeof(imsg_ifinfo));
@@ -631,7 +631,7 @@ handle_route_message(struct rt_msghdr *rtm, struct sockaddr **rti_info)
 			p = rl->sr_label;
 
 			for (ap = argv; ap < &argv[3] && (*ap =
-			     strsep(&p, " ")) != NULL;) {
+			    strsep(&p, " ")) != NULL;) {
 				if (**ap != '\0')
 					ap++;
 			}
@@ -820,6 +820,7 @@ send_solicitation(uint32_t if_index)
 	pi = (struct in6_pktinfo *)CMSG_DATA(cm);
 	pi->ipi6_ifindex = if_index;
 
-	if (sendmsg(icmp6sock, &sndmhdr, 0) != sizeof(rs))
+	if (sendmsg(icmp6sock, &sndmhdr, 0) != sizeof(rs) +
+	    sizeof(nd_opt_hdr) + sizeof(nd_opt_source_link_addr))
 		log_warn("sendmsg");
 }

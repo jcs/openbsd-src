@@ -1,4 +1,4 @@
-/*	$OpenBSD: wsfont.c,v 1.46 2017/01/22 17:17:38 fcambus Exp $ */
+/*	$OpenBSD: wsfont.c,v 1.48 2017/05/30 13:14:44 fcambus Exp $ */
 /*	$NetBSD: wsfont.c,v 1.17 2001/02/07 13:59:24 ad Exp $	*/
 
 /*-
@@ -43,33 +43,6 @@
 #include "wsfont_glue.h"	/* NRASOPS_ROTATION */
 
 #undef HAVE_FONT
-
-#define FONT_BOLD8x16_ISO1
-
-#ifdef FONT_QVSS8x15
-#define HAVE_FONT 1
-#include <dev/wsfont/qvss8x15.h>
-#endif
-
-#ifdef FONT_LUCIDA16x29
-#define HAVE_FONT 1
-#include <dev/wsfont/lucida16x29.h>
-#endif
-
-#ifdef FONT_VT220L8x8
-#define HAVE_FONT 1
-#include <dev/wsfont/vt220l8x8.h>
-#endif
-
-#ifdef FONT_VT220L8x10
-#define HAVE_FONT 1
-#include <dev/wsfont/vt220l8x10.h>
-#endif
-
-#ifdef FONT_OMRON12x20
-#define HAVE_FONT 1
-#include <dev/wsfont/omron12x20.h>
-#endif
 
 #ifdef FONT_BOLD8x16
 #define HAVE_FONT 1
@@ -133,21 +106,6 @@ static struct font builtin_fonts[] = {
 #endif
 #ifdef FONT_GALLANT12x22
 	BUILTIN_FONT(gallant12x22, 3),
-#endif
-#ifdef FONT_LUCIDA16x29
-	BUILTIN_FONT(lucida16x29, 4),
-#endif
-#ifdef FONT_QVSS8x15
-	BUILTIN_FONT(qvss8x15, 5),
-#endif
-#ifdef FONT_VT220L8x8
-	BUILTIN_FONT(vt220l8x8, 6),
-#endif
-#ifdef FONT_VT220L8x10
-	BUILTIN_FONT(vt220l8x10, 7),
-#endif
-#ifdef FONT_OMRON12x20
-	BUILTIN_FONT(omron12x20, 8),
 #endif
 #undef BUILTIN_FONT
 };

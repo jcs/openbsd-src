@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_validate.c,v 1.243 2017/05/14 13:59:53 schwarze Exp $ */
+/*	$OpenBSD: mdoc_validate.c,v 1.246 2017/06/01 15:24:41 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -51,6 +51,7 @@ typedef	void	(*v_post)(POST_ARGS);
 
 static	int	 build_list(struct roff_man *, int);
 static	void	 check_text(struct roff_man *, int, int, char *);
+static	void	 check_bsd(struct roff_man *, int, int, char *);
 static	void	 check_argv(struct roff_man *,
 			struct roff_node *, struct mdoc_argv *);
 static	void	 check_args(struct roff_man *, struct roff_node *);
@@ -103,6 +104,7 @@ static	void	 post_sh_authors(POST_ARGS);
 static	void	 post_sm(POST_ARGS);
 static	void	 post_st(POST_ARGS);
 static	void	 post_std(POST_ARGS);
+static	void	 post_useless(POST_ARGS);
 static	void	 post_xr(POST_ARGS);
 static	void	 post_xx(POST_ARGS);
 
@@ -199,7 +201,7 @@ static	const v_post __mdoc_valids[MDOC_MAX - MDOC_Dd] = {
 	post_sm,	/* Sm */
 	post_hyph,	/* Sx */
 	NULL,		/* Sy */
-	NULL,		/* Tn */
+	post_useless,	/* Tn */
 	post_xx,	/* Ux */
 	NULL,		/* Xc */
 	NULL,		/* Xo */
@@ -299,6 +301,10 @@ mdoc_node_validate(struct roff_man *mdoc)
 		if (n->sec != SEC_SYNOPSIS ||
 		    (n->parent->tok != MDOC_Cd && n->parent->tok != MDOC_Fd))
 			check_text(mdoc, n->line, n->pos, n->string);
+		if (n->parent->tok == MDOC_Sh ||
+		    n->parent->tok == MDOC_Ss ||
+		    n->parent->tok == MDOC_It)
+			check_bsd(mdoc, n->line, n->pos, n->string);
 		break;
 	case ROFFT_EQN:
 	case ROFFT_TBL:
@@ -378,6 +384,25 @@ check_text(struct roff_man *mdoc, int ln, int pos, char *p)
 	for (cp = p; NULL != (p = strchr(p, '\t')); p++)
 		mandoc_msg(MANDOCERR_FI_TAB, mdoc->parse,
 		    ln, pos + (int)(p - cp), NULL);
+}
+
+static void
+check_bsd(struct roff_man *mdoc, int ln, int pos, char *p)
+{
+	const char	*cp;
+
+	if ((cp = strstr(p, "OpenBSD")) != NULL)
+		mandoc_msg(MANDOCERR_BX, mdoc->parse,
+		    ln, pos + (cp - p), "Ox");
+	if ((cp = strstr(p, "NetBSD")) != NULL)
+		mandoc_msg(MANDOCERR_BX, mdoc->parse,
+		    ln, pos + (cp - p), "Nx");
+	if ((cp = strstr(p, "FreeBSD")) != NULL)
+		mandoc_msg(MANDOCERR_BX, mdoc->parse,
+		    ln, pos + (cp - p), "Fx");
+	if ((cp = strstr(p, "DragonFly")) != NULL)
+		mandoc_msg(MANDOCERR_BX, mdoc->parse,
+		    ln, pos + (cp - p), "Dx");
 }
 
 static void
@@ -669,6 +694,7 @@ post_eoln(POST_ARGS)
 {
 	struct roff_node	*n;
 
+	post_useless(mdoc);
 	n = mdoc->last;
 	if (n->child != NULL)
 		mandoc_vmsg(MANDOCERR_ARG_SKIP, mdoc->parse, n->line,
@@ -854,6 +880,16 @@ post_obsolete(POST_ARGS)
 		    n->line, n->pos, roff_name[n->tok]);
 }
 
+static void
+post_useless(POST_ARGS)
+{
+	struct roff_node *n;
+
+	n = mdoc->last;
+	mandoc_msg(MANDOCERR_MACRO_USELESS, mdoc->parse,
+	    n->line, n->pos, roff_name[n->tok]);
+}
+
 /*
  * Block macros.
  */
@@ -1028,6 +1064,7 @@ static void
 post_nd(POST_ARGS)
 {
 	struct roff_node	*n;
+	size_t			 sz;
 
 	n = mdoc->last;
 
@@ -1041,6 +1078,11 @@ post_nd(POST_ARGS)
 	if (n->child == NULL)
 		mandoc_msg(MANDOCERR_ND_EMPTY, mdoc->parse,
 		    n->line, n->pos, "Nd");
+	else if (n->last->type == ROFFT_TEXT &&
+	    (sz = strlen(n->last->string)) != 0 &&
+	    n->last->string[sz - 1] == '.')
+		mandoc_msg(MANDOCERR_ND_DOT, mdoc->parse,
+		    n->last->line, n->last->pos + sz - 1, NULL);
 
 	post_hyph(mdoc);
 }
@@ -2252,11 +2294,19 @@ static void
 post_bx(POST_ARGS)
 {
 	struct roff_node	*n, *nch;
+	const char		*macro;
 
 	n = mdoc->last;
 	nch = n->child;
 
 	if (nch != NULL) {
+		macro = !strcmp(nch->string, "Open") ? "Ox" :
+		    !strcmp(nch->string, "Net") ? "Nx" :
+		    !strcmp(nch->string, "Free") ? "Fx" :
+		    !strcmp(nch->string, "DragonFly") ? "Dx" : NULL;
+		if (macro != NULL)
+			mandoc_msg(MANDOCERR_BX, mdoc->parse,
+			    n->line, n->pos, macro);
 		mdoc->last = nch;
 		nch = nch->next;
 		mdoc->next = ROFF_NEXT_SIBLING;

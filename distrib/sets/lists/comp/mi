@@ -816,11 +816,6 @@
 ./usr/include/dev/wsfont/bold8x16-iso1.h
 ./usr/include/dev/wsfont/bold8x16.h
 ./usr/include/dev/wsfont/gallant12x22.h
-./usr/include/dev/wsfont/lucida16x29.h
-./usr/include/dev/wsfont/omron12x20.h
-./usr/include/dev/wsfont/qvss8x15.h
-./usr/include/dev/wsfont/vt220l8x10.h
-./usr/include/dev/wsfont/vt220l8x8.h
 ./usr/include/dev/wsfont/wsfont.h
 ./usr/include/dev/x86emu
 ./usr/include/dev/x86emu/x86emu.h
@@ -1550,6 +1545,7 @@
 ./usr/share/man/man2/flock.2
 ./usr/share/man/man2/fork.2
 ./usr/share/man/man2/fsync.2
+./usr/share/man/man2/futex.2
 ./usr/share/man/man2/getdents.2
 ./usr/share/man/man2/getdtablecount.2
 ./usr/share/man/man2/getentropy.2

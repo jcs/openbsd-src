@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_msk.c,v 1.127 2017/04/10 02:15:54 jsg Exp $	*/
+/*	$OpenBSD: if_msk.c,v 1.129 2017/06/02 01:47:36 dlg Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -1473,10 +1473,12 @@ msk_encap(struct sk_if_softc *sc_if, struct mbuf *m_head, u_int32_t *txidx)
 	struct sk_softc		*sc = sc_if->sk_softc;
 	struct msk_tx_desc	*f = NULL;
 	u_int32_t		frag, cur;
-	int			i, entries;
+	int			i, entries = 0;
 	struct sk_txmap_entry	*entry;
 	bus_dmamap_t		txmap;
 	uint64_t		addr;
+	uint32_t		hiaddr;
+	uint8_t			opcode;
 
 	DPRINTFN(2, ("msk_encap\n"));
 
@@ -1489,58 +1491,53 @@ msk_encap(struct sk_if_softc *sc_if, struct mbuf *m_head, u_int32_t *txidx)
 
 	cur = frag = *txidx;
 
-#ifdef MSK_DEBUG
-	if (mskdebug >= 2)
-		msk_dump_mbuf(m_head);
-#endif
-
-	/*
-	 * Start packing the mbufs in this chain into
-	 * the fragment pointers. Stop when we run out
-	 * of fragments or hit the end of the mbuf chain.
-	 */
-	if (bus_dmamap_load_mbuf(sc->sc_dmatag, txmap, m_head,
-	    BUS_DMA_NOWAIT)) {
-		DPRINTFN(2, ("msk_encap: dmamap failed\n"));
-		return (ENOBUFS);
+	switch (bus_dmamap_load_mbuf(sc->sc_dmatag, txmap, m_head,
+	    BUS_DMA_STREAMING | BUS_DMA_NOWAIT)) {
+	case 0:
+		break;
+	case EFBIG: /* mbuf chain is too fragmented */
+		if (m_defrag(m_head, M_DONTWAIT) == 0 &&
+		    bus_dmamap_load_mbuf(sc->sc_dmatag, txmap, m_head,
+		    BUS_DMA_STREAMING | BUS_DMA_NOWAIT) == 0)
+			break;
+		/* FALLTHROUGH */
+	default:
+		return (1);
 	}
-
-	entries = txmap->dm_nsegs * 2;
-	if (entries > (MSK_TX_RING_CNT - sc_if->sk_cdata.sk_tx_cnt - 2)) {
-		DPRINTFN(2, ("msk_encap: too few descriptors free\n"));
-		bus_dmamap_unload(sc->sc_dmatag, txmap);
-		return (ENOBUFS);
-	}
-
-	DPRINTFN(2, ("msk_encap: dm_nsegs=%d\n", txmap->dm_nsegs));
 
 	/* Sync the DMA map. */
 	bus_dmamap_sync(sc->sc_dmatag, txmap, 0, txmap->dm_mapsize,
 	    BUS_DMASYNC_PREWRITE);
 
+	opcode = 0;
 	for (i = 0; i < txmap->dm_nsegs; i++) {
 		/* high 32 bits of address */
 		addr = txmap->dm_segs[i].ds_addr;
-		f = &sc_if->sk_rdata->sk_tx_ring[frag];
-		f->sk_addr = htole32(addr >> 32);
-		if (i == 0)
-			f->sk_opcode = SK_Y2_TXOPC_ADDR64;
-		else
-			f->sk_opcode = SK_Y2_TXOPC_ADDR64 | SK_Y2_TXOPC_OWN;
+		hiaddr = addr >> 32;
+		if (sc_if->sk_tx_hiaddr != hiaddr) {
+			f = &sc_if->sk_rdata->sk_tx_ring[frag];
+			f->sk_addr = htole32(hiaddr);
+			f->sk_opcode = opcode | SK_Y2_TXOPC_ADDR64;
 
-		SK_INC(frag, MSK_TX_RING_CNT);
+			sc_if->sk_tx_hiaddr = hiaddr;
+
+			SK_INC(frag, MSK_TX_RING_CNT);
+			opcode = SK_Y2_TXOPC_OWN;
+			entries++;
+		}
 
 		/* low 32 bits of address + length */
 		f = &sc_if->sk_rdata->sk_tx_ring[frag];
-		f->sk_addr = htole32(addr & 0xffffffff);
+		f->sk_addr = htole32(addr);
 		f->sk_len = htole16(txmap->dm_segs[i].ds_len);
 		f->sk_ctl = 0;
-		if (i == 0)
-			f->sk_opcode = SK_Y2_TXOPC_PACKET | SK_Y2_TXOPC_OWN;
-		else
-			f->sk_opcode = SK_Y2_TXOPC_BUFFER | SK_Y2_TXOPC_OWN;
+		f->sk_opcode = opcode |
+		    (i == 0 ? SK_Y2_TXOPC_PACKET : SK_Y2_TXOPC_BUFFER);
 		cur = frag;
+
 		SK_INC(frag, MSK_TX_RING_CNT);
+		opcode = SK_Y2_TXOPC_OWN;
+		entries++;
 	}
 
 	sc_if->sk_cdata.sk_tx_chain[cur].sk_mbuf = m_head;
@@ -1585,12 +1582,16 @@ msk_start(struct ifnet *ifp)
 	struct sk_if_softc	*sc_if = ifp->if_softc;
 	struct mbuf		*m_head = NULL;
 	u_int32_t		idx = sc_if->sk_cdata.sk_tx_prod;
-	int			pkts = 0;
+	int			post = 0;
 
-	DPRINTFN(2, ("msk_start\n"));
+	for (;;) {
+		if (sc_if->sk_cdata.sk_tx_cnt + (SK_NTXSEG * 2) + 1 >
+		    MSK_TX_RING_CNT) {
+			ifq_set_oactive(&ifp->if_snd);
+			break;
+		}
 
-	while (sc_if->sk_cdata.sk_tx_chain[idx].sk_mbuf == NULL) {
-		m_head = ifq_deq_begin(&ifp->if_snd);
+		m_head = ifq_dequeue(&ifp->if_snd);
 		if (m_head == NULL)
 			break;
 
@@ -1600,14 +1601,11 @@ msk_start(struct ifnet *ifp)
 		 * for the NIC to drain the ring.
 		 */
 		if (msk_encap(sc_if, m_head, &idx)) {
-			ifq_deq_rollback(&ifp->if_snd, m_head);
-			ifq_set_oactive(&ifp->if_snd);
-			break;
+			m_freem(m_head);
+			continue;
 		}
 
 		/* now we are committed to transmit the packet */
-		ifq_deq_commit(&ifp->if_snd, m_head);
-		pkts++;
 
 		/*
 		 * If there's a BPF listener, bounce a copy of this frame
@@ -1617,18 +1615,17 @@ msk_start(struct ifnet *ifp)
 		if (ifp->if_bpf)
 			bpf_mtap(ifp->if_bpf, m_head, BPF_DIRECTION_OUT);
 #endif
+		post = 1;
 	}
-	if (pkts == 0)
+	if (post == 0)
 		return;
 
 	/* Transmit */
-	if (idx != sc_if->sk_cdata.sk_tx_prod) {
-		sc_if->sk_cdata.sk_tx_prod = idx;
-		SK_IF_WRITE_2(sc_if, 1, SK_TXQA1_Y2_PREF_PUTIDX, idx);
+	sc_if->sk_cdata.sk_tx_prod = idx;
+	SK_IF_WRITE_2(sc_if, 1, SK_TXQA1_Y2_PREF_PUTIDX, idx);
 
-		/* Set a timeout in case the chip goes out to lunch. */
-		ifp->if_timer = MSK_TX_TIMEOUT;
-	}
+	/* Set a timeout in case the chip goes out to lunch. */
+	ifp->if_timer = MSK_TX_TIMEOUT;
 }
 
 void
@@ -1767,10 +1764,10 @@ msk_txeof(struct sk_if_softc *sc_if)
 	}
 	ifp->if_timer = sc_if->sk_cdata.sk_tx_cnt > 0 ? MSK_TX_TIMEOUT : 0;
 
-	if (sc_if->sk_cdata.sk_tx_cnt < MSK_TX_RING_CNT - 2)
-		ifq_clr_oactive(&ifp->if_snd);
-
 	sc_if->sk_cdata.sk_tx_cons = idx;
+
+	if (ifq_is_oactive(&ifp->if_snd))
+		ifq_restart(&ifp->if_snd);
 }
 
 void
@@ -2050,6 +2047,8 @@ msk_init(void *xsc_if)
 	/* Configure XMAC(s) */
 	msk_init_yukon(sc_if);
 	mii_mediachg(mii);
+
+	sc_if->sk_tx_hiaddr = 0;
 
 	/* Configure transmit arbiter(s) */
 	SK_IF_WRITE_1(sc_if, 0, SK_TXAR1_COUNTERCTL, SK_TXARCTL_ON);

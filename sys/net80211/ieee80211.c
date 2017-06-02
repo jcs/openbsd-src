@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211.c,v 1.58 2016/01/13 14:33:07 stsp Exp $	*/
+/*	$OpenBSD: ieee80211.c,v 1.61 2017/05/31 09:17:39 stsp Exp $	*/
 /*	$NetBSD: ieee80211.c,v 1.19 2004/06/06 05:45:29 dyoung Exp $	*/
 
 /*-
@@ -147,7 +147,7 @@ ieee80211_ifattach(struct ifnet *ifp)
 
 	if (ic->ic_lintval == 0)
 		ic->ic_lintval = 100;		/* default sleep */
-	ic->ic_bmisstimeout = 7*ic->ic_lintval;	/* default 7 beacons */
+	ic->ic_bmissthres = 7;	/* default 7 beacons */
 	ic->ic_dtim_period = 1;	/* all TIMs are DTIMs */
 
 	LIST_INSERT_HEAD(&ieee80211com_head, ic, ic_list);
@@ -710,6 +710,51 @@ ieee80211_setbasicrates(struct ieee80211com *ic)
 			}
 		}
 	}
+}
+
+int
+ieee80211_min_basic_rate(struct ieee80211com *ic)
+{
+	struct ieee80211_rateset *rs = &ic->ic_bss->ni_rates;
+	int i, min, rval;
+
+	min = -1;
+
+	for (i = 0; i < rs->rs_nrates; i++) {
+		if ((rs->rs_rates[i] & IEEE80211_RATE_BASIC) == 0)
+			continue;
+		rval = (rs->rs_rates[i] & IEEE80211_RATE_VAL);
+		if (min == -1)
+			min = rval;
+		else if (rval < min)
+			min = rval;
+	}
+
+	/* Default to 1 Mbit/s on 2GHz and 6 Mbit/s on 5GHz. */
+	if (min == -1)
+		min = IEEE80211_IS_CHAN_2GHZ(ic->ic_bss->ni_chan) ? 2 : 12;
+
+	return min;
+}
+
+int
+ieee80211_max_basic_rate(struct ieee80211com *ic)
+{
+	struct ieee80211_rateset *rs = &ic->ic_bss->ni_rates;
+	int i, max, rval;
+
+	/* Default to 1 Mbit/s on 2GHz and 6 Mbit/s on 5GHz. */
+	max = IEEE80211_IS_CHAN_2GHZ(ic->ic_bss->ni_chan) ? 2 : 12;
+
+	for (i = 0; i < rs->rs_nrates; i++) {
+		if ((rs->rs_rates[i] & IEEE80211_RATE_BASIC) == 0)
+			continue;
+		rval = (rs->rs_rates[i] & IEEE80211_RATE_VAL);
+		if (rval > max)
+			max = rval;
+	}
+
+	return max;
 }
 
 /*

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf_ioctl.c,v 1.312 2017/05/15 12:26:00 mpi Exp $ */
+/*	$OpenBSD: pf_ioctl.c,v 1.314 2017/06/01 14:38:28 patrick Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -915,7 +915,6 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		case DIOCSETDEBUG:
 		case DIOCGETSTATES:
 		case DIOCGETTIMEOUT:
-		case DIOCCLRRULECTRS:
 		case DIOCGETLIMIT:
 		case DIOCGETRULESETS:
 		case DIOCGETRULESET:
@@ -1006,7 +1005,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 			error = EEXIST;
 		else {
 			pf_status.running = 1;
-			pf_status.since = time_second;
+			pf_status.since = time_uptime;
 			if (pf_status.stateid == 0) {
 				pf_status.stateid = time_second;
 				pf_status.stateid = pf_status.stateid << 32;
@@ -1021,7 +1020,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 			error = ENOENT;
 		else {
 			pf_status.running = 0;
-			pf_status.since = time_second;
+			pf_status.since = time_uptime;
 			pf_remove_queues();
 			DPFPRINTF(LOG_NOTICE, "pf: stopped");
 		}
@@ -1675,7 +1674,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		bzero(pf_status.counters, sizeof(pf_status.counters));
 		bzero(pf_status.fcounters, sizeof(pf_status.fcounters));
 		bzero(pf_status.scounters, sizeof(pf_status.scounters));
-		pf_status.since = time_second;
+		pf_status.since = time_uptime;
 
 		break;
 	}
@@ -1792,20 +1791,6 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 
 		pf_trans_set.debug = *level;
 		pf_trans_set.mask |= PF_TSET_DEBUG;
-		break;
-	}
-
-	case DIOCCLRRULECTRS: {
-		/* obsoleted by DIOCGETRULE with action=PF_GET_CLR_CNTR */
-		struct pf_ruleset	*ruleset = &pf_main_ruleset;
-		struct pf_rule		*rule;
-
-		TAILQ_FOREACH(rule,
-		    ruleset->rules.active.ptr, entries) {
-			rule->evaluations = 0;
-			rule->packets[0] = rule->packets[1] = 0;
-			rule->bytes[0] = rule->bytes[1] = 0;
-		}
 		break;
 	}
 

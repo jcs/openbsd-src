@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_input.c,v 1.307 2017/05/29 14:36:22 mpi Exp $	*/
+/*	$OpenBSD: ip_input.c,v 1.310 2017/05/31 05:59:09 mpi Exp $	*/
 /*	$NetBSD: ip_input.c,v 1.30 1996/03/16 23:53:58 christos Exp $	*/
 
 /*
@@ -127,6 +127,7 @@ int ip_sysctl_ipstat(void *, size_t *, void *);
 static struct mbuf_queue	ipsend_mq;
 
 void	ip_ours(struct mbuf *);
+void	ip_local(struct mbuf *);
 int	ip_dooptions(struct mbuf *, struct ifnet *);
 int	in_ouraddr(struct mbuf *, struct ifnet *, struct rtentry **);
 
@@ -207,21 +208,31 @@ ip_init(void)
 	mq_init(&ipsend_mq, 64, IPL_SOFTNET);
 }
 
+/*
+ * Enqueue packet for local delivery.  Queuing is used as a boundary
+ * between the network layer (input/forward path) running without
+ * KERNEL_LOCK() and the transport layer still needing it.
+ */
+void
+ip_ours(struct mbuf *m)
+{
+	niq_enqueue(&ipintrq, m);
+}
+
+/*
+ * Dequeue and process locally delivered packets.
+ */
 void
 ipintr(void)
 {
 	struct mbuf *m;
 
-	/*
-	 * Get next datagram off input queue and get IP header
-	 * in first mbuf.
-	 */
 	while ((m = niq_dequeue(&ipintrq)) != NULL) {
-#ifdef	DIAGNOSTIC
+#ifdef DIAGNOSTIC
 		if ((m->m_flags & M_PKTHDR) == 0)
 			panic("ipintr no HDR");
 #endif
-		ipv4_input(m);
+		ip_local(m);
 	}
 }
 
@@ -231,17 +242,12 @@ ipintr(void)
  * Checksum and byte swap header.  Process options. Forward or deliver.
  */
 void
-ipv4_input(struct mbuf *m)
+ipv4_input(struct ifnet *ifp, struct mbuf *m)
 {
-	struct ifnet	*ifp;
 	struct rtentry	*rt = NULL;
 	struct ip	*ip;
 	int hlen, len;
 	in_addr_t pfrdr = 0;
-
-	ifp = if_get(m->m_pkthdr.ph_ifidx);
-	if (ifp == NULL)
-		goto bad;
 
 	ipstat_inc(ips_total);
 	if (m->m_len < sizeof (struct ip) &&
@@ -319,8 +325,9 @@ ipv4_input(struct mbuf *m)
 	}
 
 #if NCARP > 0
-	if (ifp->if_type == IFT_CARP && ip->ip_p != IPPROTO_ICMP &&
-	    carp_lsdrop(m, AF_INET, &ip->ip_src.s_addr, &ip->ip_dst.s_addr))
+	if (ifp->if_type == IFT_CARP &&
+	    carp_lsdrop(m, AF_INET, &ip->ip_src.s_addr, &ip->ip_dst.s_addr,
+	    (ip->ip_p == IPPROTO_ICMP ? 0 : 1)))
 		goto bad;
 #endif
 
@@ -427,7 +434,7 @@ ipv4_input(struct mbuf *m)
 
 #if NCARP > 0
 	if (ifp->if_type == IFT_CARP && ip->ip_p == IPPROTO_ICMP &&
-	    carp_lsdrop(m, AF_INET, &ip->ip_src.s_addr, &ip->ip_dst.s_addr))
+	    carp_lsdrop(m, AF_INET, &ip->ip_src.s_addr, &ip->ip_dst.s_addr, 1))
 		goto bad;
 #endif
 	/*
@@ -456,13 +463,11 @@ ipv4_input(struct mbuf *m)
 #endif /* IPSEC */
 
 	ip_forward(m, ifp, rt, pfrdr);
-	if_put(ifp);
 	return;
 bad:
 	m_freem(m);
 out:
 	rtfree(rt);
-	if_put(ifp);
 }
 
 /*
@@ -471,12 +476,14 @@ out:
  * If fragmented try to reassemble.  Pass to next level.
  */
 void
-ip_ours(struct mbuf *m)
+ip_local(struct mbuf *m)
 {
 	struct ip *ip = mtod(m, struct ip *);
 	struct ipq *fp;
 	struct ipqent *ipqe;
 	int mff, hlen;
+
+	KERNEL_ASSERT_LOCKED();
 
 	hlen = ip->ip_hl << 2;
 
@@ -1674,18 +1681,37 @@ ip_send_dispatch(void *xmq)
 	struct mbuf *m;
 	struct mbuf_list ml;
 	int s;
+#ifdef IPSEC
+	int locked = 0;
+#endif /* IPSEC */
 
 	mq_delist(mq, &ml);
 	if (ml_empty(&ml))
 		return;
 
-	KERNEL_LOCK();
+#ifdef IPSEC
+	/*
+	 * IPsec is not ready to run without KERNEL_LOCK().  So all
+	 * the traffic on your machine is punished if you have IPsec
+	 * enabled.
+	 */
+	extern int ipsec_in_use;
+	if (ipsec_in_use) {
+		KERNEL_LOCK();
+		locked = 1;
+	}
+#endif /* IPSEC */
+
 	NET_LOCK(s);
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		ip_output(m, NULL, NULL, 0, NULL, NULL, 0);
 	}
 	NET_UNLOCK(s);
-	KERNEL_UNLOCK();
+
+#ifdef IPSEC
+	if (locked)
+		KERNEL_UNLOCK();
+#endif /* IPSEC */
 }
 
 void

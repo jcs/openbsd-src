@@ -1,4 +1,4 @@
-/*	$OpenBSD: vi.c,v 1.45 2017/05/28 07:27:01 anton Exp $	*/
+/*	$OpenBSD: vi.c,v 1.47 2017/05/31 20:18:43 schwarze Exp $	*/
 
 /*
  *	vi command editing
@@ -926,13 +926,24 @@ vi_cmd(int argcnt, const char *cmd)
 			if (cmd[1] == 0)
 				vi_error();
 			else {
-				int	n;
-
-				if (es->cursor + argcnt > es->linelen)
+				c1 = 0;
+				for (cur = es->cursor;
+				    cur < es->linelen; cur++) {
+					if (!isu8cont(es->cbuf[cur]))
+						c1++;
+					if (c1 > argcnt)
+						break;
+				}
+				if (argcnt > c1)
 					return -1;
-				for (n = 0; n < argcnt; ++n)
-					es->cbuf[es->cursor + n] = cmd[1];
-				es->cursor += n - 1;
+
+				del_range(es->cursor, cur);
+				while (argcnt-- > 0)
+					putbuf(&cmd[1], 1, 0);
+				while (es->cursor > 0)
+					if (!isu8cont(es->cbuf[--es->cursor]))
+						break;
+				es->cbuf[es->linelen] = '\0';
 			}
 			break;
 
@@ -945,9 +956,11 @@ vi_cmd(int argcnt, const char *cmd)
 			if (es->linelen == 0)
 				return -1;
 			modified = 1; hnum = hlast;
-			if (es->cursor + argcnt > es->linelen)
-				argcnt = es->linelen - es->cursor;
-			del_range(es->cursor, es->cursor + argcnt);
+			for (cur = es->cursor; cur < es->linelen; cur++)
+				if (!isu8cont(es->cbuf[cur]))
+					if (argcnt-- == 0)
+						break;
+			del_range(es->cursor, cur);
 			insert = INSERT;
 			break;
 

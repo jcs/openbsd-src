@@ -1,4 +1,4 @@
-/* $OpenBSD: key-bindings.c,v 1.78 2017/05/10 10:46:59 nicm Exp $ */
+/* $OpenBSD: key-bindings.c,v 1.80 2017/05/30 21:44:59 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -196,9 +196,9 @@ key_bindings_init(void)
 		"bind p previous-window",
 		"bind q display-panes",
 		"bind r refresh-client",
-		"bind s choose-tree",
+		"bind s choose-tree -s",
 		"bind t clock-mode",
-		"bind w choose-window",
+		"bind w choose-tree -w",
 		"bind x confirm-before -p\"kill-pane #P? (y/n)\" kill-pane",
 		"bind z resize-pane -Z",
 		"bind { swap-pane -U",
@@ -244,8 +244,8 @@ key_bindings_init(void)
 		"bind -Tcopy-mode C-k send -X copy-end-of-line",
 		"bind -Tcopy-mode C-n send -X cursor-down",
 		"bind -Tcopy-mode C-p send -X cursor-up",
-		"bind -Tcopy-mode C-r command-prompt -ip'search up' 'send -X search-backward-incremental \"%%%\"'",
-		"bind -Tcopy-mode C-s command-prompt -ip'search down' 'send -X search-forward-incremental \"%%%\"'",
+		"bind -Tcopy-mode C-r command-prompt -ip'search up' -I'#{pane_search_string}' 'send -X search-backward-incremental \"%%%\"'",
+		"bind -Tcopy-mode C-s command-prompt -ip'search down' -I'#{pane_search_string}' 'send -X search-forward-incremental \"%%%\"'",
 		"bind -Tcopy-mode C-v send -X page-down",
 		"bind -Tcopy-mode C-w send -X copy-selection-and-cancel",
 		"bind -Tcopy-mode Escape send -X cancel",

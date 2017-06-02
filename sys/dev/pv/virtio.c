@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtio.c,v 1.5 2017/05/27 10:24:31 sf Exp $	*/
+/*	$OpenBSD: virtio.c,v 1.10 2017/05/31 08:10:24 krw Exp $	*/
 /*	$NetBSD: virtio.c,v 1.3 2011/11/02 23:05:52 njoly Exp $	*/
 
 /*
@@ -256,10 +256,14 @@ virtio_init_vq(struct virtio_softc *sc, struct virtqueue *vq, int reinit)
 	}
 
 	/* free slot management */
-	SIMPLEQ_INIT(&vq->vq_freelist);
-	for (i = 0; i < vq_size; i++) {
-		SIMPLEQ_INSERT_TAIL(&vq->vq_freelist,
-				    &vq->vq_entries[i], qe_list);
+	SLIST_INIT(&vq->vq_freelist);
+	/*
+	 * virtio_enqueue_trim needs monotonely raising entries, therefore
+	 * initialize in reverse order
+	 */
+	for (i = vq_size - 1; i >= 0; i--) {
+		SLIST_INSERT_HEAD(&vq->vq_freelist, &vq->vq_entries[i],
+		    qe_list);
 		vq->vq_entries[i].qe_index = i;
 	}
 
@@ -405,7 +409,7 @@ virtio_free_vq(struct virtio_softc *sc, struct virtqueue *vq)
 
 	/* device must be already deactivated */
 	/* confirm the vq is empty */
-	SIMPLEQ_FOREACH(qe, &vq->vq_freelist, qe_list) {
+	SLIST_FOREACH(qe, &vq->vq_freelist, qe_list) {
 		i++;
 	}
 	if (i != vq->vq_num) {
@@ -435,10 +439,10 @@ vq_alloc_entry(struct virtqueue *vq)
 {
 	struct vq_entry *qe;
 
-	if (SIMPLEQ_EMPTY(&vq->vq_freelist))
+	if (SLIST_EMPTY(&vq->vq_freelist))
 		return NULL;
-	qe = SIMPLEQ_FIRST(&vq->vq_freelist);
-	SIMPLEQ_REMOVE_HEAD(&vq->vq_freelist, qe_list);
+	qe = SLIST_FIRST(&vq->vq_freelist);
+	SLIST_REMOVE_HEAD(&vq->vq_freelist, qe_list);
 
 	return qe;
 }
@@ -446,7 +450,7 @@ vq_alloc_entry(struct virtqueue *vq)
 void
 vq_free_entry(struct virtqueue *vq, struct vq_entry *qe)
 {
-	SIMPLEQ_INSERT_TAIL(&vq->vq_freelist, qe, qe_list);
+	SLIST_INSERT_HEAD(&vq->vq_freelist, qe, qe_list);
 }
 
 /*
@@ -458,7 +462,7 @@ vq_free_entry(struct virtqueue *vq, struct vq_entry *qe)
  *  - command blocks (in dmamem) should be pre-allocated and mapped
  *  - dmamaps for command blocks should be pre-allocated and loaded
  *  - dmamaps for payload should be pre-allocated
- *      r = virtio_enqueue_prep(sc, vq, &slot);		// allocate a slot
+ *	r = virtio_enqueue_prep(sc, vq, &slot);		// allocate a slot
  *	if (r)		// currently 0 or EAGAIN
  *	  return r;
  *	r = bus_dmamap_load(dmat, dmamap_payload[slot], data, count, ..);
@@ -480,6 +484,26 @@ vq_free_entry(struct virtqueue *vq, struct vq_entry *qe)
  *	virtio_enqueue(sc, vq, slot, dmamap_cmd[slot], 0);
  *	virtio_enqueue(sc, vq, slot, dmamap_payload[slot], iswrite);
  *	virtio_enqueue_commit(sc, vq, slot, 1);
+ *
+ * Alternative usage with statically allocated slots:
+ *	<during initialization>
+ *	// while not out of slots, do
+ *	virtio_enqueue_prep(sc, vq, &slot);		// allocate a slot
+ *	virtio_enqueue_reserve(sc, vq, slot, max_segs);	// reserve all slots
+ *						that may ever be needed
+ *
+ *	<when enqueing a request>
+ *	// Don't call virtio_enqueue_prep()
+ *	bus_dmamap_load(dmat, dmamap_payload[slot], data, count, ..);
+ *	bus_dmamap_sync(dmat, dmamap_cmd[slot],... BUS_DMASYNC_PREWRITE);
+ *	bus_dmamap_sync(dmat, dmamap_payload[slot],...);
+ *	virtio_enqueue_trim(sc, vq, slot, num_segs_needed);
+ *	virtio_enqueue(sc, vq, slot, dmamap_cmd[slot], 0);
+ *	virtio_enqueue(sc, vq, slot, dmamap_payload[slot], iswrite);
+ *	virtio_enqueue_commit(sc, vq, slot, 1);
+ *
+ *	<when dequeuing>
+ *	// don't call virtio_dequeue_commit()
  */
 
 /*
@@ -709,27 +733,29 @@ virtio_enqueue_abort(struct virtqueue *vq, int slot)
 void
 virtio_enqueue_trim(struct virtqueue *vq, int slot, int nsegs)
 {
+	struct vq_entry *qe1 = &vq->vq_entries[slot];
 	struct vring_desc *vd = &vq->vq_desc[0];
 	int i;
 
 	if ((vd[slot].flags & VRING_DESC_F_INDIRECT) == 0) {
-		for (i = 0; i < nsegs; i++) {
-			vd[slot].flags = VRING_DESC_F_NEXT;
-			if (i == (nsegs - 1))
-				vd[slot].flags = 0;
-			slot = vd[slot].next;
-		}
+		qe1->qe_next = qe1->qe_index;
+		/*
+		 * N.B.: the vq_entries are ASSUMED to be a contiguous
+		 *       block with slot being the index to the first one.
+		 */
 	} else {
-		struct vq_entry *qe1 = &vq->vq_entries[slot];
+		qe1->qe_next = 0;
 		vd = &vq->vq_desc[qe1->qe_index];
 		vd->len = sizeof(struct vring_desc) * nsegs;
 		vd = qe1->qe_desc_base;
-		for (i = 0; i < nsegs; i++) {
-			vd[i].flags = VRING_DESC_F_NEXT;
-			if (i == (nsegs - 1))
-				vd[i].flags = 0;
-		}
+		slot = 0;
 	}
+
+	for (i = 0; i < nsegs -1 ; i++) {
+		vd[slot].flags = VRING_DESC_F_NEXT;
+		slot++;
+	}
+	vd[slot].flags = 0;
 }
 
 /*
@@ -769,6 +795,9 @@ virtio_dequeue(struct virtio_softc *sc, struct virtqueue *vq,
 /*
  * dequeue_commit: complete dequeue; the slot is recycled for future use.
  *                 if you forget to call this the slot will be leaked.
+ *
+ *                 Don't call this if you use statically allocated slots
+ *                 and virtio_dequeue_trim().
  */
 int
 virtio_dequeue_commit(struct virtqueue *vq, int slot)

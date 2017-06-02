@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.500 2017/05/29 06:08:21 mpi Exp $	*/
+/*	$OpenBSD: if.c,v 1.503 2017/05/31 05:59:09 mpi Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -734,8 +734,6 @@ if_input(struct ifnet *ifp, struct mbuf_list *ml)
 int
 if_input_local(struct ifnet *ifp, struct mbuf *m, sa_family_t af)
 {
-	struct niqueue *ifq = NULL;
-
 #if NBPFILTER > 0
 	/*
 	 * Only send packets to bpf if they are destinated to local
@@ -758,33 +756,28 @@ if_input_local(struct ifnet *ifp, struct mbuf *m, sa_family_t af)
 	ifp->if_opackets++;
 	ifp->if_obytes += m->m_pkthdr.len;
 
+	ifp->if_ipackets++;
+	ifp->if_ibytes += m->m_pkthdr.len;
+
 	switch (af) {
 	case AF_INET:
-		ifq = &ipintrq;
+		ipv4_input(ifp, m);
 		break;
 #ifdef INET6
 	case AF_INET6:
-		ifq = &ip6intrq;
+		ipv6_input(ifp, m);
 		break;
 #endif /* INET6 */
 #ifdef MPLS
 	case AF_MPLS:
-		ifp->if_ipackets++;
-		ifp->if_ibytes += m->m_pkthdr.len;
 		mpls_input(m);
-		return (0);
+		break;
 #endif /* MPLS */
 	default:
 		printf("%s: can't handle af%d\n", ifp->if_xname, af);
 		m_freem(m);
 		return (EAFNOSUPPORT);
 	}
-
-	if (niq_enqueue(ifq, m) != 0)
-		return (ENOBUFS);
-
-	ifp->if_ipackets++;
-	ifp->if_ibytes += m->m_pkthdr.len;
 
 	return (0);
 }
@@ -881,7 +874,10 @@ if_input_process(void *xifidx)
 	struct ifnet *ifp;
 	struct ifih *ifih;
 	struct srp_ref sr;
-	int s;
+	int s, s2;
+#ifdef IPSEC
+	int locked = 0;
+#endif /* IPSEC */
 
 	ifp = if_get(ifidx);
 	if (ifp == NULL)
@@ -894,6 +890,32 @@ if_input_process(void *xifidx)
 	if (!ISSET(ifp->if_xflags, IFXF_CLONED))
 		add_net_randomness(ml_len(&ml));
 
+#ifdef IPSEC
+	/*
+	 * IPsec is not ready to run without KERNEL_LOCK().  So all
+	 * the traffic on your machine is punished if you have IPsec
+	 * enabled.
+	 */
+	extern int ipsec_in_use;
+	if (ipsec_in_use) {
+		KERNEL_LOCK();
+		locked = 1;
+	}
+#endif /* IPSEC */
+
+	/*
+	 * We grab the NET_LOCK() before processing any packet to
+	 * ensure there's no contention on the routing table lock.
+	 *
+	 * Without it we could race with a userland thread to insert
+	 * a L2 entry in ip{6,}_output().  Such race would result in
+	 * one of the threads sleeping *inside* the IP output path.
+	 *
+	 * Since we have a NET_LOCK() we also use it to serialize access
+	 * to PF globals, pipex globals, unicast and multicast addresses
+	 * lists.
+	 */
+	NET_LOCK(s2);
 	s = splnet();
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		/*
@@ -910,7 +932,12 @@ if_input_process(void *xifidx)
 			m_freem(m);
 	}
 	splx(s);
+	NET_UNLOCK(s2);
 
+#ifdef IPSEC
+	if (locked)
+		KERNEL_UNLOCK();
+#endif /* IPSEC */
 out:
 	if_put(ifp);
 }
@@ -1014,11 +1041,11 @@ if_detach(struct ifnet *ifp)
 
 	ifq_clr_oactive(&ifp->if_snd);
 
-	NET_LOCK(s);
-	s2 = splnet();
 	/* Other CPUs must not have a reference before we start destroying. */
 	if_idxmap_remove(ifp);
 
+	NET_LOCK(s);
+	s2 = splnet();
 	ifp->if_qstart = if_detached_qstart;
 	ifp->if_ioctl = if_detached_ioctl;
 	ifp->if_watchdog = NULL;

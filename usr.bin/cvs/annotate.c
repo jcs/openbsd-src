@@ -1,4 +1,4 @@
-/*	$OpenBSD: annotate.c,v 1.67 2016/10/13 20:51:25 fcambus Exp $	*/
+/*	$OpenBSD: annotate.c,v 1.69 2017/06/01 08:08:24 joris Exp $	*/
 /*
  * Copyright (c) 2007 Tobias Stoeckmann <tobias@openbsd.org>
  * Copyright (c) 2006 Xavier Santolaria <xsa@openbsd.org>
@@ -104,7 +104,7 @@ cvs_annotate(int argc, char **argv)
 	cr.enterdir = NULL;
 	cr.leavedir = NULL;
 
-	if (current_cvsroot->cr_method != CVS_METHOD_LOCAL) {
+	if (cvsroot_is_remote()) {
 		cvs_client_connect_to_server();
 		cr.fileproc = cvs_client_sendfile;
 
@@ -130,15 +130,14 @@ cvs_annotate(int argc, char **argv)
 
 	cr.flags = flags;
 
-	if (cvs_cmdop == CVS_OP_ANNOTATE ||
-	    current_cvsroot->cr_method == CVS_METHOD_LOCAL) {
+	if (cvs_cmdop == CVS_OP_ANNOTATE || cvsroot_is_local()) {
 		if (argc > 0)
 			cvs_file_run(argc, argv, &cr);
 		else
 			cvs_file_run(1, &arg, &cr);
 	}
 
-	if (current_cvsroot->cr_method != CVS_METHOD_LOCAL) {
+	if (cvsroot_is_remote()) {
 		cvs_client_send_files(argv, argc);
 		cvs_client_senddir(".");
 
@@ -179,7 +178,7 @@ cvs_annotate_local(struct cvs_file *cf)
 			rev = rcsnum_parse(cvs_specified_tag);
 			if (rev == NULL)
 				fatal("no such tag %s", cvs_specified_tag);
-                        free(rev);
+			free(rev);
 			rev = rcsnum_alloc();
 			rcsnum_cpy(cf->file_rcs->rf_head, rev, 0);
 		}

@@ -1,4 +1,4 @@
-/*	$OpenBSD: event.h,v 1.23 2016/09/24 18:39:17 tedu Exp $	*/
+/*	$OpenBSD: event.h,v 1.25 2017/05/31 14:52:05 mikeb Exp $	*/
 
 /*-
  * Copyright (c) 1999,2000,2001 Jonathan Lemon <jlemon@FreeBSD.org>
@@ -41,7 +41,8 @@
 
 #define EVFILT_SYSCOUNT		7
 
-#define EV_SET(kevp, a, b, c, d, e, f) do {	\
+#define EV_SET(kevp_, a, b, c, d, e, f) do {	\
+	struct kevent *kevp = (kevp_);		\
 	(kevp)->ident = (a);			\
 	(kevp)->filter = (b);			\
 	(kevp)->flags = (c);			\
@@ -68,6 +69,8 @@ struct kevent {
 /* flags */
 #define EV_ONESHOT	0x0010		/* only report one occurrence */
 #define EV_CLEAR	0x0020		/* clear event state after reporting */
+#define EV_RECEIPT	0x0040          /* force EV_ERROR on success, data=0 */
+#define EV_DISPATCH	0x0080          /* disable event after reporting */
 
 #define EV_SYSFLAGS	0xF000		/* reserved by system */
 #define EV_FLAG1	0x2000		/* filter-specific flag */
@@ -118,7 +121,8 @@ SLIST_HEAD(klist, knote);
 
 #ifdef _KERNEL
 
-#define KNOTE(list, hint)	do { \
+#define KNOTE(list_, hint)	do { \
+					struct klist *list = (list_); \
 					if ((list) != NULL) \
 						knote((list), (hint)); \
 				} while (0)
