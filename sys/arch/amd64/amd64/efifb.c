@@ -111,8 +111,8 @@ const struct cfattach efifb_ca = {
 	sizeof(struct efifb_softc), efifb_match, efifb_attach, NULL
 };
 
-#define	EFIFB_MAX_COLS		240
-#define	EFIFB_MAX_ROWS		80
+#define	EFIFB_WIDTH	100
+#define	EFIFB_HEIGHT	31
 
 struct wsscreen_descr efifb_std_descr = { "std" };
 
@@ -355,7 +355,7 @@ efifb_list_font(void *v, struct wsdisplay_font *font)
 	return (rasops_list_font(ri, font));
 }
 
-struct wsdisplay_charcell efifb_bs[EFIFB_MAX_COLS * EFIFB_MAX_ROWS];
+struct wsdisplay_charcell efifb_bs[EFIFB_HEIGHT * EFIFB_WIDTH];
 
 int
 efifb_cnattach(void)
@@ -427,22 +427,14 @@ efifb_rasops_init(void)
 	struct efifb		*fb = &efifb_console;
 	struct rasops_info	*ri = &fb->rinfo;
 	long			 defattr = 0;
-	int			 rows, cols;
 
 	ri->ri_bits = (u_char *)PMAP_DIRECT_MAP(fb->paddr);
 
 	efifb_rasops_preinit(fb);
 
-	cols = (ri->ri_width / 8);
-	if (cols > EFIFB_MAX_COLS)
-		cols = EFIFB_MAX_COLS;
-	rows = (ri->ri_height / 16);
-	if (rows > EFIFB_MAX_ROWS)
-		rows = EFIFB_MAX_ROWS;
-
 	ri->ri_bs = efifb_bs;
 	ri->ri_flg = RI_CLEAR | RI_CENTER | RI_WRONLY;
-	rasops_init(ri, rows, cols);
+	rasops_init(ri, EFIFB_HEIGHT, EFIFB_WIDTH);
 	efifb_std_descr.ncols = ri->ri_cols;
 	efifb_std_descr.nrows = ri->ri_rows;
 	efifb_std_descr.textops = &ri->ri_ops;
