@@ -337,8 +337,8 @@ static bool ivch_get_hw_state(struct intel_dvo_device *dvo)
 }
 
 static void ivch_mode_set(struct intel_dvo_device *dvo,
-			  struct drm_display_mode *mode,
-			  struct drm_display_mode *adjusted_mode)
+			  const struct drm_display_mode *mode,
+			  const struct drm_display_mode *adjusted_mode)
 {
 	uint16_t vr40 = 0;
 	uint16_t vr01;

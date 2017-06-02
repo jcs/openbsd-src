@@ -91,6 +91,13 @@ static inline void list_replace(struct list_head *old,
 	new->prev->next = new;
 }
 
+static inline void list_replace_init(struct list_head *old,
+				     struct list_head *new)
+{
+	list_replace(old, new);
+	INIT_LIST_HEAD(old);
+}
+
 static inline void list_move(struct list_head *list, struct list_head *head)
 {
 	list_del(list);
@@ -111,6 +118,9 @@ list_del_init(struct list_head *entry) {
 	INIT_LIST_HEAD(entry);
 }
 
+#define list_next_entry(pos, member)				\
+	list_entry(((pos)->member.next), typeof(*(pos)), member)
+
 #define list_for_each(entry, head)				\
     for (entry = (head)->next; entry != head; entry = (entry)->next)
 
@@ -130,6 +140,11 @@ list_del_init(struct list_head *entry) {
 
 #define list_for_each_entry(pos, head, member)				\
     for (pos = list_entry((head)->next, __typeof(*pos), member);	\
+	&pos->member != (head);					 	\
+	pos = list_entry(pos->member.next, __typeof(*pos), member))
+
+#define list_for_each_entry_continue(pos, head, member)				\
+    for (pos = list_entry((pos)->member.next, __typeof(*pos), member);	\
 	&pos->member != (head);					 	\
 	pos = list_entry(pos->member.next, __typeof(*pos), member))
 
@@ -154,6 +169,11 @@ list_del_init(struct list_head *entry) {
 #define list_first_entry(ptr, type, member) \
 	list_entry((ptr)->next, type, member)
 
+#define list_first_entry_or_null(ptr, type, member) \
+	(list_empty(ptr) ? NULL : list_first_entry(ptr, type, member))
+
+#define list_last_entry(ptr, type, member) \
+	list_entry((ptr)->prev, type, member)
 
 static inline void
 __list_splice(const struct list_head *list, struct list_head *prev,
@@ -187,8 +207,8 @@ list_splice_tail(const struct list_head *list, struct list_head *head)
 	__list_splice(list, head->prev, head);
 }
 
-void drm_list_sort(void *priv, struct list_head *head, int (*cmp)(void *priv,
-    struct list_head *a, struct list_head *b));
+void	list_sort(void *, struct list_head *,
+	    int (*)(void *, struct list_head *, struct list_head *));
 
 struct hlist_node {
 	LIST_ENTRY(hlist_node) link;

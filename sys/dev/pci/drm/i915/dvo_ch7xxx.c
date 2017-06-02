@@ -271,8 +271,8 @@ static enum drm_mode_status ch7xxx_mode_valid(struct intel_dvo_device *dvo,
 }
 
 static void ch7xxx_mode_set(struct intel_dvo_device *dvo,
-			    struct drm_display_mode *mode,
-			    struct drm_display_mode *adjusted_mode)
+			    const struct drm_display_mode *mode,
+			    const struct drm_display_mode *adjusted_mode)
 {
 	uint8_t tvco, tpcp, tpd, tlpf, idf;
 
@@ -336,9 +336,9 @@ static void ch7xxx_dump_regs(struct intel_dvo_device *dvo)
 	for (i = 0; i < CH7xxx_NUM_REGS; i++) {
 		uint8_t val;
 		if ((i % 8) == 0)
-			DRM_LOG_KMS("\n %02X: ", i);
+			DRM_DEBUG_KMS("\n %02X: ", i);
 		ch7xxx_readb(dvo, i, &val);
-		DRM_LOG_KMS("%02X ", val);
+		DRM_DEBUG_KMS("%02X ", val);
 	}
 }
 
