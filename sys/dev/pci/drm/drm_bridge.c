@@ -1,3 +1,5 @@
+/* Public domain. */
+
 #include <dev/pci/drm/drmP.h>
 #include <dev/pci/drm/drm_crtc.h>
 

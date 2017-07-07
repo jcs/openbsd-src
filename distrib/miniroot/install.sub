@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1013 2017/05/31 08:02:56 tb Exp $
+#	$OpenBSD: install.sub,v 1.1020 2017/07/07 16:21:34 tb Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -275,7 +275,7 @@ diskinfo() {
 		_i=${_i##+([[:space:],])}
 		_i=${_i%%+([[:space:],])}
 
-		# Extract Network Address Authority information from dmesg..
+		# Extract Network Address Authority information from dmesg.
 		_n=$(dmesg | sed -En '/^'$_d' at /h;${g;s/^.* ([a-z0-9]+\.[a-zA-Z0-9_]+)$/\1/p;}')
 
 		# Extract disk size from disklabel output.
@@ -2573,6 +2573,7 @@ store_random() {
 # Final steps common for installs and upgrades.
 finish_up() {
 	local _dev _mp _fstype _rest _d
+	local _compile=/mnt/usr/share/compile _kernel=${MDKERNEL:-GENERIC}
 
 	# Mount all known swap partitions.  This gives systems with little
 	# memory a better chance at running 'MAKEDEV all'.
@@ -2626,10 +2627,29 @@ finish_up() {
 	make_dev $(bioctl $ROOTDISK 2>/dev/null | sed -n 's/.*<\(.*\)>$/\1/p')
 	md_installboot $ROOTDISK
 
+	chmod og-rwx /mnt/bsd{,.mp,.rd} 2>/dev/null
 	if [[ -f /mnt/bsd.mp ]] && ((NCPU > 1)); then
+		_kernel=$_kernel.MP
 		echo "Multiprocessor machine; using bsd.mp instead of bsd."
 		mv /mnt/bsd /mnt/bsd.sp 2>/dev/null
 		mv /mnt/bsd.mp /mnt/bsd
+	fi
+
+	# Write kernel.SHA256 matching the just installed kernel and fix path to
+	# ensure it references the kernel as /bsd.
+	sha256 /mnt/bsd | (umask 077; sed 's,/mnt,,' >/mnt/var/db/kernel.SHA256)
+
+	if [[ -f $_compile.tgz ]]; then
+		echo -n "Relinking to create unique kernel..."
+		(
+		set -e
+		rm -rf $_compile
+		mkdir -m 700 -p $_compile
+		tar -C $_compile -xzf $_compile.tgz $_kernel
+		chroot /mnt /bin/ksh -e -c "cd ${_compile#/mnt}/$_kernel; \
+			make newbsd; make newinstall"
+		rm -f $_compile.tgz
+		) >/dev/null 2>&1 && echo "done." || echo "failed."
 	fi
 
 	# Ensure that sysmerge in batch mode is run on reboot.
@@ -2695,9 +2715,8 @@ do_install() {
 	# Configure the network.
 	donetconfig
 
-	# If there's network connectivity, fetch list of mirror servers and
-	# installer choices from previous runs.
-	((NIFS)) && start_cgiinfo
+	# Fetch list of mirror servers and installer choices from previous runs.
+	start_cgiinfo
 
 	echo
 
@@ -2949,7 +2968,7 @@ do_install() {
 	finish_up
 }
 
-do_upgrade(){
+do_upgrade() {
 	# Get $ROOTDISK and $ROOTDEV
 	get_rootinfo
 
@@ -2972,8 +2991,7 @@ do_upgrade(){
 	# Configure the network.
 	enable_network
 
-	# Fetch the list of mirror servers and installer choices from previous
-	# runs.
+	# Fetch list of mirror servers and installer choices from previous runs.
 	start_cgiinfo
 
 	# Create a skeletal /etc/fstab which is usable for the upgrade process.
@@ -3067,6 +3085,7 @@ done
 #	MDXAPERTURE - set machdep.allowaperture=value in sysctl.conf
 #	MDXDM       - ask if xdm should be started if set to 'y'
 #	NCPU	    - the number of cpus for mp capable arches
+#	MDKERNEL    - the name of the boot kernel
 . install.md
 
 # Start listener process looking for dmesg changes.

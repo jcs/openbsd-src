@@ -1,4 +1,4 @@
-/*	$OpenBSD: lunaws.c,v 1.12 2016/06/05 20:02:36 bru Exp $	*/
+/*	$OpenBSD: lunaws.c,v 1.14 2017/06/10 12:23:00 aoyama Exp $	*/
 /* $NetBSD: lunaws.c,v 1.6 2002/03/17 19:40:42 atatat Exp $ */
 
 /*-
@@ -51,6 +51,10 @@
 #include <luna88k/dev/sioreg.h>
 #include <luna88k/dev/siovar.h>
 
+#define OMKBD_RXQ_LEN		64
+#define OMKBD_RXQ_LEN_MASK	(OMKBD_RXQ_LEN - 1)
+#define OMKBD_NEXTRXQ(x)	(((x) + 1) & OMKBD_RXQ_LEN_MASK)
+
 static const u_int8_t ch1_regs[6] = {
 	WR0_RSTINT,				/* Reset E/S Interrupt */
 	WR1_RXALLS,				/* Rx per char, No Tx */
@@ -61,16 +65,19 @@ static const u_int8_t ch1_regs[6] = {
 };
 
 struct ws_softc {
-	struct device	sc_dv;
+	struct device	sc_dev;
 	struct sioreg	*sc_ctl;
 	u_int8_t	sc_wr[6];
 	struct device	*sc_wskbddev;
+	u_int8_t	sc_rxq[OMKBD_RXQ_LEN];
+	u_int		sc_rxqhead;
+	u_int		sc_rxqtail;
 #if NWSMOUSE > 0
 	struct device	*sc_wsmousedev;
 	int		sc_msreport;
-	int		buttons, dx, dy;
+	int		sc_msbuttons, sc_msdx, sc_msdy;
 #endif
-
+	void		*sc_si;
 #ifdef WSDISPLAY_COMPAT_RAWKBD
 	int		sc_rawkbd;
 #endif
@@ -97,7 +104,7 @@ const struct wskbd_accessops omkbd_accessops = {
 	omkbd_ioctl,
 };
 
-void	ws_cnattach(void);
+void ws_cnattach(void);
 void ws_cngetc(void *, u_int *, int *);
 void ws_cnpollc(void *, int);
 const struct wskbd_consops ws_consops = {
@@ -118,7 +125,8 @@ const struct wsmouse_accessops omms_accessops = {
 };
 #endif
 
-void wsintr(int);
+void wsintr(void *);
+void wssoftintr(void *);
 
 int  wsmatch(struct device *, void *, void *);
 void wsattach(struct device *, struct device *, void *);
@@ -152,14 +160,16 @@ void
 wsattach(struct device *parent, struct device *self, void *aux)
 {
 	struct ws_softc *sc = (struct ws_softc *)self;
-	struct sio_softc *scp = (struct sio_softc *)parent;
+	struct sio_softc *siosc = (struct sio_softc *)parent;
 	struct sio_attach_args *args = aux;
+	int channel = args->channel;
 	struct wskbddev_attach_args a;
 
-	sc->sc_ctl = (struct sioreg *)scp->scp_ctl + 1;
-	bcopy(ch1_regs, sc->sc_wr, sizeof(ch1_regs));
-	scp->scp_intr[1] = wsintr;
-	
+	sc->sc_ctl = &siosc->sc_ctl[channel];
+	memcpy(sc->sc_wr, ch1_regs, sizeof(ch1_regs));
+	siosc->sc_intrhand[channel].ih_func = wsintr;
+	siosc->sc_intrhand[channel].ih_arg = sc;
+
 	setsioreg(sc->sc_ctl, WR0, sc->sc_wr[WR0]);
 	setsioreg(sc->sc_ctl, WR4, sc->sc_wr[WR4]);
 	setsioreg(sc->sc_ctl, WR3, sc->sc_wr[WR3]);
@@ -168,6 +178,11 @@ wsattach(struct device *parent, struct device *self, void *aux)
 	setsioreg(sc->sc_ctl, WR1, sc->sc_wr[WR1]);
 
 	syscnputc((dev_t)1, 0x20); /* keep quiet mouse */
+
+	sc->sc_rxqhead = 0;
+	sc->sc_rxqtail = 0;
+
+	sc->sc_si = softintr_establish(IPL_SOFTTTY, wssoftintr, sc);
 
 	printf("\n");
 
@@ -216,9 +231,9 @@ ws_submatch_mouse(struct device *parent, void *match, void *aux)
 
 /*ARGSUSED*/
 void
-wsintr(int chan)
+wsintr(void *arg)
 {
-	struct ws_softc *sc = ws_cd.cd_devs[0];
+	struct ws_softc *sc = arg;
 	struct sioreg *sio = sc->sc_ctl;
 	u_int code;
 	int rr;
@@ -231,47 +246,59 @@ wsintr(int chan)
 				sio->sio_cmd = WR0_ERRRST;
 				continue;
 			}
-#if NWSMOUSE > 0
-			/*
-			 * if (code >= 0x80 && code <= 0x87), then
-			 * it's the first byte of 3 byte long mouse report
-			 * 	code[0] & 07 -> LMR button condition
-			 *	code[1], [2] -> x,y delta
-			 * otherwise, key press or release event.
-			 */
-			if (sc->sc_msreport == 0) {
-				if (code < 0x80 || code > 0x87) {
-					omkbd_input(sc, code);
-					continue;
-				}
-				code = (code & 07) ^ 07;
-				/* LMR->RML: wsevent counts 0 for leftmost */
-				sc->buttons = (code & 02);
-				if (code & 01)
-					sc->buttons |= 04;
-				if (code & 04)
-					sc->buttons |= 01;
-				sc->sc_msreport = 1;
-			}
-			else if (sc->sc_msreport == 1) {
-				sc->dx = (signed char)code;
-				sc->sc_msreport = 2;
-			}
-			else if (sc->sc_msreport == 2) {
-				sc->dy = (signed char)code;
-				if (sc->sc_wsmousedev != NULL)
-					WSMOUSE_INPUT(sc->sc_wsmousedev,
-					    sc->buttons, sc->dx, sc->dy, 0, 0);
-				sc->sc_msreport = 0;
-			}
-#else
-			omkbd_input(sc, code);
-#endif
+			sc->sc_rxq[sc->sc_rxqtail] = code;
+			sc->sc_rxqtail = OMKBD_NEXTRXQ(sc->sc_rxqtail);
 		} while ((rr = getsiocsr(sio)) & RR_RXRDY);
+		softintr_schedule(sc->sc_si);
 	}
 	if (rr & RR_TXRDY)
 		sio->sio_cmd = WR0_RSTPEND;
 	/* not capable of transmit, yet */
+}
+
+void
+wssoftintr(void *arg)
+{
+	struct ws_softc *sc = arg;
+	uint8_t code;
+
+	while (sc->sc_rxqhead != sc->sc_rxqtail) {
+		code = sc->sc_rxq[sc->sc_rxqhead];
+		sc->sc_rxqhead = OMKBD_NEXTRXQ(sc->sc_rxqhead);
+#if NWSMOUSE > 0
+		/*
+		 * if (code >= 0x80 && code <= 0x87), then
+		 * it's the first byte of 3 byte long mouse report
+		 * 	code[0] & 07 -> LMR button condition
+		 * 	code[1], [2] -> x,y delta
+		 * otherwise, key press or release event.
+		 */
+		if (sc->sc_msreport == 0) {
+			if (code < 0x80 || code > 0x87) {
+				omkbd_input(sc, code);
+				continue;
+			}
+			code = (code & 07) ^ 07;
+			/* LMR->RML: wsevent counts 0 for leftmost */
+			sc->sc_msbuttons = (code & 02);
+			if ((code & 01) != 0)
+				sc->sc_msbuttons |= 04;
+			if ((code & 04) != 0)
+				sc->sc_msbuttons |= 01;
+			sc->sc_msreport = 1;
+		} else if (sc->sc_msreport == 1) {
+			sc->sc_msdx = (int8_t)code;
+			sc->sc_msreport = 2;
+		} else if (sc->sc_msreport == 2) {
+			sc->sc_msdy = (int8_t)code;
+			WSMOUSE_INPUT(sc->sc_wsmousedev,
+			    sc->sc_msbuttons, sc->sc_msdx, sc->sc_msdy, 0, 0);
+			sc->sc_msreport = 0;
+		}
+#else
+		omkbd_input(sc, code);
+#endif
+	}
 }
 
 void
@@ -399,9 +426,6 @@ omms_enable(void *v)
 int
 omms_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 {
-#if 0
-	struct ws_softc *sc = v;
-#endif
 
 	switch (cmd) {
 	case WSMOUSEIO_GTYPE:

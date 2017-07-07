@@ -1,4 +1,4 @@
-/*	$OpenBSD: misc.c,v 1.55 2016/03/20 00:01:21 krw Exp $	*/
+/*	$OpenBSD: misc.c,v 1.57 2017/07/04 11:46:15 anton Exp $	*/
 
 /*
  * Miscellaneous functions

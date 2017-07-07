@@ -1,4 +1,4 @@
-/*	$OpenBSD: manpath.c,v 1.20 2017/02/10 15:44:31 schwarze Exp $	*/
+/*	$OpenBSD: manpath.c,v 1.22 2017/07/01 09:47:23 schwarze Exp $ */
 /*
  * Copyright (c) 2011, 2014, 2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
  * Copyright (c) 2011 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -29,6 +29,7 @@
 #include "manconf.h"
 
 #define MAN_CONF_FILE	"/etc/man.conf"
+#define MANPATH_BASE	"/usr/share/man:/usr/X11R6/man"
 #define MANPATH_DEFAULT	"/usr/share/man:/usr/X11R6/man:/usr/local/man"
 
 static	void	 manconf_file(struct manconf *, const char *);
@@ -88,6 +89,13 @@ manconf_parse(struct manconf *conf, const char *file,
 
 	/* MANPATH overrides man.conf(5) completely. */
 	manpath_parseline(&conf->manpath, defp, 0);
+}
+
+void
+manpath_base(struct manpaths *dirs)
+{
+	char path_base[] = MANPATH_BASE;
+	manpath_parseline(dirs, path_base, 0);
 }
 
 /*
@@ -298,7 +306,7 @@ manconf_output(struct manoutput *conf, const char *cp, int fromfile)
 			mandoc_asprintf(&oldval, "%zu", conf->width);
 			break;
 		}
-		conf->width = strtonum(cp, 58, 1000, &errstr);
+		conf->width = strtonum(cp, 1, 1000, &errstr);
 		if (errstr == NULL)
 			return 0;
 		warnx("-O width=%s is %s", cp, errstr);

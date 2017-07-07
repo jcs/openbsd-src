@@ -1,6 +1,7 @@
-.Dd November 17, 2014
+.\" $OpenBSD: punct.in,v 1.4 2017/07/04 14:53:26 schwarze Exp $
+.Dd $Mdocdate: July 4 2017 $
 .Dt SY-PUNCT 1
-.Os OpenBSD
+.Os
 .Sh NAME
 .Nm Sy-punct
 .Nd punctuation following a symbolic macro
@@ -81,3 +82,6 @@ Quoted:
 .Sy "a . b Nm" "Em" italic
 .Sy ". b Nm"
 .Sy "."
+.Pp
+Missing blank:
+.Sy a.

@@ -1,4 +1,4 @@
-/*	$OpenBSD: exec.c,v 1.10 2016/10/06 18:15:44 kettenis Exp $	*/
+/*	$OpenBSD: exec.c,v 1.12 2017/06/12 18:26:33 mglocker Exp $	*/
 
 /*
  * Copyright (c) 2006, 2016 Mark Kettenis

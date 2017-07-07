@@ -1217,9 +1217,8 @@ drm_do_probe_ddc_edid(void *data, u8 *buf, unsigned int block, size_t len)
 	struct i2c_adapter *adapter = data;
 	unsigned char start = block * EDID_LENGTH;
 	unsigned char segment = block >> 1;
+	unsigned char xfers = segment ? 3 : 2;
 	int ret, retries = 5;
-
-	iic_acquire_bus(adapter, 0);
 
 	/*
 	 * The core I2C driver will automatically retry the transfer if the
@@ -1229,25 +1228,39 @@ drm_do_probe_ddc_edid(void *data, u8 *buf, unsigned int block, size_t len)
 	 * of the individual block a few times seems to overcome this.
 	 */
 	do {
+		struct i2c_msg msgs[] = {
+			{
+				.addr	= DDC_SEGMENT_ADDR,
+				.flags	= 0,
+				.len	= 1,
+				.buf	= &segment,
+			}, {
+				.addr	= DDC_ADDR,
+				.flags	= 0,
+				.len	= 1,
+				.buf	= &start,
+			}, {
+				.addr	= DDC_ADDR,
+				.flags	= I2C_M_RD,
+				.len	= len,
+				.buf	= buf,
+			}
+		};
+
 		/*
 		 * Avoid sending the segment addr to not upset non-compliant
 		 * DDC monitors.
 		 */
-		if (segment) {
-			ret = iic_exec(adapter, I2C_OP_WRITE,
-			    DDC_SEGMENT_ADDR, NULL, 0, &segment, 1, 0);
-			if (ret)
-				break;
+		ret = i2c_transfer(adapter, &msgs[3 - xfers], xfers);
+
+		if (ret == -ENXIO) {
+			DRM_DEBUG_KMS("drm: skipping non-existent adapter %s\n",
+					adapter->name);
+			break;
 		}
+	} while (ret != xfers && --retries);
 
-		ret = iic_exec(adapter, I2C_OP_READ_WITH_STOP, DDC_ADDR,
-		    &start, 1, buf, len, 0);
-
-	} while (ret != 0 && --retries);
-
-	iic_release_bus(adapter, 0);
-
-	return ret == 0 ? 0 : -1;
+	return ret == xfers ? 0 : -1;
 }
 
 /**

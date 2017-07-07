@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf_ioctl.c,v 1.314 2017/06/01 14:38:28 patrick Exp $ */
+/*	$OpenBSD: pf_ioctl.c,v 1.318 2017/07/05 11:40:17 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -84,6 +84,8 @@
 #include <net/if_pfsync.h>
 #endif /* NPFSYNC > 0 */
 
+struct pool		 pf_tag_pl;
+
 void			 pfattach(int);
 void			 pf_thread_create(void *);
 int			 pfopen(dev_t, int, int, struct proc *);
@@ -129,6 +131,10 @@ struct {
 TAILQ_HEAD(pf_tags, pf_tagname)	pf_tags = TAILQ_HEAD_INITIALIZER(pf_tags),
 				pf_qids = TAILQ_HEAD_INITIALIZER(pf_qids);
 
+#ifdef WITH_PF_LOCK
+struct rwlock		 pf_lock = RWLOCK_INITIALIZER("pf_lock");
+#endif /* WITH_PF_LOCK */
+
 #if (PF_QNAME_SIZE != PF_TAG_NAME_SIZE)
 #error PF_QNAME_SIZE must be equal to PF_TAG_NAME_SIZE
 #endif
@@ -161,6 +167,8 @@ pfattach(int num)
 	    IPL_SOFTNET, 0, "pfruleitem", NULL);
 	pool_init(&pf_queue_pl, sizeof(struct pf_queuespec), 0,
 	    IPL_SOFTNET, 0, "pfqueue", NULL);
+	pool_init(&pf_tag_pl, sizeof(struct pf_tagname), 0,
+	    IPL_SOFTNET, 0, "pftag", NULL);
 	hfsc_initialize();
 	pfr_initialize();
 	pfi_initialize();
@@ -344,16 +352,17 @@ tagname2tag(struct pf_tags *head, char *tagname, int create)
 	 */
 
 	/* new entry */
-	if (!TAILQ_EMPTY(head))
-		for (p = TAILQ_FIRST(head); p != NULL &&
-		    p->tag == new_tagid; p = TAILQ_NEXT(p, entries))
-			new_tagid = p->tag + 1;
+	TAILQ_FOREACH(p, head, entries) {
+		if (p->tag != new_tagid)
+			break;
+		new_tagid = p->tag + 1;
+	}
 
 	if (new_tagid > TAGID_MAX)
 		return (0);
 
 	/* allocate and fill new struct pf_tagname */
-	tag = malloc(sizeof(*tag), M_RTABLE, M_NOWAIT|M_ZERO);
+	tag = pool_get(&pf_tag_pl, PR_NOWAIT | PR_ZERO);
 	if (tag == NULL)
 		return (0);
 	strlcpy(tag->name, tagname, sizeof(tag->name));
@@ -388,12 +397,11 @@ tag_unref(struct pf_tags *head, u_int16_t tag)
 	if (tag == 0)
 		return;
 
-	for (p = TAILQ_FIRST(head); p != NULL; p = next) {
-		next = TAILQ_NEXT(p, entries);
+	TAILQ_FOREACH_SAFE(p, head, entries, next) {
 		if (tag == p->tag) {
 			if (--p->ref == 0) {
 				TAILQ_REMOVE(head, p, entries);
-				free(p, M_RTABLE, sizeof(*p));
+				pool_put(&pf_tag_pl, p);
 			}
 			break;
 		}
@@ -598,7 +606,7 @@ pf_create_queues(void)
 		qif = malloc(sizeof(*qif), M_TEMP, M_WAITOK);
 		qif->ifp = ifp;
 
-		if (q->flags & PFQS_FLOWQUEUE) {
+		if ((q->flags & PFQS_FLOWQUEUE) && !(q->flags & PFQS_DEFAULT)) {
 			qif->ifqops = ifq_fqcodel_ops;
 			qif->pfqops = pfq_fqcodel_ops;
 		} else {
@@ -688,6 +696,14 @@ pf_commit_queues(void)
         pf_free_queues(pf_queues_inactive);
 
 	return (0);
+}
+
+const struct pfq_ops *
+pf_queue_manager(struct pf_queuespec *q)
+{
+	if (q->flags & PFQS_FLOWQUEUE)
+		return pfq_fqcodel_ops;
+	return (/* pfq_default_ops */ NULL);
 }
 
 #define PF_MD5_UPD(st, elm)						\
@@ -998,6 +1014,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		}
 
 	NET_LOCK(s);
+	PF_LOCK();
 	switch (cmd) {
 
 	case DIOCSTART:
@@ -1087,7 +1104,8 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 			break;
 		}
 		bcopy(qs, &pq->queue, sizeof(pq->queue));
-		if (qs->flags & PFQS_FLOWQUEUE)
+		if ((qs->flags & PFQS_FLOWQUEUE) && qs->parent_qid == 0 &&
+		    !(qs->flags & PFQS_DEFAULT))
 			error = pfq_fqcodel_ops->pfq_qstats(qs, pq->buf,
 			    &nbytes);
 		else
@@ -2437,6 +2455,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		break;
 	}
 fail:
+	PF_UNLOCK();
 	NET_UNLOCK(s);
 	return (error);
 }

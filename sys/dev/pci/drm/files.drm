@@ -1,38 +1,39 @@
 # $NetBSD: files.drm,v 1.2 2007/03/28 11:29:37 jmcneill Exp $
-# $OpenBSD: files.drm,v 1.35 2016/04/05 08:22:50 kettenis Exp $
+# $OpenBSD: files.drm,v 1.37 2017/07/02 20:58:55 kettenis Exp $
 
 # direct rendering modules
 define drmbase {[console = -1]}
 device drm: drmbase
 attach drm at drmbase
-file   dev/pci/drm/drm_agpsupport.c	drm & agp
-file   dev/pci/drm/drm_drv.c		drm	needs-flag
-file   dev/pci/drm/drm_global.c		drm
-file   dev/pci/drm/drm_hashtab.c	drm
-file   dev/pci/drm/drm_irq.c		drm
-file   dev/pci/drm/drm_memory.c		drm
-file   dev/pci/drm/drm_mm.c		drm
-file   dev/pci/drm/drm_atomic.c		drm
-file   dev/pci/drm/drm_atomic_helper.c	drm
-file   dev/pci/drm/drm_crtc.c		drm
-file   dev/pci/drm/drm_modes.c		drm
-file   dev/pci/drm/drm_modeset_lock.c	drm
-file   dev/pci/drm/drm_crtc_helper.c	drm
-file   dev/pci/drm/drm_edid.c		drm
-file   dev/pci/drm/drm_dp_helper.c	drm
-file   dev/pci/drm/drm_fb_helper.c	drm
-file   dev/pci/drm/drm_plane_helper.c	drm
-file   dev/pci/drm/drm_probe_helper.c	drm
-file   dev/pci/drm/drm_rect.c		drm
-file   dev/pci/drm/drm_bridge.c		drm
-file   dev/pci/drm/drm_gem.c		drm
-file   dev/pci/drm/drm_vma_manager.c	drm
-file   dev/pci/drm/drm_linux.c		drm
-file	dev/pci/drm/drm_cache.c			drm
-#file	dev/pci/drm/drm_panel.c			drm
-#file	dev/pci/drm/drm_dp_mst_topology.c	drm
-file   dev/pci/drm/linux_hdmi.c		drm
-file   dev/pci/drm/linux_list_sort.c	drm
+file	dev/pci/drm/drm_agpsupport.c		drm & agp
+file	dev/pci/drm/drm_drv.c			drm	needs-flag
+file	dev/pci/drm/drm_global.c		drm
+file	dev/pci/drm/drm_hashtab.c		drm
+file	dev/pci/drm/drm_irq.c			drm
+file	dev/pci/drm/drm_memory.c		drm
+file	dev/pci/drm/drm_mm.c			drm
+file	dev/pci/drm/drm_atomic.c		drm
+file	dev/pci/drm/drm_atomic_helper.c		drm
+file	dev/pci/drm/drm_crtc.c			drm
+file	dev/pci/drm/drm_modes.c			drm
+file	dev/pci/drm/drm_modeset_lock.c		drm
+file	dev/pci/drm/drm_crtc_helper.c		drm
+file	dev/pci/drm/drm_edid.c			drm
+file	dev/pci/drm/drm_dp_helper.c		drm
+file	dev/pci/drm/drm_fb_helper.c		drm
+file	dev/pci/drm/drm_plane_helper.c		drm
+file	dev/pci/drm/drm_probe_helper.c		drm
+file	dev/pci/drm/drm_rect.c			drm
+file	dev/pci/drm/drm_bridge.c		drm
+file	dev/pci/drm/drm_gem.c			drm
+file	dev/pci/drm/drm_vma_manager.c		drm
+file	dev/pci/drm/drm_linux.c			drm
+file	dev/pci/drm/drm_cache.c			drm & inteldrm
+file	dev/pci/drm/drm_panel.c			drm & inteldrm
+file	dev/pci/drm/drm_dp_mst_topology.c	drm
+file	dev/pci/drm/drm_mipi_dsi.c		drm & inteldrm
+file	dev/pci/drm/linux_hdmi.c		drm
+file	dev/pci/drm/linux_list_sort.c		drm
 
 define	ttm
 file	dev/pci/drm/ttm/ttm_agp_backend.c	ttm & agp
@@ -79,9 +80,9 @@ file	dev/pci/drm/i915/intel_ddi.c		inteldrm
 file	dev/pci/drm/i915/intel_display.c	inteldrm
 file	dev/pci/drm/i915/intel_dp.c		inteldrm
 file	dev/pci/drm/i915/intel_dp_mst.c		inteldrm
-#file	dev/pci/drm/i915/intel_dsi.c		inteldrm
-#file	dev/pci/drm/i915/intel_dsi_panel_vbt.c	inteldrm
-#file	dev/pci/drm/i915/intel_dsi_pll.c	inteldrm
+file	dev/pci/drm/i915/intel_dsi.c		inteldrm
+file	dev/pci/drm/i915/intel_dsi_panel_vbt.c	inteldrm
+file	dev/pci/drm/i915/intel_dsi_pll.c	inteldrm
 file	dev/pci/drm/i915/intel_dvo.c		inteldrm
 file	dev/pci/drm/i915/intel_fbc.c		inteldrm
 file	dev/pci/drm/i915/intel_fbdev.c		inteldrm
@@ -157,6 +158,7 @@ file	dev/pci/drm/radeon/radeon_cs.c			radeondrm
 file	dev/pci/drm/radeon/radeon_cursor.c		radeondrm
 file	dev/pci/drm/radeon/radeon_device.c		radeondrm
 file	dev/pci/drm/radeon/radeon_display.c		radeondrm
+file	dev/pci/drm/radeon/radeon_dp_auxch.c		radeondrm
 file	dev/pci/drm/radeon/radeon_encoders.c		radeondrm
 file	dev/pci/drm/radeon/radeon_fb.c			radeondrm
 file	dev/pci/drm/radeon/radeon_fence.c		radeondrm

@@ -1,8 +1,8 @@
-mandoc: blank.in:12:1: WARNING: whitespace at end of input line
-mandoc: blank.in:14:1: WARNING: whitespace at end of input line
-mandoc: blank.in:16:1: WARNING: whitespace at end of input line
-mandoc: blank.in:21:36: WARNING: whitespace at end of input line
-mandoc: blank.in:22:37: WARNING: whitespace at end of input line
-mandoc: blank.in:23:32: WARNING: whitespace at end of input line
-mandoc: blank.in:30:8: WARNING: whitespace at end of input line
-mandoc: blank.in:30:2: WARNING: empty block: Dl
+mandoc: blank.in:13:1: STYLE: whitespace at end of input line
+mandoc: blank.in:15:1: STYLE: whitespace at end of input line
+mandoc: blank.in:17:1: STYLE: whitespace at end of input line
+mandoc: blank.in:22:36: STYLE: whitespace at end of input line
+mandoc: blank.in:23:37: STYLE: whitespace at end of input line
+mandoc: blank.in:24:32: STYLE: whitespace at end of input line
+mandoc: blank.in:31:8: STYLE: whitespace at end of input line
+mandoc: blank.in:31:2: WARNING: empty block: Dl

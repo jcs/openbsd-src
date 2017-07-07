@@ -1,4 +1,4 @@
-#	$OpenBSD: bsd.prog.mk,v 1.70 2015/11/14 23:56:50 deraadt Exp $
+#	$OpenBSD: bsd.prog.mk,v 1.73 2017/07/04 00:59:11 espie Exp $
 #	$NetBSD: bsd.prog.mk,v 1.55 1996/04/08 21:19:26 jtc Exp $
 #	@(#)bsd.prog.mk	5.26 (Berkeley) 6/25/91
 
@@ -72,8 +72,10 @@ LIBARCH?=
 SRCS?=	${PROG}.c
 .  if !empty(SRCS:N*.h:N*.sh)
 OBJS+=	${SRCS:N*.h:N*.sh:R:S/$/.o/}
-_LEXINTM+=${SRCS:M*.l:.l=.c}
-_YACCINTM+=${SRCS:M*.y:.y=.c}
+DEPS+=	${OBJS:R:S/$/.d/}
+
+_LEXINTM?=${SRCS:M*.l:.l=.c}
+_YACCINTM?=${SRCS:M*.y:.y=.c}
 .  endif
 
 .  if defined(OBJS) && !empty(OBJS)
@@ -94,6 +96,8 @@ MAN=	${PROG}.1
 
 .MAIN: all
 all: ${PROG} _SUBDIRUSE
+
+BUILDAFTER += ${PROG} ${OBJS}
 
 .if !target(clean)
 clean: _SUBDIRUSE
@@ -137,6 +141,15 @@ realinstall: beforeinstall
 
 .if !defined(NOMAN)
 .include <bsd.man.mk>
+.endif
+
+# if we already got bsd.lib.mk we don't want to wreck that
+.if !defined(_LIBS)
+.s.o:
+	${COMPILE.S} -MD -MF ${.TARGET:R}.d -o $@ ${.IMPSRC}
+
+.S.o:
+	${COMPILE.S} -MD -MF ${.TARGET:R}.d -o $@ ${.IMPSRC}
 .endif
 
 .include <bsd.obj.mk>

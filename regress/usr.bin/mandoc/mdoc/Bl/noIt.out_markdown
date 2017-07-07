@@ -7,17 +7,17 @@ BL-NOIT(1) - General Commands Manual
 # DESCRIPTION
 
 Stray text.
-*More stray text.*
+*More stray text*
 
 tag
 
 > Tagged text.
 
 Stray text.
-*More*&zwnj;**stray**&zwnj;*text.*
+*More*&zwnj;**stray**&zwnj;*text*
 
 *	Bullet point.
 
 Stray text only.
 
-OpenBSD - October 6, 2013
+OpenBSD - July 4, 2017

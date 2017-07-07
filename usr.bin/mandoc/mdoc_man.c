@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_man.c,v 1.114 2017/05/30 16:31:25 schwarze Exp $ */
+/*	$OpenBSD: mdoc_man.c,v 1.120 2017/06/14 22:50:37 schwarze Exp $ */
 /*
  * Copyright (c) 2011-2017 Ingo Schwarze <schwarze@openbsd.org>
  *
@@ -123,12 +123,16 @@ static	void	  print_count(int *);
 static	void	  print_node(DECL_ARGS);
 
 static	const void_fp roff_manacts[ROFF_MAX] = {
-	pre_br,
-	pre_ft,
-	pre_onearg,
-	pre_sp,
-	pre_ta,
-	pre_onearg,
+	pre_br,		/* br */
+	pre_onearg,	/* ce */
+	pre_ft,		/* ft */
+	pre_onearg,	/* ll */
+	pre_onearg,	/* mc */
+	pre_onearg,	/* po */
+	pre_onearg,	/* rj */
+	pre_sp,		/* sp */
+	pre_ta,		/* ta */
+	pre_onearg,	/* ti */
 };
 
 static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
@@ -192,8 +196,8 @@ static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
 	{ NULL, pre_bf, post_bf, NULL, NULL }, /* Bf */
 	{ cond_body, pre_enc, post_enc, "[", "]" }, /* Bo */
 	{ cond_body, pre_enc, post_enc, "[", "]" }, /* Bq */
-	{ NULL, NULL, NULL, NULL, NULL }, /* Bsx */
-	{ NULL, NULL, NULL, NULL, NULL }, /* Bx */
+	{ NULL, pre_bk, post_bk, NULL, NULL }, /* Bsx */
+	{ NULL, pre_bk, post_bk, NULL, NULL }, /* Bx */
 	{ NULL, pre_skip, NULL, NULL, NULL }, /* Db */
 	{ NULL, NULL, NULL, NULL, NULL }, /* Dc */
 	{ cond_body, pre_enc, post_enc, "\\(Lq", "\\(Rq" }, /* Do */
@@ -202,12 +206,12 @@ static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
 	{ NULL, NULL, NULL, NULL, NULL }, /* Ef */
 	{ NULL, pre_em, post_font, NULL, NULL }, /* Em */
 	{ cond_body, pre_eo, post_eo, NULL, NULL }, /* Eo */
-	{ NULL, NULL, NULL, NULL, NULL }, /* Fx */
+	{ NULL, pre_bk, post_bk, NULL, NULL }, /* Fx */
 	{ NULL, pre_sy, post_font, NULL, NULL }, /* Ms */
 	{ NULL, pre_no, NULL, NULL, NULL }, /* No */
 	{ NULL, pre_ns, NULL, NULL, NULL }, /* Ns */
-	{ NULL, NULL, NULL, NULL, NULL }, /* Nx */
-	{ NULL, NULL, NULL, NULL, NULL }, /* Ox */
+	{ NULL, pre_bk, post_bk, NULL, NULL }, /* Nx */
+	{ NULL, pre_bk, post_bk, NULL, NULL }, /* Ox */
 	{ NULL, NULL, NULL, NULL, NULL }, /* Pc */
 	{ NULL, NULL, post_pf, NULL, NULL }, /* Pf */
 	{ cond_body, pre_enc, post_enc, "(", ")" }, /* Po */
@@ -248,7 +252,7 @@ static	const struct manact __manacts[MDOC_MAX - MDOC_Dd] = {
 	{ NULL, NULL, post_percent, NULL, NULL }, /* %C */
 	{ NULL, pre_skip, NULL, NULL, NULL }, /* Es */
 	{ cond_body, pre_en, post_en, NULL, NULL }, /* En */
-	{ NULL, NULL, NULL, NULL, NULL }, /* Dx */
+	{ NULL, pre_bk, post_bk, NULL, NULL }, /* Dx */
 	{ NULL, NULL, post_percent, NULL, NULL }, /* %Q */
 	{ NULL, NULL, post_percent, NULL, NULL }, /* %U */
 	{ NULL, NULL, NULL, NULL, NULL }, /* Ta */
@@ -472,6 +476,7 @@ print_offs(const char *v, int keywords)
 {
 	char		  buf[24];
 	struct roffsu	  su;
+	const char	 *end;
 	int		  sz;
 
 	print_line(".RS", MMAN_Bk_susp);
@@ -483,8 +488,11 @@ print_offs(const char *v, int keywords)
 		sz = 6;
 	else if (keywords && !strcmp(v, "indent-two"))
 		sz = 12;
-	else if (a2roffsu(v, &su, SCALE_EN) > 1) {
-		if (SCALE_EN == su.unit)
+	else {
+		end = a2roffsu(v, &su, SCALE_EN);
+		if (end == NULL || *end != '\0')
+			sz = man_strlen(v);
+		else if (SCALE_EN == su.unit)
 			sz = su.scale;
 		else {
 			/*
@@ -498,8 +506,7 @@ print_offs(const char *v, int keywords)
 			outflags |= MMAN_nl;
 			return;
 		}
-	} else
-		sz = man_strlen(v);
+	}
 
 	/*
 	 * We are inside an enclosing list.
@@ -521,6 +528,7 @@ print_width(const struct mdoc_bl *bl, const struct roff_node *child)
 {
 	char		  buf[24];
 	struct roffsu	  su;
+	const char	 *end;
 	int		  numeric, remain, sz, chsz;
 
 	numeric = 1;
@@ -529,15 +537,17 @@ print_width(const struct mdoc_bl *bl, const struct roff_node *child)
 	/* Convert the width into a number (of characters). */
 	if (bl->width == NULL)
 		sz = (bl->type == LIST_hang) ? 6 : 0;
-	else if (a2roffsu(bl->width, &su, SCALE_MAX) > 1) {
-		if (SCALE_EN == su.unit)
+	else {
+		end = a2roffsu(bl->width, &su, SCALE_MAX);
+		if (end == NULL || *end != '\0')
+			sz = man_strlen(bl->width);
+		else if (SCALE_EN == su.unit)
 			sz = su.scale;
 		else {
 			sz = 0;
 			numeric = 0;
 		}
-	} else
-		sz = man_strlen(bl->width);
+	}
 
 	/* XXX Rough estimation, might have multiple parts. */
 	if (bl->type == LIST_enum)
@@ -980,11 +990,11 @@ post_bf(DECL_ARGS)
 static int
 pre_bk(DECL_ARGS)
 {
-
 	switch (n->type) {
 	case ROFFT_BLOCK:
 		return 1;
 	case ROFFT_BODY:
+	case ROFFT_ELEM:
 		outflags |= MMAN_Bk;
 		return 1;
 	default:
@@ -995,9 +1005,18 @@ pre_bk(DECL_ARGS)
 static void
 post_bk(DECL_ARGS)
 {
-
-	if (n->type == ROFFT_BODY)
+	switch (n->type) {
+	case ROFFT_ELEM:
+		while ((n = n->parent) != NULL)
+			 if (n->tok == MDOC_Bk)
+				return;
+		/* FALLTHROUGH */
+	case ROFFT_BODY:
 		outflags &= ~MMAN_Bk;
+		break;
+	default:
+		break;
+	}
 }
 
 static int
@@ -1579,6 +1598,9 @@ pre_onearg(DECL_ARGS)
 	if (n->child != NULL)
 		print_word(n->child->string);
 	outflags |= MMAN_nl;
+	if (n->tok == ROFF_ce)
+		for (n = n->child->next; n != NULL; n = n->next)
+			print_node(meta, n);
 }
 
 static int

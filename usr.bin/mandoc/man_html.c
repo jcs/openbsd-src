@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_html.c,v 1.95 2017/05/09 14:09:37 schwarze Exp $ */
+/*	$OpenBSD: man_html.c,v 1.98 2017/06/25 07:23:53 bentley Exp $ */
 /*
  * Copyright (c) 2008-2012, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2013, 2014, 2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include "mandoc_aux.h"
+#include "mandoc.h"
 #include "roff.h"
 #include "man.h"
 #include "out.h"
@@ -103,6 +104,8 @@ static	const struct htmlman __mans[MAN_MAX - MAN_TH] = {
 	{ NULL, NULL }, /* EE */
 	{ man_UR_pre, NULL }, /* UR */
 	{ NULL, NULL }, /* UE */
+	{ man_UR_pre, NULL }, /* MT */
+	{ NULL, NULL }, /* ME */
 };
 static	const struct htmlman *const mans = __mans - MAN_TH;
 
@@ -227,6 +230,7 @@ print_man_node(MAN_ARGS)
 		case MAN_P:   /* reopen .nf in the body.	*/
 		case MAN_RS:
 		case MAN_UR:
+		case MAN_MT:
 			fillmode(h, MAN_fi);
 			break;
 		default:
@@ -356,13 +360,9 @@ fillmode(struct html *h, int want)
 static int
 a2width(const struct roff_node *n, struct roffsu *su)
 {
-
 	if (n->type != ROFFT_TEXT)
 		return 0;
-	if (a2roffsu(n->string, su, SCALE_EN))
-		return 1;
-
-	return 0;
+	return a2roffsu(n->string, su, SCALE_EN) != NULL;
 }
 
 static void
@@ -645,11 +645,17 @@ man_RS_pre(MAN_ARGS)
 static int
 man_UR_pre(MAN_ARGS)
 {
+	char *cp;
 	n = n->child;
 	assert(n->type == ROFFT_HEAD);
 	if (n->child != NULL) {
 		assert(n->child->type == ROFFT_TEXT);
-		print_otag(h, TAG_A, "cTh", "Lk", n->child->string);
+		if (n->tok == MAN_MT) {
+			mandoc_asprintf(&cp, "mailto:%s", n->child->string);
+			print_otag(h, TAG_A, "cTh", "Mt", cp);
+			free(cp);
+		} else
+			print_otag(h, TAG_A, "cTh", "Lk", n->child->string);
 	}
 
 	assert(n->next->type == ROFFT_BODY);

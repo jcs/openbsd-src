@@ -30,8 +30,6 @@
 #include <dev/pci/drm/drm_crtc_helper.h>
 #include <dev/pci/drm/drm_edid.h>
 
-#ifdef notyet
-
 static bool intel_dp_mst_compute_config(struct intel_encoder *encoder,
 					struct intel_crtc_state *pipe_config)
 {
@@ -596,5 +594,3 @@ intel_dp_mst_encoder_cleanup(struct intel_digital_port *intel_dig_port)
 	drm_dp_mst_topology_mgr_destroy(&intel_dp->mst_mgr);
 	/* encoders will get killed by normal cleanup */
 }
-
-#endif

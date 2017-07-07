@@ -1,4 +1,4 @@
-/*	$OpenBSD: asm.h,v 1.11 2016/09/25 14:58:00 fcambus Exp $	*/
+/*	$OpenBSD: asm.h,v 1.13 2017/06/29 17:36:16 deraadt Exp $	*/
 /*	$NetBSD: asm.h,v 1.15 2000/08/02 22:24:39 eeh Exp $ */
 
 /*
@@ -81,7 +81,7 @@
 #define	_ENTRY(name) \
 	.align 4; .globl name; .proc 1; FTYPE(name); name:
 
-#ifdef GPROF
+#if defined(PROF) || defined(GPROF)
 #define _PROF_PROLOGUE \
 	.data; .align 8; 1: .uaword 0; .uaword 0; \
 	.text; save %sp,-CC64FSZ,%sp; sethi %hi(1b),%o0; call _mcount; \
@@ -97,11 +97,6 @@
 #define	END(y)			.size y, . - y
 #define RODATA(name)		.align 4; .text; .globl _C_LABEL(name); \
 				OTYPE(_C_LABEL(name)); _C_LABEL(name):
-
-
-#define ASMSTR			.asciz
-
-#define RCSID(name)		.asciz name
 
 #define	STRONG_ALIAS(alias,sym)						\
 	.global alias;							\

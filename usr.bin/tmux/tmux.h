@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.779 2017/05/31 11:00:00 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.791 2017/07/03 12:38:50 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -87,11 +87,15 @@ struct tmuxproc;
 #define KEYC_NONE 0xffff00000000ULL
 #define KEYC_UNKNOWN 0xfffe00000000ULL
 #define KEYC_BASE 0x000010000000ULL
+#define KEYC_USER 0x000020000000ULL
+
+/* Available user keys. */
+#define KEYC_NUSER 1000
 
 /* Key modifier bits. */
 #define KEYC_ESCAPE 0x200000000000ULL
-#define KEYC_CTRL   0x400000000000ULL
-#define KEYC_SHIFT  0x800000000000ULL
+#define KEYC_CTRL 0x400000000000ULL
+#define KEYC_SHIFT 0x800000000000ULL
 #define KEYC_XTERM 0x1000000000000ULL
 
 /* Mask to obtain key w/o modifiers. */
@@ -126,6 +130,10 @@ enum {
 	/* Focus events. */
 	KEYC_FOCUS_IN = KEYC_BASE,
 	KEYC_FOCUS_OUT,
+
+	/* Paste brackets. */
+	KEYC_PASTE_START,
+	KEYC_PASTE_END,
 
 	/* Mouse keys. */
 	KEYC_MOUSE, /* unclassified mouse event */
@@ -617,7 +625,7 @@ struct job {
 	job_free_cb		 freecb;
 	void			*data;
 
-	LIST_ENTRY(job)	 	 entry;
+	LIST_ENTRY(job)		 entry;
 };
 LIST_HEAD(joblist, job);
 
@@ -676,7 +684,7 @@ struct screen_write_ctx {
 	struct screen_write_collect_item *item;
 	struct screen_write_collect_line *list;
 	u_int			 scrolled;
-	u_int                    bg;
+	u_int			 bg;
 
 	u_int			 cells;
 	u_int			 written;
@@ -760,6 +768,7 @@ struct window_pane {
 #define PANE_FOCUSPUSH 0x20
 #define PANE_INPUTOFF 0x40
 #define PANE_CHANGED 0x80
+#define PANE_EXITED 0x100
 
 	int		 argc;
 	char	       **argv;
@@ -1493,6 +1502,7 @@ struct tmuxpeer *proc_add_peer(struct tmuxproc *, int,
 	    void (*)(struct imsg *, void *), void *);
 void	proc_remove_peer(struct tmuxpeer *);
 void	proc_kill_peer(struct tmuxpeer *);
+void	proc_toggle_log(struct tmuxproc *);
 
 /* cfg.c */
 extern int cfg_finished;
@@ -2010,7 +2020,8 @@ void	 screen_write_putc(struct screen_write_ctx *, const struct grid_cell *,
 	     u_char);
 void	 screen_write_copy(struct screen_write_ctx *, struct screen *, u_int,
 	     u_int, u_int, u_int, bitstr_t *, const struct grid_cell *);
-void	 screen_write_line(struct screen_write_ctx *, u_int, int, int);
+void	 screen_write_hline(struct screen_write_ctx *, u_int, int, int);
+void	 screen_write_vline(struct screen_write_ctx *, u_int, int, int);
 void	 screen_write_box(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_preview(struct screen_write_ctx *, struct screen *, u_int,
 	     u_int);
@@ -2123,6 +2134,7 @@ u_int		 window_count_panes(struct window *);
 void		 window_destroy_panes(struct window *);
 struct window_pane *window_pane_find_by_id_str(const char *);
 struct window_pane *window_pane_find_by_id(u_int);
+int		 window_pane_destroy_ready(struct window_pane *);
 int		 window_pane_spawn(struct window_pane *, int, char **,
 		     const char *, const char *, const char *, struct environ *,
 		     struct termios *, char **);
@@ -2144,7 +2156,6 @@ void		 window_pane_key(struct window_pane *, struct client *,
 int		 window_pane_outside(struct window_pane *);
 int		 window_pane_visible(struct window_pane *);
 u_int		 window_pane_search(struct window_pane *, const char *);
-
 const char	*window_printable_flags(struct winlink *);
 struct window_pane *window_pane_find_up(struct window_pane *);
 struct window_pane *window_pane_find_down(struct window_pane *);
@@ -2200,10 +2211,11 @@ void	 mode_tree_each_tagged(struct mode_tree_data *, void (*)(void *, void *,
 	     key_code), key_code, int);
 void	 mode_tree_up(struct mode_tree_data *, int);
 void	 mode_tree_down(struct mode_tree_data *, int);
-struct mode_tree_data *mode_tree_start(struct window_pane *,
-	     void (*)(void *, u_int, uint64_t *), struct screen *(*)(void *,
-	     void *, u_int, u_int), void *, const char **, u_int,
-	     struct screen **);
+struct mode_tree_data *mode_tree_start(struct window_pane *, struct args *,
+	     void (*)(void *, u_int, uint64_t *, const char *),
+	     struct screen *(*)(void *, void *, u_int, u_int),
+	     int (*)(void *, void *, const char *), void *, const char **,
+	     u_int, struct screen **);
 void	 mode_tree_build(struct mode_tree_data *);
 void	 mode_tree_free(struct mode_tree_data *);
 void	 mode_tree_resize(struct mode_tree_data *, u_int, u_int);
@@ -2212,7 +2224,7 @@ struct mode_tree_item *mode_tree_add(struct mode_tree_data *,
 	     const char *, int);
 void	 mode_tree_remove(struct mode_tree_data *, struct mode_tree_item *);
 void	 mode_tree_draw(struct mode_tree_data *);
-int	 mode_tree_key(struct mode_tree_data *, key_code *,
+int	 mode_tree_key(struct mode_tree_data *, struct client *, key_code *,
 	     struct mouse_event *);
 void	 mode_tree_run_command(struct client *, struct cmd_find_state *,
 	     const char *, const char *);
@@ -2317,6 +2329,7 @@ enum utf8_state	 utf8_open(struct utf8_data *, u_char);
 enum utf8_state	 utf8_append(struct utf8_data *, u_char);
 enum utf8_state	 utf8_combine(const struct utf8_data *, wchar_t *);
 enum utf8_state	 utf8_split(wchar_t, struct utf8_data *);
+int		 utf8_isvalid(const char *);
 int		 utf8_strvis(char *, const char *, size_t, int);
 int		 utf8_stravis(char **, const char *, int);
 char		*utf8_sanitize(const char *);
@@ -2336,6 +2349,7 @@ char   *get_proc_name(int, char *);
 void	log_add_level(void);
 int	log_get_level(void);
 void	log_open(const char *);
+void	log_toggle(const char *);
 void	log_close(void);
 void printflike(1, 2) log_debug(const char *, ...);
 __dead void printflike(1, 2) fatal(const char *, ...);

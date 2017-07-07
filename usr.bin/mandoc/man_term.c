@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_term.c,v 1.153 2017/05/09 14:09:37 schwarze Exp $ */
+/*	$OpenBSD: man_term.c,v 1.161 2017/06/25 07:23:53 bentley Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -126,6 +126,8 @@ static	const struct termact __termacts[MAN_MAX - MAN_TH] = {
 	{ pre_literal, NULL, 0 }, /* EE */
 	{ pre_UR, post_UR, 0 }, /* UR */
 	{ NULL, NULL, 0 }, /* UE */
+	{ pre_UR, post_UR, 0 }, /* MT */
+	{ NULL, NULL, 0 }, /* ME */
 };
 static	const struct termact *termacts = __termacts - MAN_TH;
 
@@ -139,8 +141,10 @@ terminal_man(void *arg, const struct roff_man *man)
 	size_t			 save_defindent;
 
 	p = (struct termp *)arg;
-	p->overstep = 0;
-	p->rmargin = p->maxrmargin = p->defrmargin;
+	save_defindent = p->defindent;
+	if (p->synopsisonly == 0 && p->defindent == 0)
+		p->defindent = 7;
+	p->tcol->rmargin = p->maxrmargin = p->defrmargin;
 	term_tab_set(p, NULL);
 	term_tab_set(p, "T");
 	term_tab_set(p, ".5i");
@@ -166,16 +170,13 @@ terminal_man(void *arg, const struct roff_man *man)
 			n = n->next;
 		}
 	} else {
-		save_defindent = p->defindent;
-		if (p->defindent == 0)
-			p->defindent = 7;
 		term_begin(p, print_man_head, print_man_foot, &man->meta);
 		p->flags |= TERMP_NOSPACE;
 		if (n != NULL)
 			print_man_nodelist(p, &mt, n, &man->meta);
 		term_end(p);
-		p->defindent = save_defindent;
 	}
+	p->defindent = save_defindent;
 }
 
 /*
@@ -227,7 +228,7 @@ pre_literal(DECL_ARGS)
 
 	term_newln(p);
 
-	if (MAN_nf == n->tok || MAN_EX == n->tok)
+	if (n->tok == MAN_nf || n->tok == MAN_EX)
 		mt->fl |= MANT_LITERAL;
 	else
 		mt->fl &= ~MANT_LITERAL;
@@ -237,9 +238,9 @@ pre_literal(DECL_ARGS)
 	 * So in case a second call to term_flushln() is needed,
 	 * indentation has to be set up explicitly.
 	 */
-	if (MAN_HP == n->parent->tok && p->rmargin < p->maxrmargin) {
-		p->offset = p->rmargin;
-		p->rmargin = p->maxrmargin;
+	if (n->parent->tok == MAN_HP && p->tcol->rmargin < p->maxrmargin) {
+		p->tcol->offset = p->tcol->rmargin;
+		p->tcol->rmargin = p->maxrmargin;
 		p->trailspace = 0;
 		p->flags &= ~(TERMP_NOBREAK | TERMP_BRIND);
 		p->flags |= TERMP_NOSPACE;
@@ -259,7 +260,7 @@ pre_PD(DECL_ARGS)
 		return 0;
 	}
 	assert(n->type == ROFFT_TEXT);
-	if (a2roffsu(n->string, &su, SCALE_VS))
+	if (a2roffsu(n->string, &su, SCALE_VS) != NULL)
 		mt->pardist = term_vspan(p, &su);
 	return 0;
 }
@@ -358,8 +359,8 @@ pre_in(DECL_ARGS)
 
 	term_newln(p);
 
-	if (NULL == n->child) {
-		p->offset = mt->offset;
+	if (n->child == NULL) {
+		p->tcol->offset = mt->offset;
 		return 0;
 	}
 
@@ -373,19 +374,19 @@ pre_in(DECL_ARGS)
 	else
 		cp--;
 
-	if ( ! a2roffsu(++cp, &su, SCALE_EN))
+	if (a2roffsu(++cp, &su, SCALE_EN) == NULL)
 		return 0;
 
-	v = (term_hspan(p, &su) + 11) / 24;
+	v = term_hen(p, &su);
 
 	if (less < 0)
-		p->offset -= p->offset > v ? v : p->offset;
+		p->tcol->offset -= p->tcol->offset > v ? v : p->tcol->offset;
 	else if (less > 0)
-		p->offset += v;
+		p->tcol->offset += v;
 	else
-		p->offset = v;
-	if (p->offset > SHRT_MAX)
-		p->offset = term_len(p, p->defindent);
+		p->tcol->offset = v;
+	if (p->tcol->offset > SHRT_MAX)
+		p->tcol->offset = term_len(p, p->defindent);
 
 	return 0;
 }
@@ -424,8 +425,8 @@ pre_HP(DECL_ARGS)
 	/* Calculate offset. */
 
 	if ((nn = n->parent->head->child) != NULL &&
-	    a2roffsu(nn->string, &su, SCALE_EN)) {
-		len = term_hspan(p, &su) / 24;
+	    a2roffsu(nn->string, &su, SCALE_EN) != NULL) {
+		len = term_hen(p, &su);
 		if (len < 0 && (size_t)(-len) > mt->offset)
 			len = -mt->offset;
 		else if (len > SHRT_MAX)
@@ -434,8 +435,8 @@ pre_HP(DECL_ARGS)
 	} else
 		len = mt->lmargin[mt->lmargincur];
 
-	p->offset = mt->offset;
-	p->rmargin = mt->offset + len;
+	p->tcol->offset = mt->offset;
+	p->tcol->rmargin = mt->offset + len;
 	return 1;
 }
 
@@ -459,8 +460,8 @@ post_HP(DECL_ARGS)
 
 		p->flags &= ~(TERMP_NOBREAK | TERMP_BRIND);
 		p->trailspace = 0;
-		p->offset = mt->offset;
-		p->rmargin = p->maxrmargin;
+		p->tcol->offset = mt->offset;
+		p->tcol->rmargin = p->maxrmargin;
 		break;
 	default:
 		break;
@@ -477,7 +478,7 @@ pre_PP(DECL_ARGS)
 		print_bvspace(p, n, mt->pardist);
 		break;
 	default:
-		p->offset = mt->offset;
+		p->tcol->offset = mt->offset;
 		break;
 	}
 
@@ -509,8 +510,8 @@ pre_IP(DECL_ARGS)
 	/* Calculate the offset from the optional second argument. */
 	if ((nn = n->parent->head->child) != NULL &&
 	    (nn = nn->next) != NULL &&
-	    a2roffsu(nn->string, &su, SCALE_EN)) {
-		len = term_hspan(p, &su) / 24;
+	    a2roffsu(nn->string, &su, SCALE_EN) != NULL) {
+		len = term_hen(p, &su);
 		if (len < 0 && (size_t)(-len) > mt->offset)
 			len = -mt->offset;
 		else if (len > SHRT_MAX)
@@ -521,8 +522,8 @@ pre_IP(DECL_ARGS)
 
 	switch (n->type) {
 	case ROFFT_HEAD:
-		p->offset = mt->offset;
-		p->rmargin = mt->offset + len;
+		p->tcol->offset = mt->offset;
+		p->tcol->rmargin = mt->offset + len;
 
 		savelit = MANT_LITERAL & mt->fl;
 		mt->fl &= ~MANT_LITERAL;
@@ -535,8 +536,8 @@ pre_IP(DECL_ARGS)
 
 		return 0;
 	case ROFFT_BODY:
-		p->offset = mt->offset + len;
-		p->rmargin = p->maxrmargin;
+		p->tcol->offset = mt->offset + len;
+		p->tcol->rmargin = p->maxrmargin;
 		break;
 	default:
 		break;
@@ -554,11 +555,11 @@ post_IP(DECL_ARGS)
 		term_flushln(p);
 		p->flags &= ~TERMP_NOBREAK;
 		p->trailspace = 0;
-		p->rmargin = p->maxrmargin;
+		p->tcol->rmargin = p->maxrmargin;
 		break;
 	case ROFFT_BODY:
 		term_newln(p);
-		p->offset = mt->offset;
+		p->tcol->offset = mt->offset;
 		break;
 	default:
 		break;
@@ -591,8 +592,8 @@ pre_TP(DECL_ARGS)
 
 	if ((nn = n->parent->head->child) != NULL &&
 	    nn->string != NULL && ! (NODE_LINE & nn->flags) &&
-	    a2roffsu(nn->string, &su, SCALE_EN)) {
-		len = term_hspan(p, &su) / 24;
+	    a2roffsu(nn->string, &su, SCALE_EN) != NULL) {
+		len = term_hen(p, &su);
 		if (len < 0 && (size_t)(-len) > mt->offset)
 			len = -mt->offset;
 		else if (len > SHRT_MAX)
@@ -603,8 +604,8 @@ pre_TP(DECL_ARGS)
 
 	switch (n->type) {
 	case ROFFT_HEAD:
-		p->offset = mt->offset;
-		p->rmargin = mt->offset + len;
+		p->tcol->offset = mt->offset;
+		p->tcol->rmargin = mt->offset + len;
 
 		savelit = MANT_LITERAL & mt->fl;
 		mt->fl &= ~MANT_LITERAL;
@@ -623,8 +624,8 @@ pre_TP(DECL_ARGS)
 			mt->fl |= MANT_LITERAL;
 		return 0;
 	case ROFFT_BODY:
-		p->offset = mt->offset + len;
-		p->rmargin = p->maxrmargin;
+		p->tcol->offset = mt->offset + len;
+		p->tcol->rmargin = p->maxrmargin;
 		p->trailspace = 0;
 		p->flags &= ~(TERMP_NOBREAK | TERMP_BRTRSP);
 		break;
@@ -645,7 +646,7 @@ post_TP(DECL_ARGS)
 		break;
 	case ROFFT_BODY:
 		term_newln(p);
-		p->offset = mt->offset;
+		p->tcol->offset = mt->offset;
 		break;
 	default:
 		break;
@@ -680,14 +681,14 @@ pre_SS(DECL_ARGS)
 		break;
 	case ROFFT_HEAD:
 		term_fontrepl(p, TERMFONT_BOLD);
-		p->offset = term_len(p, 3);
-		p->rmargin = mt->offset;
+		p->tcol->offset = term_len(p, 3);
+		p->tcol->rmargin = mt->offset;
 		p->trailspace = mt->offset;
 		p->flags |= TERMP_NOBREAK | TERMP_BRIND;
 		break;
 	case ROFFT_BODY:
-		p->offset = mt->offset;
-		p->rmargin = p->maxrmargin;
+		p->tcol->offset = mt->offset;
+		p->tcol->rmargin = p->maxrmargin;
 		p->trailspace = 0;
 		p->flags &= ~(TERMP_NOBREAK | TERMP_BRIND);
 		break;
@@ -742,14 +743,14 @@ pre_SH(DECL_ARGS)
 		break;
 	case ROFFT_HEAD:
 		term_fontrepl(p, TERMFONT_BOLD);
-		p->offset = 0;
-		p->rmargin = mt->offset;
+		p->tcol->offset = 0;
+		p->tcol->rmargin = mt->offset;
 		p->trailspace = mt->offset;
 		p->flags |= TERMP_NOBREAK | TERMP_BRIND;
 		break;
 	case ROFFT_BODY:
-		p->offset = mt->offset;
-		p->rmargin = p->maxrmargin;
+		p->tcol->offset = mt->offset;
+		p->tcol->rmargin = p->maxrmargin;
 		p->trailspace = 0;
 		p->flags &= ~(TERMP_NOBREAK | TERMP_BRIND);
 		break;
@@ -795,16 +796,16 @@ pre_RS(DECL_ARGS)
 	n->aux = SHRT_MAX + 1;
 	if (n->child == NULL)
 		n->aux = mt->lmargin[mt->lmargincur];
-	else if (a2roffsu(n->child->string, &su, SCALE_EN))
-		n->aux = term_hspan(p, &su) / 24;
+	else if (a2roffsu(n->child->string, &su, SCALE_EN) != NULL)
+		n->aux = term_hen(p, &su);
 	if (n->aux < 0 && (size_t)(-n->aux) > mt->offset)
 		n->aux = -mt->offset;
 	else if (n->aux > SHRT_MAX)
 		n->aux = term_len(p, p->defindent);
 
 	mt->offset += n->aux;
-	p->offset = mt->offset;
-	p->rmargin = p->maxrmargin;
+	p->tcol->offset = mt->offset;
+	p->tcol->rmargin = p->maxrmargin;
 
 	if (++mt->lmarginsz < MAXMARGINS)
 		mt->lmargincur = mt->lmarginsz;
@@ -828,7 +829,7 @@ post_RS(DECL_ARGS)
 	}
 
 	mt->offset -= n->parent->head->aux;
-	p->offset = mt->offset;
+	p->tcol->offset = mt->offset;
 
 	if (--mt->lmarginsz < MAXMARGINS)
 		mt->lmargincur = mt->lmarginsz;
@@ -861,7 +862,6 @@ post_UR(DECL_ARGS)
 static void
 print_man_node(DECL_ARGS)
 {
-	size_t		 rm, rmax;
 	int		 c;
 
 	switch (n->type) {
@@ -872,7 +872,10 @@ print_man_node(DECL_ARGS)
 		 * before printing the line's data.
 		 */
 		if (*n->string == '\0') {
-			term_vspace(p);
+			if (p->flags & TERMP_NONEWLINE)
+				term_newln(p);
+			else
+				term_vspace(p);
 			return;
 		} else if (*n->string == ' ' && n->flags & NODE_LINE &&
 		    (p->flags & TERMP_NONEWLINE) == 0)
@@ -929,20 +932,17 @@ out:
 	if (mt->fl & MANT_LITERAL &&
 	    ! (p->flags & (TERMP_NOBREAK | TERMP_NONEWLINE)) &&
 	    (n->next == NULL || n->next->flags & NODE_LINE)) {
-		rm = p->rmargin;
-		rmax = p->maxrmargin;
-		p->rmargin = p->maxrmargin = TERM_MAXMARGIN;
-		p->flags |= TERMP_NOSPACE;
+		p->flags |= TERMP_BRNEVER | TERMP_NOSPACE;
 		if (n->string != NULL && *n->string != '\0')
 			term_flushln(p);
 		else
 			term_newln(p);
-		if (rm < rmax && n->parent->tok == MAN_HP) {
-			p->offset = rm;
-			p->rmargin = rmax;
-		} else
-			p->rmargin = rm;
-		p->maxrmargin = rmax;
+		p->flags &= ~TERMP_BRNEVER;
+		if (p->tcol->rmargin < p->maxrmargin &&
+		    n->parent->tok == MAN_HP) {
+			p->tcol->offset = p->tcol->rmargin;
+			p->tcol->rmargin = p->maxrmargin;
+		}
 	}
 	if (NODE_EOS & n->flags)
 		p->flags |= TERMP_SENTENCE;
@@ -998,8 +998,8 @@ print_man_foot(struct termp *p, const struct roff_meta *meta)
 
 	p->flags |= TERMP_NOSPACE | TERMP_NOBREAK;
 	p->trailspace = 1;
-	p->offset = 0;
-	p->rmargin = p->maxrmargin > datelen ?
+	p->tcol->offset = 0;
+	p->tcol->rmargin = p->maxrmargin > datelen ?
 	    (p->maxrmargin + term_len(p, 1) - datelen) / 2 : 0;
 
 	if (meta->os)
@@ -1008,9 +1008,10 @@ print_man_foot(struct termp *p, const struct roff_meta *meta)
 
 	/* At the bottom in the middle: manual date. */
 
-	p->offset = p->rmargin;
+	p->tcol->offset = p->tcol->rmargin;
 	titlen = term_strlen(p, title);
-	p->rmargin = p->maxrmargin > titlen ? p->maxrmargin - titlen : 0;
+	p->tcol->rmargin = p->maxrmargin > titlen ?
+	    p->maxrmargin - titlen : 0;
 	p->flags |= TERMP_NOSPACE;
 
 	term_word(p, meta->date);
@@ -1021,8 +1022,8 @@ print_man_foot(struct termp *p, const struct roff_meta *meta)
 	p->flags &= ~TERMP_NOBREAK;
 	p->flags |= TERMP_NOSPACE;
 	p->trailspace = 0;
-	p->offset = p->rmargin;
-	p->rmargin = p->maxrmargin;
+	p->tcol->offset = p->tcol->rmargin;
+	p->tcol->rmargin = p->maxrmargin;
 
 	term_word(p, title);
 	term_flushln(p);
@@ -1049,8 +1050,8 @@ print_man_head(struct termp *p, const struct roff_meta *meta)
 
 	p->flags |= TERMP_NOBREAK | TERMP_NOSPACE;
 	p->trailspace = 1;
-	p->offset = 0;
-	p->rmargin = 2 * (titlen+1) + vollen < p->maxrmargin ?
+	p->tcol->offset = 0;
+	p->tcol->rmargin = 2 * (titlen+1) + vollen < p->maxrmargin ?
 	    (p->maxrmargin - vollen + term_len(p, 1)) / 2 :
 	    vollen < p->maxrmargin ? p->maxrmargin - vollen : 0;
 
@@ -1060,9 +1061,9 @@ print_man_head(struct termp *p, const struct roff_meta *meta)
 	/* At the top in the middle: manual volume. */
 
 	p->flags |= TERMP_NOSPACE;
-	p->offset = p->rmargin;
-	p->rmargin = p->offset + vollen + titlen < p->maxrmargin ?
-	    p->maxrmargin - titlen : p->maxrmargin;
+	p->tcol->offset = p->tcol->rmargin;
+	p->tcol->rmargin = p->tcol->offset + vollen + titlen <
+	    p->maxrmargin ?  p->maxrmargin - titlen : p->maxrmargin;
 
 	term_word(p, volume);
 	term_flushln(p);
@@ -1071,17 +1072,17 @@ print_man_head(struct termp *p, const struct roff_meta *meta)
 
 	p->flags &= ~TERMP_NOBREAK;
 	p->trailspace = 0;
-	if (p->rmargin + titlen <= p->maxrmargin) {
+	if (p->tcol->rmargin + titlen <= p->maxrmargin) {
 		p->flags |= TERMP_NOSPACE;
-		p->offset = p->rmargin;
-		p->rmargin = p->maxrmargin;
+		p->tcol->offset = p->tcol->rmargin;
+		p->tcol->rmargin = p->maxrmargin;
 		term_word(p, title);
 		term_flushln(p);
 	}
 
 	p->flags &= ~TERMP_NOSPACE;
-	p->offset = 0;
-	p->rmargin = p->maxrmargin;
+	p->tcol->offset = 0;
+	p->tcol->rmargin = p->maxrmargin;
 
 	/*
 	 * Groff prints three blank lines before the content.

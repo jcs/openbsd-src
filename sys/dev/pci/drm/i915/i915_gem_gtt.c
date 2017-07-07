@@ -33,13 +33,6 @@
 #include "i915_trace.h"
 #include "intel_drv.h"
 
-/* XXX */
-#define _PAGE_PRESENT	PG_V
-#define _PAGE_RW	PG_RW
-#define _PAGE_PAT	PG_PAT
-#define _PAGE_PWT	PG_WT
-#define _PAGE_PCD	PG_N
-
 static inline void
 set_pages_uc(struct vm_page *page, int n)
 {
@@ -872,7 +865,11 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 		container_of(vm, struct i915_hw_ppgtt, base);
 	struct sg_page_iter sg_iter;
 
+#ifdef __linux__
 	__sg_page_iter_start(&sg_iter, pages->sgl, sg_nents(pages->sgl), 0);
+#else
+	__sg_page_iter_start(&sg_iter, pages->sgl, pages->nents, 0);
+#endif
 
 	if (!USES_FULL_48BIT_PPGTT(vm->dev)) {
 		gen8_ppgtt_insert_pte_entries(vm, &ppgtt->pdp, &sg_iter, start,
@@ -2410,12 +2407,8 @@ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 	dma_addr_t addr = 0; /* shut up gcc */
 
 	for_each_sg_page(st->sgl, &sg_iter, st->nents, 0) {
-#ifdef __linux__
 		addr = sg_dma_address(sg_iter.sg) +
 			(sg_iter.sg_pgoffset << PAGE_SHIFT);
-#else
-		addr = sg_page_iter_dma_address(&sg_iter);
-#endif
 		gen8_set_pte(&gtt_entries[i],
 			     gen8_pte_encode(addr, level, true));
 		i++;

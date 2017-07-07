@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.6 2013/06/02 21:46:04 pirofti Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.8 2017/06/08 12:02:52 visa Exp $	*/
 /*
  * Copyright (c) 2009 Miodrag Vallat.
  *
@@ -41,6 +41,8 @@ cpu_configure(void)
 
 	softintr_init();
 	(void)config_rootfound("mainbus", NULL);
+
+	unmap_startup();
 
 	splinit();
 	cold = 0;

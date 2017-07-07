@@ -1,4 +1,4 @@
-/*	$OpenBSD: intr.h,v 1.9 2017/04/06 15:25:24 visa Exp $ */
+/*	$OpenBSD: intr.h,v 1.12 2017/06/18 13:58:45 visa Exp $ */
 
 /*
  * Copyright (c) 2001-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)
@@ -139,18 +139,7 @@ void	splinit(void);
 #define	splassert(X)
 #define	splsoftassert(X)
 
-/* Inlines */
-static __inline void register_splx_handler(void (*)(int));
-
-typedef void (int_f)(int);
-extern int_f *splx_hand;
-
-static __inline void
-register_splx_handler(void(*handler)(int))
-{
-	splx_hand = handler;
-}
-
+void	register_splx_handler(void (*)(int));
 int	splraise(int);
 void	splx(int);
 int	spllower(int);
@@ -195,15 +184,35 @@ void	set_intr(int, uint32_t, uint32_t(*)(uint32_t, struct trapframe *));
 uint32_t updateimask(uint32_t);
 void	dosoftint(void);
 
+struct intr_controller {
+	void	  *ic_cookie;
+	void	 (*ic_init)(void);
+	void	*(*ic_establish)(int, int, int (*)(void *), void *,
+		    const char *);
+	void	*(*ic_establish_fdt_idx)(void *, int, int, int,
+		    int (*)(void *), void *, const char *);
+	void	 (*ic_disestablish)(void *);
+
+#ifdef MULTIPROCESSOR
+	int	 (*ic_ipi_establish)(int (*)(void *), cpuid_t);
+	void	 (*ic_ipi_set)(cpuid_t);
+	void	 (*ic_ipi_clear)(cpuid_t);
+#endif /* MULTIPROCESSOR */
+
+	int	   ic_node;
+	int	   ic_phandle;
+	LIST_ENTRY(intr_controller) ic_list;
+};
+
 #ifdef MULTIPROCESSOR
 #define ENABLEIPI() updateimask(~CR_INT_1) /* enable IPI interrupt level */
 #endif
-void	octeon_intr_init(void);
-void	octeon_setintrmask(int);
+
 void   *octeon_intr_establish(int, int, int (*)(void *),
 	    void *, const char *);
 void	octeon_intr_disestablish(void *);
 void	octeon_intr_init(void);
+void	octeon_intr_register(struct intr_controller *);
 
 void	*octeon_intr_establish_fdt(int, int, int (*)(void *),
 	    void *, const char *);

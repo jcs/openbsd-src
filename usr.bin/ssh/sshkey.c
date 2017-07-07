@@ -1,4 +1,4 @@
-/* $OpenBSD: sshkey.c,v 1.51 2017/05/31 09:15:42 deraadt Exp $ */
+/* $OpenBSD: sshkey.c,v 1.54 2017/07/01 13:50:45 djm Exp $ */
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
  * Copyright (c) 2008 Alexander von Gernler.  All rights reserved.
@@ -47,7 +47,6 @@
 #include "ssherr.h"
 #include "misc.h"
 #include "sshbuf.h"
-#include "rsa.h"
 #include "cipher.h"
 #include "digest.h"
 #define SSHKEY_INTERNAL
@@ -1303,7 +1302,7 @@ sshkey_to_base64(const struct sshkey *key, char **b64p)
 	return r;
 }
 
-static int
+int
 sshkey_format_text(const struct sshkey *key, struct sshbuf *b)
 {
 	int r = SSH_ERR_INTERNAL_ERROR;
@@ -2209,7 +2208,8 @@ sshkey_drop_cert(struct sshkey *k)
 
 /* Sign a certified key, (re-)generating the signed certblob. */
 int
-sshkey_certify(struct sshkey *k, struct sshkey *ca, const char *alg)
+sshkey_certify_custom(struct sshkey *k, struct sshkey *ca, const char *alg,
+    sshkey_certify_signer *signer, void *signer_ctx)
 {
 	struct sshbuf *principals = NULL;
 	u_char *ca_blob = NULL, *sig_blob = NULL, nonce[32];
@@ -2296,8 +2296,8 @@ sshkey_certify(struct sshkey *k, struct sshkey *ca, const char *alg)
 		goto out;
 
 	/* Sign the whole mess */
-	if ((ret = sshkey_sign(ca, &sig_blob, &sig_len, sshbuf_ptr(cert),
-	    sshbuf_len(cert), alg, 0)) != 0)
+	if ((ret = signer(ca, &sig_blob, &sig_len, sshbuf_ptr(cert),
+	    sshbuf_len(cert), alg, 0, signer_ctx)) != 0)
 		goto out;
 
 	/* Append signature and we are done */
@@ -2311,6 +2311,22 @@ sshkey_certify(struct sshkey *k, struct sshkey *ca, const char *alg)
 	free(ca_blob);
 	sshbuf_free(principals);
 	return ret;
+}
+
+static int
+default_key_sign(const struct sshkey *key, u_char **sigp, size_t *lenp,
+    const u_char *data, size_t datalen,
+    const char *alg, u_int compat, void *ctx)
+{
+	if (ctx != NULL)
+		return SSH_ERR_INVALID_ARGUMENT;
+	return sshkey_sign(key, sigp, lenp, data, datalen, alg, compat);
+}
+
+int
+sshkey_certify(struct sshkey *k, struct sshkey *ca, const char *alg)
+{
+	return sshkey_certify_custom(k, ca, alg, default_key_sign, NULL);
 }
 
 int
@@ -2600,7 +2616,7 @@ sshkey_private_deserialize(struct sshbuf *buf, struct sshkey **kp)
 		    (r = sshbuf_get_bignum2(buf, k->rsa->iqmp)) != 0 ||
 		    (r = sshbuf_get_bignum2(buf, k->rsa->p)) != 0 ||
 		    (r = sshbuf_get_bignum2(buf, k->rsa->q)) != 0 ||
-		    (r = rsa_generate_additional_parameters(k->rsa)) != 0)
+		    (r = ssh_rsa_generate_additional_parameters(k)) != 0)
 			goto out;
 		if (BN_num_bits(k->rsa->n) < SSH_RSA_MINIMUM_MODULUS_SIZE) {
 			r = SSH_ERR_KEY_LENGTH;
@@ -2614,7 +2630,7 @@ sshkey_private_deserialize(struct sshbuf *buf, struct sshkey **kp)
 		    (r = sshbuf_get_bignum2(buf, k->rsa->iqmp)) != 0 ||
 		    (r = sshbuf_get_bignum2(buf, k->rsa->p)) != 0 ||
 		    (r = sshbuf_get_bignum2(buf, k->rsa->q)) != 0 ||
-		    (r = rsa_generate_additional_parameters(k->rsa)) != 0)
+		    (r = ssh_rsa_generate_additional_parameters(k)) != 0)
 			goto out;
 		if (BN_num_bits(k->rsa->n) < SSH_RSA_MINIMUM_MODULUS_SIZE) {
 			r = SSH_ERR_KEY_LENGTH;
@@ -3314,6 +3330,64 @@ sshkey_private_to_fileblob(struct sshkey *key, struct sshbuf *blob,
 
 #ifdef WITH_OPENSSL
 static int
+translate_libcrypto_error(unsigned long pem_err)
+{
+	int pem_reason = ERR_GET_REASON(pem_err);
+
+	switch (ERR_GET_LIB(pem_err)) {
+	case ERR_LIB_PEM:
+		switch (pem_reason) {
+		case PEM_R_BAD_PASSWORD_READ:
+		case PEM_R_PROBLEMS_GETTING_PASSWORD:
+		case PEM_R_BAD_DECRYPT:
+			return SSH_ERR_KEY_WRONG_PASSPHRASE;
+		default:
+			return SSH_ERR_INVALID_FORMAT;
+		}
+	case ERR_LIB_EVP:
+		switch (pem_reason) {
+		case EVP_R_BAD_DECRYPT:
+			return SSH_ERR_KEY_WRONG_PASSPHRASE;
+		case EVP_R_BN_DECODE_ERROR:
+		case EVP_R_DECODE_ERROR:
+#ifdef EVP_R_PRIVATE_KEY_DECODE_ERROR
+		case EVP_R_PRIVATE_KEY_DECODE_ERROR:
+#endif
+			return SSH_ERR_INVALID_FORMAT;
+		default:
+			return SSH_ERR_LIBCRYPTO_ERROR;
+		}
+	case ERR_LIB_ASN1:
+		return SSH_ERR_INVALID_FORMAT;
+	}
+	return SSH_ERR_LIBCRYPTO_ERROR;
+}
+
+static void
+clear_libcrypto_errors(void)
+{
+	while (ERR_get_error() != 0)
+		;
+}
+
+/*
+ * Translate OpenSSL error codes to determine whether
+ * passphrase is required/incorrect.
+ */
+static int
+convert_libcrypto_error(void)
+{
+	/*
+	 * Some password errors are reported at the beginning
+	 * of the error queue.
+	 */
+	if (translate_libcrypto_error(ERR_peek_error()) ==
+	    SSH_ERR_KEY_WRONG_PASSPHRASE)
+		return SSH_ERR_KEY_WRONG_PASSPHRASE;
+	return translate_libcrypto_error(ERR_peek_last_error());
+}
+
+static int
 sshkey_parse_private_pem_fileblob(struct sshbuf *blob, int type,
     const char *passphrase, struct sshkey **keyp)
 {
@@ -3333,46 +3407,10 @@ sshkey_parse_private_pem_fileblob(struct sshbuf *blob, int type,
 		goto out;
 	}
 
+	clear_libcrypto_errors();
 	if ((pk = PEM_read_bio_PrivateKey(bio, NULL, NULL,
 	    (char *)passphrase)) == NULL) {
-		unsigned long pem_err = ERR_peek_last_error();
-		int pem_reason = ERR_GET_REASON(pem_err);
-
-		/*
-		 * Translate OpenSSL error codes to determine whether
-		 * passphrase is required/incorrect.
-		 */
-		switch (ERR_GET_LIB(pem_err)) {
-		case ERR_LIB_PEM:
-			switch (pem_reason) {
-			case PEM_R_BAD_PASSWORD_READ:
-			case PEM_R_PROBLEMS_GETTING_PASSWORD:
-			case PEM_R_BAD_DECRYPT:
-				r = SSH_ERR_KEY_WRONG_PASSPHRASE;
-				goto out;
-			default:
-				r = SSH_ERR_INVALID_FORMAT;
-				goto out;
-			}
-		case ERR_LIB_EVP:
-			switch (pem_reason) {
-			case EVP_R_BAD_DECRYPT:
-				r = SSH_ERR_KEY_WRONG_PASSPHRASE;
-				goto out;
-			case EVP_R_BN_DECODE_ERROR:
-			case EVP_R_DECODE_ERROR:
-			case EVP_R_PRIVATE_KEY_DECODE_ERROR:
-				r = SSH_ERR_INVALID_FORMAT;
-				goto out;
-			default:
-				r = SSH_ERR_LIBCRYPTO_ERROR;
-				goto out;
-			}
-		case ERR_LIB_ASN1:
-			r = SSH_ERR_INVALID_FORMAT;
-			goto out;
-		}
-		r = SSH_ERR_LIBCRYPTO_ERROR;
+		r = convert_libcrypto_error();
 		goto out;
 	}
 	if (pk->type == EVP_PKEY_RSA &&

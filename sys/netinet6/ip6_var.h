@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_var.h,v 1.75 2017/05/31 05:59:09 mpi Exp $	*/
+/*	$OpenBSD: ip6_var.h,v 1.77 2017/07/05 11:34:10 bluhm Exp $	*/
 /*	$KAME: ip6_var.h,v 1.33 2000/06/11 14:59:20 jinmei Exp $	*/
 
 /*
@@ -303,7 +303,7 @@ int	icmp6_ctloutput(int, struct socket *, int, int, struct mbuf *);
 
 void	ip6_init(void);
 void	ip6intr(void);
-void	ip6_deliver(struct mbuf **, int *, int, int);
+int	ip6_input_if(struct mbuf **, int *, int, int, struct ifnet *);
 void	ip6_freepcbopts(struct ip6_pktopts *);
 void	ip6_freemoptions(struct ip6_moptions *);
 int	ip6_unknown_opt(u_int8_t *, struct mbuf *, int);

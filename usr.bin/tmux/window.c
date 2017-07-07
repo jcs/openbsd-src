@@ -1,4 +1,4 @@
-/* $OpenBSD: window.c,v 1.197 2017/05/31 10:15:51 nicm Exp $ */
+/* $OpenBSD: window.c,v 1.201 2017/07/03 12:38:50 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -29,6 +29,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <util.h>
+#include <vis.h>
 
 #include "tmux.h"
 
@@ -387,6 +388,23 @@ window_destroy(struct window *w)
 	free(w);
 }
 
+int
+window_pane_destroy_ready(struct window_pane *wp)
+{
+	int	n;
+
+	if (wp->pipe_fd != -1) {
+		if (EVBUFFER_LENGTH(wp->pipe_event->output) != 0)
+			return (0);
+		if (ioctl(wp->fd, FIONREAD, &n) != -1 && n > 0)
+			return (0);
+	}
+
+	if (~wp->flags & PANE_EXITED)
+		return (0);
+	return (1);
+}
+
 void
 window_add_ref(struct window *w, const char *from)
 {
@@ -408,7 +426,7 @@ void
 window_set_name(struct window *w, const char *new_name)
 {
 	free(w->name);
-	w->name = xstrdup(new_name);
+	utf8_stravis(&w->name, new_name, VIS_OCTAL|VIS_CSTYLE|VIS_TAB|VIS_NL);
 	notify_window("window-renamed", w);
 }
 
@@ -999,7 +1017,11 @@ window_pane_error_callback(__unused struct bufferevent *bufev,
 {
 	struct window_pane *wp = data;
 
-	server_destroy_pane(wp, 1);
+	log_debug("%%%u error", wp->id);
+	wp->flags |= PANE_EXITED;
+
+	if (window_pane_destroy_ready(wp))
+		server_destroy_pane(wp, 1);
 }
 
 void
@@ -1225,7 +1247,7 @@ window_pane_key(struct window_pane *wp, struct client *c, struct session *s,
 	if (wp->mode != NULL) {
 		wp->modelast = time(NULL);
 		if (wp->mode->key != NULL)
-			wp->mode->key(wp, c, s, key, m);
+			wp->mode->key(wp, c, s, (key & ~KEYC_XTERM), m);
 		return;
 	}
 

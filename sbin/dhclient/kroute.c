@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.91 2017/04/12 12:22:25 krw Exp $	*/
+/*	$OpenBSD: kroute.c,v 1.102 2017/07/02 09:11:13 krw Exp $	*/
 
 /*
  * Copyright 2012 Kenneth R Westerback <krw@openbsd.org>
@@ -70,14 +70,14 @@ flush_unpriv_ibuf(const char *who)
 	}
 }
 
-struct in_addr active_addr;
 struct in_addr deleting;
 struct in_addr adding;
 
 int	create_route_label(struct sockaddr_rtlabel *);
 int	check_route_label(struct sockaddr_rtlabel *);
 void	populate_rti_info(struct sockaddr **, struct rt_msghdr *);
-void	delete_route(struct interface_info *, int, struct rt_msghdr *);
+void	delete_route(int, struct rt_msghdr *);
+
 
 #define	ROUTE_LABEL_NONE		1
 #define	ROUTE_LABEL_NOT_DHCLIENT	2
@@ -130,13 +130,9 @@ check_route_label(struct sockaddr_rtlabel *label)
 void
 flush_routes(void)
 {
-	struct imsg_flush_routes imsg;
 	int			 rslt;
 
-	imsg.zapzombies = 1;
-
-	rslt = imsg_compose(unpriv_ibuf, IMSG_FLUSH_ROUTES, 0, 0, -1,
-	    &imsg, sizeof(imsg));
+	rslt = imsg_compose(unpriv_ibuf, IMSG_FLUSH_ROUTES, 0, 0, -1, NULL, 0);
 	if (rslt == -1)
 		log_warn("flush_routes: imsg_compose");
 
@@ -144,17 +140,16 @@ flush_routes(void)
 }
 
 void
-priv_flush_routes(struct interface_info *ifi, struct imsg_flush_routes *imsg)
+priv_flush_routes(char *name, int routefd, int rdomain)
 {
-	char ifname[IF_NAMESIZE];
-	struct sockaddr *rti_info[RTAX_MAX];
-	int mib[7];
-	size_t needed;
-	char *lim, *buf = NULL, *bufp, *next, *errmsg = NULL;
-	struct rt_msghdr *rtm;
-	struct sockaddr_in *sa_in;
-	struct sockaddr_rtlabel *sa_rl;
-	int s;
+	int			 mib[7];
+	char			 ifname[IF_NAMESIZE];
+	struct sockaddr		*rti_info[RTAX_MAX];
+	char			*lim, *buf = NULL, *bufp, *next, *errmsg = NULL;
+	struct rt_msghdr	*rtm;
+	struct sockaddr_in	*sa_in;
+	struct sockaddr_rtlabel	*sa_rl;
+	size_t			 needed;
 
 	mib[0] = CTL_NET;
 	mib[1] = PF_ROUTE;
@@ -162,7 +157,7 @@ priv_flush_routes(struct interface_info *ifi, struct imsg_flush_routes *imsg)
 	mib[3] = AF_INET;
 	mib[4] = NET_RT_FLAGS;
 	mib[5] = RTF_GATEWAY;
-	mib[6] = ifi->rdomain;
+	mib[6] = rdomain;
 
 	while (1) {
 		if (sysctl(mib, 7, NULL, &needed, NULL, 0) == -1) {
@@ -194,9 +189,6 @@ priv_flush_routes(struct interface_info *ifi, struct imsg_flush_routes *imsg)
 		return;
 	}
 
-	if ((s = socket(AF_ROUTE, SOCK_RAW, 0)) == -1)
-		fatal("opening socket to flush routes");
-
 	lim = buf + needed;
 	for (next = buf; next < lim; next += rtm->rtm_msglen) {
 		rtm = (struct rt_msghdr *)next;
@@ -211,11 +203,10 @@ priv_flush_routes(struct interface_info *ifi, struct imsg_flush_routes *imsg)
 		switch (check_route_label(sa_rl)) {
 		case ROUTE_LABEL_DHCLIENT_OURS:
 			/* Always delete routes we labeled. */
-			delete_route(ifi, s, rtm);
+			delete_route(routefd, rtm);
 			break;
 		case ROUTE_LABEL_DHCLIENT_DEAD:
-			if (imsg->zapzombies)
-				delete_route(ifi, s, rtm);
+			delete_route(routefd, rtm);
 			break;
 		case ROUTE_LABEL_DHCLIENT_LIVE:
 		case ROUTE_LABEL_DHCLIENT_UNKNOWN:
@@ -227,16 +218,15 @@ priv_flush_routes(struct interface_info *ifi, struct imsg_flush_routes *imsg)
 			if (if_indextoname(rtm->rtm_index, ifname) &&
 			    sa_in &&
 			    sa_in->sin_addr.s_addr == INADDR_ANY &&
-			    rtm->rtm_tableid == ifi->rdomain &&
-			    strcmp(ifi->name, ifname) == 0)
-				delete_route(ifi, s, rtm);
+			    rtm->rtm_tableid == rdomain &&
+			    strcmp(name, ifname) == 0)
+				delete_route(routefd, rtm);
 			break;
 		default:
 			break;
 		}
 	}
 
-	close(s);
 	free(buf);
 }
 
@@ -244,13 +234,12 @@ priv_flush_routes(struct interface_info *ifi, struct imsg_flush_routes *imsg)
  * delete_route deletes a single route from the routing table.
  */
 void
-delete_route(struct interface_info *ifi, int s, struct rt_msghdr *rtm)
+delete_route(int s, struct rt_msghdr *rtm)
 {
 	static int seqno;
 	ssize_t rlen;
 
 	rtm->rtm_type = RTM_DELETE;
-	rtm->rtm_tableid = ifi->rdomain;
 	rtm->rtm_seq = seqno++;
 
 	rlen = write(s, (char *)rtm, rtm->rtm_msglen);
@@ -436,7 +425,7 @@ add_route(struct in_addr dest, struct in_addr netmask,
 }
 
 void
-priv_add_route(struct interface_info *ifi, struct imsg_add_route *imsg)
+priv_add_route(int rdomain, struct imsg_add_route *imsg)
 {
 	char destbuf[INET_ADDRSTRLEN], gatewaybuf[INET_ADDRSTRLEN];
 	char maskbuf[INET_ADDRSTRLEN], ifabuf[INET_ADDRSTRLEN];
@@ -460,7 +449,7 @@ priv_add_route(struct interface_info *ifi, struct imsg_add_route *imsg)
 
 	rtm.rtm_version = RTM_VERSION;
 	rtm.rtm_type = RTM_ADD;
-	rtm.rtm_tableid = ifi->rdomain;
+	rtm.rtm_tableid = rdomain;
 	rtm.rtm_priority = RTP_NONE;
 	rtm.rtm_msglen = sizeof(rtm);
 	rtm.rtm_addrs = imsg->addrs;
@@ -553,7 +542,7 @@ priv_add_route(struct interface_info *ifi, struct imsg_add_route *imsg)
  * interface.
  */
 void
-delete_addresses(struct interface_info *ifi)
+delete_addresses(char *name)
 {
 	struct in_addr addr;
 	struct ifaddrs *ifap, *ifa;
@@ -566,7 +555,7 @@ delete_addresses(struct interface_info *ifi)
 		    (ifa->ifa_flags & IFF_POINTOPOINT) ||
 		    (!(ifa->ifa_flags & IFF_UP)) ||
 		    (ifa->ifa_addr->sa_family != AF_INET) ||
-		    (strcmp(ifi->name, ifa->ifa_name) != 0))
+		    (strcmp(name, ifa->ifa_name) != 0))
 			continue;
 
 		memcpy(&addr, &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr,
@@ -603,22 +592,17 @@ delete_address(struct in_addr addr)
 }
 
 void
-priv_delete_address(struct interface_info *ifi,
-    struct imsg_delete_address *imsg)
+priv_delete_address(char *name, int ioctlfd, struct imsg_delete_address *imsg)
 {
-	struct ifaliasreq ifaliasreq;
-	struct sockaddr_in *in;
-	int s;
+	struct ifaliasreq	 ifaliasreq;
+	struct sockaddr_in	*in;
 
 	/*
 	 * Delete specified address on specified interface.
 	 */
 
-	if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-		fatal("socket open failed");
-
 	memset(&ifaliasreq, 0, sizeof(ifaliasreq));
-	strncpy(ifaliasreq.ifra_name, ifi->name, sizeof(ifaliasreq.ifra_name));
+	strncpy(ifaliasreq.ifra_name, name, sizeof(ifaliasreq.ifra_name));
 
 	in = (struct sockaddr_in *)&ifaliasreq.ifra_addr;
 	in->sin_family = AF_INET;
@@ -626,13 +610,11 @@ priv_delete_address(struct interface_info *ifi,
 	in->sin_addr.s_addr = imsg->addr.s_addr;
 
 	/* SIOCDIFADDR will result in a RTM_DELADDR message we must catch! */
-	if (ioctl(s, SIOCDIFADDR, &ifaliasreq) == -1) {
+	if (ioctl(ioctlfd, SIOCDIFADDR, &ifaliasreq) == -1) {
 		if (errno != EADDRNOTAVAIL)
 			log_warn("SIOCDIFADDR failed (%s)",
 			    inet_ntoa(imsg->addr));
 	}
-
-	close(s);
 }
 
 /*
@@ -657,22 +639,18 @@ set_interface_mtu(int mtu)
 }
 
 void
-priv_set_interface_mtu(struct interface_info *ifi,
+priv_set_interface_mtu(char *name, int ioctlfd,
     struct imsg_set_interface_mtu *imsg)
 {
 	struct ifreq ifr;
-	int s;
 
 	memset(&ifr, 0, sizeof(ifr));
 
-	strlcpy(ifr.ifr_name, ifi->name, sizeof(ifr.ifr_name));
+	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 	ifr.ifr_mtu = imsg->mtu;
 
-	if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-		fatal("socket open failed");
-	if (ioctl(s, SIOCSIFMTU, &ifr) == -1)
+	if (ioctl(ioctlfd, SIOCSIFMTU, &ifr) == -1)
 		log_warn("SIOCSIFMTU failed (%d)", imsg->mtu);
-	close(s);
 }
 
 /*
@@ -701,28 +679,13 @@ add_address(struct in_addr addr, struct in_addr mask)
 }
 
 void
-priv_add_address(struct interface_info *ifi, struct imsg_add_address *imsg)
+priv_add_address(char *name, int ioctlfd, struct imsg_add_address *imsg)
 {
-	struct ifaliasreq ifaliasreq;
-	struct sockaddr_in *in;
-	int s;
-
-	if (imsg->addr.s_addr == INADDR_ANY) {
-		/* Notification that the active_addr has been deleted. */
-		active_addr.s_addr = INADDR_ANY;
-		quit = INTERNALSIG;
-		return;
-	}
-
-	/*
-	 * Add specified address on specified interface.
-	 */
-
-	if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-		fatal("socket open failed");
+	struct ifaliasreq	 ifaliasreq;
+	struct sockaddr_in	*in;
 
 	memset(&ifaliasreq, 0, sizeof(ifaliasreq));
-	strncpy(ifaliasreq.ifra_name, ifi->name, sizeof(ifaliasreq.ifra_name));
+	strncpy(ifaliasreq.ifra_name, name, sizeof(ifaliasreq.ifra_name));
 
 	/* The actual address in ifra_addr. */
 	in = (struct sockaddr_in *)&ifaliasreq.ifra_addr;
@@ -738,31 +701,8 @@ priv_add_address(struct interface_info *ifi, struct imsg_add_address *imsg)
 
 	/* No need to set broadcast address. Kernel can figure it out. */
 
-	if (ioctl(s, SIOCAIFADDR, &ifaliasreq) == -1)
+	if (ioctl(ioctlfd, SIOCAIFADDR, &ifaliasreq) == -1)
 		log_warn("SIOCAIFADDR failed (%s)", inet_ntoa(imsg->addr));
-
-	close(s);
-
-	active_addr = imsg->addr;
-}
-
-/*
- * priv_cleanup removes dhclient installed routes and address.
- */
-void
-priv_cleanup(struct interface_info *ifi, struct imsg_hup *imsg)
-{
-	struct imsg_flush_routes fimsg;
-	struct imsg_delete_address dimsg;
-
-	fimsg.zapzombies = 0;	/* Only zapzombies when binding a lease. */
-	priv_flush_routes(ifi, &fimsg);
-
-	if (imsg->addr.s_addr == INADDR_ANY)
-		return;
-
-	dimsg.addr = imsg->addr;
-	priv_delete_address(ifi, &dimsg);
 }
 
 /*
@@ -782,39 +722,26 @@ write_resolv_conf(u_int8_t *contents, size_t sz)
 }
 
 void
-priv_write_resolv_conf(struct interface_info *ifi, struct imsg *imsg)
+priv_write_resolv_conf(u_int8_t *contents, size_t sz)
 {
-	u_int8_t *contents;
+	const char *path = "/etc/resolv.conf";
 	ssize_t n;
-	size_t sz;
 	int fd;
 
-
-	if (imsg->hdr.len < IMSG_HEADER_SIZE) {
-		log_warnx("short IMSG_WRITE_RESOLV_CONF");
-		return;
-	}
-
-	if (!resolv_conf_priority(ifi))
-		return;
-
-	contents = imsg->data;
-	sz = imsg->hdr.len - IMSG_HEADER_SIZE;
-
-	fd = open(_PATH_RESOLV_CONF, O_WRONLY | O_CREAT | O_TRUNC,
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC,
 	    S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
 	if (fd == -1) {
-		log_warn("Couldn't open '%s'", _PATH_RESOLV_CONF);
+		log_warn("Couldn't open '%s'", path);
 		return;
 	}
 
 	n = write(fd, contents, sz);
 	if (n == -1)
-		log_warn("Couldn't write contents to '%s'", _PATH_RESOLV_CONF);
+		log_warn("Couldn't write contents to '%s'", path);
 	else if ((size_t)n < sz)
 		log_warnx("Short contents write to '%s' (%zd vs %zu)",
-		    _PATH_RESOLV_CONF, n, sz);
+		    path, n, sz);
 
 	close(fd);
 }
@@ -824,7 +751,7 @@ priv_write_resolv_conf(struct interface_info *ifi, struct imsg *imsg)
  * suppy the contents of the resolv.conf file.
  */
 int
-resolv_conf_priority(struct interface_info *ifi)
+resolv_conf_priority(int rdomain, int routefd)
 {
 	struct iovec iov[3];
 	struct {
@@ -836,15 +763,9 @@ resolv_conf_priority(struct interface_info *ifi)
 	struct sockaddr_rtlabel *sa_rl;
 	pid_t pid;
 	ssize_t len;
-	int s, seq, rslt, iovcnt = 0;
+	int seq, rslt, iovcnt = 0;
 
 	rslt = 0;
-
-	s = socket(PF_ROUTE, SOCK_RAW, AF_INET);
-	if (s == -1) {
-		log_warn("default route socket");
-		return (0);
-	}
 
 	/* Build RTM header */
 
@@ -855,7 +776,7 @@ resolv_conf_priority(struct interface_info *ifi)
 	m_rtmsg.m_rtm.rtm_msglen = sizeof(m_rtmsg.m_rtm);
 	m_rtmsg.m_rtm.rtm_flags = RTF_STATIC | RTF_GATEWAY | RTF_UP;
 	m_rtmsg.m_rtm.rtm_seq = seq = arc4random();
-	m_rtmsg.m_rtm.rtm_tableid = ifi->rdomain;
+	m_rtmsg.m_rtm.rtm_tableid = rdomain;
 
 	iov[iovcnt].iov_base = &m_rtmsg.m_rtm;
 	iov[iovcnt++].iov_len = sizeof(m_rtmsg.m_rtm);
@@ -875,7 +796,7 @@ resolv_conf_priority(struct interface_info *ifi)
 
 	m_rtmsg.m_rtm.rtm_msglen += 2 * sizeof(sin);
 
-	if (writev(s, iov, iovcnt) == -1) {
+	if (writev(routefd, iov, iovcnt) == -1) {
 		if (errno != ESRCH)
 			log_warn("RTM_GET of default route");
 		goto done;
@@ -884,7 +805,7 @@ resolv_conf_priority(struct interface_info *ifi)
 	pid = getpid();
 
 	do {
-		len = read(s, &m_rtmsg, sizeof(m_rtmsg));
+		len = read(routefd, &m_rtmsg, sizeof(m_rtmsg));
 		if (len == -1) {
 			log_warn("get default route read");
 			break;
@@ -913,7 +834,6 @@ resolv_conf_priority(struct interface_info *ifi)
 		rslt = 1;
 
 done:
-	close(s);
 	return (rslt);
 }
 
@@ -923,7 +843,7 @@ done:
  * create /etc/resolv.conf
  */
 char *
-resolv_conf_contents(struct interface_info *ifi,
+resolv_conf_contents(char *name,
     struct option_data *domainname, struct option_data *nameservers,
     struct option_data *domainsearch)
 {
@@ -981,7 +901,7 @@ resolv_conf_contents(struct interface_info *ifi,
 		return (NULL);
 	}
 
-	rslt = asprintf(&courtesy, "# Generated by %s dhclient\n", ifi->name);
+	rslt = asprintf(&courtesy, "# Generated by %s dhclient\n", name);
 	if (rslt == -1)
 		fatalx("no memory for courtesy line");
 	len += strlen(courtesy);

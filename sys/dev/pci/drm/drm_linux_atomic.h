@@ -1,4 +1,4 @@
-/* $OpenBSD: drm_atomic.h,v 1.14 2016/04/05 08:17:34 kettenis Exp $ */
+/* $OpenBSD: drm_linux_atomic.h,v 1.1 2017/07/01 16:14:10 kettenis Exp $ */
 /**
  * \file drm_atomic.h
  * Atomic operations used in the DRM which may or may not be provided by the OS.

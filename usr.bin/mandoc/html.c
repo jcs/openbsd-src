@@ -1,4 +1,4 @@
-/*	$OpenBSD: html.c,v 1.82 2017/05/14 12:26:59 schwarze Exp $ */
+/*	$OpenBSD: html.c,v 1.85 2017/06/23 02:31:39 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2011-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -85,6 +85,7 @@ static	const struct htmldata htmltags[TAG_MAX] = {
 	{"math",	HTML_NLALL | HTML_INDENT},
 	{"mrow",	0},
 	{"mi",		0},
+	{"mn",		0},
 	{"mo",		0},
 	{"msup",	0},
 	{"msub",	0},
@@ -343,16 +344,18 @@ static int
 print_encode(struct html *h, const char *p, const char *pend, int norecurse)
 {
 	char		 numbuf[16];
-	size_t		 sz;
-	int		 c, len, nospace;
+	struct tag	*t;
 	const char	*seq;
+	size_t		 sz;
+	int		 c, len, breakline, nospace;
 	enum mandoc_esc	 esc;
-	static const char rejs[9] = { '\\', '<', '>', '&', '"',
+	static const char rejs[10] = { ' ', '\\', '<', '>', '&', '"',
 		ASCII_NBRSP, ASCII_HYPH, ASCII_BREAK, '\0' };
 
 	if (pend == NULL)
 		pend = strchr(p, '\0');
 
+	breakline = 0;
 	nospace = 0;
 
 	while (p < pend) {
@@ -363,13 +366,27 @@ print_encode(struct html *h, const char *p, const char *pend, int norecurse)
 		}
 
 		for (sz = strcspn(p, rejs); sz-- && p < pend; p++)
-			if (*p == ' ')
-				print_endword(h);
-			else
-				print_byte(h, *p);
+			print_byte(h, *p);
+
+		if (breakline &&
+		    (p >= pend || *p == ' ' || *p == ASCII_NBRSP)) {
+			t = print_otag(h, TAG_DIV, "");
+			print_text(h, "\\~");
+			print_tagq(h, t);
+			breakline = 0;
+			while (p < pend && (*p == ' ' || *p == ASCII_NBRSP))
+				p++;
+			continue;
+		}
 
 		if (p >= pend)
 			break;
+
+		if (*p == ' ') {
+			print_endword(h);
+			p++;
+			continue;
+		}
 
 		if (print_escape(h, *p++))
 			continue;
@@ -415,6 +432,9 @@ print_encode(struct html *h, const char *p, const char *pend, int norecurse)
 			if (c <= 0)
 				continue;
 			break;
+		case ESCAPE_BREAK:
+			breakline = 1;
+			continue;
 		case ESCAPE_NOSPACE:
 			if ('\0' == *p)
 				nospace = 1;
@@ -948,7 +968,10 @@ print_word(struct html *h, const char *cp)
 static void
 a2width(const char *p, struct roffsu *su)
 {
-	if (a2roffsu(p, su, SCALE_MAX) < 2) {
+	const char	*end;
+
+	end = a2roffsu(p, su, SCALE_MAX);
+	if (end == NULL || *end != '\0') {
 		su->unit = SCALE_EN;
 		su->scale = html_strlen(p);
 	} else if (su->scale < 0.0)

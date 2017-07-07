@@ -1,4 +1,4 @@
-/* $OpenBSD: server.c,v 1.170 2017/04/22 06:13:30 nicm Exp $ */
+/* $OpenBSD: server.c,v 1.172 2017/07/03 08:16:03 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -151,7 +151,7 @@ server_start(struct event_base *base, int lockfd, char *lockfile)
 	}
 	close(pair[0]);
 
-	if (log_get_level() > 3)
+	if (log_get_level() > 1)
 		tty_create_log();
 	if (pledge("stdio rpath wpath cpath fattr unix getpw recvfd proc exec "
 	    "tty ps", NULL) != 0)
@@ -365,6 +365,9 @@ server_signal(int sig)
 		}
 		server_add_accept(0);
 		break;
+	case SIGUSR2:
+		proc_toggle_log(server_proc);
+		break;
 	}
 }
 
@@ -403,7 +406,12 @@ server_child_exited(pid_t pid, int status)
 		TAILQ_FOREACH(wp, &w->panes, entry) {
 			if (wp->pid == pid) {
 				wp->status = status;
-				server_destroy_pane(wp, 1);
+
+				log_debug("%%%u exited", wp->id);
+				wp->flags |= PANE_EXITED;
+
+				if (window_pane_destroy_ready(wp))
+					server_destroy_pane(wp, 1);
 				break;
 			}
 		}

@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtsock.c,v 1.237 2017/04/19 15:21:54 bluhm Exp $	*/
+/*	$OpenBSD: rtsock.c,v 1.240 2017/07/03 19:23:47 claudio Exp $	*/
 /*	$NetBSD: rtsock.c,v 1.18 1996/03/29 00:32:10 cgd Exp $	*/
 
 /*
@@ -98,6 +98,7 @@ struct walkarg {
 	caddr_t	w_where, w_tmem;
 };
 
+void	route_prinit(void);
 int	route_output(struct mbuf *, struct socket *, struct sockaddr *,
 	    struct mbuf *);
 int	route_ctloutput(int, struct socket *, int, int, struct mbuf *);
@@ -126,19 +127,21 @@ int		 sysctl_ifnames(struct walkarg *);
 int		 sysctl_rtable_rtstat(void *, size_t *, void *);
 
 struct routecb {
-	struct rawcb	rcb;
-	struct timeout	timeout;
-	unsigned int	msgfilter;
-	unsigned int	flags;
-	u_int		rtableid;
+	struct rawcb		rcb;
+	LIST_ENTRY(routecb)	rcb_list;
+	struct timeout		timeout;
+	unsigned int		msgfilter;
+	unsigned int		flags;
+	u_int			rtableid;
 };
 #define	sotoroutecb(so)	((struct routecb *)(so)->so_pcb)
 
 struct route_cb {
-	int		ip_count;
-	int		ip6_count;
-	int		mpls_count;
-	int		any_count;
+	LIST_HEAD(, routecb)	rcb;
+	int			ip_count;
+	int			ip6_count;
+	int			mpls_count;
+	int			any_count;
 };
 
 struct route_cb route_cb;
@@ -154,45 +157,53 @@ struct route_cb route_cb;
 
 #define ROUTE_DESYNC_RESEND_TIMEOUT	(hz / 5)	/* In hz */
 
+void
+route_prinit(void)
+{
+	LIST_INIT(&route_cb.rcb);
+}
+
+
 int
 route_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
     struct mbuf *control, struct proc *p)
 {
-	struct rawcb	*rp;
 	struct routecb	*rop;
 	int		 af;
 	int		 error = 0;
 
-	rp = sotorawcb(so);
+	rop = sotoroutecb(so);
+	if (rop == NULL) {
+		m_freem(m);
+		return (EINVAL);
+	}
 
 	switch (req) {
 	case PRU_RCVD:
-		rop = (struct routecb *)rp;
-
 		/*
 		 * If we are in a FLUSH state, check if the buffer is
 		 * empty so that we can clear the flag.
 		 */
 		if (((rop->flags & ROUTECB_FLAG_FLUSH) != 0) &&
-		    ((sbspace(&rp->rcb_socket->so_rcv) ==
-		    rp->rcb_socket->so_rcv.sb_hiwat)))
+		    ((sbspace(rop->rcb.rcb_socket,
+		    &rop->rcb.rcb_socket->so_rcv) ==
+		    rop->rcb.rcb_socket->so_rcv.sb_hiwat)))
 			rop->flags &= ~ROUTECB_FLAG_FLUSH;
 		break;
 
 	case PRU_DETACH:
-		if (rp) {
-			timeout_del(&((struct routecb *)rp)->timeout);
-			af = rp->rcb_proto.sp_protocol;
-			if (af == AF_INET)
-				route_cb.ip_count--;
-			else if (af == AF_INET6)
-				route_cb.ip6_count--;
+		timeout_del(&rop->timeout);
+		af = rop->rcb.rcb_proto.sp_protocol;
+		if (af == AF_INET)
+			route_cb.ip_count--;
+		else if (af == AF_INET6)
+			route_cb.ip6_count--;
 #ifdef MPLS
-			else if (af == AF_MPLS)
-				route_cb.mpls_count--;
+		else if (af == AF_MPLS)
+			route_cb.mpls_count--;
 #endif
-			route_cb.any_count--;
-		}
+		route_cb.any_count--;
+		LIST_REMOVE(rop, rcb_list);
 		/* FALLTHROUGH */
 	default:
 		error = raw_usrreq(so, req, m, nam, control, p);
@@ -206,8 +217,7 @@ route_attach(struct socket *so, int proto)
 {
 	struct rawcb    *rp;
 	struct routecb	*rop;
-	int		 af;
-	int		 error = 0;
+	int		 error;
 
 	/*
 	 * use the rawcb but allocate a routecb, this
@@ -229,21 +239,28 @@ route_attach(struct socket *so, int proto)
 		return (error);
 	}
 	rop->rtableid = curproc->p_p->ps_rtableid;
-	af = rp->rcb_proto.sp_protocol;
-	if (af == AF_INET)
+	switch (rp->rcb_proto.sp_protocol) {
+	case AF_INET:
 		route_cb.ip_count++;
-	else if (af == AF_INET6)
+		break;
+	case AF_INET6:
 		route_cb.ip6_count++;
+		break;
 #ifdef MPLS
-	else if (af == AF_MPLS)
+	case AF_MPLS:
 		route_cb.mpls_count++;
+		break;
 #endif
-	rp->rcb_faddr = &route_src;
-	route_cb.any_count++;
+	}
+
 	soisconnected(so);
 	so->so_options |= SO_USELOOPBACK;
 
-	return (error);
+	rp->rcb_faddr = &route_src;
+	route_cb.any_count++;
+	LIST_INSERT_HEAD(&route_cb.rcb, rop, rcb_list);
+
+	return (0);
 }
 
 int
@@ -325,7 +342,8 @@ route_senddesync(void *data)
 	 */
 	desync_mbuf = rtm_msg1(RTM_DESYNC, NULL);
 	if (desync_mbuf != NULL) {
-		if (sbappendaddr(&rp->rcb_socket->so_rcv, &route_src,
+		struct socket *so = rp->rcb_socket;
+		if (sbappendaddr(so, &so->so_rcv, &route_src,
 		    desync_mbuf, NULL) != 0) {
 			rop->flags &= ~ROUTECB_FLAG_DESYNC;
 			sorwakeup(rp->rcb_socket);
@@ -359,10 +377,11 @@ route_input(struct mbuf *m0, struct socket *so, sa_family_t sa_family)
 		return;
 	}
 
-	LIST_FOREACH(rp, &rawcb, rcb_list) {
-		if (rp->rcb_socket->so_state & SS_CANTRCVMORE)
+	LIST_FOREACH(rop, &route_cb.rcb, rcb_list) {
+		rp = &rop->rcb;
+		if (!(rp->rcb_socket->so_state & SS_ISCONNECTED))
 			continue;
-		if (rp->rcb_proto.sp_family != PF_ROUTE)
+		if (rp->rcb_socket->so_state & SS_CANTRCVMORE)
 			continue;
 		/* Check to see if we don't want our own messages. */
 		if (so == rp->rcb_socket && !(so->so_options & SO_USELOOPBACK))
@@ -377,23 +396,8 @@ route_input(struct mbuf *m0, struct socket *so, sa_family_t sa_family)
 		    sa_family != AF_UNSPEC &&
 		    rp->rcb_proto.sp_protocol != sa_family)
 			continue;
-		/*
-		 * We assume the lower level routines have
-		 * placed the address in a canonical format
-		 * suitable for a structure comparison.
-		 *
-		 * Note that if the lengths are not the same
-		 * the comparison will fail at the first byte.
-		 */
-#define	equal(a1, a2) \
-  (bcmp((caddr_t)(a1), (caddr_t)(a2), a1->sa_len) == 0)
-		if (rp->rcb_laddr && !equal(rp->rcb_laddr, sodst))
-			continue;
-		if (rp->rcb_faddr && !equal(rp->rcb_faddr, sosrc))
-			continue;
 
 		/* filter messages that the process does not want */
-		rop = (struct routecb *)rp;
 		rtm = mtod(m, struct rt_msghdr *);
 		/* but RTM_DESYNC can't be filtered */
 		if (rtm->rtm_type != RTM_DESYNC && rop->msgfilter != 0 &&
@@ -431,8 +435,8 @@ route_input(struct mbuf *m0, struct socket *so, sa_family_t sa_family)
 		if (last) {
 			struct mbuf *n;
 			if ((n = m_copym(m, 0, M_COPYALL, M_NOWAIT)) != NULL) {
-				if (sbspace(&last->so_rcv) < (2 * MSIZE) ||
-				    sbappendaddr(&last->so_rcv, sosrc,
+				if (sbspace(last, &last->so_rcv) < (2*MSIZE) ||
+				    sbappendaddr(last, &last->so_rcv, sosrc,
 				    n, (struct mbuf *)NULL) == 0) {
 					/*
 					 * Flag socket as desync'ed and
@@ -452,8 +456,8 @@ route_input(struct mbuf *m0, struct socket *so, sa_family_t sa_family)
 		last = rp->rcb_socket;
 	}
 	if (last) {
-		if (sbspace(&last->so_rcv) < (2 * MSIZE) ||
-		    sbappendaddr(&last->so_rcv, sosrc,
+		if (sbspace(last, &last->so_rcv) < (2 * MSIZE) ||
+		    sbappendaddr(last, &last->so_rcv, sosrc,
 		    m, (struct mbuf *)NULL) == 0) {
 			/* Flag socket as desync'ed and flush required */
 			sotoroutecb(last)->flags |=
@@ -772,20 +776,26 @@ rtm_output(struct rt_msghdr *rtm, struct rtentry **prt,
 		rt = rtable_lookup(tableid, info->rti_info[RTAX_DST],
 		    info->rti_info[RTAX_NETMASK], info->rti_info[RTAX_GATEWAY],
 		    prio);
+		if (rt == NULL) {
+			error = ESRCH;
+			break;
+		}
+
+		/* Detaching an interface requires the KERNEL_LOCK(). */
+		ifp = if_get(rt->rt_ifidx);
+		KASSERT(ifp != NULL);
 
 		/*
 		 * Invalidate the cache of automagically created and
 		 * referenced L2 entries to make sure that ``rt_gwroute''
 		 * pointer stays valid for other CPUs.
 		 */
-		if ((rt != NULL) && (ISSET(rt->rt_flags, RTF_CACHED))) {
-			ifp = if_get(rt->rt_ifidx);
-			KASSERT(ifp != NULL);
+		if ((ISSET(rt->rt_flags, RTF_CACHED))) {
 			ifp->if_rtrequest(ifp, RTM_INVALIDATE, rt);
-			if_put(ifp);
 			/* Reset the MTU of the gateway route. */
 			rtable_walk(tableid, rt_key(rt)->sa_family,
 			    route_cleargateway, rt);
+			if_put(ifp);
 			break;
 		}
 
@@ -793,8 +803,8 @@ rtm_output(struct rt_msghdr *rtm, struct rtentry **prt,
 		 * Make sure that local routes are only modified by the
 		 * kernel.
 		 */
-		if ((rt != NULL) &&
-		    ISSET(rt->rt_flags, RTF_LOCAL|RTF_BROADCAST)) {
+		if (ISSET(rt->rt_flags, RTF_LOCAL|RTF_BROADCAST)) {
+			if_put(ifp);
 			error = EINVAL;
 			break;
 		}
@@ -802,9 +812,8 @@ rtm_output(struct rt_msghdr *rtm, struct rtentry **prt,
 		rtfree(rt);
 		rt = NULL;
 
-		error = rtrequest(RTM_DELETE, info, prio, &rt, tableid);
-		if (error != 0)
-			break;
+		error = rtrequest_delete(info, prio, ifp, &rt, tableid);
+		if_put(ifp);
 		break;
 	case RTM_CHANGE:
 	case RTM_LOCK:
@@ -1781,7 +1790,7 @@ struct protosw routesw[] = {
   .pr_ctloutput	= route_ctloutput,
   .pr_usrreq	= route_usrreq,
   .pr_attach	= route_attach,
-  .pr_init	= raw_init,
+  .pr_init	= route_prinit,
   .pr_sysctl	= sysctl_rtable
 }
 };

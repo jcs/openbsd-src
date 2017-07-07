@@ -22,9 +22,8 @@
 #ifndef _DRM_DP_MST_HELPER_H_
 #define _DRM_DP_MST_HELPER_H_
 
-#ifdef __linux__
-#include <linux/types.h>
-#endif
+#include <dev/pci/drm/drm_linux.h>
+#include <dev/pci/drm/drm_linux_list.h>
 #include <dev/pci/drm/drm_dp_helper.h>
 
 struct drm_dp_mst_branch;

@@ -1,10 +1,10 @@
-#	$OpenBSD: Makefile,v 1.11 2016/09/14 06:26:02 natano Exp $
+#	$OpenBSD: Makefile,v 1.13 2017/07/06 11:17:58 bluhm Exp $
 
 .PATH: ${.CURDIR}/lib
 
 LIB=	expat
 SRCS=	xmlparse.c xmltok.c xmlrole.c
-CFLAGS+=-I${.CURDIR} -DHAVE_EXPAT_CONFIG_H
+CFLAGS+=-I${.CURDIR} -DHAVE_EXPAT_CONFIG_H -fvisibility=hidden
 
 PC_FILES=expat.pc
 CLEANFILES+=${PC_FILES}

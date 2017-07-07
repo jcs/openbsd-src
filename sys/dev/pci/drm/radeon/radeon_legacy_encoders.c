@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_legacy_encoders.c,v 1.4 2015/09/23 23:12:12 kettenis Exp $	*/
+/*	$OpenBSD: radeon_legacy_encoders.c,v 1.6 2017/07/05 20:30:13 kettenis Exp $	*/
 /*
  * Copyright 2007-8 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.
@@ -30,15 +30,10 @@
 #include "radeon.h"
 #include "atom.h"
 
-u8	 radeon_legacy_get_backlight_level(struct radeon_encoder *);
-void	 radeon_legacy_set_backlight_level(struct radeon_encoder *, u8);
-void	 radeon_legacy_backlight_init(struct radeon_encoder *);
-void	 radeon_add_legacy_encoder(struct drm_device *, uint32_t, uint32_t);
-
 static void radeon_legacy_encoder_disable(struct drm_encoder *encoder)
 {
 	struct radeon_encoder *radeon_encoder = to_radeon_encoder(encoder);
-	struct drm_encoder_helper_funcs *encoder_funcs;
+	const struct drm_encoder_helper_funcs *encoder_funcs;
 
 	encoder_funcs = encoder->helper_private;
 	encoder_funcs->dpms(encoder, DRM_MODE_DPMS_OFF);
@@ -392,8 +387,10 @@ void radeon_legacy_backlight_init(struct radeon_encoder *radeon_encoder,
 	memset(&props, 0, sizeof(props));
 	props.max_brightness = RADEON_MAX_BL_LEVEL;
 	props.type = BACKLIGHT_RAW;
+#ifdef __linux__
 	snprintf(bl_name, sizeof(bl_name),
 		 "radeon_bl%d", dev->primary->index);
+#endif
 	bd = backlight_device_register(bl_name, &drm_connector->kdev,
 				       pdata, &radeon_backlight_ops, &props);
 	if (IS_ERR(bd)) {

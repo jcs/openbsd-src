@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.40 2015/01/02 22:38:46 sebastia Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.42 2017/06/08 12:02:52 visa Exp $	*/
 /*
  * Copyright (c) 2009, 2010 Miodrag Vallat.
  *
@@ -143,6 +143,8 @@ cpu_configure(void)
 	if (config_rootfound("mainbus", "mainbus") == 0) {
 		panic("no mainbus found");
 	}
+
+	unmap_startup();
 
 	splinit();		/* Initialized, fire up interrupt system */
 	cold = 0;

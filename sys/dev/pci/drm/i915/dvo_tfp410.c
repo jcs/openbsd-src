@@ -1,4 +1,3 @@
-/*	$OpenBSD: dvo_tfp410.c,v 1.6 2016/02/24 21:06:13 jsg Exp $	*/
 /*
  * Copyright © 2007 Dave Mueller
  *
@@ -94,29 +93,36 @@ struct tfp410_priv {
 static bool tfp410_readb(struct intel_dvo_device *dvo, int addr, uint8_t *ch)
 {
 	struct tfp410_priv *tfp = dvo->dev_priv;
-	struct i2c_controller *adapter = dvo->i2c_bus;
+	struct i2c_adapter *adapter = dvo->i2c_bus;
 	u8 out_buf[2];
 	u8 in_buf[2];
-	int ret;
+
+	struct i2c_msg msgs[] = {
+		{
+			.addr = dvo->slave_addr,
+			.flags = 0,
+			.len = 1,
+			.buf = out_buf,
+		},
+		{
+			.addr = dvo->slave_addr,
+			.flags = I2C_M_RD,
+			.len = 1,
+			.buf = in_buf,
+		}
+	};
 
 	out_buf[0] = addr;
 	out_buf[1] = 0;
 
-	iic_acquire_bus(adapter, 0);
-	ret = iic_exec(adapter, I2C_OP_READ_WITH_STOP, dvo->slave_addr,
-	    out_buf, 1, in_buf, 1, 0);
-	if (ret)
-		goto read_err;
-	iic_release_bus(adapter, 0);
+	if (i2c_transfer(adapter, msgs, 2) == 2) {
+		*ch = in_buf[0];
+		return true;
+	}
 
-	*ch = in_buf[0];
-	return true;
-
-read_err:
-	iic_release_bus(adapter, 0);
 	if (!tfp->quiet) {
-		DRM_DEBUG_KMS("Unable to read register 0x%02x from %02x.\n",
-			  addr, dvo->slave_addr);
+		DRM_DEBUG_KMS("Unable to read register 0x%02x from %s:%02x.\n",
+			  addr, adapter->name, dvo->slave_addr);
 	}
 	return false;
 }
@@ -124,26 +130,24 @@ read_err:
 static bool tfp410_writeb(struct intel_dvo_device *dvo, int addr, uint8_t ch)
 {
 	struct tfp410_priv *tfp = dvo->dev_priv;
-	struct i2c_controller *adapter = dvo->i2c_bus;
+	struct i2c_adapter *adapter = dvo->i2c_bus;
 	uint8_t out_buf[2];
-	int ret;
+	struct i2c_msg msg = {
+		.addr = dvo->slave_addr,
+		.flags = 0,
+		.len = 2,
+		.buf = out_buf,
+	};
 
 	out_buf[0] = addr;
 	out_buf[1] = ch;
 
-	iic_acquire_bus(adapter, 0);
-	ret = iic_exec(adapter, I2C_OP_WRITE_WITH_STOP, dvo->slave_addr,
-	    NULL, 0, out_buf, 2, 0);
-	iic_release_bus(adapter, 0);
-	if (ret)
-		goto write_err;
+	if (i2c_transfer(adapter, &msg, 1) == 1)
+		return true;
 
-	return true;
-
-write_err:
 	if (!tfp->quiet) {
-		DRM_DEBUG_KMS("Unable to write register 0x%02x to %d.\n",
-			  addr, dvo->slave_addr);
+		DRM_DEBUG_KMS("Unable to write register 0x%02x to %s:%d.\n",
+			  addr, adapter->name, dvo->slave_addr);
 	}
 
 	return false;
@@ -162,7 +166,7 @@ static int tfp410_getid(struct intel_dvo_device *dvo, int addr)
 
 /* Ti TFP410 driver for chip on i2c bus */
 static bool tfp410_init(struct intel_dvo_device *dvo,
-			struct i2c_controller *adapter)
+			struct i2c_adapter *adapter)
 {
 	/* this will detect the tfp410 chip on the specified i2c bus */
 	struct tfp410_priv *tfp;
@@ -177,16 +181,16 @@ static bool tfp410_init(struct intel_dvo_device *dvo,
 	tfp->quiet = true;
 
 	if ((id = tfp410_getid(dvo, TFP410_VID_LO)) != TFP410_VID) {
-		DRM_DEBUG_KMS("tfp410 not detected got VID %X: from "
+		DRM_DEBUG_KMS("tfp410 not detected got VID %X: from %s "
 				"Slave %d.\n",
-			  id, dvo->slave_addr);
+			  id, adapter->name, dvo->slave_addr);
 		goto out;
 	}
 
 	if ((id = tfp410_getid(dvo, TFP410_DID_LO)) != TFP410_DID) {
-		DRM_DEBUG_KMS("tfp410 not detected got DID %X: from "
+		DRM_DEBUG_KMS("tfp410 not detected got DID %X: from %s "
 				"Slave %d.\n",
-			  id, dvo->slave_addr);
+			  id, adapter->name, dvo->slave_addr);
 		goto out;
 	}
 	tfp->quiet = false;

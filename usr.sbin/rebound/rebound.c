@@ -1,4 +1,4 @@
-/* $OpenBSD: rebound.c,v 1.84 2017/05/31 04:52:11 deraadt Exp $ */
+/* $OpenBSD: rebound.c,v 1.87 2017/07/04 00:30:45 tedu Exp $ */
 /*
  * Copyright (c) 2015 Ted Unangst <tedu@openbsd.org>
  *
@@ -72,7 +72,7 @@ struct dnspacket {
 /*
  * requests will point to cache entries until a response is received.
  * until then, the request owns the entry and must free it.
- * after it's on the list, the request must not free it.
+ * after the response is set, the request must not free it.
  */
 struct dnscache {
 	TAILQ_ENTRY(dnscache) fifo;
@@ -82,6 +82,7 @@ struct dnscache {
 	struct dnspacket *resp;
 	size_t resplen;
 	struct timespec ts;
+	struct timespec basetime;
 };
 static TAILQ_HEAD(, dnscache) cachefifo;
 static RB_HEAD(cachetree, dnscache) cachetree;
@@ -190,6 +191,72 @@ randomcase(unsigned char *s)
 	}
 }
 
+static void
+freecacheent(struct dnscache *ent)
+{
+	cachecount -= 1;
+	RB_REMOVE(cachetree, &cachetree, ent);
+	TAILQ_REMOVE(&cachefifo, ent, fifo);
+	free(ent->req);
+	free(ent->resp);
+	free(ent);
+}
+
+static int
+adjustttl(struct dnscache *ent)
+{
+	struct dnspacket *resp = ent->resp;
+	char *p = (char *)resp;
+	u_int rlen = ent->resplen;
+	u_int used = 0;
+	uint32_t ttl, cnt, i;
+	uint16_t len;
+	time_t diff;
+
+	diff = now.tv_sec - ent->basetime.tv_sec;
+	if (diff <= 0)
+		return 0;
+
+	/* checks are redundant; checked when cacheent is created */
+	/* skip past packet header */
+	used += sizeof(struct dnspacket);
+	if (used >= rlen)
+		return -1;
+	if (ntohs(resp->qdcount) != 1)
+		return -1;
+	/* skip past query name, type, and class */
+	used += strnlen(p + used, rlen - used);
+	used += 2;
+	used += 2;
+	cnt = ntohs(resp->ancount);
+	for (i = 0; i < cnt; i++) {
+		if (used >= rlen)
+			return -1;
+		/* skip past answer name, type, and class */
+		used += strnlen(p + used, rlen - used);
+		used += 2;
+		used += 2;
+		if (used + 4 >= rlen)
+			return -1;
+		memcpy(&ttl, p + used, 4);
+		ttl = ntohl(ttl);
+		/* expired */
+		if (diff >= ttl)
+			return -1;
+		ttl -= diff;
+		ttl = ntohl(ttl);
+		memcpy(p + used, &ttl, 4);
+		used += 4;
+		if (used + 2 >= rlen)
+			return -1;
+		memcpy(&len, p + used, 2);
+		used += 2;
+		used += ntohs(len);
+	}
+	ent->basetime.tv_sec += diff;
+	return 0;
+}
+
 static struct dnscache *
 cachelookup(struct dnspacket *dnsreq, size_t reqlen)
 {
@@ -212,8 +279,13 @@ cachelookup(struct dnspacket *dnsreq, size_t reqlen)
 	key.reqlen = reqlen;
 	key.req = dnsreq;
 	hit = RB_FIND(cachetree, &cachetree, &key);
-	if (hit)
-		cachehits += 1;
+	if (hit) {
+		if (adjustttl(hit) != 0) {
+			freecacheent(hit);
+			hit = NULL;
+		} else
+			cachehits += 1;
+	}
 
 	memcpy(dnsreq->qname, origname, namelen + 1);
 	dnsreq->id = origid;
@@ -240,17 +312,6 @@ freerequest(struct request *req)
 		free(ent);
 	}
 	free(req);
-}
-
-static void
-freecacheent(struct dnscache *ent)
-{
-	cachecount -= 1;
-	RB_REMOVE(cachetree, &cachetree, ent);
-	TAILQ_REMOVE(&cachefifo, ent, fifo);
-	free(ent->req);
-	free(ent->resp);
-	free(ent);
 }
 
 static void
@@ -428,18 +489,20 @@ sendreply(struct request *req)
 	}
 	sendto(req->client, buf, r, 0, &req->from.a, req->fromlen);
 	if ((ent = req->cacheent)) {
+		/* check that the response is worth caching */
+		ttl = minttl(resp, r);
+		if (ttl == -1 || ttl == 0)
+			return;
 		/*
-		 * we do this first, because there's a potential race against
+		 * we do this next, because there's a potential race against
 		 * other requests made at the same time. if we lose, abort.
 		 * if anything else goes wrong, though, we need to reverse.
 		 */
 		if (RB_INSERT(cachetree, &cachetree, ent))
 			return;
-		ttl = minttl(resp, r);
-		if (ttl == -1)
-			ttl = 0;
 		ent->ts = now;
 		ent->ts.tv_sec += MINIMUM(ttl, 300);
+		ent->basetime = now;
 		ent->resp = malloc(r);
 		if (!ent->resp) {
 			RB_REMOVE(cachetree, &cachetree, ent);

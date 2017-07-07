@@ -80,6 +80,8 @@ struct hv_channel {
 	void				(*ch_handler)(void *);
 	void				 *ch_ctx;
 	struct evcount			  ch_evcnt;
+	struct taskq			*ch_taskq;
+	struct task			 ch_task;
 
 	uint32_t			 ch_flags;
 #define  CHF_BATCHED			  0x0001
@@ -207,10 +209,14 @@ void	hv_handle_free(struct hv_channel *, uint32_t);
 int	hv_channel_open(struct hv_channel *, size_t, void *, size_t,
 	    void (*)(void *), void *);
 int	hv_channel_close(struct hv_channel *);
+int	hv_channel_setdeferred(struct hv_channel *, const char *);
+void	hv_channel_schedule(struct hv_channel *);
 void	hv_evcount_attach(struct hv_channel *, const char *);
 int	hv_channel_send(struct hv_channel *, void *, uint32_t, uint64_t,
 	    int, uint32_t);
 int	hv_channel_send_sgl(struct hv_channel *, struct vmbus_gpa *,
+	    uint32_t, void *, uint32_t, uint64_t);
+int	hv_channel_send_prpl(struct hv_channel *, struct vmbus_gpa_range *,
 	    uint32_t, void *, uint32_t, uint64_t);
 int	hv_channel_recv(struct hv_channel *, void *, uint32_t, uint32_t *,
 	    uint64_t *, int);

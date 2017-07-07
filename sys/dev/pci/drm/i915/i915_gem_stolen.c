@@ -271,8 +271,6 @@ static unsigned long i915_stolen_to_physical(struct drm_device *dev)
 			base = 0;
 		}
 	}
-#else
-	base = 0;
 #endif
 
 	return base;
@@ -505,7 +503,6 @@ static struct sg_table *
 i915_pages_create_for_stolen(struct drm_device *dev,
 			     u32 offset, u32 size)
 {
-#ifdef notyet
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct sg_table *st;
 	struct scatterlist *sg;
@@ -535,9 +532,6 @@ i915_pages_create_for_stolen(struct drm_device *dev,
 	sg_dma_len(sg) = size;
 
 	return st;
-#else
-	return NULL;
-#endif
 }
 
 static int i915_gem_object_get_pages_stolen(struct drm_i915_gem_object *obj)

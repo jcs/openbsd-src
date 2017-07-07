@@ -1,3 +1,5 @@
+/* Public domain. */
+
 struct drm_device;
 struct intel_encoder;
 

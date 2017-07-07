@@ -1,4 +1,4 @@
-/* $OpenBSD: softraid.c,v 1.380 2017/04/14 15:11:31 bluhm Exp $ */
+/* $OpenBSD: softraid.c,v 1.382 2017/06/12 15:43:25 jsing Exp $ */
 /*
  * Copyright (c) 2007, 2008, 2009 Marco Peereboom <marco@peereboom.us>
  * Copyright (c) 2008 Chris Kuethe <ckuethe@openbsd.org>
@@ -2077,10 +2077,10 @@ sr_ccb_done(struct sr_ccb *ccb)
 			sd->sd_set_chunk_state(sd, ccb->ccb_target,
 			    BIOC_SDOFFLINE);
 		else
-			printf("%s: i/o error on block %lld target %d "
-			    "b_error %d\n", DEVNAME(sc),
-			    (long long)ccb->ccb_buf.b_blkno, ccb->ccb_target,
-			    ccb->ccb_buf.b_error);
+			printf("%s: %s: i/o error %d @ %s block %lld\n",
+			    DEVNAME(sc), sd->sd_meta->ssd_devname,
+			    ccb->ccb_buf.b_error, sd->sd_name,
+			    (long long)ccb->ccb_buf.b_blkno);
 		ccb->ccb_state = SR_CCB_FAILED;
 		wu->swu_ios_failed++;
 	} else {
@@ -2569,11 +2569,14 @@ sr_bio_handler(struct sr_softc *sc, struct sr_discipline *sd, u_long cmd,
 
 	sc->sc_status.bs_status = (rv ? BIO_STATUS_ERROR : BIO_STATUS_SUCCESS);
 
+	if (sc->sc_status.bs_msg_count > 0)
+		rv = 0;
+
 	memcpy(&bio->bio_status, &sc->sc_status, sizeof(struct bio_status));
 
 	rw_exit_write(&sc->sc_lock);
 
-	return (0);
+	return (rv);
 }
 
 int

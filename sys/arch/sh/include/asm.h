@@ -1,4 +1,4 @@
-/*	$OpenBSD: asm.h,v 1.5 2016/05/27 16:32:38 deraadt Exp $	*/
+/*	$OpenBSD: asm.h,v 1.7 2017/06/29 17:36:16 deraadt Exp $	*/
 /*	$NetBSD: asm.h,v 1.25 2006/01/20 22:02:40 christos Exp $	*/
 
 /*-
@@ -61,7 +61,7 @@
 	.type x,@function						;\
 	x:
 
-#ifdef GPROF
+#if defined(PROF) || defined(GPROF)
 #define	_PROF_PROLOGUE				  \
 	mov.l	1f,r1				; \
 	mova	2f,r0				; \
@@ -178,9 +178,6 @@
 		.long	function
 
 #endif /* !PIC */
-
-
-#define	ASMSTR		.asciz
 
 #define	STRONG_ALIAS(alias,sym)						\
 	.global _C_LABEL(alias);					\

@@ -1,4 +1,4 @@
-/*	$OpenBSD: privsep.c,v 1.46 2017/04/10 21:47:44 krw Exp $ */
+/*	$OpenBSD: privsep.c,v 1.55 2017/07/07 15:39:30 krw Exp $ */
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -35,11 +35,12 @@
 #include "log.h"
 #include "privsep.h"
 
-void
-dispatch_imsg(struct interface_info *ifi, struct imsgbuf *ibuf)
+int
+dispatch_imsg(char *name, int rdomain, int ioctlfd, int routefd,
+    struct imsgbuf *ibuf)
 {
-	struct imsg			 imsg;
-	ssize_t				 n;
+	struct imsg	imsg;
+	ssize_t		n;
 
 	for (;;) {
 		if ((n = imsg_get(ibuf, &imsg)) == -1)
@@ -54,7 +55,7 @@ dispatch_imsg(struct interface_info *ifi, struct imsgbuf *ibuf)
 			    sizeof(struct imsg_delete_address))
 				log_warnx("bad IMSG_DELETE_ADDRESS");
 			else
-				priv_delete_address(ifi, imsg.data);
+				priv_delete_address(name, ioctlfd, imsg.data);
 			break;
 
 		case IMSG_ADD_ADDRESS:
@@ -62,15 +63,14 @@ dispatch_imsg(struct interface_info *ifi, struct imsgbuf *ibuf)
 			    sizeof(struct imsg_add_address))
 				log_warnx("bad IMSG_ADD_ADDRESS");
 			else
-				priv_add_address(ifi, imsg.data);
+				priv_add_address(name, ioctlfd, imsg.data);
 			break;
 
 		case IMSG_FLUSH_ROUTES:
-			if (imsg.hdr.len != IMSG_HEADER_SIZE +
-			    sizeof(struct imsg_flush_routes))
+			if (imsg.hdr.len != IMSG_HEADER_SIZE)
 				log_warnx("bad IMSG_FLUSH_ROUTES");
 			else
-				priv_flush_routes(ifi, imsg.data);
+				priv_flush_routes(name, routefd, rdomain);
 			break;
 
 		case IMSG_ADD_ROUTE:
@@ -78,7 +78,7 @@ dispatch_imsg(struct interface_info *ifi, struct imsgbuf *ibuf)
 			    sizeof(struct imsg_add_route))
 				log_warnx("bad IMSG_ADD_ROUTE");
 			else
-				priv_add_route(ifi, imsg.data);
+				priv_add_route(rdomain, imsg.data);
 			break;
 
 		case IMSG_SET_INTERFACE_MTU:
@@ -86,20 +86,24 @@ dispatch_imsg(struct interface_info *ifi, struct imsgbuf *ibuf)
 			    sizeof(struct imsg_set_interface_mtu))
 				log_warnx("bad IMSG_SET_INTERFACE_MTU");
 			else
-				priv_set_interface_mtu(ifi, imsg.data);
+				priv_set_interface_mtu(name, ioctlfd,
+				    imsg.data);
 			break;
 
 		case IMSG_WRITE_RESOLV_CONF:
-			priv_write_resolv_conf(ifi, &imsg);
+			if (imsg.hdr.len <= IMSG_HEADER_SIZE)
+				log_warnx("short IMSG_WRITE_RESOLV_CONF");
+			else if (resolv_conf_priority(rdomain, routefd))
+				priv_write_resolv_conf(imsg.data,
+				    imsg.hdr.len - IMSG_HEADER_SIZE);
 			break;
 
 		case IMSG_HUP:
-			if (imsg.hdr.len != IMSG_HEADER_SIZE +
-			    sizeof(struct imsg_hup))
+			if (imsg.hdr.len != IMSG_HEADER_SIZE)
 				log_warnx("bad IMSG_HUP");
 			else {
-				ifi->flags |= IFI_HUP;
-				quit = SIGHUP;
+				imsg_free(&imsg);
+				return 1;
 			}
 			break;
 
@@ -110,4 +114,5 @@ dispatch_imsg(struct interface_info *ifi, struct imsgbuf *ibuf)
 
 		imsg_free(&imsg);
 	}
+	return 0;
 }

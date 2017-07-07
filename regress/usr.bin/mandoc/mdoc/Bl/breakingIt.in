@@ -1,6 +1,7 @@
-.Dd February 3, 2015
+.\" $OpenBSD: breakingIt.in,v 1.4 2017/07/04 14:53:24 schwarze Exp $
+.Dd $Mdocdate: July 4 2017 $
 .Dt BL-BREAKINGIT 1
-.Os OpenBSD
+.Os
 .Sh NAME
 .Nm Bl-breakingIt
 .Nd items breaking other blocks
@@ -9,14 +10,14 @@
 .Bl -tag -width Ds
 Stray text.
 .Ao
-More stray text.
+More stray text
 .It tag
 Tagged text.
 .El
 .Bl -bullet
 Stray text.
 .Ao
-More stray text.
+More stray text
 .It
 Bullet point.
 .El
@@ -24,7 +25,7 @@ Bullet point.
 .It tag
 Tagged text.
 .Ao
-More tagged text.
+More tagged text
 .It tag2
 Yet more tagged text.
 .El
@@ -32,7 +33,7 @@ Yet more tagged text.
 .It
 Item text.
 .Ao
-More item text.
+More item text
 .It
 Bullet point.
 .El

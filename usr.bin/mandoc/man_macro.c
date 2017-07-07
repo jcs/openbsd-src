@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_macro.c,v 1.82 2017/05/05 15:16:25 schwarze Exp $ */
+/*	$OpenBSD: man_macro.c,v 1.85 2017/06/25 07:23:53 bentley Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2012-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -67,12 +67,14 @@ const	struct man_macro __man_macros[MAN_MAX - MAN_TH] = {
 	{ in_line_eoln, 0 }, /* UC */
 	{ in_line_eoln, MAN_NSCOPED }, /* PD */
 	{ in_line_eoln, 0 }, /* AT */
-	{ in_line_eoln, 0 }, /* in */
+	{ in_line_eoln, MAN_NSCOPED }, /* in */
 	{ in_line_eoln, 0 }, /* OP */
 	{ in_line_eoln, MAN_BSCOPE }, /* EX */
 	{ in_line_eoln, MAN_BSCOPE }, /* EE */
 	{ blk_exp, MAN_BSCOPE }, /* UR */
 	{ blk_close, MAN_BSCOPE }, /* UE */
+	{ blk_exp, MAN_BSCOPE }, /* MT */
+	{ blk_close, MAN_BSCOPE }, /* ME */
 };
 const	struct man_macro *const man_macros = __man_macros - MAN_TH;
 
@@ -215,6 +217,9 @@ blk_close(MACRO_PROT_ARGS)
 	case MAN_UE:
 		ntok = MAN_UR;
 		break;
+	case MAN_ME:
+		ntok = MAN_MT;
+		break;
 	default:
 		abort();
 	}
@@ -232,6 +237,10 @@ blk_close(MACRO_PROT_ARGS)
 		ppos = man->last->pos;
 		ntok = man->last->tok;
 		man_unscope(man, nn);
+
+		if (tok == MAN_RE && nn->head->aux > 0)
+			roff_setreg(man->roff, "an-margin",
+			    nn->head->aux, '-');
 
 		/* Move a trailing paragraph behind the block. */
 
@@ -254,8 +263,17 @@ blk_exp(MACRO_PROT_ARGS)
 	head = roff_head_alloc(man, line, ppos, tok);
 
 	la = *pos;
-	if (man_args(man, line, pos, buf, &p))
+	if (man_args(man, line, pos, buf, &p)) {
 		roff_word_alloc(man, line, la, p);
+		if (tok == MAN_RS) {
+			if (roff_getreg(man->roff, "an-margin") == 0)
+				roff_setreg(man->roff, "an-margin",
+				    7 * 24, '=');
+			if ((head->aux = strtod(p, NULL) * 24.0) > 0)
+				roff_setreg(man->roff, "an-margin",
+				    head->aux, '+');
+		}
+	}
 
 	if (buf[*pos] != '\0')
 		mandoc_vmsg(MANDOCERR_ARG_EXCESS, man->parse, line,

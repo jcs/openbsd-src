@@ -79,7 +79,6 @@ struct hv_softc *hv_sc;
 
 int 	hv_match(struct device *, void *, void *);
 void	hv_attach(struct device *, struct device *, void *);
-void	hv_deferred(void *);
 void	hv_set_version(struct hv_softc *);
 u_int	hv_gettime(struct timecounter *);
 int	hv_init_hypercall(struct hv_softc *);
@@ -98,6 +97,7 @@ void	hv_message_intr(struct hv_softc *);
 int	hv_vmbus_connect(struct hv_softc *);
 void	hv_channel_response(struct hv_softc *, struct vmbus_chanmsg_hdr *);
 void	hv_channel_offer(struct hv_softc *, struct vmbus_chanmsg_hdr *);
+void	hv_channel_rescind(struct hv_softc *, struct vmbus_chanmsg_hdr *);
 void	hv_channel_delivered(struct hv_softc *, struct vmbus_chanmsg_hdr *);
 int	hv_channel_scan(struct hv_softc *);
 void	hv_process_offer(struct hv_softc *, struct hv_offer *);
@@ -105,6 +105,9 @@ struct hv_channel *
 	hv_channel_lookup(struct hv_softc *, uint32_t);
 int	hv_channel_ring_create(struct hv_channel *, uint32_t);
 void	hv_channel_ring_destroy(struct hv_channel *);
+void	hv_channel_pause(struct hv_channel *);
+uint	hv_channel_unpause(struct hv_channel *);
+uint	hv_channel_ready(struct hv_channel *);
 extern void hv_attach_icdevs(struct hv_softc *);
 int	hv_attach_devices(struct hv_softc *);
 
@@ -116,7 +119,7 @@ struct {
 } hv_msg_dispatch[] = {
 	{ 0,					0, NULL },
 	{ VMBUS_CHANMSG_CHOFFER,		0, hv_channel_offer },
-	{ VMBUS_CHANMSG_CHRESCIND,		0, NULL },
+	{ VMBUS_CHANMSG_CHRESCIND,		0, hv_channel_rescind },
 	{ VMBUS_CHANMSG_CHREQUEST,		VMBUS_CHANMSG_CHOFFER,
 	  NULL },
 	{ VMBUS_CHANMSG_CHOFFER_DONE,		0,
@@ -318,16 +321,8 @@ hv_attach(struct device *parent, struct device *self, void *aux)
 	/* Attach heartbeat, KVP and other "internal" services */
 	hv_attach_icdevs(sc);
 
-	startuphook_establish(hv_deferred, sc);
-}
-
-void
-hv_deferred(void *arg)
-{
-	struct hv_softc *sc = arg;
-
-	if (hv_attach_devices(sc))
-		return;
+	/* Attach devices with external drivers */
+	hv_attach_devices(sc);
 }
 
 void
@@ -705,8 +700,7 @@ hv_event_intr(struct hv_softc *sc)
 				continue;
 			}
 			ch->ch_evcnt.ec_count++;
-			if (ch->ch_handler)
-				ch->ch_handler(ch->ch_ctx);
+			hv_channel_schedule(ch);
 		}
 	}
 }
@@ -739,7 +733,7 @@ hv_message_intr(struct hv_softc *sc)
 			    sc->sc_dev.dv_xname, hdr->chm_type);
  skip:
 		msg->msg_type = VMBUS_MSGTYPE_NONE;
-		membar_sync();
+		virtio_membar_sync();
 		if (msg->msg_flags & VMBUS_MSGFLAG_PENDING)
 			wrmsr(MSR_HV_EOM, 0);
 	}
@@ -788,6 +782,16 @@ hv_channel_offer(struct hv_softc *sc, struct vmbus_chanmsg_hdr *hdr)
 	mtx_enter(&sc->sc_offerlck);
 	SIMPLEQ_INSERT_TAIL(&sc->sc_offers, co, co_entry);
 	mtx_leave(&sc->sc_offerlck);
+}
+
+void
+hv_channel_rescind(struct hv_softc *sc, struct vmbus_chanmsg_hdr *hdr)
+{
+	const struct vmbus_chanmsg_chrescind *cmd;
+
+	cmd = (const struct vmbus_chanmsg_chrescind *)hdr;
+	printf("%s: revoking channel %u\n", sc->sc_dev.dv_xname,
+	    cmd->chm_chanid);
 }
 
 void
@@ -1234,6 +1238,43 @@ hv_channel_setevent(struct hv_softc *sc, struct hv_channel *ch)
 		hv_intr_signal(sc, &ch->ch_monprm);
 }
 
+void
+hv_channel_intr(void *arg)
+{
+	struct hv_channel *ch = arg;
+
+	if (hv_channel_ready(ch))
+		ch->ch_handler(ch->ch_ctx);
+
+	if (hv_channel_unpause(ch) == 0)
+		return;
+
+	hv_channel_pause(ch);
+	hv_channel_schedule(ch);
+}
+
+int
+hv_channel_setdeferred(struct hv_channel *ch, const char *name)
+{
+	ch->ch_taskq = taskq_create(name, 1, IPL_NET, TASKQ_MPSAFE);
+	if (ch->ch_taskq == NULL)
+		return (-1);
+	task_set(&ch->ch_task, hv_channel_intr, ch);
+	return (0);
+}
+
+void
+hv_channel_schedule(struct hv_channel *ch)
+{
+	if (ch->ch_handler) {
+		if (!cold && (ch->ch_flags & CHF_BATCHED)) {
+			hv_channel_pause(ch);
+			task_add(ch->ch_taskq, &ch->ch_task);
+		} else
+			ch->ch_handler(ch->ch_ctx);
+	}
+}
+
 static inline void
 hv_ring_put(struct hv_ring_data *wrd, uint8_t *data, uint32_t datalen)
 {
@@ -1306,9 +1347,9 @@ hv_ring_write(struct hv_ring_data *wrd, struct iovec *iov, int iov_cnt,
 	indices = (uint64_t)oprod << 32;
 	hv_ring_put(wrd, (uint8_t *)&indices, sizeof(indices));
 
-	membar_sync();
+	virtio_membar_sync();
 	wrd->rd_ring->br_windex = wrd->rd_prod;
-	membar_sync();
+	virtio_membar_sync();
 
 	/* Signal when the ring transitions from being empty to non-empty */
 	if (wrd->rd_ring->br_imask == 0 &&
@@ -1403,6 +1444,50 @@ hv_channel_send_sgl(struct hv_channel *ch, struct vmbus_gpa *sgl,
 }
 
 int
+hv_channel_send_prpl(struct hv_channel *ch, struct vmbus_gpa_range *prpl,
+    uint32_t nprp, void *data, uint32_t datalen, uint64_t rid)
+{
+	struct hv_softc *sc = ch->ch_sc;
+	struct vmbus_chanpkt_prplist cp;
+	struct iovec iov[4];
+	uint32_t buflen, pktlen, pktlen_aligned;
+	uint64_t zeropad = 0;
+	int rv, needsig = 0;
+
+	buflen = sizeof(struct vmbus_gpa_range) * (nprp + 1);
+	pktlen = sizeof(cp) + datalen + buflen;
+	pktlen_aligned = roundup(pktlen, sizeof(uint64_t));
+
+	cp.cp_hdr.cph_type = VMBUS_CHANPKT_TYPE_GPA;
+	cp.cp_hdr.cph_flags = VMBUS_CHANPKT_FLAG_RC;
+	VMBUS_CHANPKT_SETLEN(cp.cp_hdr.cph_hlen, sizeof(cp) + buflen);
+	VMBUS_CHANPKT_SETLEN(cp.cp_hdr.cph_tlen, pktlen_aligned);
+	cp.cp_hdr.cph_tid = rid;
+	cp.cp_range_cnt = 1;
+	cp.cp_rsvd = 0;
+
+	iov[0].iov_base = &cp;
+	iov[0].iov_len = sizeof(cp);
+
+	iov[1].iov_base = prpl;
+	iov[1].iov_len = buflen;
+
+	iov[2].iov_base = data;
+	iov[2].iov_len = datalen;
+
+	iov[3].iov_base = &zeropad;
+	iov[3].iov_len = pktlen_aligned - pktlen;
+
+	mtx_enter(&ch->ch_wrd.rd_lock);
+	rv = hv_ring_write(&ch->ch_wrd, iov, 4, &needsig);
+	mtx_leave(&ch->ch_wrd.rd_lock);
+	if (rv == 0 && needsig)
+		hv_channel_setevent(sc, ch);
+
+	return (rv);
+}
+
+int
 hv_ring_peek(struct hv_ring_data *rrd, void *data, uint32_t datalen)
 {
 	uint32_t avail;
@@ -1441,7 +1526,7 @@ hv_ring_read(struct hv_ring_data *rrd, void *data, uint32_t datalen,
 	hv_ring_get(rrd, (uint8_t *)data, datalen, 0);
 	hv_ring_get(rrd, (uint8_t *)&indices, sizeof(indices), 0);
 
-	membar_sync();
+	virtio_membar_sync();
 	rrd->rd_ring->br_rindex = rrd->rd_cons;
 
 	return (0);
@@ -1481,6 +1566,49 @@ hv_channel_recv(struct hv_channel *ch, void *data, uint32_t datalen,
 	mtx_leave(&ch->ch_rrd.rd_lock);
 
 	return (rv);
+}
+
+static inline void
+hv_ring_mask(struct hv_ring_data *rd)
+{
+	virtio_membar_sync();
+	rd->rd_ring->br_imask = 1;
+	virtio_membar_sync();
+}
+
+static inline void
+hv_ring_unmask(struct hv_ring_data *rd)
+{
+	virtio_membar_sync();
+	rd->rd_ring->br_imask = 0;
+	virtio_membar_sync();
+}
+
+void
+hv_channel_pause(struct hv_channel *ch)
+{
+	hv_ring_mask(&ch->ch_rrd);
+}
+
+uint
+hv_channel_unpause(struct hv_channel *ch)
+{
+	uint32_t avail;
+
+	hv_ring_unmask(&ch->ch_rrd);
+	hv_ring_avail(&ch->ch_rrd, NULL, &avail);
+
+	return (avail);
+}
+
+uint
+hv_channel_ready(struct hv_channel *ch)
+{
+	uint32_t avail;
+
+	hv_ring_avail(&ch->ch_rrd, NULL, &avail);
+
+	return (avail);
 }
 
 /* How many PFNs can be referenced by the header */
@@ -1634,7 +1762,8 @@ hv_handle_free(struct hv_channel *ch, uint32_t handle)
 	cmd.chm_chanid = ch->ch_id;
 	cmd.chm_gpadl = handle;
 
-	rv = hv_cmd(sc, &cmd, sizeof(cmd), &rsp, sizeof(rsp), 0);
+	rv = hv_cmd(sc, &cmd, sizeof(cmd), &rsp, sizeof(rsp), cold ?
+	    HCF_NOSLEEP : 0);
 	if (rv)
 		DPRINTF("%s: GPADL_DISCONN failed with %d\n",
 		    sc->sc_dev.dv_xname, rv);

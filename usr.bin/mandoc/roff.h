@@ -1,4 +1,4 @@
-/*	$OpenBSD: roff.h,v 1.30 2017/05/08 15:33:43 schwarze Exp $	*/
+/*	$OpenBSD: roff.h,v 1.39 2017/06/25 07:23:53 bentley Exp $	*/
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2013, 2014, 2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -67,8 +67,12 @@ enum	roff_type {
 
 enum	roff_tok {
 	ROFF_br = 0,
+	ROFF_ce,
 	ROFF_ft,
 	ROFF_ll,
+	ROFF_mc,
+	ROFF_po,
+	ROFF_rj,
 	ROFF_sp,
 	ROFF_ta,
 	ROFF_ti,
@@ -100,7 +104,6 @@ enum	roff_tok {
 	ROFF_brpnl,
 	ROFF_c2,
 	ROFF_cc,
-	ROFF_ce,
 	ROFF_cf,
 	ROFF_cflags,
 	ROFF_ch,
@@ -206,7 +209,6 @@ enum	roff_tok {
 	ROFF_ls,
 	ROFF_lsm,
 	ROFF_lt,
-	ROFF_mc,
 	ROFF_mediasize,
 	ROFF_minss,
 	ROFF_mk,
@@ -238,7 +240,6 @@ enum	roff_tok {
 	ROFF_pm,
 	ROFF_pn,
 	ROFF_pnr,
-	ROFF_po,
 	ROFF_ps,
 	ROFF_psbb,
 	ROFF_pshape,
@@ -251,7 +252,6 @@ enum	roff_tok {
 	ROFF_return,
 	ROFF_rfschar,
 	ROFF_rhang,
-	ROFF_rj,
 	ROFF_rm,
 	ROFF_rn,
 	ROFF_rnn,
@@ -309,6 +309,7 @@ enum	roff_tok {
 	ROFF_writem,
 	ROFF_xflag,
 	ROFF_cblock,
+	ROFF_RENAMED,
 	ROFF_USERDEF,
 	TOKEN_NONE,
 	MDOC_Dd,
@@ -466,6 +467,8 @@ enum	roff_tok {
 	MAN_EE,
 	MAN_UR,
 	MAN_UE,
+	MAN_MT,
+	MAN_ME,
 	MAN_MAX
 };
 
@@ -527,6 +530,8 @@ struct	roff_meta {
 	char		 *name;    /* Leading manual name. */
 	char		 *date;    /* Normalized date. */
 	int		  hasbody; /* Document is not empty. */
+	int		  rcsids;  /* Bits indexed by enum mandoc_os. */
+	enum mandoc_os	  os_e;    /* Operating system. */
 };
 
 struct	roff_man {
@@ -535,7 +540,7 @@ struct	roff_man {
 	struct roff	 *roff;    /* Roff parser state data. */
 	struct ohash	 *mdocmac; /* Mdoc macro lookup table. */
 	struct ohash	 *manmac;  /* Man macro lookup table. */
-	const char	 *defos;   /* Default operating system. */
+	const char	 *os_s;    /* Default operating system. */
 	struct roff_node *first;   /* The first node parsed. */
 	struct roff_node *last;    /* The last node parsed. */
 	struct roff_node *last_es; /* The most recent Es node. */

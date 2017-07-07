@@ -1,4 +1,4 @@
-#	$OpenBSD: bsd.syspatch.mk,v 1.8 2017/04/22 13:39:00 robert Exp $
+#	$OpenBSD: bsd.syspatch.mk,v 1.13 2017/06/20 18:32:26 ajacoutot Exp $
 #
 # Copyright (c) 2016-2017 Robert Nagy <robert@openbsd.org>
 #
@@ -19,6 +19,9 @@
 ERRATA?=
 ECURR=${ERRATA:C/_.*//}
 EPREV!=echo ${ECURR} | awk '{printf "%03d\n", $$1 - 1;}'
+
+# use the base and xenocara build user
+BUILDUSER?=	build
 
 # binaries used by this makefile
 FETCH=		/usr/bin/ftp -Vm
@@ -45,17 +48,16 @@ PATCH_ARGS=	-d ${SRCDIR} -z .orig --forward --quiet -E ${PATCH_STRIP}
 # miscellaneous variables
 SYSPATCH_DIR=	${FAKE}/var/syspatch/${SYSPATCH_SHRT}
 FAKE=		${FAKEROOT}/syspatch/${SYSPATCH_SHRT}
-SRCDIR=		${BSDSRCDIR}
 SUBDIR?=
 
 _PATCH_COOKIE=	${ERRATA}/.patch_done
 _BUILD_COOKIE=	${ERRATA}/.build_done
 _FAKE_COOKIE=	${ERRATA}/.fake_done
 
-.if ${BUILD:L:Msrc}
+.if ${BUILD:L:Msrc} || ${BUILD:L:Mkernel}
 SRCDIR=		${BSDSRCDIR}
 .elif ${BUILD:L:Mxenocara}
-SRCDIR=		${X11SRC}
+SRCDIR=		${XSRCDIR}
 MTREE_FILES+=	/etc/mtree/BSD.x11.dist
 .endif
 
@@ -116,7 +118,7 @@ ${ERRATA}/${ERRATA}.patch:
 
 ${_PATCH_COOKIE}: ${ERRATA}/${ERRATA}.patch
 	@echo '>> Applying ${ERRATA}.patch'; \
-	su ${BUILDUSER} -c '/usr/bin/patch ${PATCH_ARGS} < ${ERRATA}/${ERRATA}.patch' || \
+	/usr/bin/patch ${PATCH_ARGS} < ${ERRATA}/${ERRATA}.patch || \
 		{ echo "***>   ${ERRATA}.patch did not apply cleanly"; \
 		exit 1; };
 	@su ${BUILDUSER} -c 'touch $@'
@@ -134,32 +136,36 @@ ${_BUILD_COOKIE}: ${_PATCH_COOKIE} ${_FAKE_COOKIE}
 	@echo '>> Building syspatch for ${ERRATA}'
 .if ${BUILD:L:Msrc}
 . for _t in clean obj build
-	@su ${BUILDUSER} -c "cd ${SRCDIR} && /usr/bin/make SYSPATCH=Yes ${_t}"
+	@cd ${SRCDIR} && /usr/bin/make SYSPATCH=Yes ${_t}
 . endfor
 	@su ${BUILDUSER} -c "cd ${SRCDIR} && make SYSPATCH=Yes DESTDIR=${FAKE} install"
 .elif ${BUILD:L:Mxenocara}
 . for _t in clean bootstrap obj build
-	@su ${BUILDUSER} -c "cd ${SRCDIR} && /usr/bin/make SYSPATCH=Yes ${_t}"
+	@cd ${SRCDIR} && /usr/bin/make SYSPATCH=Yes ${_t}
 . endfor
 	@su ${BUILDUSER} -c "cd ${SRCDIR} && make SYSPATCH=Yes DESTDIR=${FAKE} install"
 .elif ${BUILD:L:Mkernel}
+. for _t in clean obj build
+	@cd ${SRCDIR} && /usr/bin/make SYSPATCH=Yes ${_t}
+. endfor
+	@su ${BUILDUSER} -c "cd ${SRCDIR} && make SYSPATCH=Yes DESTDIR=${FAKE} install"
 .  for _kern in GENERIC GENERIC.MP
 	@if cd ${SRCDIR}/sys/arch/${MACHINE_ARCH}/conf; then \
 		if config ${_kern}; then \
-			if cd ../compile/${_kern} && make; then \
+			if cd ../compile/${_kern} && make clean && make ; then \
 				exit 0; \
 			fi; exit 1; \
 		fi; exit 1; \
 	fi;
 	@if [ ${_kern} = "GENERIC" ]; then \
 		su ${BUILDUSER} -c '${INSTALL} ${INSTALL_COPY} -o ${SHAREOWN} -g ${LOCALEGRP} \
-		-m 0644 ${SRCDIR}/sys/arch/${MACHINE_ARCH}/compile/${_kern}/bsd \
+		-m 0644 ${SRCDIR}/sys/arch/${MACHINE_ARCH}/compile/${_kern}/obj/bsd \
 		${FAKE}/bsd' || \
 		{ echo "***>   failed to install ${_kern}"; \
 		exit 1; }; \
 	elif [ ${_kern} = "GENERIC.MP" ]; then \
 		su ${BUILDUSER} -c '${INSTALL} ${INSTALL_COPY} -o ${SHAREOWN} -g ${LOCALEGRP} \
-		-m 0644 ${SRCDIR}/sys/arch/${MACHINE_ARCH}/compile/${_kern}/bsd \
+		-m 0644 ${SRCDIR}/sys/arch/${MACHINE_ARCH}/compile/${_kern}/obj/bsd \
 		${FAKE}/bsd.mp' || \
 		{ echo "***>   failed to install ${_kern}"; \
 		exit 1; }; \
@@ -190,6 +196,6 @@ ${ERRATA}/.plist: ${_BUILD_COOKIE}
 	@su ${BUILDUSER} -c 'echo ${SYSPATCH_DIR}/${ERRATA}.patch.sig >> ${.OBJDIR}/${ERRATA}/.plist' || \
 		{ echo "***>   unable to add syspatch to list of files"; \
 		exit 1; };
-	@su ${BUILDUSER} -c 'sed -i "s,^${FAKEROOT}/syspatch/${OSrev}-[^/]*/,./,g" ${.TARGET}' 
+	@su ${BUILDUSER} -c 'sed -i "s,^${FAKEROOT}/syspatch/${OSrev}-[^/]*/,,g" ${.TARGET}' 
 
 .include <bsd.obj.mk>

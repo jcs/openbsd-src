@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_internal.h,v 1.60 2017/05/07 03:27:06 jsing Exp $ */
+/* $OpenBSD: tls_internal.h,v 1.62 2017/07/06 17:12:22 jsing Exp $ */
 /*
  * Copyright (c) 2014 Jeremie Courreges-Anglas <jca@openbsd.org>
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
@@ -84,6 +84,8 @@ struct tls_config {
 	size_t ca_len;
 	const char *ciphers;
 	int ciphers_server;
+	char *crl_mem;
+	size_t crl_len;
 	int dheparams;
 	int ecdhecurve;
 	struct tls_keypair *keypair;
@@ -245,6 +247,8 @@ struct tls_ocsp *tls_ocsp_setup_from_peer(struct tls *ctx);
 int tls_hex_string(const unsigned char *_in, size_t _inlen, char **_out,
     size_t *_outlen);
 int tls_cert_hash(X509 *_cert, char **_hash);
+
+int tls_password_cb(char *_buf, int _size, int _rwflag, void *_u);
 
 __END_HIDDEN_DECLS
 

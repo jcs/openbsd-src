@@ -1,4 +1,4 @@
-.\"	$OpenBSD: vi.1,v 1.66 2016/08/08 15:09:33 sobrado Exp $
+.\"	$OpenBSD: vi.1,v 1.73 2017/07/05 18:56:33 schwarze Exp $
 .\"
 .\" Copyright (c) 1994
 .\"     The Regents of the University of California.  All rights reserved.
@@ -14,7 +14,7 @@
 .\"
 .\"     @(#)vi.1	8.51 (Berkeley) 10/10/96
 .\"
-.Dd $Mdocdate: August 8 2016 $
+.Dd $Mdocdate: July 5 2017 $
 .Dt VI 1
 .Os
 .Sh NAME
@@ -106,8 +106,6 @@ Start editing in ex mode, as if the command name were
 Don't copy the entire file when first starting to edit.
 (The default is to make a copy in case someone else modifies
 the file during your edit session.)
-.\" .It Fl l
-.\" Start editing with the lisp and showmatch options set.
 .It Fl R
 Start editing in read-only mode, as if the command name was
 .Nm view ,
@@ -356,7 +354,7 @@ matches the end of the word.
 .It
 .Sq ~
 matches the replacement part of the last
-.Cm substitute
+.Cm s
 command.
 .El
 .Sh BUFFERS
@@ -933,8 +931,7 @@ command.
 .Aq Li carriage-return
 .Xc
 .It Xo
-.Pf ? Ar RE Ns ?
-.Op Ar offset
+.Pf ? Ar RE ? Op Ar offset
 .Op Cm z
 .Aq Li carriage-return
 .Xc
@@ -1996,52 +1993,55 @@ Grow or shrink the current screen.
 Rewind the argument list.
 .Pp
 .It Xo
-.Cm se Ns Op Cm t
-.Sm off
-.Op option Oo = Oo value Oc Oc \ \&...
-.Sm on
-.Pf \ \& Op nooption ...
-.Op option? ...
-.Op Ar all
-.Xc
-Display or set editor options.
-.Pp
-.It Cm sh Ns Op Cm ell
-Run a shell program.
-.Pp
-.It Xo
-.Cm so Ns Op Cm urce
-.Ar file
-.Xc
-Read and execute
-.Nm ex
-commands from a file.
-.Pp
-.It Xo
 .Op Ar range
-.Cm s Ns Op Cm ubstitute
 .Sm off
-.Op / Ar pattern No / Ar replace  No /
-.Sm on
-.Pf \ \& Op Ar options
+.Cm s
+.Oo Cm / Ar pattern Cm / Ar replace Cm /
+.Op Ar options
 .Op Ar count
 .Op Ar flags
+.Oc
+.Sm on
 .Xc
 .It Xo
 .Op Ar range
+.Sm off
 .Cm &
 .Op Ar options
 .Op Ar count
 .Op Ar flags
+.Sm on
 .Xc
 .It Xo
 .Op Ar range
+.Sm off
 .Cm ~
 .Op Ar options
 .Op Ar count
 .Op Ar flags
+.Sm on
 .Xc
-Make substitutions.
+Substitute the regular expression
+.Ar pattern
+with
+.Ar replace .
+When invoked as
+.Cm & ,
+or if
+.Cm / Ns Ar pattern Ns Cm / Ns Ar replace Ns Cm /
+is omitted,
+.Ar pattern
+and
+.Ar replace
+from the most recent
+.Cm s
+command are used.
+.Cm ~
+behaves like
+.Cm & ,
+except the pattern used is the most recent regular expression used by any
+command.
+.Pp
 The
 .Ar replace
 field may contain any of the following sequences:
@@ -2051,13 +2051,13 @@ The text matched by
 .Ar pattern .
 .It Sq \(a~
 The replacement part of the previous
-.Cm substitute
+.Cm s
 command.
 .It Sq %
 If this is the entire
 .Ar replace
 pattern, the replacement part of the previous
-.Cm substitute
+.Cm s
 command.
 .It Sq \e#
 Where
@@ -2081,6 +2081,40 @@ to be converted to uppercase.
 .It Sq \eu
 Causes the next character to be converted to uppercase.
 .El
+.Pp
+The
+.Ar options
+field may contain any of the following characters:
+.Bl -tag -width Ds
+.It Sq c
+Prompt for confirmation before each replacement is done.
+.It Sq g
+Replace all instances of
+.Ar pattern
+in a line, not just the first.
+.El
+.Pp
+.It Xo
+.Cm se Ns Op Cm t
+.Sm off
+.Op option Oo = Oo value Oc Oc \ \&...
+.Sm on
+.Pf \ \& Op nooption ...
+.Op option? ...
+.Op Ar all
+.Xc
+Display or set editor options.
+.Pp
+.It Cm sh Ns Op Cm ell
+Run a shell program.
+.Pp
+.It Xo
+.Cm so Ns Op Cm urce
+.Ar file
+.Xc
+Read and execute
+.Nm ex
+commands from a file.
 .Pp
 .It Xo
 .Cm su Ns Op Cm spend Ns
@@ -2291,10 +2325,12 @@ Remember the values of the
 and
 .Sq g
 suffixes to the
-.Cm substitute
+.Cm s , &
+and
+.Cm ~
 commands, instead of initializing them as unset for each new command.
 .It Cm escapetime Bq 1
-The 10th's of a second
+The tenths of a second
 .Nm ex Ns / Ns Nm vi
 waits for a subsequent key to complete an
 .Aq escape
@@ -2326,7 +2362,7 @@ as long as an upper-case letter does not appear in the search string.
 .It Cm ignorecase , ic Bq off
 Ignore case differences in regular expressions.
 .It Cm keytime Bq 6
-The 10th's of a second
+The tenths of a second
 .Nm ex Ns / Ns Nm vi
 waits for a subsequent key to complete a key mapping.
 .It Cm leftright Bq off
@@ -2337,11 +2373,6 @@ Do left-right scrolling.
 .Nm vi
 only.
 Set the number of lines in the screen.
-.It Cm lisp Bq off
-.Nm vi
-only.
-Modify various search commands and options to work with Lisp.
-This option is not yet implemented.
 .It Cm list Bq off
 Display lines in an unambiguous fashion.
 .It Cm lock Bq on
@@ -2358,18 +2389,13 @@ re-enables them.
 .It Cm matchtime Bq 7
 .Nm vi
 only.
-The 10th's of a second
+The tenths of a second
 .Nm ex Ns / Ns Nm vi
 pauses on the matching character when the
 .Cm showmatch
 option is set.
 .It Cm mesg Bq on
 Permit messages from other users.
-.It Cm modelines , modeline Bq off
-Read the first and last few lines of each file for
-.Nm ex
-commands.
-This option will never be implemented.
 .It Cm noprint Bq \&"\&"
 Characters that are never handled as printable characters.
 .It Cm number, nu Bq off
@@ -2385,12 +2411,7 @@ If this option is not set, the
 and
 .Cm visual
 commands are disallowed.
-.It Cm optimize , opt Bq on
-.Nm vi
-only.
-Optimize text throughput to dumb terminals.
-This option is not yet implemented
-.It Cm paragraphs , para Bq "IPLPPPQPP LIpplpipbp"
+.It Cm paragraphs , para Bq "IPLPPPQPP LIpplpipbpBlBdPpLpIt"
 .Nm vi
 only.
 Define additional paragraph boundaries for the
@@ -2410,11 +2431,6 @@ Display a command prompt.
 Mark the file and session as read-only.
 .It Cm recdir Bq /tmp/vi.recover
 The directory where recovery files are stored.
-.It Cm redraw , re Bq off
-.Nm vi
-only.
-Simulate an intelligent terminal on a dumb one.
-This option is not yet implemented.
 .It Cm remap Bq on
 Remap keys until resolved.
 .It Cm report Bq 5
@@ -2431,7 +2447,7 @@ Makes the
 and
 .Cm ?\&
 commands incremental.
-.It Cm sections , sect Bq "NHSHH HUnhsh"
+.It Cm sections , sect Bq "NHSHH HUnhshShSs"
 .Nm vi
 only.
 Define additional section boundaries for the
@@ -2470,12 +2486,6 @@ flag.
 .Nm vi
 only.
 Set the amount a left-right scroll will shift.
-.It Cm slowopen , slow Bq off
-Delay display updating during text input.
-This option is not yet implemented.
-.It Cm sourceany Bq off
-Read startup files not owned by the current user.
-This option will never be implemented.
 .It Cm tabstop , ts Bq 8
 This option sets tab widths for the editor display.
 .It Cm taglength , tl Bq 0
@@ -2727,9 +2737,40 @@ and >0 if an error occurs.
 .Nm nex Ns / Ns Nm nvi
 is close to
 .St -p1003.1-2008 .
-That document differs from historical
-.Nm ex Ns / Ns Nm vi
-practice in several places; there are changes to be made on both sides.
+It deviates in the following respects:
+.Bl -bullet
+.It
+The
+.Ic s
+.Nm ex
+command may not be called as
+.Ic substitute .
+.It
+The
+.Ic directory , redraw
+and
+.Ic slowopen
+settings are not implemented.
+.It
+The
+.Ic paragraphs
+and
+.Ic sections
+settings default to values useful for editing
+.Xr mdoc 7
+manuals.
+.It
+The
+.Ev TMPDIR
+environment variable is ignored.
+.It
+In insert mode, entering
+.Aq Ic control-H ,
+.Aq Ic erase ,
+or
+.Aq Ic kill
+following a backslash will not embed the control character in the text.
+.El
 .Sh HISTORY
 The
 .Nm ex

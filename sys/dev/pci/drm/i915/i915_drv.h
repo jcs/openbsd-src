@@ -1,4 +1,4 @@
-/* $OpenBSD: i915_drv.h,v 1.74 2016/04/05 21:22:02 kettenis Exp $ */
+/* $OpenBSD: i915_drv.h,v 1.76 2017/07/05 20:30:13 kettenis Exp $ */
 /* i915_drv.h -- Private header for the I915 driver -*- linux-c -*-
  */
 /*
@@ -43,7 +43,6 @@
 #include "intel_guc.h"
 
 struct sg_table;
-#define i2c_adapter i2c_controller
 
 #define CONFIG_DRM_I915_FBDEV 1
 #define CONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT 1
@@ -1818,14 +1817,7 @@ struct inteldrm_softc {
 	struct task burner_task;
 	int burner_fblank;
 
-	struct backlight_device {
-		struct intel_connector *connector;
-		struct {
-			uint32_t brightness;
-			uint32_t max_brightness;
-			uint32_t power;
-		} props;
-	} backlight;
+	struct backlight_device *backlight;
 
 	struct intel_uncore uncore;
 
@@ -2999,12 +2991,12 @@ int i915_gem_obj_prepare_shmem_read(struct drm_i915_gem_object *obj,
 
 int __must_check i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
 
-#ifdef __linux__
 static inline int __sg_page_count(struct scatterlist *sg)
 {
 	return sg->length >> PAGE_SHIFT;
 }
 
+#ifdef __linux__
 static inline struct page *
 i915_gem_object_get_page(struct drm_i915_gem_object *obj, int n)
 {
@@ -3031,7 +3023,16 @@ i915_gem_object_get_page(struct drm_i915_gem_object *obj, int n)
 	if (WARN_ON(n >= obj->base.size >> PAGE_SHIFT))
 		return NULL;
 
-	return obj->pages->sgl->__pages[n];
+	if (n < obj->get_page.last) {
+		obj->get_page.sg = obj->pages->sgl;
+		obj->get_page.last = 0;
+	}
+
+	while (obj->get_page.last + __sg_page_count(obj->get_page.sg) <= n)
+		obj->get_page.last += __sg_page_count(obj->get_page.sg++);
+
+	return PHYS_TO_VM_PAGE(obj->get_page.sg->dma_address +
+			       (n - obj->get_page.last) * PAGE_SIZE);
 }
 #endif
 

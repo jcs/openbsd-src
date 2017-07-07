@@ -1,41 +1,26 @@
-#	$OpenBSD: bsd.dep.mk,v 1.13 2017/05/31 07:48:04 anton Exp $
+#	$OpenBSD: bsd.dep.mk,v 1.20 2017/07/05 13:30:01 espie Exp $
 #	$NetBSD: bsd.dep.mk,v 1.12 1995/09/27 01:15:09 christos Exp $
 
-# some of the rules involve .h sources, so remove them from mkdep line
 .if !target(depend)
-depend: beforedepend .depend realdepend afterdepend
-.ORDER: beforedepend .depend realdepend afterdepend
-realdepend: _SUBDIRUSE
+depend:
+	@:
+.endif
 
-.  if defined(SRCS) && !empty(SRCS)
-.depend: ${SRCS} ${_LEXINTM} ${_YACCINTM}
-	@rm -f .depend
-	@files="${.ALLSRC:M*.s} ${.ALLSRC:M*.S}"; \
-	if [ "$$files" != " " ]; then \
-	  echo mkdep -a ${MKDEP} ${CFLAGS:M-[ID]*} ${CPPFLAGS} ${AINC} $$files;\
-	  mkdep -a ${MKDEP} ${CFLAGS:M-[ID]*} ${CPPFLAGS} ${AINC} $$files; \
-	fi
-	@files="${.ALLSRC:M*.c}"; \
-	if [ "$$files" != "" ]; then \
-	  echo mkdep -a ${MKDEP} ${CFLAGS:M-[ID]*} ${CPPFLAGS} $$files; \
-	  mkdep -a ${MKDEP} ${CFLAGS:M-[ID]*} ${CPPFLAGS} $$files; \
-	fi
-	@files="${.ALLSRC:M*.cc} ${.ALLSRC:M*.C} ${.ALLSRC:M*.cpp}"; \
-	files="$$files ${.ALLSRC:M*.cxx}"; \
-	if [ "$$files" != "   " ]; then \
-	  echo mkdep -a ${MKDEP} ${CXXFLAGS:M-[ID]*} ${CPPFLAGS} $$files; \
-	  mkdep -a ${MKDEP} ${CXXFLAGS:M-[ID]*} ${CPPFLAGS} $$files; \
-	fi
-.  else
-.depend:
-.  endif
-.  if !target(beforedepend)
-beforedepend:
-.  endif
-.  if !target(afterdepend)
-afterdepend:
+# relies on DEPS defined by bsd.lib.mk and bsd.prog.mk
+.if defined(DEPS) && !empty(DEPS)
+# catch22: don't include potentially bogus files we are going to clean
+.  if !(make(clean) || make(cleandir) || make(obj))
+.    for o in ${DEPS}
+       sinclude $o
+.    endfor
 .  endif
 .endif
+
+CFLAGS += -MD -MP
+CXXFLAGS += -MD -MP
+
+# libraries need some special love
+DFLAGS = -MD -MP -MT $*.o -MT $*.po -MT $*.so -MT $*.do
 
 .if !target(tags)
 .  if defined(SRCS)
@@ -47,10 +32,20 @@ tags:
 .  endif
 .endif
 
-.if defined(SRCS)
-cleandir: cleandepend
-cleandepend:
-	rm -f .depend ${.CURDIR}/tags
-.endif
+# explicitly tag most source files
+.for i in ${SRCS:N*.[hyl]:N*.sh} ${_LEXINTM} ${_YACCINTM}
+# assume libraries
+${i:R:S/$/.o/} ${i:R:S/$/.po/} ${i:R:S/$/.so/} ${i:R:S/$/.do/}: $i
+.endfor
 
-.PHONY: beforedepend depend afterdepend cleandepend realdepend
+CLEANFILES += ${DEPS} .depend
+
+BUILDFIRST ?=
+BUILDAFTER ?=
+.if !empty(BUILDAFTER)
+.  for i in ${BUILDFIRST} ${_LEXINTM} ${_YACCINTM}
+.    if !exists($i)
+${BUILDAFTER}: $i
+.    endif
+.  endfor
+.endif

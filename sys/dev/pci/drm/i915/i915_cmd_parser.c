@@ -638,7 +638,6 @@ static int init_hash_table(struct intel_engine_cs *ring,
 			   const struct drm_i915_cmd_table *cmd_tables,
 			   int cmd_table_count)
 {
-#ifdef notyet
 	int i, j;
 
 	hash_init(ring->cmd_hash);
@@ -660,14 +659,12 @@ static int init_hash_table(struct intel_engine_cs *ring,
 				 desc->cmd.value & CMD_HASH_MASK);
 		}
 	}
-#endif
 
 	return 0;
 }
 
 static void fini_hash_table(struct intel_engine_cs *ring)
 {
-#ifdef notyet
 	struct hlist_node *tmp;
 	struct cmd_node *desc_node;
 	int i;
@@ -676,7 +673,6 @@ static void fini_hash_table(struct intel_engine_cs *ring)
 		hash_del(&desc_node->node);
 		kfree(desc_node);
 	}
-#endif
 }
 
 /**
@@ -764,9 +760,7 @@ int i915_cmd_parser_init_ring(struct intel_engine_cs *ring)
 	BUG_ON(!validate_cmds_sorted(ring, cmd_tables, cmd_table_count));
 	BUG_ON(!validate_regs_sorted(ring));
 
-#ifdef notyet
 	WARN_ON(!hash_empty(ring->cmd_hash));
-#endif
 
 	ret = init_hash_table(ring, cmd_tables, cmd_table_count);
 	if (ret) {
@@ -799,7 +793,6 @@ static const struct drm_i915_cmd_descriptor*
 find_cmd_in_table(struct intel_engine_cs *ring,
 		  u32 cmd_header)
 {
-#ifdef notyet
 	struct cmd_node *desc_node;
 
 	hash_for_each_possible(ring->cmd_hash, desc_node, node,
@@ -811,7 +804,6 @@ find_cmd_in_table(struct intel_engine_cs *ring,
 		if (masked_cmd == masked_value)
 			return desc;
 	}
-#endif
 
 	return NULL;
 }

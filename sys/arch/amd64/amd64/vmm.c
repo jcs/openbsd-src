@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.152 2017/05/30 20:31:24 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.157 2017/07/02 19:49:31 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -190,6 +190,8 @@ void svm_setmsrbrw(struct vcpu *, uint32_t);
 void vmx_setmsrbr(struct vcpu *, uint32_t);
 void vmx_setmsrbw(struct vcpu *, uint32_t);
 void vmx_setmsrbrw(struct vcpu *, uint32_t);
+void svm_set_clean(struct vcpu *, uint32_t);
+void svm_set_dirty(struct vcpu *, uint32_t);
 
 #ifdef VMM_DEBUG
 void dump_vcpu(struct vcpu *);
@@ -1244,6 +1246,14 @@ vm_impl_init_svm(struct vm *vm, struct proc *p)
  * vm_impl_init
  *
  * Calls the architecture-specific VM init routine
+ *
+ * Parameters:
+ *  vm: the VM being initialized
+ *   p: vmd process owning the VM
+ *
+ * Return values (from architecture-specific init routines):
+ *  0: the initialization was successful
+ *  ENOMEM: the initialization failed (lack of resources)
  */
 int
 vm_impl_init(struct vm *vm, struct proc *p)
@@ -1262,6 +1272,9 @@ vm_impl_init(struct vm *vm, struct proc *p)
  * vm_impl_deinit_vmx
  *
  * Intel VMX specific VM initialization routine
+ *
+ * Parameters:
+ *  vm: VM to deinit
  */
 void
 vm_impl_deinit_vmx(struct vm *vm)
@@ -1273,6 +1286,9 @@ vm_impl_deinit_vmx(struct vm *vm)
  * vm_impl_deinit_svm
  *
  * AMD SVM specific VM initialization routine
+ *
+ * Parameters:
+ *  vm: VM to deinit
  */
 void
 vm_impl_deinit_svm(struct vm *vm)
@@ -1284,6 +1300,9 @@ vm_impl_deinit_svm(struct vm *vm)
  * vm_impl_deinit
  *
  * Calls the architecture-specific VM init routine
+ *
+ * Parameters:
+ *  vm: VM to deinit
  */
 void
 vm_impl_deinit(struct vm *vm)
@@ -1765,8 +1784,8 @@ vcpu_reset_regs_svm(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	vmcb->v_asid = asid;
 	vcpu->vc_vpid = asid;
 
-	/* TLB Control */
-	vmcb->v_tlb_control = 1;	/* First time in, flush all */
+	/* TLB Control - First time in, flush all*/
+	vmcb->v_tlb_control = SVM_TLB_CONTROL_FLUSH_ALL;
 
 	/* INTR masking */
 	vmcb->v_intr_masking = 1;
@@ -1974,6 +1993,63 @@ vmx_setmsrbrw(struct vcpu *vcpu, uint32_t msr)
 {
 	vmx_setmsrbr(vcpu, msr);
 	vmx_setmsrbw(vcpu, msr);
+}
+
+/*
+ * svm_set_clean
+ *
+ * Sets (mark as unmodified) the VMCB clean bit set in 'value'. 
+ * For example, to set the clean bit for the VMCB intercepts (bit position 0),
+ * the caller provides 'SVM_CLEANBITS_I' (0x1) for the 'value' argument.
+ * Multiple cleanbits can be provided in 'value' at the same time (eg,
+ * "SVM_CLEANBITS_I | SVM_CLEANBITS_TPR").
+ *
+ * Note that this function does not clear any bits; to clear bits in the
+ * vmcb cleanbits bitfield, use 'svm_set_dirty'.
+ *
+ * Paramters:
+ *  vmcs: the VCPU whose VMCB clean value should be set
+ *  value: the value(s) to enable in the cleanbits mask
+ */
+void
+svm_set_clean(struct vcpu *vcpu, uint32_t value)
+{
+	struct vmcb *vmcb;
+
+	/* If no cleanbits support, do nothing */
+	if (!curcpu()->ci_vmm_cap.vcc_svm.svm_vmcb_clean)
+		return;
+
+	vmcb = (struct vmcb *)vcpu->vc_control_va;
+
+	vmcb->v_vmcb_clean_bits |= value;
+}
+
+/*
+ * svm_set_dirty
+ *
+ * Clears (mark as modified) the VMCB clean bit set in 'value'. 
+ * For example, to clear the bit for the VMCB intercepts (bit position 0)
+ * the caller provides 'SVM_CLEANBITS_I' (0x1) for the 'value' argument.
+ * Multiple dirty bits can be provided in 'value' at the same time (eg,
+ * "SVM_CLEANBITS_I | SVM_CLEANBITS_TPR").
+ *
+ * Paramters:
+ *  vmcs: the VCPU whose VMCB dirty value should be set
+ *  value: the value(s) to dirty in the cleanbits mask
+ */
+void
+svm_set_dirty(struct vcpu *vcpu, uint32_t value)
+{
+	struct vmcb *vmcb;
+
+	/* If no cleanbits support, do nothing */
+	if (!curcpu()->ci_vmm_cap.vcc_svm.svm_vmcb_clean)
+		return;
+
+	vmcb = (struct vmcb *)vcpu->vc_control_va;
+
+	vmcb->v_vmcb_clean_bits &= ~value;
 }
 
 /*
@@ -4150,6 +4226,7 @@ svm_handle_exit(struct vcpu *vcpu)
 
 	/* Enable SVME in EFER (must always be set) */
 	vmcb->v_efer |= EFER_SVME;
+	svm_set_dirty(vcpu, SVM_CLEANBITS_CR);
 
 	return (ret);
 }
@@ -5156,7 +5233,6 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		 *  hyperthreading (CPUID_HTT)
 		 *  pending break enabled (CPUID_PBE)
 		 *  MTRR (CPUID_MTRR)
-		 *  PAT (CPUID_PAT)
 		 * plus:
 		 *  hypervisor (CPUIDECX_HV)
 		 */
@@ -5170,7 +5246,7 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		    ~(CPUID_ACPI | CPUID_TM | CPUID_TSC |
 		      CPUID_HTT | CPUID_DS | CPUID_APIC |
 		      CPUID_PSN | CPUID_SS | CPUID_PBE |
-		      CPUID_MTRR | CPUID_PAT);
+		      CPUID_MTRR);
 		break;
 	case 0x02:	/* Cache and TLB information */
 		*rax = eax;
@@ -5479,8 +5555,18 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 			setregion(&gdt, ci->ci_gdt, GDT_SIZE - 1);
 
 			if (ci != vcpu->vc_last_pcpu) {
-				vmcb->v_tlb_control = 3; /* Flush TLB */
-				vmcb->v_vmcb_clean_bits = 0; /* Flush cleanbits cache */
+				/*
+				 * Flush TLB by guest ASID if feature
+				 * available, flush entire TLB if not.
+				 */
+				if (ci->ci_vmm_cap.vcc_svm.svm_flush_by_asid)
+					vmcb->v_tlb_control =
+					    SVM_TLB_CONTROL_FLUSH_ASID;
+				else
+					vmcb->v_tlb_control =
+					    SVM_TLB_CONTROL_FLUSH_ALL;
+
+				svm_set_dirty(vcpu, SVM_CLEANBITS_ALL);
 			}
 
 			vcpu->vc_last_pcpu = ci;
@@ -5501,18 +5587,17 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 				vmcb->v_intr_misc = 0x10; /* XXX #define ign_tpr */
 				vmcb->v_intr_vector = 0;
 				vmcb->v_intercept1 |= SVM_INTERCEPT_VINTR;
-				vmcb->v_vmcb_clean_bits &= ~(1 << 3);
-				vmcb->v_vmcb_clean_bits &= ~(1 << 0);
+				svm_set_dirty(vcpu, SVM_CLEANBITS_TPR |
+				    SVM_CLEANBITS_I);
 			}
 
 			irq = 0xFFFF;
 		} else if (!vcpu->vc_intr) {
 			/* Disable interrupt window */
-			vmcb->v_intercept1 &= ~SVM_INTERCEPT_VINTR;
-			vmcb->v_vmcb_clean_bits &= ~(1 << 0);
-			vmcb->v_vmcb_clean_bits &= ~(1 << 3);
 			vmcb->v_irq = 0;
 			vmcb->v_intr_vector = 0;
+			vmcb->v_intercept1 &= ~SVM_INTERCEPT_VINTR;
+			svm_set_dirty(vcpu, SVM_CLEANBITS_TPR | SVM_CLEANBITS_I);
 		}
 
 		/* Inject event if present */
@@ -5600,10 +5685,15 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 
 		enable_intr();
 
-
 		vcpu->vc_gueststate.vg_rip = vmcb->v_rip;
-		vmcb->v_tlb_control = 0;
-		vmcb->v_vmcb_clean_bits = 0xFFFFFFFF;
+		vmcb->v_tlb_control = SVM_TLB_CONTROL_FLUSH_NONE;
+		svm_set_clean(vcpu, SVM_CLEANBITS_ALL);
+
+		/* Record the exit reason on successful exit */
+		if (ret == 0) {
+			exit_reason = vmcb->v_exitcode;
+			vcpu->vc_gueststate.vg_exit_reason = exit_reason;
+		}	
 
 		if (ret || exit_reason != SVM_VMEXIT_INTR) {
 			KERNEL_LOCK();
@@ -5614,9 +5704,6 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 		/* If we exited successfully ... */
 		if (ret == 0) {
 			resume = 1;
-
-			exit_reason = vmcb->v_exitcode;
-			vcpu->vc_gueststate.vg_exit_reason = exit_reason;
 
 			vcpu->vc_gueststate.vg_rflags = vmcb->v_rflags;
 
@@ -5641,8 +5728,8 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 			if (vcpu->vc_irqready == 0 && vcpu->vc_intr) {
 				vmcb->v_intercept1 |= SVM_INTERCEPT_VINTR;
 				vmcb->v_irq = 1;
-				vmcb->v_vmcb_clean_bits &= ~(1 << 0);
-				vmcb->v_vmcb_clean_bits &= ~(1 << 3);
+				svm_set_dirty(vcpu, SVM_CLEANBITS_TPR |
+				    SVM_CLEANBITS_I);
 			}
 
 			/*

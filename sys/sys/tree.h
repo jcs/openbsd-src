@@ -1,4 +1,4 @@
-/*	$OpenBSD: tree.h,v 1.25 2016/09/26 08:08:51 kettenis Exp $	*/
+/*	$OpenBSD: tree.h,v 1.28 2017/06/19 03:06:26 dlg Exp $	*/
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
  * All rights reserved.
@@ -788,8 +788,6 @@ struct _name {								\
 
 #define RBT_ENTRY(_type)	struct rb_entry
 
-#ifdef _KERNEL
-
 static inline void
 _rb_init(struct rb_tree *rbt)
 {
@@ -814,7 +812,9 @@ void	*_rb_prev(const struct rb_type *, void *);
 void	*_rb_left(const struct rb_type *, void *);
 void	*_rb_right(const struct rb_type *, void *);
 void	*_rb_parent(const struct rb_type *, void *);
-void	*_rb_color(const struct rb_type *, void *);
+void	 _rb_set_left(const struct rb_type *, void *, void *);
+void	 _rb_set_right(const struct rb_type *, void *, void *);
+void	 _rb_set_parent(const struct rb_type *, void *, void *);
 void	 _rb_poison(const struct rb_type *, void *, unsigned long);
 int	 _rb_check(const struct rb_type *, void *, unsigned long);
 
@@ -908,6 +908,24 @@ _name##_RBT_PARENT(struct _type *elm)					\
 }									\
 									\
 __unused static inline void						\
+_name##_RBT_SET_LEFT(struct _type *elm, struct _type *left)		\
+{									\
+	return _rb_set_left(_name##_RBT_TYPE, elm, left);		\
+}									\
+									\
+__unused static inline void						\
+_name##_RBT_SET_RIGHT(struct _type *elm, struct _type *right)		\
+{									\
+	return _rb_set_right(_name##_RBT_TYPE, elm, right);		\
+}									\
+									\
+__unused static inline void						\
+_name##_RBT_SET_PARENT(struct _type *elm, struct _type *parent)		\
+{									\
+	return _rb_set_parent(_name##_RBT_TYPE, elm, parent);		\
+}									\
+									\
+__unused static inline void						\
 _name##_RBT_POISON(struct _type *elm, unsigned long poison)		\
 {									\
 	return _rb_poison(_name##_RBT_TYPE, elm, poison);		\
@@ -959,6 +977,9 @@ RBT_GENERATE_INTERNAL(_name, _type, _field, _cmp, _name##_RBT_AUGMENT)
 #define RBT_LEFT(_name, _elm)		_name##_RBT_LEFT(_elm)
 #define RBT_RIGHT(_name, _elm)		_name##_RBT_RIGHT(_elm)
 #define RBT_PARENT(_name, _elm)		_name##_RBT_PARENT(_elm)
+#define RBT_SET_LEFT(_name, _elm, _l)	_name##_RBT_SET_LEFT(_elm, _l)
+#define RBT_SET_RIGHT(_name, _elm, _r)	_name##_RBT_SET_RIGHT(_elm, _r)
+#define RBT_SET_PARENT(_name, _elm, _p)	_name##_RBT_SET_PARENT(_elm, _p)
 #define RBT_POISON(_name, _elm, _p)	_name##_RBT_POISON(_elm, _p)
 #define RBT_CHECK(_name, _elm, _p)	_name##_RBT_CHECK(_elm, _p)
 
@@ -981,7 +1002,5 @@ RBT_GENERATE_INTERNAL(_name, _type, _field, _cmp, _name##_RBT_AUGMENT)
 	for ((_e) = RBT_MAX(_name, (_head));				\
 	     (_e) != NULL && ((_n) = RBT_PREV(_name, (_e)), 1);	\
 	     (_e) = (_n))
-
-#endif /* _KERNEL */
 
 #endif	/* _SYS_TREE_H_ */

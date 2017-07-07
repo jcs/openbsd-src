@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_urtwn.c,v 1.70 2017/05/08 12:28:39 stsp Exp $	*/
+/*	$OpenBSD: if_urtwn.c,v 1.72 2017/06/23 14:41:54 kevlo Exp $	*/
 
 /*-
  * Copyright (c) 2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -61,13 +61,20 @@
 /* Maximum number of output pipes is 3. */
 #define R92C_MAX_EPOUT	3
 
-#define R92C_PUBQ_NPAGES	231
+#define R92C_HQ_NPAGES		12
+#define R92C_LQ_NPAGES		2
+#define R92C_NQ_NPAGES		2
 #define R92C_TXPKTBUF_COUNT	256
 #define R92C_TX_PAGE_COUNT	248
 #define R92C_TX_PAGE_BOUNDARY	(R92C_TX_PAGE_COUNT + 1)
+#define R92C_MAX_RX_DMA_SIZE	0x2800
+#define R88E_HQ_NPAGES		0
+#define R88E_LQ_NPAGES		9
+#define R88E_NQ_NPAGES		0
 #define R88E_TXPKTBUF_COUNT	177
-#define R88E_TX_PAGE_COUNT	169
+#define R88E_TX_PAGE_COUNT	168
 #define R88E_TX_PAGE_BOUNDARY	(R88E_TX_PAGE_COUNT + 1)
+#define R88E_MAX_RX_DMA_SIZE	0x2400
 
 /* USB Requests. */
 #define R92C_REQ_REGS	0x05
@@ -164,6 +171,7 @@ struct urtwn_softc {
 	struct timeout			scan_to;
 	struct timeout			calib_to;
 
+	int				ntx;
 	struct usbd_pipe		*rx_pipe;
 	struct usbd_pipe		*tx_pipe[R92C_MAX_EPOUT];
 	int				ac2idx[EDCA_NUM_AC];
@@ -204,95 +212,109 @@ int urtwn_debug = 4;
 #define DPRINTFN(n, x)
 #endif
 
-static const struct usb_devno urtwn_devs[] = {
-	{ USB_VENDOR_ABOCOM,	USB_PRODUCT_ABOCOM_RTL8188CU_1 },
-	{ USB_VENDOR_ABOCOM,	USB_PRODUCT_ABOCOM_RTL8188CU_2 },
-	{ USB_VENDOR_ABOCOM,	USB_PRODUCT_ABOCOM_RTL8192CU },
-	{ USB_VENDOR_ASUS,	USB_PRODUCT_ASUS_RTL8192CU },
-	{ USB_VENDOR_ASUS,	USB_PRODUCT_ASUS_RTL8192CU_2 },
-	{ USB_VENDOR_ASUS,	USB_PRODUCT_ASUS_RTL8192CU_3 },
-	{ USB_VENDOR_AZUREWAVE,	USB_PRODUCT_AZUREWAVE_RTL8188CE_1 },
-	{ USB_VENDOR_AZUREWAVE,	USB_PRODUCT_AZUREWAVE_RTL8188CE_2 },
-	{ USB_VENDOR_AZUREWAVE,	USB_PRODUCT_AZUREWAVE_RTL8188CU },
-	{ USB_VENDOR_BELKIN,	USB_PRODUCT_BELKIN_F7D2102 },
-	{ USB_VENDOR_BELKIN,	USB_PRODUCT_BELKIN_F9L1004V1 },
-	{ USB_VENDOR_BELKIN,	USB_PRODUCT_BELKIN_RTL8188CU },
-	{ USB_VENDOR_BELKIN,	USB_PRODUCT_BELKIN_RTL8188CUS },
-	{ USB_VENDOR_BELKIN,	USB_PRODUCT_BELKIN_RTL8192CU },
-	{ USB_VENDOR_BELKIN,	USB_PRODUCT_BELKIN_RTL8192CU_1 },
-	{ USB_VENDOR_BELKIN,	USB_PRODUCT_BELKIN_RTL8192CU_2 },
-	{ USB_VENDOR_CHICONY,	USB_PRODUCT_CHICONY_RTL8188CUS_1 },
-	{ USB_VENDOR_CHICONY,	USB_PRODUCT_CHICONY_RTL8188CUS_2 },
-	{ USB_VENDOR_CHICONY,	USB_PRODUCT_CHICONY_RTL8188CUS_3 },
-	{ USB_VENDOR_CHICONY,	USB_PRODUCT_CHICONY_RTL8188CUS_4 },
-	{ USB_VENDOR_CHICONY,	USB_PRODUCT_CHICONY_RTL8188CUS_5 },
-	{ USB_VENDOR_CHICONY,	USB_PRODUCT_CHICONY_RTL8188CUS_6 },
-	{ USB_VENDOR_COMPARE,	USB_PRODUCT_COMPARE_RTL8192CU },
-	{ USB_VENDOR_COREGA,	USB_PRODUCT_COREGA_RTL8192CU },
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_DWA131B },
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_RTL8188CU },
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_RTL8192CU_1 },
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_RTL8192CU_2 },
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_RTL8192CU_3 },
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_RTL8192CU_4 },
-	{ USB_VENDOR_EDIMAX,	USB_PRODUCT_EDIMAX_EW7811UN },
-	{ USB_VENDOR_EDIMAX,	USB_PRODUCT_EDIMAX_RTL8192CU },
-	{ USB_VENDOR_FEIXUN,	USB_PRODUCT_FEIXUN_RTL8188CU },
-	{ USB_VENDOR_FEIXUN,	USB_PRODUCT_FEIXUN_RTL8192CU },
-	{ USB_VENDOR_GUILLEMOT,	USB_PRODUCT_GUILLEMOT_HWNUP150 },
-	{ USB_VENDOR_GUILLEMOT,	USB_PRODUCT_GUILLEMOT_RTL8192CU },
-	{ USB_VENDOR_HAWKING,	USB_PRODUCT_HAWKING_RTL8192CU },
-	{ USB_VENDOR_HAWKING,	USB_PRODUCT_HAWKING_RTL8192CU_2 },
-	{ USB_VENDOR_HP3,	USB_PRODUCT_HP3_RTL8188CU },
-	{ USB_VENDOR_IODATA,	USB_PRODUCT_IODATA_WNG150UM },
-	{ USB_VENDOR_IODATA,	USB_PRODUCT_IODATA_RTL8192CU },
-	{ USB_VENDOR_NETGEAR,	USB_PRODUCT_NETGEAR_N300MA },
-	{ USB_VENDOR_NETGEAR,	USB_PRODUCT_NETGEAR_WNA1000M },
-	{ USB_VENDOR_NETGEAR,	USB_PRODUCT_NETGEAR_WNA1000Mv2 },
-	{ USB_VENDOR_NETGEAR,	USB_PRODUCT_NETGEAR_RTL8192CU },
-	{ USB_VENDOR_NETGEAR4,	USB_PRODUCT_NETGEAR4_RTL8188CU },
-	{ USB_VENDOR_NETWEEN,	USB_PRODUCT_NETWEEN_RTL8192CU },
-	{ USB_VENDOR_NOVATECH,	USB_PRODUCT_NOVATECH_RTL8188CU },
-	{ USB_VENDOR_PLANEX2,	USB_PRODUCT_PLANEX2_RTL8188CU_1 },
-	{ USB_VENDOR_PLANEX2,	USB_PRODUCT_PLANEX2_RTL8188CU_2 },
-	{ USB_VENDOR_PLANEX2,	USB_PRODUCT_PLANEX2_RTL8188CU_3 },
-	{ USB_VENDOR_PLANEX2,	USB_PRODUCT_PLANEX2_RTL8188CU_4 },
-	{ USB_VENDOR_PLANEX2,	USB_PRODUCT_PLANEX2_RTL8188CUS },
-	{ USB_VENDOR_PLANEX2,	USB_PRODUCT_PLANEX2_RTL8192CU },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CE_0 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CE_1 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CTV },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CU_0 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CU_1 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CU_2 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CU_3 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CU_4 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CU_5 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CU_COMBO },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188CUS },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188RU },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188RU_2 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188RU_3 },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8191CU },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8192CE },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8192CE_VAU },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8192CU },
-	{ USB_VENDOR_SITECOMEU,	USB_PRODUCT_SITECOMEU_RTL8188CU },
-	{ USB_VENDOR_SITECOMEU,	USB_PRODUCT_SITECOMEU_RTL8188CU_2 },
-	{ USB_VENDOR_SITECOMEU,	USB_PRODUCT_SITECOMEU_RTL8192CU },
-	{ USB_VENDOR_SITECOMEU,	USB_PRODUCT_SITECOMEU_RTL8192CU_2 },
-	{ USB_VENDOR_SITECOMEU,	USB_PRODUCT_SITECOMEU_WLA2100V2 },
-	{ USB_VENDOR_TPLINK,	USB_PRODUCT_TPLINK_RTL8192CU },
-	{ USB_VENDOR_TRENDNET,	USB_PRODUCT_TRENDNET_RTL8188CU },
-	{ USB_VENDOR_TRENDNET,	USB_PRODUCT_TRENDNET_RTL8192CU },
-	{ USB_VENDOR_ZYXEL,	USB_PRODUCT_ZYXEL_RTL8192CU },
+/*
+ * Various supported device vendors/products.
+ */
+#define URTWN_DEV(v, p, f)					\
+        { { USB_VENDOR_##v, USB_PRODUCT_##v##_##p }, (f) | RTWN_CHIP_USB }
+#define URTWN_DEV_8192CU(v, p)	URTWN_DEV(v, p, RTWN_CHIP_92C | RTWN_CHIP_88C)
+#define URTWN_DEV_8188EU(v, p)	URTWN_DEV(v, p, RTWN_CHIP_88E)
+static const struct urtwn_type {
+	struct usb_devno        dev;
+	uint32_t		chip;
+} urtwn_devs[] = {
+	URTWN_DEV_8192CU(ABOCOM,	RTL8188CU_1),
+	URTWN_DEV_8192CU(ABOCOM,	RTL8188CU_1),
+	URTWN_DEV_8192CU(ABOCOM,	RTL8188CU_2),
+	URTWN_DEV_8192CU(ABOCOM,	RTL8192CU),
+	URTWN_DEV_8192CU(ASUS,		RTL8192CU),
+	URTWN_DEV_8192CU(ASUS,		RTL8192CU_2),
+	URTWN_DEV_8192CU(ASUS,		RTL8192CU_3),
+	URTWN_DEV_8192CU(AZUREWAVE,	RTL8188CE_1),
+	URTWN_DEV_8192CU(AZUREWAVE,	RTL8188CE_2),
+	URTWN_DEV_8192CU(AZUREWAVE,	RTL8188CU),
+	URTWN_DEV_8192CU(BELKIN,	F7D2102),
+	URTWN_DEV_8192CU(BELKIN,	F9L1004V1),
+	URTWN_DEV_8192CU(BELKIN,	RTL8188CU),
+	URTWN_DEV_8192CU(BELKIN,	RTL8188CUS),
+	URTWN_DEV_8192CU(BELKIN,	RTL8192CU),
+	URTWN_DEV_8192CU(BELKIN,	RTL8192CU_1),
+	URTWN_DEV_8192CU(BELKIN,	RTL8192CU_2),
+	URTWN_DEV_8192CU(CHICONY,	RTL8188CUS_1),
+	URTWN_DEV_8192CU(CHICONY,	RTL8188CUS_2),
+	URTWN_DEV_8192CU(CHICONY,	RTL8188CUS_3),
+	URTWN_DEV_8192CU(CHICONY,	RTL8188CUS_4),
+	URTWN_DEV_8192CU(CHICONY,	RTL8188CUS_5),
+	URTWN_DEV_8192CU(CHICONY,	RTL8188CUS_6),
+	URTWN_DEV_8192CU(COMPARE,	RTL8192CU),
+	URTWN_DEV_8192CU(COREGA,	RTL8192CU),
+	URTWN_DEV_8192CU(DLINK,		DWA131B),
+	URTWN_DEV_8192CU(DLINK,		RTL8188CU),
+	URTWN_DEV_8192CU(DLINK,		RTL8192CU_1),
+	URTWN_DEV_8192CU(DLINK,		RTL8192CU_2),
+	URTWN_DEV_8192CU(DLINK,		RTL8192CU_3),
+	URTWN_DEV_8192CU(DLINK,		RTL8192CU_4),
+	URTWN_DEV_8192CU(EDIMAX,	EW7811UN),
+	URTWN_DEV_8192CU(EDIMAX,	RTL8192CU),
+	URTWN_DEV_8192CU(FEIXUN,	RTL8188CU),
+	URTWN_DEV_8192CU(FEIXUN,	RTL8192CU),
+	URTWN_DEV_8192CU(GUILLEMOT,	HWNUP150),
+	URTWN_DEV_8192CU(GUILLEMOT,	RTL8192CU),
+	URTWN_DEV_8192CU(HAWKING,	RTL8192CU),
+	URTWN_DEV_8192CU(HAWKING,	RTL8192CU_2),
+	URTWN_DEV_8192CU(HP3,		RTL8188CU),
+	URTWN_DEV_8192CU(IODATA,	WNG150UM),
+	URTWN_DEV_8192CU(IODATA,	RTL8192CU),
+	URTWN_DEV_8192CU(NETGEAR,	N300MA),
+	URTWN_DEV_8192CU(NETGEAR,	WNA1000M),
+	URTWN_DEV_8192CU(NETGEAR,	WNA1000Mv2),
+	URTWN_DEV_8192CU(NETGEAR,	RTL8192CU),
+	URTWN_DEV_8192CU(NETGEAR4,	RTL8188CU),
+	URTWN_DEV_8192CU(NETWEEN,	RTL8192CU),
+	URTWN_DEV_8192CU(NOVATECH,	RTL8188CU),
+	URTWN_DEV_8192CU(PLANEX2,	RTL8188CU_1),
+	URTWN_DEV_8192CU(PLANEX2,	RTL8188CU_2),
+	URTWN_DEV_8192CU(PLANEX2,	RTL8188CU_3),
+	URTWN_DEV_8192CU(PLANEX2,	RTL8188CU_4),
+	URTWN_DEV_8192CU(PLANEX2,	RTL8188CUS),
+	URTWN_DEV_8192CU(PLANEX2,	RTL8192CU),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CE_0),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CE_1),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CTV),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CU_0),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CU_1),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CU_2),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CU_3),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CU_4),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CU_5),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CU_COMBO),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188CUS),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188RU),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188RU_2),
+	URTWN_DEV_8192CU(REALTEK,	RTL8188RU_3),
+	URTWN_DEV_8192CU(REALTEK,	RTL8191CU),
+	URTWN_DEV_8192CU(REALTEK,	RTL8192CE),
+	URTWN_DEV_8192CU(REALTEK,	RTL8192CE_VAU),
+	URTWN_DEV_8192CU(REALTEK,	RTL8192CU),
+	URTWN_DEV_8192CU(SITECOMEU,	RTL8188CU),
+	URTWN_DEV_8192CU(SITECOMEU,	RTL8188CU_2),
+	URTWN_DEV_8192CU(SITECOMEU,	RTL8192CU),
+	URTWN_DEV_8192CU(SITECOMEU,	RTL8192CU_2),
+	URTWN_DEV_8192CU(SITECOMEU,	WLA2100V2),
+	URTWN_DEV_8192CU(TPLINK,	RTL8192CU),
+	URTWN_DEV_8192CU(TRENDNET,	RTL8188CU),
+	URTWN_DEV_8192CU(TRENDNET,	RTL8192CU),
+	URTWN_DEV_8192CU(ZYXEL,		RTL8192CU),
 	/* URTWN_RTL8188E */
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_DWA123D1 },
-	{ USB_VENDOR_DLINK,	USB_PRODUCT_DLINK_DWA125D1 },
-	{ USB_VENDOR_ELECOM,	USB_PRODUCT_ELECOM_WDC150SU2M },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188ETV },
-	{ USB_VENDOR_REALTEK,	USB_PRODUCT_REALTEK_RTL8188EU }
+	URTWN_DEV_8188EU(DLINK,		DWA123D1),
+	URTWN_DEV_8188EU(DLINK,		DWA125D1),
+	URTWN_DEV_8188EU(ELECOM,	WDC150SU2M),
+	URTWN_DEV_8188EU(REALTEK,	RTL8188ETV),
+	URTWN_DEV_8188EU(REALTEK,	RTL8188EU)
 };
+
+#define urtwn_lookup(v, p)	\
+	((const struct urtwn_type *)usb_lookup(urtwn_devs, v, p))
 
 int		urtwn_match(struct device *, void *, void *);
 void		urtwn_attach(struct device *, struct device *, void *);
@@ -347,12 +369,10 @@ int		urtwn_power_on(void *);
 int		urtwn_alloc_buffers(void *);
 int		urtwn_r92c_power_on(struct urtwn_softc *);
 int		urtwn_r88e_power_on(struct urtwn_softc *);
-int		urtwn_llt_init(struct urtwn_softc *);
+int		urtwn_llt_init(struct urtwn_softc *, int);
 int		urtwn_fw_loadpage(void *, int, uint8_t *, int);
 int		urtwn_load_firmware(void *, u_char **, size_t *);
 int		urtwn_dma_init(void *);
-int		urtwn_r92c_dma_init(struct urtwn_softc *);
-int		urtwn_r88e_dma_init(struct urtwn_softc *);
 void		urtwn_mac_init(void *);
 void		urtwn_bb_init(void *);
 int		urtwn_init(void *);
@@ -381,7 +401,7 @@ urtwn_match(struct device *parent, void *match, void *aux)
 	if (uaa->iface == NULL || uaa->configno != 1)
 		return (UMATCH_NONE);
 
-	return ((usb_lookup(urtwn_devs, uaa->vendor, uaa->product) != NULL) ?
+	return ((urtwn_lookup(uaa->vendor, uaa->product) != NULL) ?
 	    UMATCH_VENDOR_PRODUCT_CONF_IFACE : UMATCH_NONE);
 }
 
@@ -392,26 +412,17 @@ urtwn_attach(struct device *parent, struct device *self, void *aux)
 	struct usb_attach_arg *uaa = aux;
 	struct ifnet *ifp;
 	struct ieee80211com *ic = &sc->sc_sc.sc_ic;
-	uint32_t chip_type;
 
 	sc->sc_udev = uaa->device;
 	sc->sc_iface = uaa->iface;
+
+	sc->sc_sc.chip = urtwn_lookup(uaa->vendor, uaa->product)->chip;
 
 	usb_init_task(&sc->sc_task, urtwn_task, sc, USB_TASK_TYPE_GENERIC);
 	timeout_set(&sc->scan_to, urtwn_scan_to, sc);
 	timeout_set(&sc->calib_to, urtwn_calib_to, sc);
 	if (urtwn_open_pipes(sc) != 0)
 		return;
-
-	chip_type = RTWN_CHIP_USB;
-	if (uaa->product == USB_PRODUCT_DLINK_DWA123D1 ||
-	    uaa->product == USB_PRODUCT_DLINK_DWA125D1 ||
-	    uaa->product == USB_PRODUCT_ELECOM_WDC150SU2M ||
-	    uaa->product == USB_PRODUCT_REALTEK_RTL8188EU ||
-	    uaa->product == USB_PRODUCT_REALTEK_RTL8188ETV)
-		chip_type |= RTWN_CHIP_88E;
-	else
-		chip_type |= (RTWN_CHIP_92C | RTWN_CHIP_88C);
 
 	sc->amrr.amrr_min_success_threshold =  1;
 	sc->amrr.amrr_max_success_threshold = 10;
@@ -440,7 +451,7 @@ urtwn_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_sc.sc_ops.next_scan = urtwn_next_scan;
 	sc->sc_sc.sc_ops.cancel_scan = urtwn_cancel_scan;
 	sc->sc_sc.sc_ops.wait_async = urtwn_wait_async;
-	if (rtwn_attach(&sc->sc_dev, &sc->sc_sc, chip_type) != 0) {
+	if (rtwn_attach(&sc->sc_dev, &sc->sc_sc) != 0) {
 		urtwn_close_pipes(sc);
 		return;
 	}
@@ -507,29 +518,35 @@ int
 urtwn_open_pipes(struct urtwn_softc *sc)
 {
 	/* Bulk-out endpoints addresses (from highest to lowest prio). */
-	const uint8_t epaddr[] = { 0x02, 0x03, 0x05 };
+	uint8_t epaddr[R92C_MAX_EPOUT] = { 0, 0, 0 };
+	uint8_t rx_no;
 	usb_interface_descriptor_t *id;
 	usb_endpoint_descriptor_t *ed;
-	int i, ntx = 0, error;
+	int i, error;
 
-	/* Determine the number of bulk-out pipes. */
+	/* Find all bulk endpoints. */
 	id = usbd_get_interface_descriptor(sc->sc_iface);
 	for (i = 0; i < id->bNumEndpoints; i++) {
 		ed = usbd_interface2endpoint_descriptor(sc->sc_iface, i);
-		if (ed != NULL &&
-		    UE_GET_XFERTYPE(ed->bmAttributes) == UE_BULK &&
-		    UE_GET_DIR(ed->bEndpointAddress) == UE_DIR_OUT)
-			ntx++;
+		if (ed == NULL || UE_GET_XFERTYPE(ed->bmAttributes) != UE_BULK)
+			continue;
+
+		if (UE_GET_DIR(ed->bEndpointAddress) == UE_DIR_IN)
+			rx_no = ed->bEndpointAddress;
+		else {
+			epaddr[sc->ntx] = ed->bEndpointAddress;
+			sc->ntx++;
+		}
 	}
-	DPRINTF(("found %d bulk-out pipes\n", ntx));
-	if (ntx == 0 || ntx > R92C_MAX_EPOUT) {
+	DPRINTF(("found %d bulk-out pipes\n", sc->ntx));
+	if (sc->ntx == 0 || sc->ntx > R92C_MAX_EPOUT) {
 		printf("%s: %d: invalid number of Tx bulk pipes\n",
-		    sc->sc_dev.dv_xname, ntx);
+		    sc->sc_dev.dv_xname, sc->ntx);
 		return (EIO);
 	}
 
-	/* Open bulk-in pipe at address 0x81. */
-	error = usbd_open_pipe(sc->sc_iface, 0x81, 0, &sc->rx_pipe);
+	/* Open bulk-in pipe. */
+	error = usbd_open_pipe(sc->sc_iface, rx_no, 0, &sc->rx_pipe);
 	if (error != 0) {
 		printf("%s: could not open Rx bulk pipe\n",
 		    sc->sc_dev.dv_xname);
@@ -537,7 +554,7 @@ urtwn_open_pipes(struct urtwn_softc *sc)
 	}
 
 	/* Open bulk-out pipes (up to 3). */
-	for (i = 0; i < ntx; i++) {
+	for (i = 0; i < sc->ntx; i++) {
 		error = usbd_open_pipe(sc->sc_iface, epaddr[i], 0,
 		    &sc->tx_pipe[i]);
 		if (error != 0) {
@@ -549,8 +566,8 @@ urtwn_open_pipes(struct urtwn_softc *sc)
 
 	/* Map 802.11 access categories to USB pipes. */
 	sc->ac2idx[EDCA_AC_BK] =
-	sc->ac2idx[EDCA_AC_BE] = (ntx == 3) ? 2 : ((ntx == 2) ? 1 : 0);
-	sc->ac2idx[EDCA_AC_VI] = (ntx == 3) ? 1 : 0;
+	sc->ac2idx[EDCA_AC_BE] = (sc->ntx == 3) ? 2 : ((sc->ntx == 2) ? 1 : 0);
+	sc->ac2idx[EDCA_AC_VI] = (sc->ntx == 3) ? 1 : 0;
 	sc->ac2idx[EDCA_AC_VO] = 0;	/* Always use highest prio. */
 
 	if (error != 0)
@@ -1579,15 +1596,14 @@ urtwn_r88e_power_on(struct urtwn_softc *sc)
 	    urtwn_read_1(sc, R92C_AFE_XTAL_CTRL + 2) | 0x80);
 
 	/* Disable HWPDN. */
-	urtwn_write_1(sc, 0x5, urtwn_read_1(sc, 0x5) & ~0x80);
 	urtwn_write_2(sc, R92C_APS_FSMCO,
 	    urtwn_read_2(sc, R92C_APS_FSMCO) & ~R92C_APS_FSMCO_APDM_HPDN);
-
 	/* Disable WL suspend. */
 	urtwn_write_2(sc, R92C_APS_FSMCO,
 	    urtwn_read_2(sc, R92C_APS_FSMCO) &
 	    ~(R92C_APS_FSMCO_AFSM_HSUS | R92C_APS_FSMCO_AFSM_PCIE));
 
+	/* Auto enable WLAN. */
 	urtwn_write_2(sc, R92C_APS_FSMCO,
 	    urtwn_read_2(sc, R92C_APS_FSMCO) | R92C_APS_FSMCO_APFM_ONMAC);
 	for (ntries = 0; ntries < 5000; ntries++) {
@@ -1596,8 +1612,11 @@ urtwn_r88e_power_on(struct urtwn_softc *sc)
 			break;
 		DELAY(10);
 	}
-	if (ntries == 5000)
+	if (ntries == 5000) {
+		printf("%s: timeout waiting for MAC auto ON\n",
+		    sc->sc_dev.dv_xname);
 		return (ETIMEDOUT);
+	}
 
 	/* Enable LDO normal mode. */
 	urtwn_write_1(sc, R92C_LPLDO_CTRL,
@@ -1610,17 +1629,14 @@ urtwn_r88e_power_on(struct urtwn_softc *sc)
 	    R92C_CR_TXDMA_EN | R92C_CR_RXDMA_EN | R92C_CR_PROTOCOL_EN |
 	    R92C_CR_SCHEDULE_EN | R92C_CR_ENSEC | R92C_CR_CALTMR_EN;
 	urtwn_write_2(sc, R92C_CR, reg);
-
 	return (0);
 }
 
 int
-urtwn_llt_init(struct urtwn_softc *sc)
+urtwn_llt_init(struct urtwn_softc *sc, int page_count)
 {
-	int i, error, page_count, pktbuf_count;
+	int i, error, pktbuf_count;
 
-	page_count = (sc->sc_sc.chip & RTWN_CHIP_88E) ?
-	    R88E_TX_PAGE_COUNT : R92C_TX_PAGE_COUNT;
 	pktbuf_count = (sc->sc_sc.chip & RTWN_CHIP_88E) ?
 	    R88E_TXPKTBUF_COUNT : R92C_TXPKTBUF_COUNT;
 
@@ -1700,140 +1716,89 @@ int
 urtwn_dma_init(void *cookie)
 {
 	struct urtwn_softc *sc = cookie;
-
-	if (sc->sc_sc.chip & RTWN_CHIP_88E)
-		return urtwn_r88e_dma_init(sc);
-
-	return urtwn_r92c_dma_init(sc);
-}
-
-int
-urtwn_r92c_dma_init(struct urtwn_softc *sc)
-{
-	int hashq, hasnq, haslq, nqueues, nqpages, nrempages;
 	uint32_t reg;
-	int error;
+	uint16_t dmasize;
+	int hqpages, lqpages, nqpages, pagecnt, boundary;
+	int error, hashq, haslq, hasnq;
+
+	/* Default initialization of chipset values. */
+	if (sc->sc_sc.chip & RTWN_CHIP_88E) {
+		hqpages = R88E_HQ_NPAGES;
+		lqpages = R88E_LQ_NPAGES;
+		nqpages = R88E_NQ_NPAGES;
+		pagecnt = R88E_TX_PAGE_COUNT;
+		boundary = R88E_TX_PAGE_BOUNDARY;
+		dmasize = R88E_MAX_RX_DMA_SIZE;
+	} else {
+		hqpages = R92C_HQ_NPAGES;
+		lqpages = R92C_LQ_NPAGES;
+		nqpages = R92C_NQ_NPAGES;
+		pagecnt = R92C_TX_PAGE_COUNT;
+		boundary = R92C_TX_PAGE_BOUNDARY;
+		dmasize = R92C_MAX_RX_DMA_SIZE;
+	}
 
 	/* Initialize LLT table. */
-	error = urtwn_llt_init(sc);
+	error = urtwn_llt_init(sc, pagecnt);
 	if (error != 0)
 		return (error);
 
 	/* Get Tx queues to USB endpoints mapping. */
 	hashq = hasnq = haslq = 0;
-	reg = urtwn_read_2(sc, R92C_USB_EP + 1);
-	DPRINTFN(2, ("USB endpoints mapping 0x%x\n", reg));
-	if (MS(reg, R92C_USB_EP_HQ) != 0)
-		hashq = 1;
-	if (MS(reg, R92C_USB_EP_NQ) != 0)
-		hasnq = 1;
-	if (MS(reg, R92C_USB_EP_LQ) != 0)
+	switch (sc->ntx) {
+	case 3:
 		haslq = 1;
-	nqueues = hashq + hasnq + haslq;
-	if (nqueues == 0)
-		return (EIO);
-	/* Get the number of pages for each queue. */
-	nqpages = (R92C_TX_PAGE_COUNT - R92C_PUBQ_NPAGES) / nqueues;
-	/* The remaining pages are assigned to the high priority queue. */
-	nrempages = (R92C_TX_PAGE_COUNT - R92C_PUBQ_NPAGES) % nqueues;
+		pagecnt -= lqpages;
+		/* FALLTHROUGH */
+	case 2:
+		hasnq = 1;
+		pagecnt -= nqpages;
+		/* FALLTHROUGH */
+	case 1:
+		hashq = 1;
+		pagecnt -= hqpages;
+		break;
+	}
 
 	/* Set number of pages for normal priority queue. */
 	urtwn_write_1(sc, R92C_RQPN_NPQ, hasnq ? nqpages : 0);
 	urtwn_write_4(sc, R92C_RQPN,
 	    /* Set number of pages for public queue. */
-	    SM(R92C_RQPN_PUBQ, R92C_PUBQ_NPAGES) |
+	    SM(R92C_RQPN_PUBQ, pagecnt) |
 	    /* Set number of pages for high priority queue. */
-	    SM(R92C_RQPN_HPQ, hashq ? nqpages + nrempages : 0) |
+	    SM(R92C_RQPN_HPQ, hashq ? hqpages : 0) |
 	    /* Set number of pages for low priority queue. */
-	    SM(R92C_RQPN_LPQ, haslq ? nqpages : 0) |
+	    SM(R92C_RQPN_LPQ, haslq ? lqpages : 0) |
 	    /* Load values. */
 	    R92C_RQPN_LD);
 
-	urtwn_write_1(sc, R92C_TXPKTBUF_BCNQ_BDNY, R92C_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TXPKTBUF_MGQ_BDNY, R92C_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TXPKTBUF_WMAC_LBK_BF_HD, R92C_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TRXFF_BNDY, R92C_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TDECTRL + 1, R92C_TX_PAGE_BOUNDARY);
+	urtwn_write_1(sc, R92C_TXPKTBUF_BCNQ_BDNY, boundary);
+	urtwn_write_1(sc, R92C_TXPKTBUF_MGQ_BDNY, boundary);
+	urtwn_write_1(sc, R92C_TXPKTBUF_WMAC_LBK_BF_HD, boundary);
+	urtwn_write_1(sc, R92C_TRXFF_BNDY, boundary);
+	urtwn_write_1(sc, R92C_TDECTRL + 1, boundary);
 
 	/* Set queue to USB pipe mapping. */
 	reg = urtwn_read_2(sc, R92C_TRXDMA_CTRL);
 	reg &= ~R92C_TRXDMA_CTRL_QMAP_M;
-	if (nqueues == 1) {
-		if (hashq)
+	if (haslq)
+		reg |= R92C_TRXDMA_CTRL_QMAP_3EP;
+	else if (hashq) {
+		if (!hasnq)
 			reg |= R92C_TRXDMA_CTRL_QMAP_HQ;
-		else if (hasnq)
-			reg |= R92C_TRXDMA_CTRL_QMAP_NQ;
 		else
-			reg |= R92C_TRXDMA_CTRL_QMAP_LQ;
-	} else if (nqueues == 2) {
-		/* All 2-endpoints configs have a high priority queue. */
-		if (!hashq)
-			return (EIO);
-		if (hasnq)
 			reg |= R92C_TRXDMA_CTRL_QMAP_HQ_NQ;
-		else
-			reg |= R92C_TRXDMA_CTRL_QMAP_HQ_LQ;
-	} else
-		reg |= R92C_TRXDMA_CTRL_QMAP_3EP;
+	}
 	urtwn_write_2(sc, R92C_TRXDMA_CTRL, reg);
 
 	/* Set Tx/Rx transfer page boundary. */
-	urtwn_write_2(sc, R92C_TRXFF_BNDY + 2, 0x27ff);
+	urtwn_write_2(sc, R92C_TRXFF_BNDY + 2, dmasize - 1);
 
 	/* Set Tx/Rx transfer page size. */
 	urtwn_write_1(sc, R92C_PBP,
 	    SM(R92C_PBP_PSRX, R92C_PBP_128) |
 	    SM(R92C_PBP_PSTX, R92C_PBP_128));
-	return (0);
-}
-
-int
-urtwn_r88e_dma_init(struct urtwn_softc *sc)
-{
-	usb_interface_descriptor_t      *id;
-	uint32_t reg;
-	int nqueues = 1;
-	int error;
-
-	/* Initialize LLT table. */
-	error = urtwn_llt_init(sc);
-	if (error != 0)
-		return (error);
-
-	/* Get Tx queues to USB endpoints mapping. */
-	id = usbd_get_interface_descriptor(sc->sc_iface);
-	nqueues = id->bNumEndpoints - 1;
-
-	/* Set number of pages for normal priority queue. */
-	urtwn_write_2(sc, R92C_RQPN_NPQ, 0x000d);
-	urtwn_write_4(sc, R92C_RQPN, 0x808e000d);
-
-	urtwn_write_1(sc, R92C_TXPKTBUF_BCNQ_BDNY, R88E_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TXPKTBUF_MGQ_BDNY, R88E_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TXPKTBUF_WMAC_LBK_BF_HD, R88E_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TRXFF_BNDY, R88E_TX_PAGE_BOUNDARY);
-	urtwn_write_1(sc, R92C_TDECTRL + 1, R88E_TX_PAGE_BOUNDARY);
-
-	/* Set queue to USB pipe mapping. */
-	reg = urtwn_read_2(sc, R92C_TRXDMA_CTRL);
-	reg &= ~R92C_TRXDMA_CTRL_QMAP_M;
-	if (nqueues == 1)
-		reg |= R92C_TRXDMA_CTRL_QMAP_LQ;
-	else if (nqueues == 2)
-		reg |= R92C_TRXDMA_CTRL_QMAP_HQ_NQ;
-	else
-		reg |= R92C_TRXDMA_CTRL_QMAP_3EP;
-	urtwn_write_2(sc, R92C_TRXDMA_CTRL, reg);
-
-	/* Set Tx/Rx transfer page boundary. */
-	urtwn_write_2(sc, R92C_TRXFF_BNDY + 2, 0x23ff);
-
-	/* Set Tx/Rx transfer page size. */
-	urtwn_write_1(sc, R92C_PBP,
-	    SM(R92C_PBP_PSRX, R92C_PBP_128) |
-	    SM(R92C_PBP_PSTX, R92C_PBP_128));
-
-	return (0);
+	return (error);
 }
 
 void
@@ -1862,7 +1827,7 @@ urtwn_bb_init(void *cookie)
 	struct urtwn_softc *sc = cookie;
 	const struct r92c_bb_prog *prog;
 	uint32_t reg;
-	uint8_t crystalcap;
+	uint8_t xtal;
 	int i;
 
 	/* Enable BB and RF. */
@@ -1960,14 +1925,10 @@ urtwn_bb_init(void *cookie)
 		urtwn_bb_write(sc, R92C_OFDM0_AGCCORE1(0), 0x69553420);
 		DELAY(1);
 
-		crystalcap = sc->sc_sc.r88e_rom[0xb9];
-		if (crystalcap == 0xff)
-			crystalcap = 0x20;
-		crystalcap &= 0x3f;
+		xtal = sc->sc_sc.crystal_cap & 0x3f;
 		reg = urtwn_bb_read(sc, R92C_AFE_XTAL_CTRL);
 		urtwn_bb_write(sc, R92C_AFE_XTAL_CTRL,
-		    RW(reg, R92C_AFE_XTAL_CTRL_ADDR,
-		    crystalcap | crystalcap << 6));
+		    RW(reg, R92C_AFE_XTAL_CTRL_ADDR, xtal | xtal << 6));
 	}
 
 	if (urtwn_bb_read(sc, R92C_HSSI_PARAM2(0)) & R92C_HSSI_PARAM2_CCK_HIPWR)
@@ -1980,9 +1941,9 @@ urtwn_power_on(void *cookie)
 	struct urtwn_softc *sc = cookie;
 
 	if (sc->sc_sc.chip & RTWN_CHIP_88E)
-		return urtwn_r88e_power_on(sc);
+		return (urtwn_r88e_power_on(sc));
 
-	return urtwn_r92c_power_on(sc);
+	return (urtwn_r92c_power_on(sc));
 }
 
 int

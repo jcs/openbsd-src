@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_carp.c,v 1.312 2017/05/30 12:09:27 friehm Exp $	*/
+/*	$OpenBSD: ip_carp.c,v 1.314 2017/06/22 11:34:51 tom Exp $	*/
 
 /*
  * Copyright (c) 2002 Michael Shalayeff. All rights reserved.
@@ -421,7 +421,7 @@ carp_proto_input(struct mbuf **mp, int *offp, int proto, int af)
 
 	ifp = if_get((*mp)->m_pkthdr.ph_ifidx);
 	if (ifp == NULL) {
-		m_freem(*mp);
+		m_freemp(mp);
 		return IPPROTO_DONE;
 	}
 
@@ -517,7 +517,7 @@ carp6_proto_input(struct mbuf **mp, int *offp, int proto, int af)
 
 	ifp = if_get((*mp)->m_pkthdr.ph_ifidx);
 	if (ifp == NULL) {
-		m_freem(*mp);
+		m_freemp(mp);
 		return IPPROTO_DONE;
 	}
 
@@ -2338,7 +2338,7 @@ carp_start(struct ifnet *ifp)
 			uint8_t *esrc;
 
 			eh = mtod(m, struct ether_header *);
-			esrc = ((struct arpcom*)ifp->if_carpdev)->ac_enaddr;;
+			esrc = ((struct arpcom*)ifp->if_carpdev)->ac_enaddr;
 			memcpy(eh->ether_shost, esrc, sizeof(eh->ether_shost));
 		}
 

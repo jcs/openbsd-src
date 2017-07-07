@@ -1,4 +1,4 @@
-/*	$OpenBSD: mbuf.h,v 1.229 2017/05/30 12:09:27 friehm Exp $	*/
+/*	$OpenBSD: mbuf.h,v 1.231 2017/06/23 11:18:12 bluhm Exp $	*/
 /*	$NetBSD: mbuf.h,v 1.19 1996/02/09 18:25:14 christos Exp $	*/
 
 /*
@@ -186,7 +186,7 @@ struct mbuf {
 
 /* mbuf pkthdr flags, also in m_flags */
 #define M_VLANTAG	0x0020	/* ether_vtag is valid */
-#define M_LOOP		0x0040	/* for Mbuf statistics */
+#define M_LOOP		0x0040	/* packet has been sent from local machine */
 #define M_ACAST		0x0080	/* received as IPv6 anycast */
 #define M_BCAST		0x0100	/* sent/received as link-level broadcast */
 #define M_MCAST		0x0200	/* sent/received as link-level multicast */
@@ -462,6 +462,15 @@ int	m_apply(struct mbuf *, int, int,
 	    int (*)(caddr_t, caddr_t, unsigned int), caddr_t);
 struct mbuf *m_dup_pkt(struct mbuf *, unsigned int, int);
 int	m_dup_pkthdr(struct mbuf *, struct mbuf *, int);
+
+static inline struct mbuf *
+m_freemp(struct mbuf **mp)
+{
+	struct mbuf *m = *mp;
+
+	*mp = NULL;
+	return m_freem(m);
+}
 
 /* Packet tag routines */
 struct m_tag *m_tag_get(int, int, int);

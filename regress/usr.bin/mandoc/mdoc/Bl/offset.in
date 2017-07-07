@@ -1,6 +1,7 @@
-.Dd December 25, 2014
+.\" $OpenBSD: offset.in,v 1.5 2017/07/04 14:53:24 schwarze Exp $
+.Dd $Mdocdate: July 4 2017 $
 .Dt BL-OFFSET 1
-.Os OpenBSD
+.Os
 .Sh NAME
 .Nm Bl-offset
 .Nd various arguments for Bl offset
@@ -57,9 +58,9 @@ Bl tag width Ds offset indent
 .It tag
 Bl tag width Ds offset indent-two
 .El
-.Bl -tag -width Ds -offset 4n
+.Bl -tag -width Ds -offset 0.36i
 .It tag
-Bl tag width Ds offset 4n
+Bl tag width Ds offset 0.36i
 .El
 .Bl -tag -width Ds -offset mystring
 .It tag
@@ -73,7 +74,7 @@ Bl tag width Ds offset Ds
 .It tag
 Bl tag width Ds offset 78n
 .El
-.Bl -tag -width Ds -offset -3n
+.Bl -tag -width Ds -offset -0.26i
 .It tag
-Bl tag width Ds offset -3n
+Bl tag width Ds offset -0.26i
 .El

@@ -1321,6 +1321,7 @@
 ./usr/share/man/man4/hppa/wax.4
 ./usr/share/man/man4/hsq.4
 ./usr/share/man/man4/hvn.4
+./usr/share/man/man4/hvs.4
 ./usr/share/man/man4/hyperv.4
 ./usr/share/man/man4/i386/amdmsr.4
 ./usr/share/man/man4/i386/amdpcib.4
@@ -1527,6 +1528,8 @@
 ./usr/share/man/man4/oce.4
 ./usr/share/man/man4/octeon/amdcf.4
 ./usr/share/man/man4/octeon/cnmac.4
+./usr/share/man/man4/octeon/octciu.4
+./usr/share/man/man4/octeon/octmmc.4
 ./usr/share/man/man4/octeon/octrng.4
 ./usr/share/man/man4/octeon/octrtc.4
 ./usr/share/man/man4/octeon/octuctl.4

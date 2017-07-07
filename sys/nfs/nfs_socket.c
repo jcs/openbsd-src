@@ -1,4 +1,4 @@
-/*	$OpenBSD: nfs_socket.c,v 1.116 2017/05/17 08:59:05 mpi Exp $	*/
+/*	$OpenBSD: nfs_socket.c,v 1.119 2017/06/27 12:02:43 mpi Exp $	*/
 /*	$NetBSD: nfs_socket.c,v 1.27 1996/04/15 20:20:00 thorpej Exp $	*/
 
 /*
@@ -362,7 +362,9 @@ nfs_connect(struct nfsmount *nmp, struct nfsreq *rep)
 		rcvreserve = (nmp->nm_rsize + NFS_MAXPKTHDR +
 		    sizeof (u_int32_t)) * 2;
 	}
+	s = solock(so);
 	error = soreserve(so, sndreserve, rcvreserve);
+	sounlock(s);
 	if (error)
 		goto bad;
 	so->so_rcv.sb_flags |= SB_NOINTR;
@@ -673,8 +675,7 @@ tryagain:
 		}
 errout:
 		if (error && error != EINTR && error != ERESTART) {
-			m_freem(*mp);
-			*mp = NULL;
+			m_freemp(mp);
 			if (error != EPIPE)
 				log(LOG_INFO,
 				    "receive error %d from nfs server %s\n",
@@ -707,10 +708,8 @@ errout:
 		} while (error == EWOULDBLOCK);
 		len -= auio.uio_resid;
 	}
-	if (error) {
-		m_freem(*mp);
-		*mp = NULL;
-	}
+	if (error)
+		m_freemp(mp);
 	/*
 	 * Search for any mbufs that are not a multiple of 4 bytes long
 	 * or with m_data not longword aligned.
@@ -1179,7 +1178,7 @@ nfs_timer(void *arg)
 		 * Set r_rtt to -1 in case we fail to send it now.
 		 */
 		rep->r_rtt = -1;
-		if (sbspace(&so->so_snd) >= rep->r_mreq->m_pkthdr.len &&
+		if (sbspace(so, &so->so_snd) >= rep->r_mreq->m_pkthdr.len &&
 		   ((nmp->nm_flag & NFSMNT_DUMBTIMR) ||
 		    (rep->r_flags & R_SENT) ||
 		    nmp->nm_sent < nmp->nm_cwnd) &&
@@ -1418,7 +1417,7 @@ nfs_realign(struct mbuf **pm, int hsiz)
 			off += m->m_len;
 			m = m->m_next;
 		}
-		m_freem(*pm);
+		m_freemp(pm);
 		*pm = n;
 	}
 }

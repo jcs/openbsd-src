@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.2 2017/01/21 09:40:15 patrick Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.4 2017/06/29 05:40:35 deraadt Exp $	*/
 /*
  * Copyright (c) 2009 Miodrag Vallat.
  *
@@ -21,6 +21,7 @@
 #include <sys/device.h>
 #include <sys/reboot.h>
 #include <sys/hibernate.h>
+#include <uvm/uvm.h>
 
 #include <machine/bootconfig.h>
 
@@ -31,12 +32,28 @@ struct device *bootdv = NULL;
 enum devclass bootdev_class = DV_DULL;
 
 void
+unmap_startup(void)
+{
+#if 0
+	extern void *_start, *endboot;
+	vaddr_t p = (vaddr_t)&_start;
+
+	do {
+		pmap_kremove(p, PAGE_SIZE);
+		p += PAGE_SIZE;
+	} while (p < (vaddr_t)&endboot);
+#endif
+}
+
+void
 cpu_configure(void)
 {
 	(void)splhigh();
 
 	softintr_init();
 	(void)config_rootfound("mainbus", NULL);
+
+	unmap_startup();
 
 	cold = 0;
 	spl0();

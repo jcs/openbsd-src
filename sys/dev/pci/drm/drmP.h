@@ -1,4 +1,4 @@
-/* $OpenBSD: drmP.h,v 1.210 2017/05/25 03:19:39 dlg Exp $ */
+/* $OpenBSD: drmP.h,v 1.213 2017/07/05 20:30:13 kettenis Exp $ */
 /* drmP.h -- Private header for Direct Rendering Manager -*- linux-c -*-
  * Created: Mon Jan  4 10:05:05 1999 by faith@precisioninsight.com
  */
@@ -67,7 +67,8 @@
 #include <dev/pci/agpvar.h>
 #include <machine/bus.h>
 
-#define CONFIG_DRM_FBDEV_EMULATION
+#define CONFIG_DRM_FBDEV_EMULATION 1
+#define CONFIG_BACKLIGHT_CLASS_DEVICE 1
 
 #include "drm_linux.h"
 #include "drm_linux_list.h"
@@ -967,6 +968,9 @@ static inline wait_queue_head_t *drm_crtc_vblank_waitqueue(struct drm_crtc *crtc
 	return &crtc->dev->vblank[drm_crtc_index(crtc)].queue;
 }
 
+/* Modesetting support */
+extern void drm_vblank_pre_modeset(struct drm_device *dev, unsigned int pipe);
+extern void drm_vblank_post_modeset(struct drm_device *dev, unsigned int pipe);
 
 bool	drm_mode_parse_command_line_for_connector(const char *,
 	    struct drm_connector *, struct drm_cmdline_mode *);

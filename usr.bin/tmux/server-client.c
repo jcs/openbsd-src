@@ -1,4 +1,4 @@
-/* $OpenBSD: server-client.c,v 1.237 2017/05/31 11:00:00 nicm Exp $ */
+/* $OpenBSD: server-client.c,v 1.239 2017/06/13 07:12:33 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -816,8 +816,9 @@ server_client_handle_key(struct client *c, key_code key)
 	struct timeval		 tv;
 	struct key_table	*table, *first;
 	struct key_binding	 bd_find, *bd;
-	int			 xtimeout;
+	int			 xtimeout, flags;
 	struct cmd_find_state	 fs;
+	key_code		 key0;
 
 	/* Check the client is good to accept input. */
 	if (s == NULL || (c->flags & (CLIENT_DEAD|CLIENT_SUSPENDED)) != 0)
@@ -906,13 +907,15 @@ server_client_handle_key(struct client *c, key_code key)
 	 * The prefix always takes precedence and forces a switch to the prefix
 	 * table, unless we are already there.
 	 */
-	if ((key == (key_code)options_get_number(s->options, "prefix") ||
-	    key == (key_code)options_get_number(s->options, "prefix2")) &&
+	key0 = (key & ~KEYC_XTERM);
+	if ((key0 == (key_code)options_get_number(s->options, "prefix") ||
+	    key0 == (key_code)options_get_number(s->options, "prefix2")) &&
 	    strcmp(table->name, "prefix") != 0) {
 		server_client_set_key_table(c, "prefix");
 		server_status_client(c);
 		return;
 	}
+	flags = c->flags;
 
 retry:
 	/* Log key table. */
@@ -924,7 +927,7 @@ retry:
 		log_debug("currently repeating");
 
 	/* Try to see if there is a key binding in the current table. */
-	bd_find.key = (key & ~KEYC_XTERM);
+	bd_find.key = key0;
 	bd = RB_FIND(key_bindings, &table->key_bindings, &bd_find);
 	if (bd != NULL) {
 		/*
@@ -990,7 +993,7 @@ retry:
 	 * No match in the root table either. If this wasn't the first table
 	 * tried, don't pass the key to the pane.
 	 */
-	if (first != table) {
+	if (first != table && (~flags & CLIENT_REPEAT)) {
 		server_client_set_key_table(c, NULL);
 		server_status_client(c);
 		return;

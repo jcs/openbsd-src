@@ -1,4 +1,4 @@
-/*	$OpenBSD: nd6_rtr.c,v 1.159 2017/05/30 08:58:34 florian Exp $	*/
+/*	$OpenBSD: nd6_rtr.c,v 1.161 2017/06/09 12:56:44 mpi Exp $	*/
 /*	$KAME: nd6_rtr.c,v 1.97 2001/02/07 11:09:13 itojun Exp $	*/
 
 /*
@@ -613,7 +613,9 @@ defrouter_addreq(struct nd_defrouter *new)
 	error = rtrequest(RTM_ADD, &info, RTP_DEFAULT, &rt,
 	    new->ifp->if_rdomain);
 	if (error == 0) {
+		KERNEL_LOCK();
 		rtm_send(rt, RTM_ADD, new->ifp->if_rdomain);
+		KERNEL_UNLOCK();
 		rtfree(rt);
 		new->installed = 1;
 	}
@@ -714,10 +716,12 @@ defrouter_delreq(struct nd_defrouter *dr)
 	info.rti_info[RTAX_GATEWAY] = sin6tosa(&gw);
 	info.rti_info[RTAX_NETMASK] = sin6tosa(&mask);
 
-	error = rtrequest(RTM_DELETE, &info, RTP_DEFAULT, &rt,
+	error = rtrequest_delete(&info, RTP_DEFAULT, dr->ifp, &rt,
 	    dr->ifp->if_rdomain);
 	if (error == 0) {
+		KERNEL_LOCK();
 		rtm_send(rt, RTM_DELETE, dr->ifp->if_rdomain);
+		KERNEL_UNLOCK();
 		rtfree(rt);
 	}
 
@@ -2036,10 +2040,11 @@ rt6_flush(struct in6_addr *gateway, struct ifnet *ifp)
 int
 rt6_deleteroute(struct rtentry *rt, void *arg, unsigned int id)
 {
+	struct ifnet *ifp;
 	struct rt_addrinfo info;
 	struct in6_addr *gate = (struct in6_addr *)arg;
 	struct sockaddr_in6 sa_mask;
-	int error;
+	int error = 0;
 
 	if (rt->rt_gateway == NULL || rt->rt_gateway->sa_family != AF_INET6)
 		return (0);
@@ -2062,14 +2067,16 @@ rt6_deleteroute(struct rtentry *rt, void *arg, unsigned int id)
 	if ((rt->rt_flags & RTF_HOST) == 0)
 		return (0);
 
-	bzero(&info, sizeof(info));
-	info.rti_flags =  rt->rt_flags;
-	info.rti_info[RTAX_DST] = rt_key(rt);
-	info.rti_info[RTAX_GATEWAY] = rt->rt_gateway;
-	info.rti_info[RTAX_NETMASK] = rt_plen2mask(rt, &sa_mask);
-	error = rtrequest(RTM_DELETE, &info, RTP_ANY, NULL, id);
-	if (error != 0)
-		return (error);
+	ifp = if_get(rt->rt_ifidx);
+	if (ifp != NULL) {
+		bzero(&info, sizeof(info));
+		info.rti_flags =  rt->rt_flags;
+		info.rti_info[RTAX_DST] = rt_key(rt);
+		info.rti_info[RTAX_GATEWAY] = rt->rt_gateway;
+		info.rti_info[RTAX_NETMASK] = rt_plen2mask(rt, &sa_mask);
+		error = rtrequest_delete(&info, RTP_ANY, ifp, NULL, id);
+	}
+	if_put(ifp);
 
-	return (EAGAIN);
+	return (error != 0 ? error : EAGAIN);
 }

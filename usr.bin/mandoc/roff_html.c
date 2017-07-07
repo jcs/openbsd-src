@@ -1,4 +1,4 @@
-/*	$OpenBSD: roff_html.c,v 1.5 2017/05/08 15:33:43 schwarze Exp $ */
+/*	$OpenBSD: roff_html.c,v 1.11 2017/06/24 14:38:28 schwarze Exp $ */
 /*
  * Copyright (c) 2010 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2014, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -20,6 +20,7 @@
 #include <assert.h>
 #include <stddef.h>
 
+#include "mandoc.h"
 #include "roff.h"
 #include "out.h"
 #include "html.h"
@@ -29,12 +30,17 @@
 typedef	void	(*roff_html_pre_fp)(ROFF_HTML_ARGS);
 
 static	void	  roff_html_pre_br(ROFF_HTML_ARGS);
+static	void	  roff_html_pre_ce(ROFF_HTML_ARGS);
 static	void	  roff_html_pre_sp(ROFF_HTML_ARGS);
 
 static	const roff_html_pre_fp roff_html_pre_acts[ROFF_MAX] = {
 	roff_html_pre_br,  /* br */
+	roff_html_pre_ce,  /* ce */
 	NULL,  /* ft */
 	NULL,  /* ll */
+	NULL,  /* mc */
+	NULL,  /* po */
+	roff_html_pre_ce,  /* rj */
 	roff_html_pre_sp,  /* sp */
 	NULL,  /* ta */
 	NULL,  /* ti */
@@ -52,8 +58,25 @@ roff_html_pre(struct html *h, const struct roff_node *n)
 static void
 roff_html_pre_br(ROFF_HTML_ARGS)
 {
-	print_otag(h, TAG_DIV, "");
+	struct tag	*t;
+
+	t = print_otag(h, TAG_DIV, "");
 	print_text(h, "\\~");  /* So the div isn't empty. */
+	print_tagq(h, t);
+}
+
+static void
+roff_html_pre_ce(ROFF_HTML_ARGS)
+{
+	for (n = n->child->next; n != NULL; n = n->next) {
+		if (n->type == ROFFT_TEXT) {
+			if (n->flags & NODE_LINE)
+				roff_html_pre_br(h, n);
+			print_text(h, n->string);
+		} else
+			roff_html_pre(h, n);
+	}
+	roff_html_pre_br(h, n);
 }
 
 static void
@@ -63,7 +86,7 @@ roff_html_pre_sp(ROFF_HTML_ARGS)
 
 	SCALE_VS_INIT(&su, 1);
 	if ((n = n->child) != NULL) {
-		if (a2roffsu(n->string, &su, SCALE_VS) == 0)
+		if (a2roffsu(n->string, &su, SCALE_VS) == NULL)
 			su.scale = 1.0;
 		else if (su.scale < 0.0)
 			su.scale = 0.0;

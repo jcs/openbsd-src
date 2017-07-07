@@ -4067,7 +4067,6 @@ intel_dp_probe_oui(struct intel_dp *intel_dp)
 static bool
 intel_dp_probe_mst(struct intel_dp *intel_dp)
 {
-#ifdef notyet
 	u8 buf[1];
 
 	if (!intel_dp->can_mst)
@@ -4088,9 +4087,6 @@ intel_dp_probe_mst(struct intel_dp *intel_dp)
 
 	drm_dp_mst_topology_mgr_set_mst(&intel_dp->mst_mgr, intel_dp->is_mst);
 	return intel_dp->is_mst;
-#else
-	return false;
-#endif
 }
 
 static int intel_dp_sink_crc_stop(struct intel_dp *intel_dp)
@@ -4223,7 +4219,6 @@ intel_dp_get_sink_irq(struct intel_dp *intel_dp, u8 *sink_irq_vector)
 				       sink_irq_vector, 1) == 1;
 }
 
-#ifdef notyet
 static bool
 intel_dp_get_sink_irq_esi(struct intel_dp *intel_dp, u8 *sink_irq_vector)
 {
@@ -4237,7 +4232,6 @@ intel_dp_get_sink_irq_esi(struct intel_dp *intel_dp, u8 *sink_irq_vector)
 
 	return true;
 }
-#endif
 
 static uint8_t intel_dp_autotest_link_training(struct intel_dp *intel_dp)
 {
@@ -4359,7 +4353,6 @@ update_status:
 static int
 intel_dp_check_mst_status(struct intel_dp *intel_dp)
 {
-#ifdef notyet
 	bool bret;
 
 	if (intel_dp->is_mst) {
@@ -4411,7 +4404,6 @@ go_again:
 			drm_kms_helper_hotplug_event(intel_dig_port->base.base.dev);
 		}
 	}
-#endif
 	return -EINVAL;
 }
 
@@ -5012,9 +5004,7 @@ void intel_dp_encoder_destroy(struct drm_encoder *encoder)
 	struct intel_dp *intel_dp = &intel_dig_port->dp;
 
 	drm_dp_aux_unregister(&intel_dp->aux);
-#ifdef notyet
 	intel_dp_mst_encoder_cleanup(intel_dig_port);
-#endif
 	if (is_edp(intel_dp)) {
 		cancel_delayed_work_sync(&intel_dp->panel_vdd_work);
 		/*
@@ -5190,14 +5180,12 @@ intel_dp_hpd_pulse(struct intel_digital_port *intel_dig_port, bool long_hpd)
 
 	goto put_power;
 mst_fail:
-#ifdef notyet
 	/* if we were in MST mode, and device is not there get out of MST mode */
 	if (intel_dp->is_mst) {
 		DRM_DEBUG_KMS("MST device may have disappeared %d vs %d\n", intel_dp->is_mst, intel_dp->mst_mgr.mst_state);
 		intel_dp->is_mst = false;
 		drm_dp_mst_topology_mgr_set_mst(&intel_dp->mst_mgr, intel_dp->is_mst);
 	}
-#endif
 put_power:
 	intel_display_power_put(dev_priv, power_domain);
 
@@ -6096,13 +6084,11 @@ intel_dp_init_connector(struct intel_digital_port *intel_dig_port,
 
 	intel_dp_aux_init(intel_dp, intel_connector);
 
-#ifdef notyet
 	/* init MST on ports that can support it */
 	if (HAS_DP_MST(dev) &&
 	    (port == PORT_B || port == PORT_C || port == PORT_D))
 		intel_dp_mst_encoder_init(intel_dig_port,
 					  intel_connector->base.base.id);
-#endif
 
 	if (!intel_edp_init_connector(intel_dp, intel_connector)) {
 		drm_dp_aux_unregister(&intel_dp->aux);
@@ -6214,8 +6200,6 @@ err_connector_alloc:
 	return false;
 }
 
-#ifdef notyet
-
 void intel_dp_mst_suspend(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -6258,5 +6242,3 @@ void intel_dp_mst_resume(struct drm_device *dev)
 		}
 	}
 }
-
-#endif

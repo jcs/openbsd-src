@@ -1,4 +1,4 @@
-/* $OpenBSD: options-table.c,v 1.88 2017/05/30 21:44:59 nicm Exp $ */
+/* $OpenBSD: options-table.c,v 1.90 2017/06/23 15:36:52 nicm Exp $ */
 
 /*
  * Copyright (c) 2011 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -53,6 +53,9 @@ static const char *options_table_bell_action_list[] = {
 };
 static const char *options_table_pane_status_list[] = {
 	"off", "top", "bottom", NULL
+};
+static const char *options_table_set_clipboard_list[] = {
+	"off", "external", "on", NULL
 };
 
 /* Top-level options. */
@@ -118,8 +121,9 @@ const struct options_table_entry options_table[] = {
 	},
 
 	{ .name = "set-clipboard",
-	  .type = OPTIONS_TABLE_FLAG,
+	  .type = OPTIONS_TABLE_CHOICE,
 	  .scope = OPTIONS_TABLE_SERVER,
+	  .choices = options_table_set_clipboard_list,
 	  .default_num = 1
 	},
 
@@ -129,6 +133,13 @@ const struct options_table_entry options_table[] = {
 	  .default_str = "xterm*:XT:Ms=\\E]52;%p1%s;%p2%s\\007"
 			 ":Cs=\\E]12;%p1%s\\007:Cr=\\E]112\\007"
 			 ":Ss=\\E[%p1%d q:Se=\\E[2 q,screen*:XT",
+	  .separator = ","
+	},
+
+	{ .name = "user-keys",
+	  .type = OPTIONS_TABLE_ARRAY,
+	  .scope = OPTIONS_TABLE_SERVER,
+	  .default_str = "",
 	  .separator = ","
 	},
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: hfsc.c,v 1.39 2017/05/08 11:30:53 mikeb Exp $	*/
+/*	$OpenBSD: hfsc.c,v 1.41 2017/06/28 18:24:02 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2012-2013 Henning Brauer <henning@openbsd.org>
@@ -60,9 +60,6 @@
 #include <net/pfvar.h>
 #include <net/hfsc.h>
 
-/* need to provide dummies for hfsc-less kernels to reduce the if.h horror */
-#include "pf.h"
-#if NPF > 0
 /*
  * kernel internal service curve representation
  *	coordinates are given by 64 bit unsigned integers.
@@ -817,7 +814,7 @@ hfsc_deferred(void *arg)
 	KASSERT(HFSC_ENABLED(ifq));
 
 	if (!ifq_empty(ifq))
-		(*ifp->if_qstart)(ifq);
+		ifq_start(ifq);
 
 	hif = ifq->ifq_q;
 
@@ -1597,4 +1594,3 @@ hfsc_clh2cph(struct hfsc_if *hif, u_int32_t chandle)
 			return (cl);
 	return (NULL);
 }
-#endif

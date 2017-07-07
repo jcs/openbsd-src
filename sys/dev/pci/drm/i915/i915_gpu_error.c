@@ -632,11 +632,6 @@ i915_error_object_create(struct drm_i915_private *dev_priv,
 		   vma && (vma->bound & GLOBAL_BIND) &&
 		   reloc_offset + num_pages * PAGE_SIZE <= dev_priv->gtt.mappable_end);
 
-#if 0
-	if (reloc_offset + num_pages * PAGE_SIZE <= dev_priv->gtt.mappable_end)
-		use_ggtt = 1;
-#endif
-
 	/* Cannot access stolen address directly, try to use the aperture */
 	if (src->stolen) {
 		use_ggtt = true;
@@ -690,17 +685,13 @@ i915_error_object_create(struct drm_i915_private *dev_priv,
 			void *s;
 
 			page = i915_gem_object_get_page(src, i);
-			if (i == 0)
-				printf("%s: phys 0x%lx\n", __func__, VM_PAGE_TO_PHYS(page));
 
-			wbinvd();
 			drm_clflush_pages(&page, 1);
 
 			s = kmap_atomic(page);
 			memcpy(d, s, PAGE_SIZE);
 			kunmap_atomic(s);
 
-			wbinvd();
 			drm_clflush_pages(&page, 1);
 		}
 		local_irq_restore(flags);
@@ -1450,7 +1441,6 @@ void i915_capture_error_state(struct drm_device *dev, bool wedged,
 				   dev_priv->ring[i].name,
 				   lower_32_bits(obj->gtt_offset));
 			xprint_error_obj(obj);
-			printf("XXX 0x%x\n", *(uint32_t *)dev_priv->ring[i].buffer->virtual_start);
 		}
 
 		if ((obj = error->ring[i].hws_page)) {

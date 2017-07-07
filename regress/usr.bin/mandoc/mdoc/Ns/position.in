@@ -1,6 +1,7 @@
-.Dd September 15, 2013
+.\" $OpenBSD: position.in,v 1.6 2017/07/04 14:53:25 schwarze Exp $
+.Dd $Mdocdate: July 4 2017 $
 .Dt NS-POSITION 1
-.Os OpenBSD
+.Os
 .Sh NAME
 .Nm Ns-position
 .Nd effect of the position of the no space macro on the line
@@ -19,6 +20,12 @@ After some macro and a block closing:
 .Pp
 In the middle of a macro line:
 .Oo before Oc Ns Op after
+.Pp
+After closing punctuation:
+.Oo before Oc : Ns Op after
+.Pp
+Before closing punctuation:
+.Oo before Oc Ns : Op after
 .Pp
 At the end of a macro line:
 .Oo before Oc Ns

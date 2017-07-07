@@ -1,4 +1,4 @@
-/*	$OpenBSD: intel_i2c.c,v 1.8 2016/04/16 17:39:44 kettenis Exp $	*/
+/*	$OpenBSD: intel_i2c.c,v 1.11 2017/07/03 13:26:04 naddy Exp $	*/
 /*
  * Copyright (c) 2012, 2013 Mark Kettenis <kettenis@openbsd.org>
  *
@@ -413,19 +413,19 @@ intel_setup_gmbus(struct drm_device *dev)
 		/* By default use a conservative clock rate */
 		bus->reg0 = pin | GMBUS_RATE_100KHZ;
 
-		bus->adapter.ic_cookie = bus;
-		bus->adapter.ic_acquire_bus = intel_gmbus_acquire_bus;
-		bus->adapter.ic_release_bus = intel_gmbus_release_bus;
-		bus->adapter.ic_exec = intel_gmbus_exec;
+		bus->adapter.ic.ic_cookie = bus;
+		bus->adapter.ic.ic_acquire_bus = intel_gmbus_acquire_bus;
+		bus->adapter.ic.ic_release_bus = intel_gmbus_release_bus;
+		bus->adapter.ic.ic_exec = intel_gmbus_exec;
 
 		bus->gpio_reg = dev_priv->gpio_mmio_base +
 			get_gmbus_pin(dev_priv, pin)->reg;
 
-		bus->adapter.ic_send_start = intel_gpio_send_start;
-		bus->adapter.ic_send_stop = intel_gpio_send_stop;
-		bus->adapter.ic_initiate_xfer = intel_gpio_initiate_xfer;
-		bus->adapter.ic_read_byte = intel_gpio_read_byte;
-		bus->adapter.ic_write_byte = intel_gpio_write_byte;
+		bus->adapter.ic.ic_send_start = intel_gpio_send_start;
+		bus->adapter.ic.ic_send_stop = intel_gpio_send_stop;
+		bus->adapter.ic.ic_initiate_xfer = intel_gpio_initiate_xfer;
+		bus->adapter.ic.ic_read_byte = intel_gpio_read_byte;
+		bus->adapter.ic.ic_write_byte = intel_gpio_write_byte;
 	}
 
 	intel_i2c_reset(dev_priv->dev);
@@ -457,10 +457,10 @@ intel_gmbus_force_bit(struct i2c_adapter *adapter, bool force_bit)
 	else
 		bus->force_bit--;
 
-	KASSERT(force_bit >= 0);
+	KASSERT(bus->force_bit >= 0);
 
 	if (bus->force_bit)
-		bus->adapter.ic_exec = NULL;
+		bus->adapter.ic.ic_exec = NULL;
 	else
-		bus->adapter.ic_exec = intel_gmbus_exec;
+		bus->adapter.ic.ic_exec = intel_gmbus_exec;
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: identd.c,v 1.36 2017/05/26 17:38:46 florian Exp $ */
+/*	$OpenBSD: identd.c,v 1.38 2017/07/04 01:09:42 dlg Exp $ */
 
 /*
  * Copyright (c) 2013 David Gwynne <dlg@openbsd.org>
@@ -40,6 +40,7 @@
 #include <stdio.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <signal.h>
 #include <syslog.h>
@@ -752,8 +753,8 @@ identd_accept(int fd, short events, void *arg)
 	event_set(&c->ev, s, EV_READ | EV_PERSIST, identd_request, c);
 	event_add(&c->ev, NULL);
 
-	event_set(&c->tmo, s, 0, identd_timeout, c);
-	event_add(&c->tmo, &timeout);
+	evtimer_set(&c->tmo, identd_timeout, c);
+	evtimer_add(&c->tmo, &timeout);
 }
 
 void

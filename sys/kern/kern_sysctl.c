@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.326 2017/05/06 18:18:11 bluhm Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.329 2017/06/20 14:11:46 gerhard Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -928,23 +928,24 @@ sysctl_rdquad(void *oldp, size_t *oldlenp, void *newp, int64_t val)
  */
 int
 sysctl_string(void *oldp, size_t *oldlenp, void *newp, size_t newlen, char *str,
-    int maxlen)
+    size_t maxlen)
 {
 	return sysctl__string(oldp, oldlenp, newp, newlen, str, maxlen, 0);
 }
 
 int
 sysctl_tstring(void *oldp, size_t *oldlenp, void *newp, size_t newlen,
-    char *str, int maxlen)
+    char *str, size_t maxlen)
 {
 	return sysctl__string(oldp, oldlenp, newp, newlen, str, maxlen, 1);
 }
 
 int
 sysctl__string(void *oldp, size_t *oldlenp, void *newp, size_t newlen,
-    char *str, int maxlen, int trunc)
+    char *str, size_t maxlen, int trunc)
 {
-	int len, error = 0;
+	size_t len;
+	int error = 0;
 
 	len = strlen(str) + 1;
 	if (oldp && *oldlenp < len) {
@@ -977,7 +978,8 @@ sysctl__string(void *oldp, size_t *oldlenp, void *newp, size_t newlen,
 int
 sysctl_rdstring(void *oldp, size_t *oldlenp, void *newp, const char *str)
 {
-	int len, error = 0;
+	size_t len;
+	int error = 0;
 
 	len = strlen(str) + 1;
 	if (oldp && *oldlenp < len)
@@ -996,7 +998,7 @@ sysctl_rdstring(void *oldp, size_t *oldlenp, void *newp, const char *str)
  */
 int
 sysctl_struct(void *oldp, size_t *oldlenp, void *newp, size_t newlen, void *sp,
-    int len)
+    size_t len)
 {
 	int error = 0;
 
@@ -1019,7 +1021,7 @@ sysctl_struct(void *oldp, size_t *oldlenp, void *newp, size_t newlen, void *sp,
  */
 int
 sysctl_rdstruct(void *oldp, size_t *oldlenp, void *newp, const void *sp,
-    int len)
+    size_t len)
 {
 	int error = 0;
 
@@ -1325,6 +1327,7 @@ sysctl_file(int *name, u_int namelen, char *where, size_t *sizep,
 		FREF(fp);
 		do {
 			if (fp->f_count > 1 && /* 0, +1 for our FREF() */
+			    FILE_IS_USABLE(fp) &&
 			    (arg == 0 || fp->f_type == arg)) {
 				int af, skip = 0;
 				if (arg == DTYPE_SOCKET && fp->f_type == arg) {

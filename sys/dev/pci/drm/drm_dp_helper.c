@@ -637,8 +637,6 @@ static int drm_dp_i2c_do_msg(struct drm_dp_aux *aux, struct drm_dp_aux_msg *msg)
 	return -EREMOTEIO;
 }
 
-#ifdef __linux__
-
 static void drm_dp_i2c_msg_set_request(struct drm_dp_aux_msg *msg,
 				       const struct i2c_msg *i2c_msg)
 {
@@ -646,17 +644,6 @@ static void drm_dp_i2c_msg_set_request(struct drm_dp_aux_msg *msg,
 		DP_AUX_I2C_READ : DP_AUX_I2C_WRITE;
 	msg->request |= DP_AUX_I2C_MOT;
 }
-
-#else
-
-static void drm_dp_i2c_msg_set_request(struct drm_dp_aux_msg *msg, i2c_op_t op)
-{
-	msg->request = I2C_OP_READ_P(op) ?
-		DP_AUX_I2C_READ : DP_AUX_I2C_WRITE;
-	msg->request |= DP_AUX_I2C_MOT;
-}
-
-#endif
 
 /*
  * Keep retrying drm_dp_i2c_do_msg until all data has been transferred.
@@ -685,8 +672,6 @@ static int drm_dp_i2c_drain_msg(struct drm_dp_aux *aux, struct drm_dp_aux_msg *o
 
 	return ret;
 }
-
-#ifdef notyet
 
 /*
  * Bizlink designed DP->DVI-D Dual Link adapters require the I2C over AUX
@@ -773,108 +758,11 @@ static int drm_dp_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 }
 
 static const struct i2c_algorithm drm_dp_i2c_algo = {
+#ifdef notyet
 	.functionality = drm_dp_i2c_functionality,
+#endif
 	.master_xfer = drm_dp_i2c_xfer,
 };
-
-#endif
-
-static int
-i2c_dp_aux_acquire_bus(void *cookie, int flags)
-{
-	struct drm_dp_aux *aux = cookie;
-
-	mutex_lock(&aux->hw_mutex);
-	return 0;
-}
-
-static void
-i2c_dp_aux_release_bus(void *cookie, int flags)
-{
-	struct drm_dp_aux *aux = cookie;
-
-	mutex_unlock(&aux->hw_mutex);
-}
-
-static int
-drm_dp_i2c_doexec(struct drm_dp_aux *aux, struct drm_dp_aux_msg *msg, i2c_op_t op, char *buf, size_t len)
-{
-	unsigned int j;
-	unsigned transfer_size;
-	int err = 0;
-
-	drm_dp_i2c_msg_set_request(msg, I2C_OP_WRITE);
-	/* Send a bare address packet to start the transaction.
-	 * Zero sized messages specify an address only (bare
-	 * address) transaction.
-	 */
-	msg->buffer = NULL;
-	msg->size = 0;
-	err = drm_dp_i2c_do_msg(aux, msg);
-
-	/*
-	 * Reset msg.request in case in case it got
-	 * changed into a WRITE_STATUS_UPDATE.
-	 */
-	drm_dp_i2c_msg_set_request(msg, op);
-
-	if (err < 0)
-		return err;
-	/* We want each transaction to be as large as possible, but
-	 * we'll go to smaller sizes if the hardware gives us a
-	 * short reply.
-	 */
-	transfer_size = DP_AUX_MAX_PAYLOAD_BYTES;
-	for (j = 0; j < len; j += msg->size) {
-		msg->buffer = buf + j;
-		msg->size = min(transfer_size, len - j);
-
-		err = drm_dp_i2c_drain_msg(aux, msg);
-
-		/*
-		 * Reset msg.request in case in case it got
-		 * changed into a WRITE_STATUS_UPDATE.
-		 */
-		drm_dp_i2c_msg_set_request(msg, op);
-
-		if (err < 0)
-			break;
-		transfer_size = err;
-	}
-
-	return err;
-}
-
-static int
-i2c_algo_dp_aux_exec(void *cookie, i2c_op_t op, i2c_addr_t addr,
-    const void *cmdbuf, size_t cmdlen, void *buffer, size_t len, int flags)
-{
-	struct drm_dp_aux *aux = cookie;
-	struct drm_dp_aux_msg msg;
-	int err = 0;
-
-	memset(&msg, 0, sizeof(msg));
-
-	msg.address = addr;
-
-	if (cmdlen > 0)
-		err = drm_dp_i2c_doexec(aux, &msg, I2C_OP_WRITE,
-					(void *)cmdbuf, cmdlen);
-
-	if (len > 0 && err >= 0)
-		err = drm_dp_i2c_doexec(aux, &msg, op, buffer, len);
-
-	/* Send a bare address packet to close out the transaction.
-	 * Zero sized messages specify an address only (bare
-	 * address) transaction.
-	 */
-	msg.request &= ~DP_AUX_I2C_MOT;
-	msg.buffer = NULL;
-	msg.size = 0;
-	(void)drm_dp_i2c_do_msg(aux, &msg);
-
-	return (err < 0 ? -err : 0);
-}
 
 /**
  * drm_dp_aux_register() - initialise and register aux channel
@@ -886,14 +774,23 @@ int drm_dp_aux_register(struct drm_dp_aux *aux)
 {
 	rw_init(&aux->hw_mutex, "drmdp");
 
-	aux->ddc.ic_acquire_bus = i2c_dp_aux_acquire_bus;
-	aux->ddc.ic_release_bus = i2c_dp_aux_release_bus;
-	aux->ddc.ic_exec = i2c_algo_dp_aux_exec;
-	aux->ddc.ic_cookie = aux;
+	aux->ddc.algo = &drm_dp_i2c_algo;
+	aux->ddc.algo_data = aux;
+	aux->ddc.retries = 3;
 
-	return 0;
+#ifdef __linux__
+	aux->ddc.class = I2C_CLASS_DDC;
+	aux->ddc.owner = THIS_MODULE;
+	aux->ddc.dev.parent = aux->dev;
+	aux->ddc.dev.of_node = aux->dev->of_node;
+#endif
+
+	strlcpy(aux->ddc.name, aux->name ? aux->name : dev_name(aux->dev),
+		sizeof(aux->ddc.name));
+
+	return i2c_add_adapter(&aux->ddc);
 }
-EXPORT_SYMBOL(drm_dp_aux_register)
+EXPORT_SYMBOL(drm_dp_aux_register);
 
 /**
  * drm_dp_aux_unregister() - unregister an AUX adapter
@@ -901,5 +798,6 @@ EXPORT_SYMBOL(drm_dp_aux_register)
  */
 void drm_dp_aux_unregister(struct drm_dp_aux *aux)
 {
+	i2c_del_adapter(&aux->ddc);
 }
 EXPORT_SYMBOL(drm_dp_aux_unregister);

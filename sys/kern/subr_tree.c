@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_tree.c,v 1.6 2016/09/20 01:11:27 dlg Exp $ */
+/*	$OpenBSD: subr_tree.c,v 1.9 2017/06/08 03:30:52 dlg Exp $ */
 
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
@@ -41,21 +41,20 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/param.h>
 #include <sys/tree.h>
 
-static inline void *
+static inline struct rb_entry *
 rb_n2e(const struct rb_type *t, void *node)
 {
-	caddr_t addr = (caddr_t)node;
+	unsigned long addr = (unsigned long)node;
 
-	return ((void *)(addr + t->t_offset));
+	return ((struct rb_entry *)(addr + t->t_offset));
 }
 
 static inline void *
 rb_e2n(const struct rb_type *t, struct rb_entry *rbe)
 {
-	caddr_t addr = (caddr_t)rbe;
+	unsigned long addr = (unsigned long)rbe;
 
 	return ((void *)(addr - t->t_offset));
 }
@@ -590,6 +589,33 @@ _rb_parent(const struct rb_type *t, void *node)
 	struct rb_entry *rbe = rb_n2e(t, node);
 	rbe = RBE_PARENT(rbe);
 	return (rbe == NULL ? NULL : rb_e2n(t, rbe));
+}
+
+void
+_rb_set_left(const struct rb_type *t, void *node, void *left)
+{
+	struct rb_entry *rbe = rb_n2e(t, node);
+	struct rb_entry *rbl = (left == NULL) ? NULL : rb_n2e(t, left);
+
+	RBE_LEFT(rbe) = rbl;
+}
+
+void
+_rb_set_right(const struct rb_type *t, void *node, void *right)
+{
+	struct rb_entry *rbe = rb_n2e(t, node);
+	struct rb_entry *rbr = (right == NULL) ? NULL : rb_n2e(t, right);
+
+	RBE_RIGHT(rbe) = rbr;
+}
+
+void
+_rb_set_parent(const struct rb_type *t, void *node, void *parent)
+{
+	struct rb_entry *rbe = rb_n2e(t, node);
+	struct rb_entry *rbp = (parent == NULL) ? NULL : rb_n2e(t, parent);
+
+	RBE_PARENT(rbe) = rbp;
 }
 
 void

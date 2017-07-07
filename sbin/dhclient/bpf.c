@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpf.c,v 1.50 2017/04/19 05:36:12 natano Exp $	*/
+/*	$OpenBSD: bpf.c,v 1.56 2017/07/07 15:14:47 krw Exp $	*/
 
 /* BPF socket interface code, originally contributed by Archie Cobbs. */
 
@@ -65,14 +65,14 @@
 #include "dhcpd.h"
 #include "log.h"
 
-int if_register_bpf(struct interface_info *ifi);
+void if_register_bpf(struct interface_info *ifi);
 
 /*
  * Called by get_interface_list for each interface that's discovered.
  * Opens a packet filter for each interface and adds it to the select
  * mask.
  */
-int
+void
 if_register_bpf(struct interface_info *ifi)
 {
 	struct ifreq ifr;
@@ -86,7 +86,7 @@ if_register_bpf(struct interface_info *ifi)
 	if (ioctl(sock, BIOCSETIF, &ifr) < 0)
 		fatal("Can't attach interface %s to /dev/bpf", ifi->name);
 
-	return (sock);
+	ifi->bfdesc = sock;
 }
 
 void
@@ -192,7 +192,7 @@ if_register_receive(struct interface_info *ifi)
 	int flag = 1, sz;
 
 	/* Open a BPF device and hang it on this interface. */
-	ifi->bfdesc = if_register_bpf(ifi);
+	if_register_bpf(ifi);
 
 	/* Make sure the BPF version is in range. */
 	if (ioctl(ifi->bfdesc, BIOCVERSION, &v) < 0)
@@ -256,16 +256,15 @@ if_register_receive(struct interface_info *ifi)
 ssize_t
 send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
 {
-	struct client_state *client = ifi->client;
 	struct sockaddr_in dest;
 	struct ether_header eh;
 	struct ip ip;
 	struct udphdr udp;
 	struct iovec iov[4];
 	struct msghdr msg;
-	unsigned char *data;
+	struct dhcp_packet *packet = &ifi->sent_packet;
 	ssize_t result;
-	int iovcnt = 0, len;
+	int iovcnt = 0, len = ifi->sent_packet_length;
 
 	memset(&dest, 0, sizeof(dest));
 	dest.sin_family = AF_INET;
@@ -273,14 +272,11 @@ send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
 	dest.sin_addr.s_addr = to.s_addr;
 
 	if (to.s_addr == INADDR_BROADCAST) {
-		assemble_eh_header(ifi, &eh);
+		assemble_eh_header(ifi->hw_address, &eh);
 		iov[0].iov_base = &eh;
 		iov[0].iov_len = sizeof(eh);
 		iovcnt++;
 	}
-
-	data = (unsigned char *)&client->bootrequest_packet;
-	len = client->bootrequest_packet_length;
 
 	ip.ip_v = 4;
 	ip.ip_hl = 5;
@@ -303,14 +299,15 @@ send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
 	udp.uh_ulen = htons(sizeof(udp) + len);
 	udp.uh_sum = 0;
 	udp.uh_sum = wrapsum(checksum((unsigned char *)&udp, sizeof(udp),
-	    checksum(data, len, checksum((unsigned char *)&ip.ip_src,
+	    checksum((unsigned char *)packet, len,
+	    checksum((unsigned char *)&ip.ip_src,
 	    2 * sizeof(ip.ip_src),
 	    IPPROTO_UDP + (u_int32_t)ntohs(udp.uh_ulen)))));
 	iov[iovcnt].iov_base = &udp;
 	iov[iovcnt].iov_len = sizeof(udp);
 	iovcnt++;
 
-	iov[iovcnt].iov_base = data;
+	iov[iovcnt].iov_base = packet;
 	iov[iovcnt].iov_len = len;
 	iovcnt++;
 
@@ -319,7 +316,7 @@ send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
 	} else {
 		memset(&msg, 0, sizeof(msg));
 		msg.msg_name = (struct sockaddr *)&dest;
-		msg.msg_namelen = sizeof(to);
+		msg.msg_namelen = sizeof(dest);
 		msg.msg_iov = iov;
 		msg.msg_iovlen = iovcnt;
 		result = sendmsg(ifi->ufdesc, &msg, 0);
@@ -334,7 +331,7 @@ ssize_t
 receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
     struct ether_addr *hfrom)
 {
-	struct client_state *client = ifi->client;
+	struct dhcp_packet *packet = &ifi->recv_packet;
 	int length = 0, offset = 0;
 	struct bpf_hdr hdr;
 
@@ -398,7 +395,7 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 
 		/* Decode the physical header. */
 		offset = decode_hw_header(ifi->rbuf + ifi->rbuf_offset,
-		   hdr.bh_caplen, hfrom);
+		    hdr.bh_caplen, hfrom);
 
 		/*
 		 * If a physical layer checksum failed (dunno of any
@@ -415,7 +412,7 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 
 		/* Decode the IP and UDP headers. */
 		offset = decode_udp_ip_header(ifi->rbuf + ifi->rbuf_offset,
-		   hdr.bh_caplen, from);
+		    hdr.bh_caplen, from);
 
 		/* If the IP or UDP checksum was bad, skip the packet. */
 		if (offset < 0) {
@@ -431,16 +428,15 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 		 * we have to skip it (this shouldn't happen in real
 		 * life, though).
 		 */
-		if (hdr.bh_caplen > sizeof(client->packet)) {
+		if (hdr.bh_caplen > sizeof(*packet)) {
 			ifi->rbuf_offset = BPF_WORDALIGN(
 			    ifi->rbuf_offset + hdr.bh_caplen);
 			continue;
 		}
 
 		/* Copy out the data in the packet. */
-		memset(&client->packet, DHO_END, sizeof(client->packet));
-		memcpy(&client->packet, ifi->rbuf + ifi->rbuf_offset,
-		    hdr.bh_caplen);
+		memset(packet, DHO_END, sizeof(*packet));
+		memcpy(packet, ifi->rbuf + ifi->rbuf_offset, hdr.bh_caplen);
 		ifi->rbuf_offset = BPF_WORDALIGN(ifi->rbuf_offset +
 		    hdr.bh_caplen);
 		return (hdr.bh_caplen);

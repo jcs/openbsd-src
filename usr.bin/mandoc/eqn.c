@@ -1,7 +1,7 @@
-/*	$OpenBSD: eqn.c,v 1.25 2017/03/11 15:42:03 schwarze Exp $ */
+/*	$OpenBSD: eqn.c,v 1.38 2017/07/07 17:15:21 schwarze Exp $ */
 /*
  * Copyright (c) 2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
- * Copyright (c) 2014, 2015 Ingo Schwarze <schwarze@openbsd.org>
+ * Copyright (c) 2014, 2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -18,6 +18,7 @@
 #include <sys/types.h>
 
 #include <assert.h>
+#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,9 +79,12 @@ enum	eqn_tok {
 	EQN_TOK_TDEFINE,
 	EQN_TOK_NDEFINE,
 	EQN_TOK_UNDEF,
-	EQN_TOK_EOF,
 	EQN_TOK_ABOVE,
-	EQN_TOK__MAX
+	EQN_TOK__MAX,
+	EQN_TOK_FUNC,
+	EQN_TOK_QUOTED,
+	EQN_TOK_SYM,
+	EQN_TOK_EOF
 };
 
 static	const char *eqn_toks[EQN_TOK__MAX] = {
@@ -128,12 +132,18 @@ static	const char *eqn_toks[EQN_TOK__MAX] = {
 	"tdefine", /* EQN_TOK_TDEFINE */
 	"ndefine", /* EQN_TOK_NDEFINE */
 	"undef", /* EQN_TOK_UNDEF */
-	NULL, /* EQN_TOK_EOF */
 	"above", /* EQN_TOK_ABOVE */
 };
 
+static	const char *const eqn_func[] = {
+	"acos",	"acsc",	"and",	"arc",	"asec",	"asin", "atan",
+	"cos",	"cosh", "coth",	"csc",	"det",	"exp",	"for",
+	"if",	"lim",	"ln",	"log",	"max",	"min",
+	"sec",	"sin",	"sinh",	"tan",	"tanh",	"Im",	"Re",
+};
+
 enum	eqn_symt {
-	EQNSYM_alpha,
+	EQNSYM_alpha = 0,
 	EQNSYM_beta,
 	EQNSYM_chi,
 	EQNSYM_delta,
@@ -264,18 +274,22 @@ static	const struct eqnsym eqnsyms[EQNSYM__MAX] = {
 	{ "-", "mi" }, /* EQNSYM_minus */
 };
 
+enum	parse_mode {
+	MODE_QUOTED,
+	MODE_NOSUB,
+	MODE_SUB,
+	MODE_TOK
+};
+
 static	struct eqn_box	*eqn_box_alloc(struct eqn_node *, struct eqn_box *);
 static	void		 eqn_box_free(struct eqn_box *);
 static	struct eqn_box	*eqn_box_makebinary(struct eqn_node *,
-				enum eqn_post, struct eqn_box *);
+				struct eqn_box *);
 static	void		 eqn_def(struct eqn_node *);
-static	struct eqn_def	*eqn_def_find(struct eqn_node *, const char *, size_t);
+static	struct eqn_def	*eqn_def_find(struct eqn_node *);
 static	void		 eqn_delim(struct eqn_node *);
-static	const char	*eqn_next(struct eqn_node *, char, size_t *, int);
-static	const char	*eqn_nextrawtok(struct eqn_node *, size_t *);
-static	const char	*eqn_nexttok(struct eqn_node *, size_t *);
+static	enum eqn_tok	 eqn_next(struct eqn_node *, enum parse_mode);
 static	enum rofferr	 eqn_parse(struct eqn_node *, struct eqn_box *);
-static	enum eqn_tok	 eqn_tok_parse(struct eqn_node *, char **);
 static	void		 eqn_undef(struct eqn_node *);
 
 
@@ -344,183 +358,136 @@ eqn_alloc(int pos, int line, struct mparse *parse)
  * Find the key "key" of the give size within our eqn-defined values.
  */
 static struct eqn_def *
-eqn_def_find(struct eqn_node *ep, const char *key, size_t sz)
+eqn_def_find(struct eqn_node *ep)
 {
 	int		 i;
 
 	for (i = 0; i < (int)ep->defsz; i++)
 		if (ep->defs[i].keysz && STRNEQ(ep->defs[i].key,
-		    ep->defs[i].keysz, key, sz))
+		    ep->defs[i].keysz, ep->start, ep->toksz))
 			return &ep->defs[i];
 
 	return NULL;
 }
 
 /*
- * Get the next token from the input stream using the given quote
- * character.
- * Optionally make any replacements.
- */
-static const char *
-eqn_next(struct eqn_node *ep, char quote, size_t *sz, int repl)
-{
-	static size_t	 last_len;
-	static int	 lim;
-
-	char		*start, *next;
-	int		 q, diff;
-	size_t		 ssz, dummy;
-	struct eqn_def	*def;
-
-	if (NULL == sz)
-		sz = &dummy;
-
-	if (ep->cur >= last_len)
-		lim = 0;
-	ep->rew = ep->cur;
-again:
-	/* Prevent self-definitions. */
-
-	if (lim >= EQN_NEST_MAX) {
-		mandoc_msg(MANDOCERR_ROFFLOOP, ep->parse,
-		    ep->eqn.ln, ep->eqn.pos, NULL);
-		return NULL;
-	}
-
-	ep->cur = ep->rew;
-	start = &ep->data[(int)ep->cur];
-	q = 0;
-
-	if ('\0' == *start)
-		return NULL;
-
-	if (quote == *start) {
-		ep->cur++;
-		q = 1;
-	}
-
-	start = &ep->data[(int)ep->cur];
-
-	if ( ! q) {
-		if ('{' == *start || '}' == *start)
-			ssz = 1;
-		else
-			ssz = strcspn(start + 1, " ^~\"{}\t") + 1;
-		next = start + (int)ssz;
-		if ('\0' == *next)
-			next = NULL;
-	} else
-		next = strchr(start, quote);
-
-	if (NULL != next) {
-		*sz = (size_t)(next - start);
-		ep->cur += *sz;
-		if (q)
-			ep->cur++;
-		while (' ' == ep->data[(int)ep->cur] ||
-		    '\t' == ep->data[(int)ep->cur] ||
-		    '^' == ep->data[(int)ep->cur] ||
-		    '~' == ep->data[(int)ep->cur])
-			ep->cur++;
-	} else {
-		if (q)
-			mandoc_msg(MANDOCERR_ARG_QUOTE, ep->parse,
-			    ep->eqn.ln, ep->eqn.pos, NULL);
-		next = strchr(start, '\0');
-		*sz = (size_t)(next - start);
-		ep->cur += *sz;
-	}
-
-	/* Quotes aren't expanded for values. */
-
-	if (q || ! repl)
-		return start;
-
-	if (NULL != (def = eqn_def_find(ep, start, *sz))) {
-		diff = def->valsz - *sz;
-
-		if (def->valsz > *sz) {
-			ep->sz += diff;
-			ep->data = mandoc_realloc(ep->data, ep->sz + 1);
-			ep->data[ep->sz] = '\0';
-			start = &ep->data[(int)ep->rew];
-		}
-
-		diff = def->valsz - *sz;
-		memmove(start + *sz + diff, start + *sz,
-		    (strlen(start) - *sz) + 1);
-		memcpy(start, def->val, def->valsz);
-		last_len = start - ep->data + def->valsz;
-		lim++;
-		goto again;
-	}
-
-	return start;
-}
-
-/*
- * Get the next delimited token using the default current quote
- * character.
- */
-static const char *
-eqn_nexttok(struct eqn_node *ep, size_t *sz)
-{
-
-	return eqn_next(ep, '"', sz, 1);
-}
-
-/*
- * Get next token without replacement.
- */
-static const char *
-eqn_nextrawtok(struct eqn_node *ep, size_t *sz)
-{
-
-	return eqn_next(ep, '"', sz, 0);
-}
-
-/*
- * Parse a token from the stream of text.
- * A token consists of one of the recognised eqn(7) strings.
- * Strings are separated by delimiting marks.
- * This returns EQN_TOK_EOF when there are no more tokens.
- * If the token is an unrecognised string literal, then it returns
- * EQN_TOK__MAX and sets the "p" pointer to an allocated, nil-terminated
- * string.
- * This must be later freed with free(3).
+ * Parse a token from the input text.  The modes are:
+ * MODE_QUOTED: Use *ep->start as the delimiter; the token ends
+ *   before its next occurence.  Do not interpret the token in any
+ *   way and return EQN_TOK_QUOTED.  All other modes behave like
+ *   MODE_QUOTED when *ep->start is '"'.
+ * MODE_NOSUB: If *ep->start is a curly brace, the token ends after it;
+ *   otherwise, it ends before the next whitespace or brace.
+ *   Do not interpret the token and return EQN_TOK__MAX.
+ * MODE_SUB: Like MODE_NOSUB, but try to interpret the token as an
+ *   alias created with define.  If it is an alias, replace it with
+ *   its string value and reparse.
+ * MODE_TOK: Like MODE_SUB, but also check the token against the list
+ *   of tokens, and if there is a match, return that token.  Otherwise,
+ *   if the token matches a symbol, return EQN_TOK_SYM; if it matches
+ *   a function name, EQN_TOK_FUNC, or else EQN_TOK__MAX.  Except for
+ *   a token match, *ep->start is set to an allocated string that the
+ *   caller is expected to free.
+ * All modes skip whitespace following the end of the token.
  */
 static enum eqn_tok
-eqn_tok_parse(struct eqn_node *ep, char **p)
+eqn_next(struct eqn_node *ep, enum parse_mode mode)
 {
-	const char	*start;
-	size_t		 i, sz;
-	int		 quoted;
+	static int	 last_len, lim;
 
-	if (NULL != p)
-		*p = NULL;
+	struct eqn_def	*def;
+	size_t		 start;
+	int		 diff, i, quoted;
+	enum eqn_tok	 tok;
 
-	quoted = ep->data[ep->cur] == '"';
+	/*
+	 * Reset the recursion counter after advancing
+	 * beyond the end of the previous substitution.
+	 */
+	if (ep->end - ep->data >= last_len)
+		lim = 0;
 
-	if (NULL == (start = eqn_nexttok(ep, &sz)))
-		return EQN_TOK_EOF;
-
-	if (quoted) {
-		if (p != NULL)
-			*p = mandoc_strndup(start, sz);
-		return EQN_TOK__MAX;
-	}
-
-	for (i = 0; i < EQN_TOK__MAX; i++) {
-		if (NULL == eqn_toks[i])
-			continue;
-		if (STRNEQ(start, sz, eqn_toks[i], strlen(eqn_toks[i])))
+	ep->start = ep->end;
+	quoted = mode == MODE_QUOTED;
+	for (;;) {
+		switch (*ep->start) {
+		case '\0':
+			ep->toksz = 0;
+			return EQN_TOK_EOF;
+		case '"':
+			quoted = 1;
 			break;
+		default:
+			break;
+		}
+		if (quoted) {
+			ep->end = strchr(ep->start + 1, *ep->start);
+			ep->start++;  /* Skip opening quote. */
+			if (ep->end == NULL) {
+				mandoc_msg(MANDOCERR_ARG_QUOTE, ep->parse,
+				    ep->eqn.ln, ep->eqn.pos, NULL);
+				ep->end = strchr(ep->start, '\0');
+			}
+		} else {
+			ep->end = ep->start + 1;
+			if (*ep->start != '{' && *ep->start != '}')
+				ep->end += strcspn(ep->end, " ^~\"{}\t");
+		}
+		ep->toksz = ep->end - ep->start;
+		if (quoted && *ep->end != '\0')
+			ep->end++;  /* Skip closing quote. */
+		while (*ep->end != '\0' && strchr(" \t^~", *ep->end) != NULL)
+			ep->end++;
+		if (quoted)  /* Cannot return, may have to strndup. */
+			break;
+		if (mode == MODE_NOSUB)
+			return EQN_TOK__MAX;
+		if ((def = eqn_def_find(ep)) == NULL)
+			break;
+		if (++lim > EQN_NEST_MAX) {
+			mandoc_msg(MANDOCERR_ROFFLOOP, ep->parse,
+			    ep->eqn.ln, ep->eqn.pos, NULL);
+			return EQN_TOK_EOF;
+		}
+
+		/* Replace a defined name with its string value. */
+		if ((diff = def->valsz - ep->toksz) > 0) {
+			start = ep->start - ep->data;
+			ep->sz += diff;
+			ep->data = mandoc_realloc(ep->data, ep->sz + 1);
+			ep->start = ep->data + start;
+		}
+		if (diff)
+			memmove(ep->start + def->valsz, ep->start + ep->toksz,
+			    strlen(ep->start + ep->toksz) + 1);
+		memcpy(ep->start, def->val, def->valsz);
+		last_len = ep->start - ep->data + def->valsz;
 	}
+	if (mode != MODE_TOK)
+		return quoted ? EQN_TOK_QUOTED : EQN_TOK__MAX;
+	if (quoted) {
+		ep->start = mandoc_strndup(ep->start, ep->toksz);
+		return EQN_TOK_QUOTED;
+	}
+	for (tok = 0; tok < EQN_TOK__MAX; tok++)
+		if (STRNEQ(ep->start, ep->toksz,
+		    eqn_toks[tok], strlen(eqn_toks[tok])))
+			return tok;
 
-	if (i == EQN_TOK__MAX && NULL != p)
-		*p = mandoc_strndup(start, sz);
-
-	return i;
+	for (i = 0; i < EQNSYM__MAX; i++) {
+		if (STRNEQ(ep->start, ep->toksz,
+		    eqnsyms[i].str, strlen(eqnsyms[i].str))) {
+			mandoc_asprintf(&ep->start,
+			    "\\[%s]", eqnsyms[i].sym);
+			return EQN_TOK_SYM;
+		}
+	}
+	ep->start = mandoc_strndup(ep->start, ep->toksz);
+	for (i = 0; i < (int)(sizeof(eqn_func)/sizeof(*eqn_func)); i++)
+		if (STRNEQ(ep->start, ep->toksz,
+		    eqn_func[i], strlen(eqn_func[i])))
+			return EQN_TOK_FUNC;
+	return EQN_TOK__MAX;
 }
 
 static void
@@ -552,6 +519,7 @@ eqn_box_alloc(struct eqn_node *ep, struct eqn_box *parent)
 	bp->parent = parent;
 	bp->parent->args++;
 	bp->expectargs = UINT_MAX;
+	bp->font = bp->parent->font;
 	bp->size = ep->gsize;
 
 	if (NULL != parent->first) {
@@ -571,8 +539,7 @@ eqn_box_alloc(struct eqn_node *ep, struct eqn_box *parent)
  * The new EQN_SUBEXPR will have a two-child limit.
  */
 static struct eqn_box *
-eqn_box_makebinary(struct eqn_node *ep,
-	enum eqn_post pos, struct eqn_box *parent)
+eqn_box_makebinary(struct eqn_node *ep, struct eqn_box *parent)
 {
 	struct eqn_box	*b, *newb;
 
@@ -584,7 +551,6 @@ eqn_box_makebinary(struct eqn_node *ep,
 	parent->last = b->prev;
 	b->prev = NULL;
 	newb = eqn_box_alloc(ep, parent);
-	newb->pos = pos;
 	newb->type = EQN_SUBEXPR;
 	newb->expectargs = 2;
 	newb->args = 1;
@@ -600,20 +566,21 @@ eqn_box_makebinary(struct eqn_node *ep,
 static void
 eqn_delim(struct eqn_node *ep)
 {
-	const char	*start;
-	size_t		 sz;
-
-	if ((start = eqn_nextrawtok(ep, &sz)) == NULL)
+	if (ep->end[0] == '\0' || ep->end[1] == '\0') {
 		mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 		    ep->eqn.ln, ep->eqn.pos, "delim");
-	else if (strncmp(start, "off", 3) == 0)
+		if (ep->end[0] != '\0')
+			ep->end++;
+	} else if (strncmp(ep->end, "off", 3) == 0) {
 		ep->delim = 0;
-	else if (strncmp(start, "on", 2) == 0) {
+		ep->end += 3;
+	} else if (strncmp(ep->end, "on", 2) == 0) {
 		if (ep->odelim && ep->cdelim)
 			ep->delim = 1;
-	} else if (start[1] != '\0') {
-		ep->odelim = start[0];
-		ep->cdelim = start[1];
+		ep->end += 2;
+	} else {
+		ep->odelim = *ep->end++;
+		ep->cdelim = *ep->end++;
 		ep->delim = 1;
 	}
 }
@@ -624,16 +591,14 @@ eqn_delim(struct eqn_node *ep)
 static void
 eqn_undef(struct eqn_node *ep)
 {
-	const char	*start;
 	struct eqn_def	*def;
-	size_t		 sz;
 
-	if ((start = eqn_nextrawtok(ep, &sz)) == NULL) {
+	if (eqn_next(ep, MODE_NOSUB) == EQN_TOK_EOF) {
 		mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 		    ep->eqn.ln, ep->eqn.pos, "undef");
 		return;
 	}
-	if ((def = eqn_def_find(ep, start, sz)) == NULL)
+	if ((def = eqn_def_find(ep)) == NULL)
 		return;
 	free(def->key);
 	free(def->val);
@@ -644,12 +609,10 @@ eqn_undef(struct eqn_node *ep)
 static void
 eqn_def(struct eqn_node *ep)
 {
-	const char	*start;
-	size_t		 sz;
 	struct eqn_def	*def;
 	int		 i;
 
-	if ((start = eqn_nextrawtok(ep, &sz)) == NULL) {
+	if (eqn_next(ep, MODE_NOSUB) == EQN_TOK_EOF) {
 		mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 		    ep->eqn.ln, ep->eqn.pos, "define");
 		return;
@@ -659,7 +622,7 @@ eqn_def(struct eqn_node *ep)
 	 * Search for a key that already exists.
 	 * Create a new key if none is found.
 	 */
-	if (NULL == (def = eqn_def_find(ep, start, sz))) {
+	if ((def = eqn_def_find(ep)) == NULL) {
 		/* Find holes in string array. */
 		for (i = 0; i < (int)ep->defsz; i++)
 			if (0 == ep->defs[i].keysz)
@@ -674,12 +637,11 @@ eqn_def(struct eqn_node *ep)
 
 		def = ep->defs + i;
 		free(def->key);
-		def->key = mandoc_strndup(start, sz);
-		def->keysz = sz;
+		def->key = mandoc_strndup(ep->start, ep->toksz);
+		def->keysz = ep->toksz;
 	}
 
-	start = eqn_next(ep, ep->data[(int)ep->cur], &sz, 0);
-	if (start == NULL) {
+	if (eqn_next(ep, MODE_QUOTED) == EQN_TOK_EOF) {
 		mandoc_vmsg(MANDOCERR_REQ_EMPTY, ep->parse,
 		    ep->eqn.ln, ep->eqn.pos, "define %s", def->key);
 		free(def->key);
@@ -689,8 +651,8 @@ eqn_def(struct eqn_node *ep)
 		return;
 	}
 	free(def->val);
-	def->val = mandoc_strndup(start, sz);
-	def->valsz = sz;
+	def->val = mandoc_strndup(ep->start, ep->toksz);
+	def->valsz = ep->toksz;
 }
 
 /*
@@ -699,13 +661,11 @@ eqn_def(struct eqn_node *ep)
 static enum rofferr
 eqn_parse(struct eqn_node *ep, struct eqn_box *parent)
 {
-	char		 sym[64];
-	struct eqn_box	*cur;
-	const char	*start;
+	struct eqn_box	*cur, *nbox, *split;
+	const char	*cp, *cpn;
 	char		*p;
-	size_t		 i, sz;
-	enum eqn_tok	 tok, subtok;
-	enum eqn_post	 pos;
+	enum eqn_tok	 tok;
+	enum { CCL_LET, CCL_DIG, CCL_PUN } ccl, ccln;
 	int		 size;
 
 	assert(parent != NULL);
@@ -718,44 +678,44 @@ eqn_parse(struct eqn_node *ep, struct eqn_box *parent)
 	if (ep->data == NULL)
 		return ROFF_IGN;
 
-next_tok:
-	tok = eqn_tok_parse(ep, &p);
+	ep->start = ep->end = ep->data + strspn(ep->data, " ^~");
 
-this_tok:
+next_tok:
+	tok = eqn_next(ep, MODE_TOK);
 	switch (tok) {
-	case (EQN_TOK_UNDEF):
+	case EQN_TOK_UNDEF:
 		eqn_undef(ep);
 		break;
-	case (EQN_TOK_NDEFINE):
-	case (EQN_TOK_DEFINE):
+	case EQN_TOK_NDEFINE:
+	case EQN_TOK_DEFINE:
 		eqn_def(ep);
 		break;
-	case (EQN_TOK_TDEFINE):
-		if (eqn_nextrawtok(ep, NULL) == NULL ||
-		    eqn_next(ep, ep->data[(int)ep->cur], NULL, 0) == NULL)
+	case EQN_TOK_TDEFINE:
+		if (eqn_next(ep, MODE_NOSUB) == EQN_TOK_EOF ||
+		    eqn_next(ep, MODE_QUOTED) == EQN_TOK_EOF)
 			mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 			    ep->eqn.ln, ep->eqn.pos, "tdefine");
 		break;
-	case (EQN_TOK_DELIM):
+	case EQN_TOK_DELIM:
 		eqn_delim(ep);
 		break;
-	case (EQN_TOK_GFONT):
-		if (eqn_nextrawtok(ep, NULL) == NULL)
+	case EQN_TOK_GFONT:
+		if (eqn_next(ep, MODE_SUB) == EQN_TOK_EOF)
 			mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 			    ep->eqn.ln, ep->eqn.pos, eqn_toks[tok]);
 		break;
-	case (EQN_TOK_MARK):
-	case (EQN_TOK_LINEUP):
+	case EQN_TOK_MARK:
+	case EQN_TOK_LINEUP:
 		/* Ignore these. */
 		break;
-	case (EQN_TOK_DYAD):
-	case (EQN_TOK_VEC):
-	case (EQN_TOK_UNDER):
-	case (EQN_TOK_BAR):
-	case (EQN_TOK_TILDE):
-	case (EQN_TOK_HAT):
-	case (EQN_TOK_DOT):
-	case (EQN_TOK_DOTDOT):
+	case EQN_TOK_DYAD:
+	case EQN_TOK_VEC:
+	case EQN_TOK_UNDER:
+	case EQN_TOK_BAR:
+	case EQN_TOK_TILDE:
+	case EQN_TOK_HAT:
+	case EQN_TOK_DOT:
+	case EQN_TOK_DOTDOT:
 		if (parent->last == NULL) {
 			mandoc_msg(MANDOCERR_EQN_NOBOX, ep->parse,
 			    ep->eqn.ln, ep->eqn.pos, eqn_toks[tok]);
@@ -763,72 +723,52 @@ this_tok:
 			cur->type = EQN_TEXT;
 			cur->text = mandoc_strdup("");
 		}
-		parent = eqn_box_makebinary(ep, EQNPOS_NONE, parent);
-		parent->type = EQN_LISTONE;
+		parent = eqn_box_makebinary(ep, parent);
+		parent->type = EQN_LIST;
 		parent->expectargs = 1;
+		parent->font = EQNFONT_ROMAN;
 		switch (tok) {
-		case (EQN_TOK_DOTDOT):
-			strlcpy(sym, "\\[ad]", sizeof(sym));
+		case EQN_TOK_DOTDOT:
+			parent->top = mandoc_strdup("\\[ad]");
 			break;
-		case (EQN_TOK_VEC):
-			strlcpy(sym, "\\[->]", sizeof(sym));
+		case EQN_TOK_VEC:
+			parent->top = mandoc_strdup("\\[->]");
 			break;
-		case (EQN_TOK_DYAD):
-			strlcpy(sym, "\\[<>]", sizeof(sym));
+		case EQN_TOK_DYAD:
+			parent->top = mandoc_strdup("\\[<>]");
 			break;
-		case (EQN_TOK_TILDE):
-			strlcpy(sym, "\\[a~]", sizeof(sym));
+		case EQN_TOK_TILDE:
+			parent->top = mandoc_strdup("\\[a~]");
 			break;
-		case (EQN_TOK_UNDER):
-			strlcpy(sym, "\\[ul]", sizeof(sym));
+		case EQN_TOK_UNDER:
+			parent->bottom = mandoc_strdup("\\[ul]");
 			break;
-		case (EQN_TOK_BAR):
-			strlcpy(sym, "\\[rl]", sizeof(sym));
+		case EQN_TOK_BAR:
+			parent->top = mandoc_strdup("\\[rl]");
 			break;
-		case (EQN_TOK_DOT):
-			strlcpy(sym, "\\[a.]", sizeof(sym));
+		case EQN_TOK_DOT:
+			parent->top = mandoc_strdup("\\[a.]");
 			break;
-		case (EQN_TOK_HAT):
-			strlcpy(sym, "\\[ha]", sizeof(sym));
-			break;
-		default:
-			abort();
-		}
-
-		switch (tok) {
-		case (EQN_TOK_DOTDOT):
-		case (EQN_TOK_VEC):
-		case (EQN_TOK_DYAD):
-		case (EQN_TOK_TILDE):
-		case (EQN_TOK_BAR):
-		case (EQN_TOK_DOT):
-		case (EQN_TOK_HAT):
-			parent->top = mandoc_strdup(sym);
-			break;
-		case (EQN_TOK_UNDER):
-			parent->bottom = mandoc_strdup(sym);
+		case EQN_TOK_HAT:
+			parent->top = mandoc_strdup("\\[ha]");
 			break;
 		default:
 			abort();
 		}
 		parent = parent->parent;
 		break;
-	case (EQN_TOK_FWD):
-	case (EQN_TOK_BACK):
-	case (EQN_TOK_DOWN):
-	case (EQN_TOK_UP):
-		subtok = eqn_tok_parse(ep, NULL);
-		if (subtok != EQN_TOK__MAX) {
+	case EQN_TOK_FWD:
+	case EQN_TOK_BACK:
+	case EQN_TOK_DOWN:
+	case EQN_TOK_UP:
+		if (eqn_next(ep, MODE_SUB) == EQN_TOK_EOF)
 			mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 			    ep->eqn.ln, ep->eqn.pos, eqn_toks[tok]);
-			tok = subtok;
-			goto this_tok;
-		}
 		break;
-	case (EQN_TOK_FAT):
-	case (EQN_TOK_ROMAN):
-	case (EQN_TOK_ITALIC):
-	case (EQN_TOK_BOLD):
+	case EQN_TOK_FAT:
+	case EQN_TOK_ROMAN:
+	case EQN_TOK_ITALIC:
+	case EQN_TOK_BOLD:
 		while (parent->args == parent->expectargs)
 			parent = parent->parent;
 		/*
@@ -837,34 +777,34 @@ this_tok:
 		 * exactly one of those.
 		 */
 		parent = eqn_box_alloc(ep, parent);
-		parent->type = EQN_LISTONE;
+		parent->type = EQN_LIST;
 		parent->expectargs = 1;
 		switch (tok) {
-		case (EQN_TOK_FAT):
+		case EQN_TOK_FAT:
 			parent->font = EQNFONT_FAT;
 			break;
-		case (EQN_TOK_ROMAN):
+		case EQN_TOK_ROMAN:
 			parent->font = EQNFONT_ROMAN;
 			break;
-		case (EQN_TOK_ITALIC):
+		case EQN_TOK_ITALIC:
 			parent->font = EQNFONT_ITALIC;
 			break;
-		case (EQN_TOK_BOLD):
+		case EQN_TOK_BOLD:
 			parent->font = EQNFONT_BOLD;
 			break;
 		default:
 			abort();
 		}
 		break;
-	case (EQN_TOK_SIZE):
-	case (EQN_TOK_GSIZE):
+	case EQN_TOK_SIZE:
+	case EQN_TOK_GSIZE:
 		/* Accept two values: integral size and a single. */
-		if (NULL == (start = eqn_nexttok(ep, &sz))) {
+		if (eqn_next(ep, MODE_SUB) == EQN_TOK_EOF) {
 			mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 			    ep->eqn.ln, ep->eqn.pos, eqn_toks[tok]);
 			break;
 		}
-		size = mandoc_strntoi(start, sz, 10);
+		size = mandoc_strntoi(ep->start, ep->toksz, 10);
 		if (-1 == size) {
 			mandoc_msg(MANDOCERR_IT_NONUM, ep->parse,
 			    ep->eqn.ln, ep->eqn.pos, eqn_toks[tok]);
@@ -874,15 +814,17 @@ this_tok:
 			ep->gsize = size;
 			break;
 		}
+		while (parent->args == parent->expectargs)
+			parent = parent->parent;
 		parent = eqn_box_alloc(ep, parent);
-		parent->type = EQN_LISTONE;
+		parent->type = EQN_LIST;
 		parent->expectargs = 1;
 		parent->size = size;
 		break;
-	case (EQN_TOK_FROM):
-	case (EQN_TOK_TO):
-	case (EQN_TOK_SUB):
-	case (EQN_TOK_SUP):
+	case EQN_TOK_FROM:
+	case EQN_TOK_TO:
+	case EQN_TOK_SUB:
+	case EQN_TOK_SUP:
 		/*
 		 * We have a left-right-associative expression.
 		 * Repivot under a positional node, open a child scope
@@ -895,36 +837,48 @@ this_tok:
 			cur->type = EQN_TEXT;
 			cur->text = mandoc_strdup("");
 		}
-		/* Handle the "subsup" and "fromto" positions. */
-		if (EQN_TOK_SUP == tok && parent->pos == EQNPOS_SUB) {
+		while (parent->expectargs == 1 && parent->args == 1)
+			parent = parent->parent;
+		if (tok == EQN_TOK_FROM || tok == EQN_TOK_TO)  {
+			for (cur = parent; cur != NULL; cur = cur->parent)
+				if (cur->pos == EQNPOS_SUB ||
+				    cur->pos == EQNPOS_SUP ||
+				    cur->pos == EQNPOS_SUBSUP ||
+				    cur->pos == EQNPOS_SQRT ||
+				    cur->pos == EQNPOS_OVER)
+					break;
+			if (cur != NULL)
+				parent = cur->parent;
+		}
+		if (tok == EQN_TOK_SUP && parent->pos == EQNPOS_SUB) {
 			parent->expectargs = 3;
 			parent->pos = EQNPOS_SUBSUP;
 			break;
 		}
-		if (EQN_TOK_TO == tok && parent->pos == EQNPOS_FROM) {
+		if (tok == EQN_TOK_TO && parent->pos == EQNPOS_FROM) {
 			parent->expectargs = 3;
 			parent->pos = EQNPOS_FROMTO;
 			break;
 		}
+		parent = eqn_box_makebinary(ep, parent);
 		switch (tok) {
-		case (EQN_TOK_FROM):
-			pos = EQNPOS_FROM;
+		case EQN_TOK_FROM:
+			parent->pos = EQNPOS_FROM;
 			break;
-		case (EQN_TOK_TO):
-			pos = EQNPOS_TO;
+		case EQN_TOK_TO:
+			parent->pos = EQNPOS_TO;
 			break;
-		case (EQN_TOK_SUP):
-			pos = EQNPOS_SUP;
+		case EQN_TOK_SUP:
+			parent->pos = EQNPOS_SUP;
 			break;
-		case (EQN_TOK_SUB):
-			pos = EQNPOS_SUB;
+		case EQN_TOK_SUB:
+			parent->pos = EQNPOS_SUB;
 			break;
 		default:
 			abort();
 		}
-		parent = eqn_box_makebinary(ep, pos, parent);
 		break;
-	case (EQN_TOK_SQRT):
+	case EQN_TOK_SQRT:
 		while (parent->args == parent->expectargs)
 			parent = parent->parent;
 		/*
@@ -937,7 +891,7 @@ this_tok:
 		parent->pos = EQNPOS_SQRT;
 		parent->expectargs = 1;
 		break;
-	case (EQN_TOK_OVER):
+	case EQN_TOK_OVER:
 		/*
 		 * We have a right-left-associative fraction.
 		 * Close out anything that's currently open, then
@@ -950,12 +904,15 @@ this_tok:
 			cur->type = EQN_TEXT;
 			cur->text = mandoc_strdup("");
 		}
+		while (parent->args == parent->expectargs)
+			parent = parent->parent;
 		while (EQN_SUBEXPR == parent->type)
 			parent = parent->parent;
-		parent = eqn_box_makebinary(ep, EQNPOS_OVER, parent);
+		parent = eqn_box_makebinary(ep, parent);
+		parent->pos = EQNPOS_OVER;
 		break;
-	case (EQN_TOK_RIGHT):
-	case (EQN_TOK_BRACE_CLOSE):
+	case EQN_TOK_RIGHT:
+	case EQN_TOK_BRACE_CLOSE:
 		/*
 		 * Close out the existing brace.
 		 * FIXME: this is a shitty sentinel: we should really
@@ -963,6 +920,7 @@ this_tok:
 		 */
 		for (cur = parent; cur != NULL; cur = cur->parent)
 			if (cur->type == EQN_LIST &&
+			    cur->expectargs > 1 &&
 			    (tok == EQN_TOK_BRACE_CLOSE ||
 			     cur->left != NULL))
 				break;
@@ -973,21 +931,20 @@ this_tok:
 		}
 		parent = cur;
 		if (EQN_TOK_RIGHT == tok) {
-			if (NULL == (start = eqn_nexttok(ep, &sz))) {
+			if (eqn_next(ep, MODE_SUB) == EQN_TOK_EOF) {
 				mandoc_msg(MANDOCERR_REQ_EMPTY,
 				    ep->parse, ep->eqn.ln,
 				    ep->eqn.pos, eqn_toks[tok]);
 				break;
 			}
 			/* Handling depends on right/left. */
-			if (STRNEQ(start, sz, "ceiling", 7)) {
-				strlcpy(sym, "\\[rc]", sizeof(sym));
-				parent->right = mandoc_strdup(sym);
-			} else if (STRNEQ(start, sz, "floor", 5)) {
-				strlcpy(sym, "\\[rf]", sizeof(sym));
-				parent->right = mandoc_strdup(sym);
-			} else
-				parent->right = mandoc_strndup(start, sz);
+			if (STRNEQ(ep->start, ep->toksz, "ceiling", 7))
+				parent->right = mandoc_strdup("\\[rc]");
+			else if (STRNEQ(ep->start, ep->toksz, "floor", 5))
+				parent->right = mandoc_strdup("\\[rf]");
+			else
+				parent->right =
+				    mandoc_strndup(ep->start, ep->toksz);
 		}
 		parent = parent->parent;
 		if (tok == EQN_TOK_BRACE_CLOSE &&
@@ -995,12 +952,13 @@ this_tok:
 		     parent->type == EQN_MATRIX))
 			parent = parent->parent;
 		/* Close out any "singleton" lists. */
-		while (parent->type == EQN_LISTONE &&
-		    parent->args == parent->expectargs)
+		while (parent->type == EQN_LIST &&
+		    parent->expectargs == 1 &&
+		    parent->args == 1)
 			parent = parent->parent;
 		break;
-	case (EQN_TOK_BRACE_OPEN):
-	case (EQN_TOK_LEFT):
+	case EQN_TOK_BRACE_OPEN:
+	case EQN_TOK_LEFT:
 		/*
 		 * If we already have something in the stack and we're
 		 * in an expression, then rewind til we're not any more
@@ -1009,7 +967,7 @@ this_tok:
 		while (parent->args == parent->expectargs)
 			parent = parent->parent;
 		if (EQN_TOK_LEFT == tok &&
-		    (start = eqn_nexttok(ep, &sz)) == NULL) {
+		    eqn_next(ep, MODE_SUB) == EQN_TOK_EOF) {
 			mandoc_msg(MANDOCERR_REQ_EMPTY, ep->parse,
 			    ep->eqn.ln, ep->eqn.pos, eqn_toks[tok]);
 			break;
@@ -1017,30 +975,29 @@ this_tok:
 		parent = eqn_box_alloc(ep, parent);
 		parent->type = EQN_LIST;
 		if (EQN_TOK_LEFT == tok) {
-			if (STRNEQ(start, sz, "ceiling", 7)) {
-				strlcpy(sym, "\\[lc]", sizeof(sym));
-				parent->left = mandoc_strdup(sym);
-			} else if (STRNEQ(start, sz, "floor", 5)) {
-				strlcpy(sym, "\\[lf]", sizeof(sym));
-				parent->left = mandoc_strdup(sym);
-			} else
-				parent->left = mandoc_strndup(start, sz);
+			if (STRNEQ(ep->start, ep->toksz, "ceiling", 7))
+				parent->left = mandoc_strdup("\\[lc]");
+			else if (STRNEQ(ep->start, ep->toksz, "floor", 5))
+				parent->left = mandoc_strdup("\\[lf]");
+			else
+				parent->left =
+				    mandoc_strndup(ep->start, ep->toksz);
 		}
 		break;
-	case (EQN_TOK_PILE):
-	case (EQN_TOK_LPILE):
-	case (EQN_TOK_RPILE):
-	case (EQN_TOK_CPILE):
-	case (EQN_TOK_CCOL):
-	case (EQN_TOK_LCOL):
-	case (EQN_TOK_RCOL):
+	case EQN_TOK_PILE:
+	case EQN_TOK_LPILE:
+	case EQN_TOK_RPILE:
+	case EQN_TOK_CPILE:
+	case EQN_TOK_CCOL:
+	case EQN_TOK_LCOL:
+	case EQN_TOK_RCOL:
 		while (parent->args == parent->expectargs)
 			parent = parent->parent;
 		parent = eqn_box_alloc(ep, parent);
 		parent->type = EQN_PILE;
 		parent->expectargs = 1;
 		break;
-	case (EQN_TOK_ABOVE):
+	case EQN_TOK_ABOVE:
 		for (cur = parent; cur != NULL; cur = cur->parent)
 			if (cur->type == EQN_PILE)
 				break;
@@ -1052,22 +1009,25 @@ this_tok:
 		parent = eqn_box_alloc(ep, cur);
 		parent->type = EQN_LIST;
 		break;
-	case (EQN_TOK_MATRIX):
+	case EQN_TOK_MATRIX:
 		while (parent->args == parent->expectargs)
 			parent = parent->parent;
 		parent = eqn_box_alloc(ep, parent);
 		parent->type = EQN_MATRIX;
 		parent->expectargs = 1;
 		break;
-	case (EQN_TOK_EOF):
+	case EQN_TOK_EOF:
 		/*
 		 * End of file!
 		 * TODO: make sure we're not in an open subexpression.
 		 */
 		return ROFF_EQN;
-	default:
-		assert(tok == EQN_TOK__MAX);
-		assert(NULL != p);
+	case EQN_TOK__MAX:
+	case EQN_TOK_FUNC:
+	case EQN_TOK_QUOTED:
+	case EQN_TOK_SYM:
+		p = ep->start;
+		assert(p != NULL);
 		/*
 		 * If we already have something in the stack and we're
 		 * in an expression, then rewind til we're not any more.
@@ -1076,24 +1036,84 @@ this_tok:
 			parent = parent->parent;
 		cur = eqn_box_alloc(ep, parent);
 		cur->type = EQN_TEXT;
-		for (i = 0; i < EQNSYM__MAX; i++)
-			if (0 == strcmp(eqnsyms[i].str, p)) {
-				(void)snprintf(sym, sizeof(sym),
-					"\\[%s]", eqnsyms[i].sym);
-				cur->text = mandoc_strdup(sym);
-				free(p);
+		cur->text = p;
+		switch (tok) {
+		case EQN_TOK_FUNC:
+			cur->font = EQNFONT_ROMAN;
+			break;
+		case EQN_TOK_QUOTED:
+			if (cur->font == EQNFONT_NONE)
+				cur->font = EQNFONT_ITALIC;
+			break;
+		case EQN_TOK_SYM:
+			break;
+		default:
+			if (cur->font != EQNFONT_NONE || *p == '\0')
 				break;
+			cpn = p - 1;
+			ccln = CCL_LET;
+			split = NULL;
+			for (;;) {
+				/* Advance to next character. */
+				cp = cpn++;
+				ccl = ccln;
+				ccln = isalpha((unsigned char)*cpn) ? CCL_LET :
+				    isdigit((unsigned char)*cpn) ||
+				    (*cpn == '.' && (ccl == CCL_DIG ||
+				     isdigit((unsigned char)cpn[1]))) ?
+				    CCL_DIG : CCL_PUN;
+				/* No boundary before first character. */
+				if (cp < p)
+					continue;
+				cur->font = ccl == CCL_LET ?
+				    EQNFONT_ITALIC : EQNFONT_ROMAN;
+				if (*cp == '\\')
+					mandoc_escape(&cpn, NULL, NULL);
+				/* No boundary after last character. */
+				if (*cpn == '\0')
+					break;
+				if (ccln == ccl)
+					continue;
+				/* Boundary found, split the text. */
+				if (parent->args == parent->expectargs) {
+					/* Remove the text from the tree. */
+					if (cur->prev == NULL)
+						parent->first = cur->next;
+					else
+						cur->prev->next = NULL;
+					parent->last = cur->prev;
+					parent->args--;
+					/* Set up a list instead. */
+					split = eqn_box_alloc(ep, parent);
+					split->type = EQN_LIST;
+					/* Insert the word into the list. */
+					split->first = split->last = cur;
+					cur->parent = split;
+					cur->prev = NULL;
+					parent = split;
+				}
+				/* Append a new text box. */
+				nbox = eqn_box_alloc(ep, parent);
+				nbox->type = EQN_TEXT;
+				nbox->text = mandoc_strdup(cpn);
+				/* Truncate the old box. */
+				p = mandoc_strndup(cur->text,
+				    cpn - cur->text);
+				free(cur->text);
+				cur->text = p;
+				/* Setup to process the new box. */
+				cur = nbox;
+				p = nbox->text;
+				cpn = p - 1;
+				ccln = CCL_LET;
 			}
-
-		if (i == EQNSYM__MAX)
-			cur->text = p;
-		/*
-		 * Post-process list status.
-		 */
-		while (parent->type == EQN_LISTONE &&
-		    parent->args == parent->expectargs)
-			parent = parent->parent;
+			if (split != NULL)
+				parent = split->parent;
+			break;
+		}
 		break;
+	default:
+		abort();
 	}
 	goto next_tok;
 }

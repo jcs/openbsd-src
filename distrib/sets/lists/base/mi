@@ -298,6 +298,7 @@
 ./sbin/scan_ffs
 ./sbin/scsi
 ./sbin/shutdown
+./sbin/slaacd
 ./sbin/swapctl
 ./sbin/swapon
 ./sbin/sysctl
@@ -542,6 +543,7 @@
 ./usr/bin/ssh-keyscan
 ./usr/bin/stat
 ./usr/bin/strings
+./usr/bin/strip
 ./usr/bin/su
 ./usr/bin/systat
 ./usr/bin/tail
@@ -615,14 +617,14 @@
 ./usr/games
 ./usr/include
 ./usr/lib
-./usr/lib/libc.so.89.5
-./usr/lib/libc.so.89.5.a
+./usr/lib/libc.so.89.6
+./usr/lib/libc.so.89.6.a
 ./usr/lib/libcrypto.so.41.2
 ./usr/lib/libcrypto.so.41.2.a
 ./usr/lib/libcurses.so.14.0
 ./usr/lib/libedit.so.5.2
 ./usr/lib/libevent.so.4.1
-./usr/lib/libexpat.so.11.0
+./usr/lib/libexpat.so.12.0
 ./usr/lib/libform.so.6.0
 ./usr/lib/libformw.so.6.0
 ./usr/lib/libfuse.so.1.1
@@ -647,7 +649,7 @@
 ./usr/lib/libssl.so.43.3
 ./usr/lib/libtermcap.so.14.0
 ./usr/lib/libtermlib.so.14.0
-./usr/lib/libtls.so.15.6
+./usr/lib/libtls.so.15.7
 ./usr/lib/libusbhid.so.7.0
 ./usr/lib/libutil.so.12.2
 ./usr/lib/libz.so.5.0
@@ -2200,7 +2202,6 @@
 ./usr/libexec/ld.so
 ./usr/libexec/locate.bigram
 ./usr/libexec/locate.code
-./usr/libexec/locate.concatdb
 ./usr/libexec/locate.mklocatedb
 ./usr/libexec/locate.updatedb
 ./usr/libexec/lockspool
@@ -2469,7 +2470,6 @@
 ./usr/sbin/sendmail
 ./usr/sbin/sensorsd
 ./usr/sbin/slaacctl
-./usr/sbin/slaacd
 ./usr/sbin/slowcgi
 ./usr/sbin/smtpctl
 ./usr/sbin/smtpd
@@ -2571,6 +2571,7 @@
 ./usr/share/calendar/ru_RU.UTF-8/calendar.orthodox
 ./usr/share/calendar/ru_RU.UTF-8/calendar.pagan
 ./usr/share/calendar/ru_RU.UTF-8/calendar.primety
+./usr/share/compile.tgz
 ./usr/share/dict
 ./usr/share/dict/README
 ./usr/share/dict/american

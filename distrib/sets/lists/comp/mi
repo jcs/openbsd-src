@@ -11,7 +11,6 @@
 ./usr/bin/objdump
 ./usr/bin/ranlib
 ./usr/bin/rpcgen
-./usr/bin/strip
 ./usr/bin/yacc
 ./usr/include/FlexLexer.h
 ./usr/include/a.out.h
@@ -2685,7 +2684,6 @@
 ./usr/share/man/man3/wscanf.3
 ./usr/share/man/man3/xdr.3
 ./usr/share/man/man3/ypclnt.3
-./usr/share/man/man4/octeon/octmmc.4
 ./usr/share/man/man4/vmmci.4
 ./usr/share/man/man4/xbf.4
 ./usr/share/man/man9/RBT_INIT.9
@@ -2775,6 +2773,7 @@
 ./usr/share/man/man9/physio.9
 ./usr/share/man/man9/pmap.9
 ./usr/share/man/man9/pool.9
+./usr/share/man/man9/pool_cache_init.9
 ./usr/share/man/man9/ppsratecheck.9
 ./usr/share/man/man9/printf.9
 ./usr/share/man/man9/psignal.9

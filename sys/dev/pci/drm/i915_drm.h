@@ -1,4 +1,4 @@
-/* $OpenBSD: i915_drm.h,v 1.24 2015/09/23 23:12:11 kettenis Exp $ */
+/* $OpenBSD: i915_drm.h,v 1.25 2017/07/01 16:14:10 kettenis Exp $ */
 /*
  * Copyright 2003 Tungsten Graphics, Inc., Cedar Park, Texas.
  * All Rights Reserved.

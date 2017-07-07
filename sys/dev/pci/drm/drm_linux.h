@@ -1,4 +1,4 @@
-/*	$OpenBSD: drm_linux.h,v 1.50 2017/05/26 14:26:33 kettenis Exp $	*/
+/*	$OpenBSD: drm_linux.h,v 1.53 2017/07/05 20:30:13 kettenis Exp $	*/
 /*
  * Copyright (c) 2013, 2014, 2015 Mark Kettenis
  *
@@ -38,6 +38,7 @@
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 
+#include <dev/pci/drm/linux_types.h>
 #include <dev/pci/drm/drm_linux_atomic.h>
 
 /* The Linux code doesn't meet our usual standards! */
@@ -49,22 +50,56 @@
 #pragma clang diagnostic ignored "-Wunused-const-variable"
 #endif
 
-#define i2c_adapter i2c_controller
+struct i2c_algorithm;
+
+struct i2c_adapter {
+	struct i2c_controller ic;
+
+	char name[48];
+	const struct i2c_algorithm *algo;
+	void *algo_data;
+	int retries;
+
+	void *data;
+};
+
+#define I2C_NAME_SIZE	20
+
+struct i2c_msg {
+	uint16_t addr;
+	uint16_t flags;
+	uint16_t len;
+	uint8_t *buf;
+};
+
+#define I2C_M_RD	0x0001
+#define I2C_M_NOSTART	0x0002
+
+struct i2c_algorithm {
+	int (*master_xfer)(struct i2c_adapter *, struct i2c_msg *, int);
+};
+
+int i2c_transfer(struct i2c_adapter *, struct i2c_msg *, int);
+#define i2c_add_adapter(x) 0
+#define i2c_del_adapter(x)
+
+static inline void *
+i2c_get_adapdata(struct i2c_adapter *adap)
+{
+	return adap->data;
+}
+
+static inline void
+i2c_set_adapdata(struct i2c_adapter *adap, void *data)
+{
+	adap->data = data;
+}
 
 typedef int irqreturn_t;
 enum irqreturn {
 	IRQ_NONE = 0,
 	IRQ_HANDLED = 1
 };
-
-typedef int8_t   __s8;
-typedef uint8_t  __u8;
-typedef int16_t  __s16;
-typedef uint16_t __u16;
-typedef int32_t  __s32;
-typedef uint32_t __u32;
-typedef int64_t  __s64;
-typedef uint64_t __u64;
 
 typedef int8_t   s8;
 typedef uint8_t  u8;
@@ -150,9 +185,9 @@ hweight32(uint32_t x)
 static inline uint32_t
 hweight64(uint64_t x)
 {
-	x = (x & 0x5555555555555555) + ((x & 0xaaaaaaaaaaaaaaaa) >> 1);
-	x = (x & 0x3333333333333333) + ((x & 0xcccccccccccccccc) >> 2);
-	x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0f;
+	x = (x & 0x5555555555555555ULL) + ((x & 0xaaaaaaaaaaaaaaaaULL) >> 1);
+	x = (x & 0x3333333333333333ULL) + ((x & 0xccccccccccccccccULL) >> 2);
+	x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0fULL;
 	x = (x + (x >> 8));
 	x = (x + (x >> 16));
 	x = (x + (x >> 32)) & 0x000000ff;
@@ -212,7 +247,16 @@ bitmap_weight(void *p, u_int n)
 	return sum;
 }
 
-#define DECLARE_HASHTABLE(x, y)
+#define DECLARE_HASHTABLE(x, y) struct hlist_head x;
+
+#define hash_init(x)		INIT_HLIST_HEAD(&(x))
+#define hash_add(x, y, z)	hlist_add_head(y, &(x))
+#define hash_del(x)		hlist_del_init(x)
+#define hash_empty(x)		hlist_empty(&(x))
+#define hash_for_each_possible(a, b, c, d) \
+	hlist_for_each_entry(b, &(a), c)
+#define hash_for_each_safe(a, b, c, d, e) (void)(b); \
+	hlist_for_each_entry_safe(d, c, &(a), e)
 
 #define ACCESS_ONCE(x)		(x)
 
@@ -222,12 +266,15 @@ bitmap_weight(void *p, u_int n)
 
 #define IS_BUILTIN(x) 1
 
+struct device_node;
+
 struct device_driver {
 	struct device *dev;
 };
 
 #define dev_get_drvdata(x)	NULL
 #define dev_set_drvdata(x, y)
+#define dev_name(dev)		""
 
 #define devm_kzalloc(x, y, z)	kzalloc(y, z)
 
@@ -377,7 +424,6 @@ do {									\
 	if (__ret)							\
 		printf("WARNING %s failed at %s:%d\n",			\
 		    _WARN_STR(condition), __FILE__, __LINE__);		\
-	KASSERT(__ret == 0);						\
 	unlikely(__ret);						\
 })
 
@@ -461,6 +507,7 @@ PTR_ERR_OR_ZERO(const void *ptr)
 typedef struct rwlock rwlock_t;
 typedef struct mutex spinlock_t;
 #define DEFINE_SPINLOCK(x)	struct mutex x
+#define DEFINE_MUTEX(x)		struct rwlock x
 
 static inline void
 spin_lock_irqsave(struct mutex *mtxp, __unused unsigned long flags)
@@ -781,7 +828,7 @@ typedef void *async_cookie_t;
 #define timer_pending(x)	timeout_pending((x))
 
 #define cond_resched()		sched_pause(yield)
-#define need_resched() \
+#define drm_need_resched() \
     (curcpu()->ci_schedstate.spc_schedflags & SPCF_SHOULDYIELD)
 
 #define TASK_UNINTERRUPTIBLE	0
@@ -1282,8 +1329,6 @@ copy_from_user(void *to, const void *from, unsigned len)
 #define console_trylock()	1
 #define console_unlock()
 
-#define i2c_del_adapter(x)
-
 #ifndef PCI_MEM_START
 #define PCI_MEM_START	0
 #endif
@@ -1726,6 +1771,12 @@ get_order(size_t size)
 
 #if defined(__i386__) || defined(__amd64__)
 
+#define _PAGE_PRESENT	PG_V
+#define _PAGE_RW	PG_RW
+#define _PAGE_PAT	PG_PAT
+#define _PAGE_PWT	PG_WT
+#define _PAGE_PCD	PG_N
+
 static inline void
 pagefault_disable(void)
 {
@@ -1849,6 +1900,48 @@ acpi_status acpi_get_table_with_size(const char *, int, struct acpi_table_header
 #define acpi_video_register()
 #define acpi_video_unregister()
 
+struct backlight_device;
+
+struct backlight_properties {
+	int type;
+	int max_brightness;
+	int brightness;
+	int power;
+};
+
+struct backlight_ops {
+	int (*update_status)(struct backlight_device *);
+	int (*get_brightness)(struct backlight_device *);
+};
+
+struct backlight_device {
+	const struct backlight_ops *ops;
+	struct backlight_properties props;
+	void *data;
+};
+
+#define bl_get_data(bd)	(bd)->data
+
+#define BACKLIGHT_RAW	0
+
+struct backlight_device *backlight_device_register(const char *, void *,
+     void *, const struct backlight_ops *, struct backlight_properties *);
+void backlight_device_unregister(struct backlight_device *);
+
+static inline void
+backlight_update_status(struct backlight_device *bd)
+{
+	bd->ops->update_status(bd);
+};
+
+#define MIPI_DSI_V_SYNC_START			0x01
+#define MIPI_DSI_V_SYNC_END			0x11
+#define MIPI_DSI_H_SYNC_START			0x21
+#define MIPI_DSI_H_SYNC_END			0x31
+#define MIPI_DSI_COLOR_MODE_OFF			0x02
+#define MIPI_DSI_COLOR_MODE_ON			0x12
+#define MIPI_DSI_SHUTDOWN_PERIPHERAL		0x22
+#define MIPI_DSI_TURN_ON_PERIPHERAL		0x32
 #define MIPI_DSI_GENERIC_SHORT_WRITE_0_PARAM	0x03
 #define MIPI_DSI_GENERIC_SHORT_WRITE_1_PARAM	0x13
 #define MIPI_DSI_GENERIC_SHORT_WRITE_2_PARAM	0x23
@@ -1858,8 +1951,36 @@ acpi_status acpi_get_table_with_size(const char *, int, struct acpi_table_header
 #define MIPI_DSI_DCS_SHORT_WRITE		0x05
 #define MIPI_DSI_DCS_SHORT_WRITE_PARAM		0x15
 #define MIPI_DSI_DCS_READ			0x06
+#define MIPI_DSI_SET_MAXIMUM_RETURN_PACKET_SIZE	0x37
+#define MIPI_DSI_END_OF_TRANSMISSION		0x08
+#define MIPI_DSI_NULL_PACKET			0x09
+#define MIPI_DSI_BLANKING_PACKET		0x19
 #define MIPI_DSI_GENERIC_LONG_WRITE		0x29
 #define MIPI_DSI_DCS_LONG_WRITE			0x39
+#define MIPI_DSI_LOOSELY_PACKED_PIXEL_STREAM_YCBCR20	0x0c
+#define MIPI_DSI_PACKED_PIXEL_STREAM_YCBCR24	0x1c
+#define MIPI_DSI_PACKED_PIXEL_STREAM_YCBCR16	0x2c
+#define MIPI_DSI_PACKED_PIXEL_STREAM_30		0x0d
+#define MIPI_DSI_PACKED_PIXEL_STREAM_36		0x1d
+#define MIPI_DSI_PACKED_PIXEL_STREAM_YCBCR12	0x3d
+#define MIPI_DSI_PACKED_PIXEL_STREAM_16		0x0e
+#define MIPI_DSI_PACKED_PIXEL_STREAM_18		0x1e
+#define MIPI_DSI_PIXEL_STREAM_3BYTE_18		0x2e
+#define MIPI_DSI_PACKED_PIXEL_STREAM_24		0x3e
+
+#define MIPI_DCS_NOP				0x00
+#define MIPI_DCS_SOFT_RESET			0x01
+#define MIPI_DCS_GET_POWER_MODE			0x0a
+#define MIPI_DCS_GET_PIXEL_FORMAT		0x0c
+#define MIPI_DCS_ENTER_SLEEP_MODE		0x10
+#define MIPI_DCS_EXIT_SLEEP_MODE		0x11
+#define MIPI_DCS_SET_DISPLAY_OFF		0x28
+#define MIPI_DCS_SET_DISPLAY_ON			0x29
+#define MIPI_DCS_SET_COLUMN_ADDRESS		0x2a
+#define MIPI_DCS_SET_PAGE_ADDRESS		0x2b
+#define MIPI_DCS_SET_TEAR_OFF			0x34
+#define MIPI_DCS_SET_TEAR_ON			0x35
+#define MIPI_DCS_SET_PIXEL_FORMAT		0x3a
 
 struct pwm_device;
 
@@ -1898,9 +2019,9 @@ pwm_disable(struct pwm_device *pwm)
 }
 
 struct scatterlist {
-	struct pglist __plist;
-	struct vm_page **__pages;
-	unsigned int __num_pages;
+	dma_addr_t dma_address;
+	unsigned int offset;
+	unsigned int length;
 };
 
 struct sg_table {
@@ -1912,57 +2033,57 @@ struct sg_table {
 struct sg_page_iter {
 	struct scatterlist *sg;
 	unsigned int sg_pgoffset;
+	unsigned int __nents;
 };
 
 int sg_alloc_table(struct sg_table *, unsigned int, gfp_t);
 void sg_free_table(struct sg_table *);
 
-#if 0
-void sg_set_page(struct scatterlist *, struct vm_page *, unsigned int,
-    unsigned int);
-#endif
-
 #define sg_mark_end(x)
-#define sg_nents(sgl) -1
 
 static __inline void
 __sg_page_iter_start(struct sg_page_iter *iter, struct scatterlist *sgl,
     unsigned int nents, unsigned long pgoffset)
 {
 	iter->sg = sgl;
-	iter->sg_pgoffset = pgoffset;
+	iter->sg_pgoffset = pgoffset - 1;
+	iter->__nents = nents;
 }
 
 static inline bool
 __sg_page_iter_next(struct sg_page_iter *iter)
 {
 	iter->sg_pgoffset++;
-	return (iter->sg_pgoffset <= iter->sg->__num_pages);
-}
+	while (iter->__nents > 0 && 
+	    iter->sg_pgoffset >= (iter->sg->length / PAGE_SIZE)) {
+		iter->sg_pgoffset -= (iter->sg->length / PAGE_SIZE);
+		iter->sg++;
+		iter->__nents--;
+	}
 
-static inline struct vm_page *
-sg_page_iter_page(struct sg_page_iter *iter)
-{
-	return iter->sg->__pages[iter->sg_pgoffset - 1];
+	return (iter->__nents > 0);
 }
 
 static inline paddr_t
 sg_page_iter_dma_address(struct sg_page_iter *iter)
 {
-	return VM_PAGE_TO_PHYS(sg_page_iter_page(iter));
+	return iter->sg->dma_address + (iter->sg_pgoffset << PAGE_SHIFT);
+}
+
+static inline struct vm_page *
+sg_page_iter_page(struct sg_page_iter *iter)
+{
+	return PHYS_TO_VM_PAGE(sg_page_iter_dma_address(iter));
 }
 
 static inline struct vm_page *
 sg_page(struct scatterlist *sgl)
 {
-	return sgl->__pages[0];
+	return PHYS_TO_VM_PAGE(sgl->dma_address);
 }
 
-static inline paddr_t
-sg_dma_address(struct scatterlist *sgl)
-{
-	return VM_PAGE_TO_PHYS(sgl->__pages[0]);
-}
+#define sg_dma_address(sg)	((sg)->dma_address)
+#define sg_dma_len(sg)		((sg)->length)
 
 #define for_each_sg_page(sgl, iter, nents, pgoffset) \
   __sg_page_iter_start((iter), (sgl), (nents), (pgoffset)); \

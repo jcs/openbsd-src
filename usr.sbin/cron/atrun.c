@@ -1,4 +1,4 @@
-/*	$OpenBSD: atrun.c,v 1.43 2016/01/11 14:23:50 millert Exp $	*/
+/*	$OpenBSD: atrun.c,v 1.46 2017/06/08 16:23:39 millert Exp $	*/
 
 /*
  * Copyright (c) 2002-2003 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -51,7 +51,7 @@
 #include "funcs.h"
 #include "globals.h"
 
-static void run_job(atjob *, char *);
+static void run_job(const atjob *, int, const char *);
 
 static int
 strtot(const char *nptr, char **endptr, time_t *tp)
@@ -169,23 +169,41 @@ atrun(at_db *db, double batch_maxload, time_t now)
 	char atfile[PATH_MAX];
 	struct stat sb;
 	double la;
+	int dfd, len;
 	atjob *job, *tjob, *batch = NULL;
 
 	if (db == NULL)
 		return;
+
+	if ((dfd = open(_PATH_AT_SPOOL, O_RDONLY|O_DIRECTORY)) == -1) {
+		syslog(LOG_ERR, "(CRON) OPEN FAILED (%s)", _PATH_AT_SPOOL);
+		return;
+	}
 
 	TAILQ_FOREACH_SAFE(job, &db->jobs, entries, tjob) {
 		/* Skip jobs in the future */
 		if (job->run_time > now)
 			continue;
 
-		snprintf(atfile, sizeof(atfile), "%s/%lld.%c", _PATH_AT_SPOOL,
+		len = snprintf(atfile, sizeof(atfile), "%lld.%c",
 		    (long long)job->run_time, job->queue);
-
-		if (lstat(atfile, &sb) != 0 || !S_ISREG(sb.st_mode)) {
+		if (len >= sizeof(atfile)) {
 			TAILQ_REMOVE(&db->jobs, job, entries);
 			free(job);
-			continue;		/* disapeared or not a file */
+			continue;
+		}
+
+		if (fstatat(dfd, atfile, &sb, AT_SYMLINK_NOFOLLOW) != 0) {
+			TAILQ_REMOVE(&db->jobs, job, entries);
+			free(job);
+			continue;		/* disapeared from queue */
+		}
+		if (!S_ISREG(sb.st_mode)) {
+			syslog(LOG_WARNING, "(CRON) NOT REGULAR (%s)",
+			    atfile);
+			TAILQ_REMOVE(&db->jobs, job, entries);
+			free(job);
+			continue;		/* was a file, no longer is */
 		}
 
 		/*
@@ -200,7 +218,7 @@ atrun(at_db *db, double batch_maxload, time_t now)
 					batch = job;
 			} else {
 				/* normal at job */
-				run_job(job, atfile);
+				run_job(job, dfd, atfile);
 				TAILQ_REMOVE(&db->jobs, job, entries);
 				free(job);
 			}
@@ -212,19 +230,22 @@ atrun(at_db *db, double batch_maxload, time_t now)
 	    && (batch_maxload == 0.0 ||
 	    ((getloadavg(&la, 1) == 1) && la <= batch_maxload))
 	    ) {
-		snprintf(atfile, sizeof(atfile), "%s/%lld.%c", _PATH_AT_SPOOL,
+		len = snprintf(atfile, sizeof(atfile), "%lld.%c",
 		    (long long)batch->run_time, batch->queue);
-		run_job(batch, atfile);
+		if (len < sizeof(atfile))
+			run_job(batch, dfd, atfile);
 		TAILQ_REMOVE(&db->jobs, batch, entries);
 		free(job);
 	}
+
+	close(dfd);
 }
 
 /*
  * Run the specified job contained in atfile.
  */
 static void
-run_job(atjob *job, char *atfile)
+run_job(const atjob *job, int dfd, const char *atfile)
 {
 	struct stat sb;
 	struct passwd *pw;
@@ -241,15 +262,11 @@ run_job(atjob *job, char *atfile)
 	char *nargv[2], *nenvp[1];
 
 	/* Open the file and unlink it so we don't try running it again. */
-	if ((fd = open(atfile, O_RDONLY|O_NONBLOCK|O_NOFOLLOW, 0)) < 0) {
+	if ((fd = openat(dfd, atfile, O_RDONLY|O_NONBLOCK|O_NOFOLLOW, 0)) < 0) {
 		syslog(LOG_ERR, "(CRON) CAN'T OPEN (%s)", atfile);
 		return;
 	}
-	unlink(atfile);
-
-	/* We don't want the atjobs dir in the log messages. */
-	if ((cp = strrchr(atfile, '/')) != NULL)
-		atfile = cp + 1;
+	unlinkat(dfd, atfile, 0);
 
 	/* Fork so other pending jobs don't have to wait for us to finish. */
 	switch (fork()) {
@@ -303,6 +320,11 @@ run_job(atjob *job, char *atfile)
 	}
 	if (sb.st_uid != 0 && sb.st_uid != job->uid) {
 		syslog(LOG_WARNING, "(%s) WRONG FILE OWNER (%s)", pw->pw_name,
+		    atfile);
+		_exit(EXIT_FAILURE);
+	}
+	if (sb.st_gid != cron_gid) {
+		syslog(LOG_WARNING, "(%s) WRONG FILE GROUP (%s)", pw->pw_name,
 		    atfile);
 		_exit(EXIT_FAILURE);
 	}

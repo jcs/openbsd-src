@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.455 2017/05/29 10:24:06 florian Exp $
+#	$OpenBSD: Makefile,v 1.460 2017/06/22 16:02:42 deraadt Exp $
 
 .include <bsd.own.mk>
 
@@ -27,7 +27,14 @@ ALL_KERNELS += $K
 kernels: ${ALL_KERNELS}
 .for CONF K in ${KERNELS}
 	cp ../sys/arch/${MACHINE}/compile/${CONF}/obj/bsd ${RELEASEDIR}/$K
+	chmod a+r ${RELEASEDIR}/$K
 .endfor
+	cd ${.CURDIR}/../sys/arch/${MACHINE}/compile/ && \
+		tar -chzf ${DESTDIR}/usr/share/compile.tgz -s ',/obj/,/,' \
+		GENERIC*/obj/*.o GENERIC*/obj/Makefile \
+		GENERIC*/obj/ld.script GENERIC*/obj/makegap.sh
+	chown root:wheel ${DESTDIR}/usr/share/compile.tgz
+	chmod 644 ${DESTDIR}/usr/share/compile.tgz
 
 # -rw-r--r--
 BINOWN= root
@@ -61,7 +68,7 @@ RCDAEMONS=amd apmd bgpd bootparamd cron dhcpd dhcrelay dhcrelay6 dvmrpd \
 
 MISETS=	base${OSrev}.tgz comp${OSrev}.tgz man${OSrev}.tgz game${OSrev}.tgz
 
-all clean cleandir depend etc install lint:
+all clean cleandir depend etc install:
 
 install-mtree:
 	${INSTALL} -c -o root -g wheel -m 600 mtree/special \
@@ -265,6 +272,7 @@ do-release:
 release-sets:
 	su ${BUILDUSER} -c 'exec ${MAKE} distribution'
 	su ${BUILDUSER} -c 'exec ${MAKE} kernels'
+	cp -p ${DESTDIR}/usr/share/compile.tgz /usr/share/compile.tgz
 	${MAKE} bootblocks
 	cd ${RELEASEDIR} && rm -f SHA256
 	cd ../distrib/sets && exec su ${BUILDUSER} -c 'exec sh maketars ${OSrev}'

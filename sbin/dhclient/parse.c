@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.c,v 1.50 2017/04/09 20:44:13 krw Exp $	*/
+/*	$OpenBSD: parse.c,v 1.54 2017/06/29 21:37:43 krw Exp $	*/
 
 /* Common parser code for dhcpd and dhclient. */
 
@@ -227,43 +227,6 @@ parse_ip_addr(FILE *cfile, struct in_addr *addr)
 }
 
 /*
- * ETHERNET :== 'ethernet' NUMBER:NUMBER:NUMBER:NUMBER:NUMBER:NUMBER
- */
-void
-parse_ethernet(FILE *cfile, struct ether_addr *hardware)
-{
-	struct ether_addr buf;
-	int len, token;
-
-	token = next_token(NULL, cfile);
-	if (token != TOK_ETHERNET) {
-		parse_warn("expecting 'ethernet'.");
-		if (token != ';')
-			skip_to_semi(cfile);
-		return;
-	}
-
-	len = 0;
-	for (token = ':'; token == ':'; token = next_token(NULL, cfile)) {
-		if (!parse_hex(cfile, &buf.ether_addr_octet[len]))
-			break;
-		if (++len == sizeof(buf.ether_addr_octet))
-			break;
-	}
-
-	if (len == 6) {
-		if (parse_semi(cfile))
-		    memcpy(hardware, &buf, sizeof(*hardware));
-	} else if (token != ':') {
-		parse_warn("expecting ':'.");
-		skip_to_semi(cfile);
-	} else {
-		parse_warn("expecting hex value.");
-		skip_to_semi(cfile);
-	}
-}
-
-/*
  * lease-time :== NUMBER SEMI
  */
 void
@@ -399,14 +362,8 @@ parse_date(FILE *cfile)
 	memset(&tm, 0, sizeof(tm));	/* 'cuz strptime ignores tm_isdt. */
 	p = strptime(timestr, DB_TIMEFMT, &tm);
 	if (p == NULL || *p != '\0') {
-		p = strptime(timestr, OLD_DB_TIMEFMT, &tm);
-		if (p == NULL || *p != '\0') {
-			p = strptime(timestr, BAD_DB_TIMEFMT, &tm);
-			if (p == NULL || *p != '\0') {
-				parse_warn("unparseable time string");
-				return (0);
-			}
-		}
+		parse_warn("unparseable time string");
+		return (0);
 	}
 
 	guess = timegm(&tm);
@@ -417,8 +374,6 @@ parse_date(FILE *cfile)
 
 	return (guess);
 }
-
-int warnings_occurred;
 
 void
 parse_warn(char *msg)
@@ -438,6 +393,4 @@ parse_warn(char *msg)
 		}
 	}
 	log_warnx("%s^", spaces);
-
-	warnings_occurred = 1;
 }

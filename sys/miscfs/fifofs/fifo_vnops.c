@@ -1,4 +1,4 @@
-/*	$OpenBSD: fifo_vnops.c,v 1.53 2016/12/19 08:36:49 mpi Exp $	*/
+/*	$OpenBSD: fifo_vnops.c,v 1.56 2017/07/03 08:31:39 mpi Exp $	*/
 /*	$NetBSD: fifo_vnops.c,v 1.18 1996/03/16 23:52:42 christos Exp $	*/
 
 /*
@@ -356,18 +356,22 @@ fifo_close(void *v)
 
 	if (ap->a_fflag & FREAD) {
 		if (--fip->fi_readers == 0) {
-			NET_LOCK(s);
-			socantsendmore(fip->fi_writesock);
-			NET_UNLOCK(s);
+			struct socket *wso = fip->fi_writesock;
+
+			s = solock(wso);
+			socantsendmore(wso);
+			sounlock(s);
 		}
 	}
 	if (ap->a_fflag & FWRITE) {
 		if (--fip->fi_writers == 0) {
-			NET_LOCK(s);
+			struct socket *rso = fip->fi_readsock;
+
+			s = solock(rso);
 			/* SS_ISDISCONNECTED will result in POLLHUP */
-			fip->fi_readsock->so_state |= SS_ISDISCONNECTED;
-			socantrcvmore(fip->fi_readsock);
-			NET_UNLOCK(s);
+			rso->so_state |= SS_ISDISCONNECTED;
+			socantrcvmore(rso);
+			sounlock(s);
 		}
 	}
 	if (fip->fi_readers == 0 && fip->fi_writers == 0) {
@@ -527,14 +531,22 @@ int
 filt_fiforead(struct knote *kn, long hint)
 {
 	struct socket *so = (struct socket *)kn->kn_hook;
+	int s, rv;
 
+	if (!(hint & NOTE_SUBMIT))
+		s = solock(so);
 	kn->kn_data = so->so_rcv.sb_cc;
 	if (so->so_state & SS_CANTRCVMORE) {
 		kn->kn_flags |= EV_EOF;
-		return (1);
+		rv = 1;
+	} else {
+		kn->kn_flags &= ~EV_EOF;
+		rv = (kn->kn_data > 0);
 	}
-	kn->kn_flags &= ~EV_EOF;
-	return (kn->kn_data > 0);
+	if (!(hint & NOTE_SUBMIT))
+		sounlock(s);
+
+	return (rv);
 }
 
 void
@@ -551,12 +563,20 @@ int
 filt_fifowrite(struct knote *kn, long hint)
 {
 	struct socket *so = (struct socket *)kn->kn_hook;
+	int s, rv;
 
-	kn->kn_data = sbspace(&so->so_snd);
+	if (!(hint & NOTE_SUBMIT))
+		s = solock(so);
+	kn->kn_data = sbspace(so, &so->so_snd);
 	if (so->so_state & SS_CANTSENDMORE) {
 		kn->kn_flags |= EV_EOF;
-		return (1);
+		rv = 1;
+	} else {
+		kn->kn_flags &= ~EV_EOF;
+		rv = (kn->kn_data >= so->so_snd.sb_lowat);
 	}
-	kn->kn_flags &= ~EV_EOF;
-	return (kn->kn_data >= so->so_snd.sb_lowat);
+	if (!(hint & NOTE_SUBMIT))
+		sounlock(s);
+
+	return (rv);
 }

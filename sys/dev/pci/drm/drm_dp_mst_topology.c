@@ -20,6 +20,7 @@
  * OF THIS SOFTWARE.
  */
 
+#ifdef __linux__
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/init.h>
@@ -27,10 +28,11 @@
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 #include <linux/i2c.h>
-#include <drm/drm_dp_mst_helper.h>
-#include <drm/drmP.h>
+#endif
+#include <dev/pci/drm/drm_dp_mst_helper.h>
+#include <dev/pci/drm/drmP.h>
 
-#include <drm/drm_fixed.h>
+#include <dev/pci/drm/drm_fixed.h>
 
 /**
  * DOC: dp mst helper
@@ -39,8 +41,10 @@
  * protocol. The helpers contain a topology manager and bandwidth manager.
  * The helpers encapsulate the sending and received of sideband msgs.
  */
+#ifdef __linux__
 static bool dump_dp_payload_table(struct drm_dp_mst_topology_mgr *mgr,
 				  char *buf);
+#endif
 static int test_calc_pbn_mode(void);
 
 static void drm_dp_put_port(struct drm_dp_mst_port *port);
@@ -3026,6 +3030,7 @@ out:
 	return ret;
 }
 
+#ifdef notyet
 static u32 drm_dp_mst_i2c_functionality(struct i2c_adapter *adapter)
 {
 	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL |
@@ -3033,9 +3038,12 @@ static u32 drm_dp_mst_i2c_functionality(struct i2c_adapter *adapter)
 	       I2C_FUNC_SMBUS_BLOCK_PROC_CALL |
 	       I2C_FUNC_10BIT_ADDR;
 }
+#endif
 
 static const struct i2c_algorithm drm_dp_mst_i2c_algo = {
+#ifdef notyet
 	.functionality = drm_dp_mst_i2c_functionality,
+#endif
 	.master_xfer = drm_dp_mst_i2c_xfer,
 };
 
@@ -3051,10 +3059,12 @@ static int drm_dp_mst_register_i2c_bus(struct drm_dp_aux *aux)
 	aux->ddc.algo_data = aux;
 	aux->ddc.retries = 3;
 
+#ifdef __linux__
 	aux->ddc.class = I2C_CLASS_DDC;
 	aux->ddc.owner = THIS_MODULE;
 	aux->ddc.dev.parent = aux->dev;
 	aux->ddc.dev.of_node = aux->dev->of_node;
+#endif
 
 	strlcpy(aux->ddc.name, aux->name ? aux->name : dev_name(aux->dev),
 		sizeof(aux->ddc.name));

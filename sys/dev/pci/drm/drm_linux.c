@@ -1,4 +1,4 @@
-/*	$OpenBSD: drm_linux.c,v 1.12 2016/09/15 02:00:17 dlg Exp $	*/
+/*	$OpenBSD: drm_linux.c,v 1.14 2017/07/05 20:30:13 kettenis Exp $	*/
 /*
  * Copyright (c) 2013 Jonathan Gray <jsg@openbsd.org>
  * Copyright (c) 2015, 2016 Mark Kettenis <kettenis@openbsd.org>
@@ -285,9 +285,20 @@ vunmap(void *addr, size_t size)
 
 void
 print_hex_dump(const char *level, const char *prefix_str, int prefix_type,
-    int rowsize, int groupsize, const void *buf,size_t len, bool ascii)
+    int rowsize, int groupsize, const void *buf, size_t len, bool ascii)
 {
-	printf("%s not implemented\n", __func__);
+	const uint8_t *cbuf = buf;
+	int i;
+
+	for (i = 0; i < len; i++) {
+		if ((i % rowsize) == 0)
+			printf("%s", prefix_str);
+		printf("%02x", cbuf[i]);
+		if ((i % rowsize) == (rowsize - 1))
+			printf("\n");
+		else
+			printf(" ");
+	}
 }
 
 void *
@@ -517,27 +528,19 @@ ida_simple_get(struct ida *ida, unsigned int start, unsigned int end,
 int
 sg_alloc_table(struct sg_table *table, unsigned int nents, gfp_t gfp_mask)
 {
-	table->sgl = malloc(sizeof(struct scatterlist), M_DRM, gfp_mask);
+	table->sgl = mallocarray(nents, sizeof(struct scatterlist),
+	    M_DRM, gfp_mask);
 	if (table->sgl == NULL)
 		return -ENOMEM;
-
-	table->sgl->__pages = mallocarray(nents, sizeof(struct vm_page *),
-	    M_DRM, gfp_mask);
-	if (table->sgl->__pages == NULL) {
-		free(table->sgl, M_DRM, sizeof(struct scatterlist));
-		return -ENOMEM;
-	}
-	table->sgl->__num_pages = nents;
-	table->nents = nents;
+	table->nents = table->orig_nents = nents;
 	return 0;
 }
 
 void
 sg_free_table(struct sg_table *table)
 {
-	free(table->sgl->__pages, M_DRM,
-	    table->sgl->__num_pages * sizeof(struct vm_page *));
-	free(table->sgl, M_DRM, sizeof(struct scatterlist));
+	free(table->sgl, M_DRM,
+	    table->orig_nents * sizeof(struct scatterlist));
 }
 
 size_t
@@ -545,6 +548,55 @@ sg_copy_from_buffer(struct scatterlist *sgl, unsigned int nents,
     const void *buf, size_t buflen)
 {
 	panic("%s", __func__);
+}
+
+int
+i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
+{
+	void *cmd = NULL;
+	int cmdlen = 0;
+	int err, ret = 0;
+	int op;
+
+	if (adap->algo)
+		return adap->algo->master_xfer(adap, msgs, num);
+
+	iic_acquire_bus(&adap->ic, 0);
+
+	while (num > 2) {
+		op = (msgs->flags & I2C_M_RD) ? I2C_OP_READ : I2C_OP_WRITE;
+		err = iic_exec(&adap->ic, op, msgs->addr, NULL, 0,
+		    msgs->buf, msgs->len, 0);
+		if (err) {
+			ret = -err;
+			goto fail;
+		}
+		msgs++;
+		num--;
+		ret++;
+	}
+
+	if (num > 1) {
+		cmd = msgs->buf;
+		cmdlen = msgs->len;
+		msgs++;
+		num--;
+		ret++;
+	}
+
+	op = (msgs->flags & I2C_M_RD) ? I2C_OP_READ_WITH_STOP : I2C_OP_WRITE_WITH_STOP;
+	err = iic_exec(&adap->ic, op, msgs->addr, cmd, cmdlen, msgs->buf, msgs->len, 0);
+	if (err) {
+		ret = -err;
+		goto fail;
+	}
+	msgs++;
+	ret++;
+
+fail:
+	iic_release_bus(&adap->ic, 0);
+
+	return ret;
 }
 
 #if defined(__amd64__) || defined(__i386__)
@@ -644,3 +696,23 @@ acpi_get_table_with_size(const char *sig, int instance,
 }
 
 #endif
+
+struct backlight_device *
+backlight_device_register(const char *name, void *kdev, void *data,
+    const struct backlight_ops *ops, struct backlight_properties *props)
+{
+	struct backlight_device *bd;
+
+	bd = malloc(sizeof(*bd), M_DRM, M_WAITOK);
+	bd->ops = ops;
+	bd->props = *props;
+	bd->data = data;
+	
+	return bd;
+}
+
+void
+backlight_device_unregister(struct backlight_device *bd)
+{
+	free(bd, M_DRM, sizeof(*bd));
+}

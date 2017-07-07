@@ -1,4 +1,4 @@
-/* $OpenBSD: drm.h,v 1.22 2016/12/01 01:37:17 jsg Exp $ */
+/* $OpenBSD: drm.h,v 1.23 2017/07/01 16:00:25 kettenis Exp $ */
 /**
  * \file drm.h
  * Header for the Direct Rendering Manager

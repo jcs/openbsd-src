@@ -1,4 +1,4 @@
-.\" $OpenBSD: pledge.2,v 1.42 2017/05/30 16:46:04 deraadt Exp $
+.\" $OpenBSD: pledge.2,v 1.45 2017/07/05 11:43:09 schwarze Exp $
 .\"
 .\" Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: May 30 2017 $
+.Dd $Mdocdate: July 5 2017 $
 .Dt PLEDGE 2
 .Os
 .Sh NAME
@@ -46,6 +46,16 @@ can reduce the abilities further, but abilities can never be regained.
 A process which attempts a restricted operation is killed with an uncatchable
 .Dv SIGABRT ,
 delivering a core file if possible.
+A process currently running with pledge has state
+.Sq p
+in
+.Xr ps 1
+output; a process that was terminated due to a pledge violation
+is accounted by
+.Xr lastcomm 1
+with the
+.Sq P
+flag.
 .Pp
 A
 .Fa promises
@@ -132,7 +142,7 @@ support:
 .Xr uname 3 ,
 system sensor readings.
 .Pp
-.It Xr pledge 2
+.It Fn pledge
 Can only reduce permissions; can only set a list of
 .Pa paths
 once.
@@ -563,7 +573,7 @@ or one of its elements, or
 .Fa promises
 points outside the process's allocated address space.
 .It Bq Er EINVAL
-.Ar request
+.Ar promises
 is malformed or contains invalid keywords.
 .It Bq Er ENAMETOOLONG
 An element of

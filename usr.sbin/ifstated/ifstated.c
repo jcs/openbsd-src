@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifstated.c,v 1.41 2013/05/30 19:22:48 henning Exp $	*/
+/*	$OpenBSD: ifstated.c,v 1.50 2017/07/04 21:09:52 benno Exp $	*/
 
 /*
  * Copyright (c) 2004 Marco Pfatschbacher <mpf@openbsd.org>
@@ -36,12 +36,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <stdint.h>
+#include <syslog.h>
 #include <err.h>
 #include <event.h>
 #include <unistd.h>
 #include <ifaddrs.h>
 
 #include "ifstated.h"
+#include "log.h"
 
 struct	 ifsd_config *conf = NULL, *newconf = NULL;
 
@@ -50,28 +53,29 @@ int	 opt_inhibit = 0;
 char	*configfile = "/etc/ifstated.conf";
 struct event	rt_msg_ev, sighup_ev, startup_ev, sigchld_ev;
 
-void	startup_handler(int, short, void *);
-void	sighup_handler(int, short, void *);
-int	load_config(void);
-void	sigchld_handler(int, short, void *);
-void	rt_msg_handler(int, short, void *);
-void	external_handler(int, short, void *);
-void	external_exec(struct ifsd_external *, int);
-void	check_external_status(struct ifsd_state *);
-void	external_evtimer_setup(struct ifsd_state *, int);
-void	scan_ifstate(int, int, int);
-int	scan_ifstate_single(int, int, struct ifsd_state *);
-void	fetch_state(void);
-void	usage(void);
-void	adjust_expressions(struct ifsd_expression_list *, int);
-void	adjust_external_expressions(struct ifsd_state *);
-void	eval_state(struct ifsd_state *);
-int	state_change(void);
-void	do_action(struct ifsd_action *);
-void	remove_action(struct ifsd_action *, struct ifsd_state *);
-void	remove_expression(struct ifsd_expression *, struct ifsd_state *);
+void		startup_handler(int, short, void *);
+void		sighup_handler(int, short, void *);
+int		load_config(void);
+void		sigchld_handler(int, short, void *);
+void		rt_msg_handler(int, short, void *);
+void		external_handler(int, short, void *);
+void		external_exec(struct ifsd_external *, int);
+void		check_external_status(struct ifsd_state *);
+void		external_evtimer_setup(struct ifsd_state *, int);
+void		scan_ifstate(int, int, int);
+int		scan_ifstate_single(int, int, struct ifsd_state *);
+void		fetch_ifstate(void);
+__dead void	usage(void);
+void		adjust_expressions(struct ifsd_expression_list *, int);
+void		adjust_external_expressions(struct ifsd_state *);
+void		eval_state(struct ifsd_state *);
+int		state_change(void);
+void		do_action(struct ifsd_action *);
+void		remove_action(struct ifsd_action *, struct ifsd_state *);
+void		remove_expression(struct ifsd_expression *,
+		    struct ifsd_state *);
 
-void
+__dead void
 usage(void)
 {
 	extern char *__progname;
@@ -85,10 +89,12 @@ int
 main(int argc, char *argv[])
 {
 	struct timeval tv;
-	int ch;
+	int ch, rt_fd;
 	int debug = 0;
+	unsigned int rtfilter;
 
-	log_init(1);
+	log_init(1, LOG_DAEMON);	/* log to stderr until daemonized */
+	log_setverbose(1);
 
 	while ((ch = getopt(argc, argv, "dD:f:hniv")) != -1) {
 		switch (ch) {
@@ -138,14 +144,28 @@ main(int argc, char *argv[])
 		daemon(1, 0);
 
 	event_init();
-	log_init(debug);
+	log_init(debug, LOG_DAEMON);
+	log_setverbose(opts & IFSD_OPT_VERBOSE);
+
+	if ((rt_fd = socket(PF_ROUTE, SOCK_RAW, 0)) < 0)
+		err(1, "no routing socket");
+
+	rtfilter = ROUTE_FILTER(RTM_IFINFO);
+	if (setsockopt(rt_fd, PF_ROUTE, ROUTE_MSGFILTER,
+	    &rtfilter, sizeof(rtfilter)) == -1)	/* not fatal */
+		log_warn("%s: setsockopt msgfilter", __func__);
+
+	rtfilter = RTABLE_ANY;
+	if (setsockopt(rt_fd, PF_ROUTE, ROUTE_TABLEFILTER,
+	    &rtfilter, sizeof(rtfilter)) == -1)	/* not fatal */
+		log_warn("%s: setsockopt tablefilter", __func__);
 
 	signal_set(&sigchld_ev, SIGCHLD, sigchld_handler, NULL);
 	signal_add(&sigchld_ev, NULL);
 
 	/* Loading the config needs to happen in the event loop */
 	timerclear(&tv);
-	evtimer_set(&startup_ev, startup_handler, NULL);
+	evtimer_set(&startup_ev, startup_handler, (void *)(long)rt_fd);
 	evtimer_add(&startup_ev, &tv);
 
 	event_loop(0);
@@ -155,28 +175,14 @@ main(int argc, char *argv[])
 void
 startup_handler(int fd, short event, void *arg)
 {
-	int rt_fd;
-	unsigned int rtfilter;
-
-	if ((rt_fd = socket(PF_ROUTE, SOCK_RAW, 0)) < 0)
-		err(1, "no routing socket");
+	int rfd = (int)(long)arg;
 
 	if (load_config() != 0) {
 		log_warnx("unable to load config");
 		exit(1);
 	}
 
-	rtfilter = ROUTE_FILTER(RTM_IFINFO);
-	if (setsockopt(rt_fd, PF_ROUTE, ROUTE_MSGFILTER,
-	    &rtfilter, sizeof(rtfilter)) == -1)         /* not fatal */
-		log_warn("startup_handler: setsockopt msgfilter");
-
-	rtfilter = RTABLE_ANY;
-	if (setsockopt(rt_fd, PF_ROUTE, ROUTE_TABLEFILTER,
-	    &rtfilter, sizeof(rtfilter)) == -1)         /* not fatal */
-		log_warn("startup_handler: setsockopt tablefilter");
-	
-	event_set(&rt_msg_ev, rt_fd, EV_READ|EV_PERSIST, rt_msg_handler, NULL);
+	event_set(&rt_msg_ev, rfd, EV_READ|EV_PERSIST, rt_msg_handler, NULL);
 	event_add(&rt_msg_ev, NULL);
 
 	signal_set(&sighup_ev, SIGHUP, sighup_handler, NULL);
@@ -201,18 +207,20 @@ load_config(void)
 	if (conf != NULL)
 		clear_config(conf);
 	conf = newconf;
-	conf->always.entered = time(NULL);
-	fetch_state();
-	external_evtimer_setup(&conf->always, IFSD_EVTIMER_ADD);
-	adjust_external_expressions(&conf->always);
-	eval_state(&conf->always);
+	conf->initstate.entered = time(NULL);
+	fetch_ifstate();
+	external_evtimer_setup(&conf->initstate, IFSD_EVTIMER_ADD);
+	adjust_external_expressions(&conf->initstate);
+	eval_state(&conf->initstate);
 	if (conf->curstate != NULL) {
 		log_info("initial state: %s", conf->curstate->name);
 		conf->curstate->entered = time(NULL);
 		conf->nextstate = conf->curstate;
 		conf->curstate = NULL;
-		while (state_change())
-			do_action(conf->curstate->always);
+		while (state_change()) {
+			do_action(conf->curstate->init);
+			do_action(conf->curstate->body);
+		}
 	}
 	return (0);
 }
@@ -244,7 +252,7 @@ rt_msg_handler(int fd, short event, void *arg)
 void
 sigchld_handler(int fd, short event, void *arg)
 {
-	check_external_status(&conf->always);
+	check_external_status(&conf->initstate);
 	if (conf->curstate != NULL)
 		check_external_status(conf->curstate);
 }
@@ -457,8 +465,8 @@ scan_ifstate(int ifindex, int s, int do_eval)
 	struct ifsd_state *state;
 	int cur_eval = 0;
 
-	if (scan_ifstate_single(ifindex, s, &conf->always) && do_eval)
-		eval_state(&conf->always);
+	if (scan_ifstate_single(ifindex, s, &conf->initstate) && do_eval)
+		eval_state(&conf->initstate);
 	TAILQ_FOREACH(state, &conf->states, entries) {
 		if (scan_ifstate_single(ifindex, s, state) &&
 		    (do_eval && state == conf->curstate))
@@ -521,18 +529,19 @@ adjust_expressions(struct ifsd_expression_list *expressions, int depth)
 void
 eval_state(struct ifsd_state *state)
 {
-	struct ifsd_external *external = TAILQ_FIRST(&state->external_tests);
+	struct ifsd_external *external;
+
+	external = TAILQ_FIRST(&state->external_tests);
 	if (external == NULL || external->lastexec >= state->entered ||
 	    external->lastexec == 0) {
-		do_action(state->always);
-		while (state_change())
-			do_action(conf->curstate->always);
+		do_action(state->body);
+		while (state_change()) {
+			do_action(conf->curstate->init);
+			do_action(conf->curstate->body);
+		}
 	}
 }
 
-/*
- *If a previous action included a state change, process it.
- */
 int
 state_change(void)
 {
@@ -548,7 +557,6 @@ state_change(void)
 		conf->curstate->entered = time(NULL);
 		external_evtimer_setup(conf->curstate, IFSD_EVTIMER_ADD);
 		adjust_external_expressions(conf->curstate);
-		do_action(conf->curstate->init);
 		return (1);
 	}
 	return (0);
@@ -580,7 +588,7 @@ do_action(struct ifsd_action *action)
 		}
 		break;
 	default:
-		log_debug("do_action: unknown action %d", action->type);
+		log_debug("%s: unknown action %d", __func__, action->type);
 		break;
 	}
 }
@@ -589,7 +597,7 @@ do_action(struct ifsd_action *action)
  * Fetch the current link states.
  */
 void
-fetch_state(void)
+fetch_ifstate(void)
 {
 	struct ifaddrs *ifap, *ifa;
 	char *oname = NULL;
@@ -600,7 +608,7 @@ fetch_state(void)
 
 	for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
 		struct ifreq ifr;
-		struct if_data  ifrdat;
+		struct if_data ifrdat;
 
 		if (oname && !strcmp(oname, ifa->ifa_name))
 			continue;
@@ -619,28 +627,23 @@ fetch_state(void)
 	close(sock);
 }
 
-
-
-/*
- * Clear the config.
- */
 void
 clear_config(struct ifsd_config *oconf)
 {
 	struct ifsd_state *state;
 
-	external_evtimer_setup(&conf->always, IFSD_EVTIMER_DEL);
+	external_evtimer_setup(&conf->initstate, IFSD_EVTIMER_DEL);
 	if (conf != NULL && conf->curstate != NULL)
 		external_evtimer_setup(conf->curstate, IFSD_EVTIMER_DEL);
 	while ((state = TAILQ_FIRST(&oconf->states)) != NULL) {
 		TAILQ_REMOVE(&oconf->states, state, entries);
 		remove_action(state->init, state);
-		remove_action(state->always, state);
+		remove_action(state->body, state);
 		free(state->name);
 		free(state);
 	}
-	remove_action(oconf->always.init, &oconf->always);
-	remove_action(oconf->always.always, &oconf->always);
+	remove_action(oconf->initstate.init, &oconf->initstate);
+	remove_action(oconf->initstate.body, &oconf->initstate);
 	free(oconf);
 }
 

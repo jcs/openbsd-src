@@ -1,6 +1,6 @@
 #!/bin/ksh
 #
-# $OpenBSD: syspatch.sh,v 1.112 2017/05/27 09:05:25 ajacoutot Exp $
+# $OpenBSD: syspatch.sh,v 1.115 2017/07/04 20:25:53 ajacoutot Exp $
 #
 # Copyright (c) 2016, 2017 Antoine Jacoutot <ajacoutot@openbsd.org>
 #
@@ -47,12 +47,6 @@ apply_patch()
 
 	checkfs ${_files}
 	create_rollback ${_patch} "${_files}"
-
-	# create_rollback(): tar(1) was fed with an empty list of files; that is
-	# not an error but no tarball is created; this happens if no earlier
-	# version of the files contained in the syspatch exists on the system
-	[[ ! -f ${_PDIR}/${_patch}/rollback.tgz ]] && unset _files &&
-		echo "Missing set, skipping patch ${_patch##${_OSrev}-}"
 
 	for _file in ${_files}; do
 		((_ret == 0)) || break
@@ -188,7 +182,7 @@ ls_installed()
 
 ls_missing()
 {
-	local _c _l="$(ls_installed)" _sha=${_TMP}/SHA256
+	local _c _f _cmd _l="$(ls_installed)" _p _r _sha=${_TMP}/SHA256
 
 	# return inmediately if we cannot reach the mirror server
 	[[ -d ${_MIRROR#file://*} ]] ||
@@ -201,9 +195,17 @@ ls_missing()
 	unpriv -f "${_sha}" signify -Veq -x ${_sha}.sig -m ${_sha} -p \
 		/etc/signify/openbsd-${_OSrev}-syspatch.pub >/dev/null
 
+	# if no earlier version of all files contained in the syspatch exists
+	# on the system, it means a missing set so skip it
 	grep -Eo "syspatch${_OSrev}-[[:digit:]]{3}_[[:alnum:]_]+" ${_sha} |
 		while read _c; do _c=${_c##syspatch${_OSrev}-} &&
 		[[ -n ${_l} ]] && echo ${_c} | grep -qw -- "${_l}" || echo ${_c}
+	done | while read _p; do
+		_cmd="ftp -MVo - ${_MIRROR}/syspatch${_OSrev}-${_p}.tgz"
+		{ unpriv ${_cmd} | tar tzf -; } 2>/dev/null | while read _f; do
+			[[ -f /${_f} ]] || continue && echo ${_p} && pkill -u \
+				_syspatch -xf "${_cmd}" || true && break
+		done
 	done | sort -V
 }
 
@@ -212,7 +214,7 @@ rollback_patch()
 	local _edir _file _files _patch _ret=0
 
 	_patch="$(ls_installed | tail -1)"
-	[[ -n ${_patch} ]] || return # function used as a while condition
+	[[ -n ${_patch} ]]
 
 	_edir=${_TMP}/${_patch}-rollback
 	_patch=${_OSrev}-${_patch}
@@ -246,7 +248,7 @@ rollback_patch()
 
 sp_cleanup()
 {
-	local _d _k _m
+	local _d _k
 
 	# remove non matching release /var/syspatch/ content
 	for _d in ${_PDIR}/{.[!.],}*; do
@@ -262,9 +264,9 @@ sp_cleanup()
 	done
 
 	# in case a patch added a new directory (install -D)
-	for _m in /etc/mtree/{4.4BSD,BSD.x11}.dist; do
-		[[ -f ${_m} ]] && mtree -qdef ${_m} -p / -U >/dev/null
-	done
+	mtree -qdef /etc/mtree/4.4BSD.dist -p / -U >/dev/null
+	[[ -f /var/sysmerge/xetc.tgz ]] &&
+		mtree -qdef /etc/mtree/BSD.x11.dist -p / -U >/dev/null
 }
 
 unpriv()
@@ -297,7 +299,6 @@ _MIRROR=$(while read _line; do _line=${_line%%#*}; [[ -n ${_line} ]] &&
 	print -r -- "${_line}"; done </etc/installurl | tail -1) 2>/dev/null
 [[ ${_MIRROR} == @(file|http|https)://*/*[!/] ]] ||
 	sp_err "${0##*/}: invalid URL configured in /etc/installurl"
-
 _MIRROR="${_MIRROR}/syspatch/${_KERNV[0]}/$(machine)"
 
 (($(sysctl -n hw.ncpufound) > 1)) && _BSDMP=true || _BSDMP=false

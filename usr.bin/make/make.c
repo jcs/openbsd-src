@@ -1,4 +1,4 @@
-/*	$OpenBSD: make.c,v 1.71 2016/10/21 16:12:38 espie Exp $	*/
+/*	$OpenBSD: make.c,v 1.73 2017/06/22 17:09:10 espie Exp $	*/
 /*	$NetBSD: make.c,v 1.10 1996/11/06 17:59:15 christos Exp $	*/
 
 /*
@@ -99,7 +99,14 @@ static struct ohash targets;	/* stuff we must build */
 static void MakeAddChild(void *, void *);
 static void MakeHandleUse(void *, void *);
 static bool MakeStartJobs(void);
-static void MakePrintStatus(void *, void *);
+static void MakePrintStatus(void *);
+
+/* Cycle detection functions */
+static bool targets_contain_cycles(void);
+static void print_unlink_cycle(struct growableArray *, GNode *);
+static void break_and_print_cycles(Lst);
+static GNode *find_cycle(Lst, struct growableArray *);
+
 static bool try_to_make_node(GNode *);
 static void add_targets_to_make(Lst);
 
@@ -110,7 +117,7 @@ static void random_setup(void);
 static bool randomize_queue;
 long random_delay = 0;
 
-bool 
+bool
 no_jobs_left()
 {
 	return Array_IsEmpty(&toBeMade);
@@ -124,7 +131,7 @@ random_setup()
 /* no random delay in the new engine for now */
 #if 0
 	if (Var_Definedi("RANDOM_DELAY", NULL))
-		random_delay = strtonum(Var_Value("RANDOM_DELAY"), 0, 1000, 
+		random_delay = strtonum(Var_Value("RANDOM_DELAY"), 0, 1000,
 		    NULL) * 1000000;
 #endif
 
@@ -163,7 +170,7 @@ has_unmade_predecessor(GNode *gn)
 
 		if (pgn->must_make && pgn->built_status == UNKNOWN) {
 			if (DEBUG(MAKE))
-				printf("predecessor %s not made yet.\n", 
+				printf("predecessor %s not made yet.\n",
 				    pgn->name);
 			return true;
 		}
@@ -182,7 +189,7 @@ requeue_successors(GNode *gn)
 	for (ln = Lst_First(&gn->successors); ln != NULL; ln = Lst_Adv(ln)) {
 		GNode	*succ = Lst_Datum(ln);
 
-		if (succ->must_make && succ->unmade == 0 
+		if (succ->must_make && succ->unmade == 0
 		    && succ->built_status == UNKNOWN)
 			Array_PushNew(&toBeMade, succ);
 	}
@@ -199,7 +206,7 @@ requeue(GNode *gn)
 			j--;
 			heldBack.a[i]->built_status = UNKNOWN;
 			if (DEBUG(HELDJOBS))
-				printf("%s finished, releasing: %s\n", 
+				printf("%s finished, releasing: %s\n",
 				    gn->name, heldBack.a[i]->name);
 			Array_Push(&toBeMade, heldBack.a[i]);
 			continue;
@@ -256,7 +263,7 @@ Make_Update(GNode *cgn)	/* the child node */
 		if (noExecute || is_out_of_date(Dir_MTime(cgn)))
 			clock_gettime(CLOCK_REALTIME, &cgn->mtime);
 		if (DEBUG(MAKE))
-			printf("update time: %s\n", 
+			printf("update time: %s\n",
 			    time_to_string(&cgn->mtime));
 	}
 
@@ -268,7 +275,7 @@ Make_Update(GNode *cgn)	/* the child node */
 		pgn->unmade--;
 		if (pgn->must_make) {
 			if (DEBUG(MAKE))
-				printf("%s--=%d ", 
+				printf("%s--=%d ",
 				    pgn->name, pgn->unmade);
 
 			if ( ! (cgn->type & (OP_EXEC|OP_USE))) {
@@ -341,7 +348,7 @@ try_to_make_node(GNode *gn)
 				gn->built_status = HELDBACK;
 				if (DEBUG(HELDJOBS))
 					printf("Holding back job %s, "
-					    "groupling to %s\n", 
+					    "groupling to %s\n",
 					    gn->name, gn2->name);
 				Array_Push(&heldBack, gn);
 				return false;
@@ -355,7 +362,7 @@ try_to_make_node(GNode *gn)
 				gn->built_status = HELDBACK;
 				if (DEBUG(HELDJOBS))
 					printf("Holding back job %s, "
-					    "sibling to %s\n", 
+					    "sibling to %s\n",
 					    gn->name, gn2->name);
 				Array_Push(&heldBack, gn);
 				return false;
@@ -416,58 +423,16 @@ MakeStartJobs(void)
 	return false;
 }
 
-/*-
- *-----------------------------------------------------------------------
- * MakePrintStatus --
- *	Print the status of a top-level node, viz. it being up-to-date
- *	already or not created due to an error in a lower level.
- *	Callback function for Make_Run via Lst_ForEach.
- *
- * Side Effects:
- *	A message may be printed.
- *-----------------------------------------------------------------------
- */
 static void
-MakePrintStatus(
-    void *gnp,		    /* Node to examine */
-    void *cyclep)	    /* True if gn->unmade being non-zero implies
-			     * a cycle in the graph, not an error in an
-			     * inferior */
+MakePrintStatus(void *gnp)
 {
 	GNode	*gn = gnp;
-	bool 	*cp = cyclep;
-	bool	cycle = *cp;
 	if (gn->built_status == UPTODATE) {
 		printf("`%s' is up to date.\n", gn->name);
 	} else if (gn->unmade != 0) {
-		if (cycle) {
-			bool t = true;
-			/*
-			 * If printing cycles and came to one that has unmade
-			 * children, print out the cycle by recursing on its
-			 * children. Note a cycle like:
-			 *	a : b
-			 *	b : c
-			 *	c : b
-			 * will cause this to erroneously complain about a
-			 * being in the cycle, but this is a good approximation.
-			 */
-			if (gn->built_status == CYCLE) {
-				Error("Graph cycles through `%s'", gn->name);
-				gn->built_status = ENDCYCLE;
-				Lst_ForEach(&gn->children, MakePrintStatus, &t);
-				gn->built_status = UNKNOWN;
-			} else if (gn->built_status != ENDCYCLE) {
-				gn->built_status = CYCLE;
-				Lst_ForEach(&gn->children, MakePrintStatus, &t);
-			}
-		} else {
-			printf("`%s' not remade because of errors.\n",
-			    gn->name);
-		}
+		printf("`%s' not remade because of errors.\n", gn->name);
 	}
 }
-
 
 static void
 MakeAddChild(void *to_addp, void *ap)
@@ -489,7 +454,7 @@ MakeHandleUse(void *cgnp, void *pgnp)
 		Make_HandleUse(cgn, pgn);
 }
 
-/* Add stuff to the toBeMade queue. we try to sort things so that stuff 
+/* Add stuff to the toBeMade queue. we try to sort things so that stuff
  * that can be done directly is done right away.  This won't be perfect,
  * since some dependencies are only discovered later (e.g., SuffFindDeps).
  */
@@ -564,9 +529,6 @@ bool
 Make_Run(Lst targs)		/* the initial list of targets */
 {
 	bool problem;	/* errors occurred */
-	GNode *gn;
-	unsigned int i;
-	bool cycle;
 
 	/* wild guess at initial sizes */
 	Array_Init(&toBeMade, 500);
@@ -611,24 +573,127 @@ Make_Run(Lst targs)		/* the initial list of targets */
 	}
 
 	problem = Job_Finish();
-	cycle = false;
 
-	for (gn = ohash_first(&targets, &i); gn != NULL; 
-	    gn = ohash_next(&targets, &i)) {
-	    	if (has_been_built(gn))
-			continue;
-		cycle = true;
-		problem = true;
-	    	printf("Error: target %s unaccounted for (%s)\n", 
-		    gn->name, status_to_string(gn));
-	}
 	/*
 	 * Print the final status of each target. E.g. if it wasn't made
 	 * because some inferior reported an error.
 	 */
-	Lst_ForEach(targs, MakePrintStatus, &cycle);
+	if (targets_contain_cycles()) {
+		break_and_print_cycles(targs);
+		problem = true;
+	}
+	Lst_Every(targs, MakePrintStatus);
 	if (problem)
 		Fatal("Errors while building");
 
 	return true;
+}
+
+/* round-about detection: assume make is bug-free, if there are targets
+ * that have not been touched, it means they never were reached, so we can
+ * look for a cycle
+ */
+static bool
+targets_contain_cycles(void)
+{
+	GNode *gn;
+	unsigned int i;
+	bool cycle = false;
+	bool first = true;
+
+	for (gn = ohash_first(&targets, &i); gn != NULL;
+	    gn = ohash_next(&targets, &i)) {
+	    	if (has_been_built(gn))
+			continue;
+		cycle = true;
+		if (first)
+			printf("Error target(s) unaccounted for: ");
+		printf("%s ", gn->name);
+		first = false;
+	}
+	if (!first)
+		printf("\n");
+	return cycle;
+}
+
+static void
+print_unlink_cycle(struct growableArray *l, GNode *c)
+{
+	LstNode ln;
+	GNode *gn = NULL;
+	unsigned int i;
+	
+	printf("Cycle found: ");
+
+	for (i = 0; i != l->n; i++) {
+		gn = l->a[i];
+		if (gn == c)
+			printf("(");
+		printf("%s -> ", gn->name);
+	}
+	printf("%s)\n", c->name);
+	assert(gn);
+
+	/* So the first element is tied to our node, find and kill the link */
+	for (ln = Lst_First(&gn->children); ln != NULL; ln = Lst_Adv(ln)) {
+		GNode *gn2 = Lst_Datum(ln);
+		if (gn2 == c) {
+			Lst_Remove(&gn->children, ln);
+			return;
+		}
+	}
+	/* this shouldn't happen ever */
+	assert(0);
+}
+
+/* each call to find_cycle records a cycle in cycle, to break at node c.
+ * this will stop eventually.
+ */
+static void
+break_and_print_cycles(Lst t)
+{
+	struct growableArray cycle;
+
+	Array_Init(&cycle, 16); /* cycles are generally shorter */
+	while (1) {
+		GNode *c;
+
+		Array_Reset(&cycle);
+		c = find_cycle(t, &cycle);
+		if (c)
+			print_unlink_cycle(&cycle, c);
+		else
+			break;
+	}
+	free(cycle.a);
+}
+
+
+static GNode *
+find_cycle(Lst l, struct growableArray *cycle)
+{
+	LstNode ln;
+
+	for (ln = Lst_First(l); ln != NULL; ln = Lst_Adv(ln)) {
+		GNode *gn = Lst_Datum(ln);
+		if (gn->in_cycle) {
+			/* we should print the cycle and not do more */
+			return gn;
+		}
+		
+		if (gn->built_status == UPTODATE)
+			continue;
+		if (gn->unmade != 0) {
+			GNode *c;
+
+			gn->in_cycle = true;
+			Array_Push(cycle, gn);
+			c = find_cycle(&gn->children, cycle);
+			gn->in_cycle = false;
+			if (c)
+				return c;
+			Array_Pop(cycle);
+		}
+	}
+	return NULL;
 }

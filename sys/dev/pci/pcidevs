@@ -1,4 +1,4 @@
-$OpenBSD: pcidevs,v 1.1820 2017/06/02 16:04:11 kettenis Exp $
+$OpenBSD: pcidevs,v 1.1822 2017/07/05 12:43:10 kettenis Exp $
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
 /*
@@ -3627,6 +3627,7 @@ product INTEL BSW_PCIE_1	0x22c8	Braswell PCIE
 product INTEL BSW_PCIE_2	0x22ca	Braswell PCIE
 product INTEL BSW_PCIE_3	0x22cc	Braswell PCIE
 product INTEL BSW_PCIE_4	0x22ce	Braswell PCIE
+product INTEL BSW_SENSOR	0x22d8	Braswell Sensor Hub
 product INTEL BSW_PM		0x22dc	Braswell Power
 product INTEL DH8900_LPC	0x2310	DH8900 LPC
 product INTEL DH8900_AHCI	0x2323	DH8900 AHCI
@@ -3718,6 +3719,7 @@ product INTEL WL_3168_1		0x24fb	Dual Band Wireless-AC 3168
 product INTEL WL_8265_1		0x24fd	Dual Band Wireless-AC 8265
 product INTEL 82820_HB		0x2501	82820 Host
 product INTEL 82820_AGP		0x250f	82820 AGP
+product INTEL OPTANE		0x2522	Optane
 product INTEL 82850_HB		0x2530	82850 Host
 product INTEL 82860_HB		0x2531	82860 Host
 product INTEL 82850_AGP		0x2532	82850/82860 AGP

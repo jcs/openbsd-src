@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.287 2017/05/31 10:29:15 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.290 2017/06/06 14:53:28 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -159,8 +159,10 @@ tty_read_callback(__unused int fd, __unused short events, void *data)
 	int		 nread;
 
 	nread = evbuffer_read(tty->in, tty->fd, -1);
-	if (nread == -1)
+	if (nread == -1) {
+		event_del(&tty->event_in);
 		return;
+	}
 	log_debug("%s: read %d bytes (already %zu)", c->name, nread, size);
 
 	while (tty_keys_next(tty))
@@ -1841,10 +1843,18 @@ tty_check_fg(struct tty *tty, const struct window_pane *wp,
 	u_int	colours;
 	int	c;
 
-	/* Perform substitution if this pane has a palette */
-	if ((~gc->flags & GRID_FLAG_NOPALETTE) &&
-	    (c = window_pane_get_palette(wp, gc->fg)) != -1)
-		gc->fg = c;
+	/*
+	 * Perform substitution if this pane has a palette. If the bright
+	 * attribute is set, use the bright entry in the palette by changing to
+	 * the aixterm colour.
+	 */
+	if (~gc->flags & GRID_FLAG_NOPALETTE) {
+		c = gc->fg;
+		if (c < 8 && gc->attr & GRID_ATTR_BRIGHT)
+			c += 90;
+		if ((c = window_pane_get_palette(wp, c)) != -1)
+			gc->fg = c;
+	}
 
 	/* Is this a 24-bit colour? */
 	if (gc->fg & COLOUR_FLAG_RGB) {
@@ -1894,10 +1904,11 @@ tty_check_bg(struct tty *tty, const struct window_pane *wp,
 	u_int	colours;
 	int	c;
 
-	/* Perform substitution if this pane has a palette */
-	if ((~gc->flags & GRID_FLAG_NOPALETTE) &&
-	    (c = window_pane_get_palette(wp, gc->bg)) != -1)
-		gc->bg = c;
+	/* Perform substitution if this pane has a palette. */
+	if (~gc->flags & GRID_FLAG_NOPALETTE) {
+		if ((c = window_pane_get_palette(wp, gc->bg)) != -1)
+			gc->bg = c;
+	}
 
 	/* Is this a 24-bit colour? */
 	if (gc->bg & COLOUR_FLAG_RGB) {

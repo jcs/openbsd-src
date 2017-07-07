@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_server.c,v 1.37 2017/05/06 20:59:28 jsing Exp $ */
+/* $OpenBSD: tls_server.c,v 1.40 2017/07/05 15:38:35 jsing Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -91,10 +91,16 @@ tls_servername_cb(SSL *ssl, int *al, void *arg)
 		return (SSL_TLSEXT_ERR_NOACK);
 	}
 
-	/* Per RFC 6066 section 3: ensure that name is not an IP literal. */
+	/*
+	 * Per RFC 6066 section 3: ensure that name is not an IP literal.
+	 *
+	 * While we should treat this as an error, a number of clients
+	 * (Python, Ruby and Safari) are not RFC compliant. To avoid handshake
+	 * failures, pretend that we did not receive the extension.
+	 */
 	if (inet_pton(AF_INET, name, &addrbuf) == 1 ||
             inet_pton(AF_INET6, name, &addrbuf) == 1)
-		goto err;
+		return (SSL_TLSEXT_ERR_NOACK);
 
 	free((char *)conn_ctx->servername);
 	if ((conn_ctx->servername = strdup(name)) == NULL)
@@ -201,6 +207,7 @@ tls_keypair_load_cert(struct tls_keypair *keypair, struct tls_error *error,
 	char *errstr = "unknown";
 	BIO *cert_bio = NULL;
 	int ssl_err;
+	int rv = -1;
 
 	X509_free(*cert);
 	*cert = NULL;
@@ -214,21 +221,20 @@ tls_keypair_load_cert(struct tls_keypair *keypair, struct tls_error *error,
 		tls_error_set(error, "failed to create certificate bio");
 		goto err;
 	}
-	if ((*cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL)) == NULL) {
+	if ((*cert = PEM_read_bio_X509(cert_bio, NULL, tls_password_cb,
+	    NULL)) == NULL) {
 		if ((ssl_err = ERR_peek_error()) != 0)
 		    errstr = ERR_error_string(ssl_err, NULL);
 		tls_error_set(error, "failed to load certificate: %s", errstr);
 		goto err;
 	}
 
-	BIO_free(cert_bio);
-
-	return (0);
+	rv = 0;
 
  err:
 	BIO_free(cert_bio);
 
-	return (-1);
+	return (rv);
 }
 
 static int

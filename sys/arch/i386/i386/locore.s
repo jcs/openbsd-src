@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.s,v 1.175 2017/05/31 19:18:18 deraadt Exp $	*/
+/*	$OpenBSD: locore.s,v 1.178 2017/07/06 06:17:05 deraadt Exp $	*/
 /*	$NetBSD: locore.s,v 1.145 1996/05/03 19:41:19 christos Exp $	*/
 
 /*-
@@ -80,9 +80,8 @@
  * override user-land alignment before including asm.h
  */
 
-#define	ALIGN_DATA	.align  4
+#define	ALIGN_DATA	.align  4,0xcc
 #define	ALIGN_TEXT	.align  4,0x90	/* 4-byte boundaries, NOP-filled */
-#define	SUPERALIGN_TEXT	.align  16,0x90	/* 16-byte boundaries better for 486 */
 #define _ALIGN_TEXT	ALIGN_TEXT
 #include <machine/asm.h>
 
@@ -149,20 +148,9 @@
  * PTmap is recursive pagemap at top of virtual address space.
  * Within PTmap, the page directory can be found (third indirection).
  */
-	.globl	_C_LABEL(PTmap), _C_LABEL(PTD), _C_LABEL(PTDpde)
+	.globl	_C_LABEL(PTmap), _C_LABEL(PTD)
 	.set	_C_LABEL(PTmap), (PDSLOT_PTE << PDSHIFT)
 	.set	_C_LABEL(PTD), (_C_LABEL(PTmap) + PDSLOT_PTE * NBPG)
-	.set	_C_LABEL(PTDpde), (_C_LABEL(PTD) + PDSLOT_PTE * 4)	# XXX 4 == sizeof pde
-
-/*
- * APTmap, APTD is the alternate recursive pagemap.
- * It's used when modifying another process's page tables.
- */
-	.globl	_C_LABEL(APTmap), _C_LABEL(APTD), _C_LABEL(APTDpde)
-	.set	_C_LABEL(APTmap), (PDSLOT_APTE << PDSHIFT)
-	.set	_C_LABEL(APTD), (_C_LABEL(APTmap) + PDSLOT_APTE * NBPG)
-	# XXX 4 == sizeof pde
-	.set	_C_LABEL(APTDpde), (_C_LABEL(PTD) + PDSLOT_APTE * 4)
 
 /*
  * Initialization
@@ -358,7 +346,7 @@ ENTRY(kcopy)
 #endif
 	ret
 
-	ALIGN_TEXT
+	.align  4,0xcc
 1:	addl	%ecx,%edi		# copy backward
 	addl	%ecx,%esi
 	std
@@ -1087,7 +1075,7 @@ calltrap:
 	jne	3f
 	INTRFASTEXIT
 3:	sti
-	pushl	$4f
+	pushl	$spl_lowered
 	call	_C_LABEL(printf)
 	addl	$4,%esp
 #if defined(DDB) && 0
@@ -1095,9 +1083,13 @@ calltrap:
 #endif /* DDB */
 	movl	%ebx,CPL
 	jmp	2b
-4:	.asciz	"WARNING: SPL NOT LOWERED ON TRAP EXIT\n"
+
+	.section .rodata
+spl_lowered:
+	.asciz	"WARNING: SPL NOT LOWERED ON TRAP EXIT\n"
 #endif /* DIAGNOSTIC */
 
+	.text
 #if !defined(GPROF) && defined(DDBPROF)
 .Lprobe_fixup:
 	/* Restore all register unwinding the stack. */
@@ -1240,7 +1232,7 @@ ENTRY(i686_pagezero)
 	movl	12(%esp), %edi
 	movl	$1024, %ecx
 
-	ALIGN_TEXT
+	.align  4,0x90
 1:
 	xorl	%eax, %eax
 	repe
@@ -1251,8 +1243,7 @@ ENTRY(i686_pagezero)
 	popl	%edi
 	ret
 
-	ALIGN_TEXT
-
+	.align  4,0x90
 2:
 	incl	%ecx
 	subl	$4, %edi

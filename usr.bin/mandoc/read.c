@@ -1,4 +1,4 @@
-/*	$OpenBSD: read.c,v 1.140 2017/06/01 15:24:41 schwarze Exp $ */
+/*	$OpenBSD: read.c,v 1.161 2017/07/06 22:58:44 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -49,10 +49,10 @@ struct	mparse {
 	const char	 *file; /* filename of current input file */
 	struct buf	 *primary; /* buffer currently being parsed */
 	struct buf	 *secondary; /* preprocessed copy of input */
-	const char	 *defos; /* default operating system */
+	const char	 *os_s; /* default operating system */
 	mandocmsg	  mmsg; /* warning/error message handler */
 	enum mandoclevel  file_status; /* status of current parse */
-	enum mandoclevel  wlevel; /* ignore messages below this */
+	enum mandocerr	  mmin; /* ignore messages below this */
 	int		  options; /* parser options */
 	int		  gzip; /* current input file is gzipped */
 	int		  filenc; /* encoding of the current file */
@@ -71,7 +71,7 @@ static	void	  mparse_parse_buffer(struct mparse *, struct buf,
 
 static	const enum mandocerr	mandoclimits[MANDOCLEVEL_MAX] = {
 	MANDOCERR_OK,
-	MANDOCERR_STYLE,
+	MANDOCERR_OK,
 	MANDOCERR_WARNING,
 	MANDOCERR_ERROR,
 	MANDOCERR_UNSUPP,
@@ -82,26 +82,46 @@ static	const enum mandocerr	mandoclimits[MANDOCLEVEL_MAX] = {
 static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"ok",
 
+	"base system convention",
+
+	"Mdocdate found",
+	"Mdocdate missing",
+	"unknown architecture",
+	"operating system explicitly specified",
+	"RCS id missing",
+	"referenced manual not found",
+
 	"generic style suggestion",
 
+	"legacy man(7) date format",
+	"lower case character in document title",
+	"duplicate RCS id",
+	"typo in section name",
+	"unterminated quoted argument",
 	"useless macro",
 	"consider using OS macro",
-	"description line ends with a full stop",
+	"errnos out of order",
+	"duplicate errno",
+	"trailing delimiter",
+	"no blank before trailing delimiter",
+	"fill mode already enabled, skipping",
+	"fill mode already disabled, skipping",
+	"function name without markup",
+	"whitespace at end of input line",
+	"bad comment style",
 
 	"generic warning",
 
 	/* related to the prologue */
 	"missing manual title, using UNTITLED",
 	"missing manual title, using \"\"",
-	"lower case character in document title",
 	"missing manual section, using \"\"",
 	"unknown manual section",
 	"missing date, using today's date",
 	"cannot parse date, using it verbatim",
+	"date in the future, using it anyway",
 	"missing Os macro, using \"\"",
-	"duplicate prologue macro",
 	"late prologue macro",
-	"skipping late title macro",
 	"prologue macros out of order",
 
 	/* related to document structure */
@@ -119,6 +139,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"sections out of conventional order",
 	"duplicate section title",
 	"unexpected section",
+	"cross reference to self",
 	"unusual Xr order",
 	"unusual Xr punctuation",
 	"AUTHORS section without An macro",
@@ -132,9 +153,9 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"blocks badly nested",
 	"nested displays are not portable",
 	"moving content out of list",
-	"fill mode already enabled, skipping",
-	"fill mode already disabled, skipping",
+	"first macro on line",
 	"line scope broken",
+	"skipping blank line in line scope",
 
 	/* related to missing macro arguments */
 	"skipping empty request",
@@ -149,6 +170,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"missing function name, using \"\"",
 	"empty head in list item",
 	"empty list item",
+	"missing argument, using next line",
 	"missing font type, using \\fR",
 	"unknown font type, using \\fR",
 	"nothing follows prefix",
@@ -160,7 +182,6 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"missing eqn box, using \"\"",
 
 	/* related to bad macro arguments */
-	"unterminated quoted argument",
 	"duplicate argument",
 	"skipping duplicate argument",
 	"skipping duplicate display type",
@@ -170,6 +191,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"unknown AT&T UNIX version",
 	"comma in function argument",
 	"parenthesis in function name",
+	"unknown library name",
 	"invalid content in Rs block",
 	"invalid Boolean argument",
 	"unknown font, skipping request",
@@ -178,9 +200,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	/* related to plain text */
 	"blank line in fill mode, using .sp",
 	"tab in filled text",
-	"whitespace at end of input line",
 	"new sentence, new line",
-	"bad comment style",
 	"invalid escape sequence",
 	"undefined string, using \"\"",
 
@@ -206,6 +226,8 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 
 	/* related to document structure and macros */
 	NULL,
+	"duplicate prologue macro",
+	"skipping late title macro",
 	"input stack limit exceeded, infinite loop?",
 	"skipping bad character",
 	"skipping unknown macro",
@@ -222,6 +244,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"NOT IMPLEMENTED: Bd -file",
 	"skipping display without arguments",
 	"missing list type, using -item",
+	"argument is not numeric, using 1",
 	"missing manual name, using \"\"",
 	"uname(3) system call failed, using UNKNOWN",
 	"unknown standard specifier",
@@ -321,7 +344,6 @@ mparse_buf_r(struct mparse *curp, struct buf blk, size_t i, int start)
 	const char	*save_file;
 	char		*cp;
 	size_t		 pos; /* byte number in the ln buffer */
-	size_t		 j;  /* auxiliary byte number in the blk buffer */
 	enum rofferr	 rr;
 	int		 of;
 	int		 lnn; /* line number in the real file */
@@ -403,79 +425,14 @@ mparse_buf_r(struct mparse *curp, struct buf blk, size_t i, int start)
 				continue;
 			}
 
-			/* Trailing backslash = a plain char. */
-
-			if (blk.buf[i] != '\\' || i + 1 == blk.sz) {
-				ln.buf[pos++] = blk.buf[i++];
-				continue;
-			}
-
-			/*
-			 * Found escape and at least one other character.
-			 * When it's a newline character, skip it.
-			 * When there is a carriage return in between,
-			 * skip that one as well.
-			 */
-
-			if ('\r' == blk.buf[i + 1] && i + 2 < blk.sz &&
-			    '\n' == blk.buf[i + 2])
-				++i;
-			if ('\n' == blk.buf[i + 1]) {
-				i += 2;
-				++lnn;
-				continue;
-			}
-
-			if ('"' == blk.buf[i + 1] || '#' == blk.buf[i + 1]) {
-				j = i;
-				i += 2;
-				/* Comment, skip to end of line */
-				for (; i < blk.sz; ++i) {
-					if (blk.buf[i] != '\n')
-						continue;
-					if (blk.buf[i - 1] == ' ' ||
-					    blk.buf[i - 1] == '\t')
-						mandoc_msg(
-						    MANDOCERR_SPACE_EOL,
-						    curp, curp->line,
-						    pos + i-1 - j, NULL);
-					++i;
-					++lnn;
-					break;
-				}
-
-				/* Backout trailing whitespaces */
-				for (; pos > 0; --pos) {
-					if (ln.buf[pos - 1] != ' ')
-						break;
-					if (pos > 2 && ln.buf[pos - 2] == '\\')
-						break;
-				}
-				break;
-			}
-
-			/* Catch escaped bogus characters. */
-
-			c = (unsigned char) blk.buf[i+1];
-
-			if ( ! (isascii(c) &&
-			    (isgraph(c) || isblank(c)))) {
-				mandoc_vmsg(MANDOCERR_CHAR_BAD, curp,
-				    curp->line, pos, "0x%x", c);
-				i += 2;
-				ln.buf[pos++] = '?';
-				continue;
-			}
-
-			/* Some other escape sequence, copy & cont. */
-
-			ln.buf[pos++] = blk.buf[i++];
 			ln.buf[pos++] = blk.buf[i++];
 		}
 
-		if (pos >= ln.sz)
+		if (pos + 1 >= ln.sz)
 			resize_buf(&ln, 256);
 
+		if (i == blk.sz || blk.buf[i] == '\0')
+			ln.buf[pos++] = '\n';
 		ln.buf[pos] = '\0';
 
 		/*
@@ -792,20 +749,20 @@ mparse_open(struct mparse *curp, const char *file)
 }
 
 struct mparse *
-mparse_alloc(int options, enum mandoclevel wlevel, mandocmsg mmsg,
-    const char *defos)
+mparse_alloc(int options, enum mandocerr mmin, mandocmsg mmsg,
+    enum mandoc_os os_e, const char *os_s)
 {
 	struct mparse	*curp;
 
 	curp = mandoc_calloc(1, sizeof(struct mparse));
 
 	curp->options = options;
-	curp->wlevel = wlevel;
+	curp->mmin = mmin;
 	curp->mmsg = mmsg;
-	curp->defos = defos;
+	curp->os_s = os_s;
 
 	curp->roff = roff_alloc(curp, options);
-	curp->man = roff_man_alloc( curp->roff, curp, curp->defos,
+	curp->man = roff_man_alloc(curp->roff, curp, curp->os_s,
 		curp->options & MPARSE_QUICK ? 1 : 0);
 	if (curp->options & MPARSE_MDOC) {
 		curp->man->macroset = MACROSET_MDOC;
@@ -817,6 +774,7 @@ mparse_alloc(int options, enum mandoclevel wlevel, mandocmsg mmsg,
 			curp->man->manmac = roffhash_alloc(MAN_TH, MAN_MAX);
 	}
 	curp->man->first->tok = TOKEN_NONE;
+	curp->man->meta.os_e = os_e;
 	return curp;
 }
 
@@ -892,12 +850,12 @@ mandoc_msg(enum mandocerr er, struct mparse *m,
 {
 	enum mandoclevel level;
 
+	if (er < m->mmin && er != MANDOCERR_FILE)
+		return;
+
 	level = MANDOCLEVEL_UNSUPP;
 	while (er < mandoclimits[level])
 		level--;
-
-	if (level < m->wlevel && er != MANDOCERR_FILE)
-		return;
 
 	if (m->mmsg)
 		(*m->mmsg)(er, level, m->file, ln, col, msg);

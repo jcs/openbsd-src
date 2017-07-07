@@ -3673,6 +3673,8 @@ static void gen8_de_irq_postinstall(struct drm_i915_private *dev_priv)
 					  de_pipe_enables);
 
 	GEN5_IRQ_INIT(GEN8_DE_PORT_, ~de_port_masked, de_port_enables);
+
+	GEN5_IRQ_INIT(GEN8_DE_MISC_, ~GEN8_DE_MISC_GSE, GEN8_DE_MISC_GSE);
 }
 
 static int gen8_irq_postinstall(struct drm_device *dev)

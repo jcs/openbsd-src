@@ -1,4 +1,4 @@
-/* $OpenBSD: drm_drv.c,v 1.151 2016/12/01 01:37:17 jsg Exp $ */
+/* $OpenBSD: drm_drv.c,v 1.153 2017/07/04 22:27:23 kettenis Exp $ */
 /*-
  * Copyright 2007-2009 Owain G. Ainsworth <oga@openbsd.org>
  * Copyright © 2008 Intel Corporation
@@ -450,14 +450,12 @@ drm_attach(struct device *parent, struct device *self, void *aux)
 		}
 	}
 
-#if 0
-	if (dev->driver->driver_features & DRIVER_GEM) {
+	if (dev->driver->gem_size > 0) {
 		KASSERT(dev->driver->gem_size >= sizeof(struct drm_gem_object));
 		/* XXX unique name */
 		pool_init(&dev->objpl, dev->driver->gem_size, 0, IPL_NONE, 0,
 		    "drmobjpl", NULL);
 	}
-#endif
 
 	if (dev->driver->driver_features & DRIVER_GEM) {
 		ret = drm_gem_init(dev);
@@ -561,7 +559,9 @@ drm_find_description(int vendor, int device, const struct drm_pcidev *idlist)
 	
 	for (i = 0; idlist[i].vendor != 0; i++) {
 		if ((idlist[i].vendor == vendor) &&
-		    (idlist[i].device == device))
+		    (idlist[i].device == device) &&
+		    (idlist[i].subvendor == PCI_ANY_ID) &&
+		    (idlist[i].subdevice == PCI_ANY_ID))
 			return &idlist[i];
 	}
 	return NULL;

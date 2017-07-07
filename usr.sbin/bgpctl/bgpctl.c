@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpctl.c,v 1.195 2017/05/31 10:48:06 claudio Exp $ */
+/*	$OpenBSD: bgpctl.c,v 1.197 2017/06/26 10:09:13 phessler Exp $ */
 
 /*
  * Copyright (c) 2003 Henning Brauer <henning@openbsd.org>
@@ -1532,6 +1532,9 @@ show_community(u_char *data, u_int16_t len)
 		v = ntohs(v);
 		if (a == COMMUNITY_WELLKNOWN)
 			switch (v) {
+			case COMMUNITY_GRACEFUL_SHUTDOWN:
+				printf("GRACEFUL_SHUTDOWN");
+				break;
 			case COMMUNITY_NO_EXPORT:
 				printf("NO_EXPORT");
 				break;
@@ -1548,7 +1551,7 @@ show_community(u_char *data, u_int16_t len)
 				printf("BLACKHOLE");
 				break;
 			default:
-				printf("WELLKNOWN:%hu", v);
+				printf("%hu:%hu", a, v);
 				break;
 			}
 		else

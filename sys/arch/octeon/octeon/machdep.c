@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.88 2017/04/30 16:45:45 mpi Exp $ */
+/*	$OpenBSD: machdep.c,v 1.96 2017/07/03 08:17:20 visa Exp $ */
 
 /*
  * Copyright (c) 2009, 2010 Miodrag Vallat.
@@ -129,7 +129,7 @@ struct phys_mem_desc mem_layout[MAXMEMSEGS];
 
 void		dumpsys(void);
 void		dumpconf(void);
-vaddr_t		mips_init(__register_t, __register_t, __register_t, __register_t);
+vaddr_t		mips_init(register_t, register_t, register_t, register_t);
 boolean_t 	is_memory_range(paddr_t, psize_t, psize_t);
 void		octeon_memory_init(struct boot_info *);
 int		octeon_cpuspeed(int *);
@@ -137,25 +137,23 @@ void		octeon_tlb_init(void);
 static void	process_bootargs(void);
 static uint64_t	get_ncpusfound(void);
 
-#ifdef MULTIPROCESSOR
-uint32_t	ipi_intr(uint32_t, struct trapframe *);
-#endif
-
 extern void 	parse_uboot_root(void);
 
 cons_decl(cn30xxuart);
 struct consdev uartcons = cons_init(cn30xxuart);
 
-u_int		ipdclock_get_timecount(struct timecounter *);
+u_int		ioclock_get_timecount(struct timecounter *);
 
-struct timecounter ipdclock_timecounter = {
-	.tc_get_timecount = ipdclock_get_timecount,
+struct timecounter ioclock_timecounter = {
+	.tc_get_timecount = ioclock_get_timecount,
 	.tc_poll_pps = NULL,
 	.tc_counter_mask = 0xffffffff,	/* truncated to 32 bits */
 	.tc_frequency = 0,		/* determined at runtime */
-	.tc_name = "ipdclock",
-	.tc_quality = 0			/* ipdclock can be overridden
+	.tc_name = "ioclock",
+	.tc_quality = 0,		/* ioclock can be overridden
 					 * by cp0 counter */
+	.tc_priv = 0			/* clock register,
+					 * determined at runtime */
 };
 
 void
@@ -223,14 +221,14 @@ octeon_memory_init(struct boot_info *boot_info)
  * Reset mapping and set up mapping to hardware and init "wired" reg.
  */
 vaddr_t
-mips_init(__register_t a0, __register_t a1, __register_t a2 __unused,
-	__register_t a3)
+mips_init(register_t a0, register_t a1, register_t a2, register_t a3)
 {
 	uint prid;
 	vaddr_t xtlb_handler;
 	int i;
 	struct boot_desc *boot_desc;
 	struct boot_info *boot_info;
+	uint32_t config4;
 
 	extern char start[], edata[], end[];
 	extern char exception[], e_exception[];
@@ -279,18 +277,18 @@ mips_init(__register_t a0, __register_t a1, __register_t a2 __unused,
 
 	bootcpu_hwinfo.clock = boot_desc->eclock;
 
-	switch ((prid >> 8) & 0xff) {
+	switch (octeon_model_family(prid)) {
 	default:
 		octeon_ver = OCTEON_1;
 		break;
-	case MIPS_CN50XX:
+	case OCTEON_MODEL_FAMILY_CN50XX:
 		octeon_ver = OCTEON_PLUS;
 		break;
-	case MIPS_CN61XX:
+	case OCTEON_MODEL_FAMILY_CN61XX:
 		octeon_ver = OCTEON_2;
 		break;
-	case MIPS_CN71XX:
-	case MIPS_CN73XX:
+	case OCTEON_MODEL_FAMILY_CN71XX:
+	case OCTEON_MODEL_FAMILY_CN73XX:
 		octeon_ver = OCTEON_3;
 		break;
 	}
@@ -351,7 +349,16 @@ mips_init(__register_t a0, __register_t a1, __register_t a2 __unused,
 	bootcpu_hwinfo.c0prid = prid;
 	bootcpu_hwinfo.type = (prid >> 8) & 0xff;
 	bootcpu_hwinfo.c1prid = 0;	/* No FPU */
+
 	bootcpu_hwinfo.tlbsize = 1 + ((cp0_get_config_1() >> 25) & 0x3f);
+	if (cp0_get_config_3() & CONFIG3_M) {
+		config4 = cp0_get_config_4();
+		if (((config4 & CONFIG4_MMUExtDef) >>
+		    CONFIG4_MMUExtDef_SHIFT) == 1)
+			bootcpu_hwinfo.tlbsize +=
+			    (config4 & CONFIG4_MMUSizeExt) << 6;
+	}
+
 	bcopy(&bootcpu_hwinfo, &curcpu()->ci_hw, sizeof(struct cpu_hwinfo));
 
 	/*
@@ -516,12 +523,16 @@ mips_init(__register_t a0, __register_t a1, __register_t a2 __unused,
 		db_enter();
 #endif
 
-#ifdef MULTIPROCESSOR
-	set_intr(INTPRI_IPI, CR_INT_1, ipi_intr);
-#endif
-
-	ipdclock_timecounter.tc_frequency = octeon_ioclock_speed();
-	tc_init(&ipdclock_timecounter);
+	switch (octeon_model_family(prid)) {
+	case OCTEON_MODEL_FAMILY_CN73XX:
+		ioclock_timecounter.tc_priv = (void *)FPA3_CLK_COUNT;
+		break;
+	default:
+		ioclock_timecounter.tc_priv = (void *)IPD_CLK_COUNT;
+		break;
+	}
+	ioclock_timecounter.tc_frequency = octeon_ioclock_speed();
+	tc_init(&ioclock_timecounter);
 
 	/*
 	 * Return the new kernel stack pointer.
@@ -539,6 +550,7 @@ consinit()
 	static int console_ok = 0;
 
 	if (console_ok == 0) {
+		com_fdt_init_cons();
 		cninit();
 		console_ok = 1;
 	}
@@ -829,18 +841,16 @@ is_memory_range(paddr_t pa, psize_t len, psize_t limit)
 }
 
 u_int
-ipdclock_get_timecount(struct timecounter *arg)
+ioclock_get_timecount(struct timecounter *tc)
 {
-        return octeon_xkphys_read_8(IPD_CLK_COUNT);
+	uint64_t reg = (uint64_t)tc->tc_priv;
+
+	return octeon_xkphys_read_8(reg);
 }
 
 #ifdef MULTIPROCESSOR
 uint32_t cpu_spinup_mask = 0;
 uint64_t cpu_spinup_a0, cpu_spinup_sp;
-static int (*ipi_handler)(void *);
-
-extern bus_space_t iobus_tag;
-extern bus_space_handle_t iobus_h;
 
 void
 hw_cpu_boot_secondary(struct cpu_info *ci)
@@ -851,8 +861,11 @@ hw_cpu_boot_secondary(struct cpu_info *ci)
 	if (kstack == 0)
 		panic("unable to allocate idle stack\n");
 	ci->ci_curprocpaddr = (void *)kstack;
+
 	cpu_spinup_a0 = (uint64_t)ci;
 	cpu_spinup_sp = (uint64_t)(kstack + USPACE);
+	mips_sync();
+
 	cpu_spinup_mask = (uint32_t)ci->ci_cpuid;
 
 	while (!cpuset_isset(&cpus_running, ci))
@@ -897,65 +910,10 @@ hw_cpu_hatch(struct cpu_info *ci)
 	cpuset_add(&cpus_running, ci);
 	octeon_intr_init();
 	mips64_ipi_init();
-	octeon_setintrmask(0);
 	spl0();
 	(void)updateimask(0);
 
 	SCHED_LOCK(s);
 	cpu_switchto(NULL, sched_chooseproc());
-}
-
-/*
- * IPI dispatcher.
- */
-uint32_t
-ipi_intr(uint32_t hwpend, struct trapframe *frame)
-{
-	u_long cpuid = cpu_number();
-
-	/*
-	 * Mask all pending interrupts.
-	 */
-	bus_space_write_8(&iobus_tag, iobus_h, CIU_IP3_EN0(cpuid), 0);
-
-	if (ipi_handler == NULL)
-		return hwpend;
-
-	ipi_handler((void *)cpuid);
-
-	/*
-	 * Reenable interrupts which have been serviced.
-	 */
-	bus_space_write_8(&iobus_tag, iobus_h, CIU_IP3_EN0(cpuid),
-		(1ULL << CIU_INT_MBOX0)|(1ULL << CIU_INT_MBOX1));
-	return hwpend;
-}
-
-int
-hw_ipi_intr_establish(int (*func)(void *), u_long cpuid)
-{
-	if (cpuid == 0)
-		ipi_handler = func;
-
-	bus_space_write_8(&iobus_tag, iobus_h, CIU_MBOX_CLR(cpuid),
-		0xffffffff);
-	bus_space_write_8(&iobus_tag, iobus_h, CIU_IP3_EN0(cpuid),
-		(1ULL << CIU_INT_MBOX0)|(1ULL << CIU_INT_MBOX1));
-
-	return 0;
-};
-
-void
-hw_ipi_intr_set(u_long cpuid)
-{
-	bus_space_write_8(&iobus_tag, iobus_h, CIU_MBOX_SET(cpuid), 1);
-}
-
-void
-hw_ipi_intr_clear(u_long cpuid)
-{
-	uint64_t clr =
-		bus_space_read_8(&iobus_tag, iobus_h, CIU_MBOX_CLR(cpuid));
-	bus_space_write_8(&iobus_tag, iobus_h, CIU_MBOX_CLR(cpuid), clr);
 }
 #endif /* MULTIPROCESSOR */

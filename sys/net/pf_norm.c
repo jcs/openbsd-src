@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf_norm.c,v 1.204 2017/05/15 12:26:00 mpi Exp $ */
+/*	$OpenBSD: pf_norm.c,v 1.208 2017/06/26 18:33:24 bluhm Exp $ */
 
 /*
  * Copyright 2001 Niels Provos <provos@citi.umich.edu>
@@ -39,6 +39,7 @@
 #include <sys/time.h>
 #include <sys/pool.h>
 #include <sys/syslog.h>
+#include <sys/mutex.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -75,29 +76,30 @@ struct pf_frent {
 	u_int16_t	 fe_mff;	/* more fragment flag */
 };
 
-/* keep synced with struct pf_fragment, used in RB_FIND */
-struct pf_fragment_cmp {
-	struct pf_addr	fr_src;
-	struct pf_addr	fr_dst;
-	u_int32_t	fr_id;
-	sa_family_t	fr_af;
-	u_int8_t	fr_proto;
-	u_int8_t	fr_direction;
+RB_HEAD(pf_frag_tree, pf_fragment);
+struct pf_frnode {
+	struct pf_addr	fn_src;		/* ip source address */
+	struct pf_addr	fn_dst;		/* ip destination address */
+	sa_family_t	fn_af;		/* address family */
+	u_int8_t	fn_proto;	/* protocol for fragments in fn_tree */
+	u_int8_t	fn_direction;	/* pf packet direction */
+	u_int32_t	fn_fragments;	/* number of entries in fn_tree */
+	u_int32_t	fn_gen;		/* fr_gen of newest entry in fn_tree */
+
+	RB_ENTRY(pf_frnode) fn_entry;
+	struct pf_frag_tree fn_tree;	/* matching fragments, lookup by id */
 };
 
 struct pf_fragment {
-	struct pf_addr	fr_src;		/* ip source address */
-	struct pf_addr	fr_dst;		/* ip destination address */
 	u_int32_t	fr_id;		/* fragment id for reassemble */
-	sa_family_t	fr_af;		/* address family */
-	u_int8_t	fr_proto;	/* protocol of this fragment */
-	u_int8_t	fr_direction;	/* pf packet direction */
 
 	RB_ENTRY(pf_fragment) fr_entry;
 	TAILQ_ENTRY(pf_fragment) frag_next;
 	TAILQ_HEAD(pf_fragq, pf_frent) fr_queue;
 	int32_t		fr_timeout;
+	u_int32_t	fr_gen;		/* generation number (per pf_frnode) */
 	u_int16_t	fr_maxlen;	/* maximum length of single fragment */
+	struct pf_frnode *fr_node;	/* ip src/dst/proto/af for fragments */
 };
 
 struct pf_fragment_tag {
@@ -108,19 +110,23 @@ struct pf_fragment_tag {
 
 TAILQ_HEAD(pf_fragqueue, pf_fragment)	pf_fragqueue;
 
+static __inline int	 pf_frnode_compare(struct pf_frnode *,
+			    struct pf_frnode *);
+RB_HEAD(pf_frnode_tree, pf_frnode)	pf_frnode_tree;
+RB_PROTOTYPE(pf_frnode_tree, pf_frnode, fn_entry, pf_frnode_compare);
+RB_GENERATE(pf_frnode_tree, pf_frnode, fn_entry, pf_frnode_compare);
+
 static __inline int	 pf_frag_compare(struct pf_fragment *,
 			    struct pf_fragment *);
-RB_HEAD(pf_frag_tree, pf_fragment)	pf_frag_tree, pf_cache_tree;
 RB_PROTOTYPE(pf_frag_tree, pf_fragment, fr_entry, pf_frag_compare);
 RB_GENERATE(pf_frag_tree, pf_fragment, fr_entry, pf_frag_compare);
 
 /* Private prototypes */
 void			 pf_flush_fragments(void);
 void			 pf_free_fragment(struct pf_fragment *);
-struct pf_fragment	*pf_find_fragment(struct pf_fragment_cmp *,
-			    struct pf_frag_tree *);
+struct pf_fragment	*pf_find_fragment(struct pf_frnode *, u_int32_t);
 struct pf_frent		*pf_create_fragment(u_short *);
-struct pf_fragment	*pf_fillup_fragment(struct pf_fragment_cmp *,
+struct pf_fragment	*pf_fillup_fragment(struct pf_frnode *, u_int32_t,
 			    struct pf_frent *, u_short *);
 int			 pf_isfull_fragment(struct pf_fragment *);
 struct mbuf		*pf_join_fragment(struct pf_fragment *);
@@ -131,15 +137,29 @@ int			 pf_reassemble6(struct mbuf **, struct ip6_frag *,
 #endif /* INET6 */
 
 /* Globals */
-struct pool		 pf_frent_pl, pf_frag_pl;
+struct pool		 pf_frent_pl, pf_frag_pl, pf_frnode_pl;
 struct pool		 pf_state_scrub_pl;
 int			 pf_nfrents;
+
+#ifdef WITH_PF_LOCK
+struct mutex		 pf_frag_mtx;
+
+#define PF_FRAG_LOCK_INIT()	mtx_init(&pf_frag_mtx, IPL_SOFTNET)
+#define PF_FRAG_LOCK()		mtx_enter(&pf_frag_mtx)
+#define PF_FRAG_UNLOCK()	mtx_leave(&pf_frag_mtx)
+#else /* !WITH_PF_LOCK */
+#define PF_FRAG_LOCK_INIT()	(void)(0)
+#define PF_FRAG_LOCK()		(void)(0)
+#define PF_FRAG_UNLOCK()	(void)(0)
+#endif /* WITH_PF_LOCK */
 
 void
 pf_normalize_init(void)
 {
 	pool_init(&pf_frent_pl, sizeof(struct pf_frent), 0,
 	    IPL_SOFTNET, 0, "pffrent", NULL);
+	pool_init(&pf_frnode_pl, sizeof(struct pf_frnode), 0,
+	    IPL_SOFTNET, 0, "pffrnode", NULL);
 	pool_init(&pf_frag_pl, sizeof(struct pf_fragment), 0,
 	    IPL_SOFTNET, 0, "pffrag", NULL);
 	pool_init(&pf_state_scrub_pl, sizeof(struct pf_state_scrub), 0,
@@ -149,6 +169,25 @@ pf_normalize_init(void)
 	pool_sethardlimit(&pf_frent_pl, PFFRAG_FRENT_HIWAT, NULL, 0);
 
 	TAILQ_INIT(&pf_fragqueue);
+
+	PF_FRAG_LOCK_INIT();
+}
+
+static __inline int
+pf_frnode_compare(struct pf_frnode *a, struct pf_frnode *b)
+{
+	int	diff;
+
+	if ((diff = a->fn_proto - b->fn_proto) != 0)
+		return (diff);
+	if ((diff = a->fn_af - b->fn_af) != 0)
+		return (diff);
+	if ((diff = pf_addr_compare(&a->fn_src, &b->fn_src, a->fn_af)) != 0)
+		return (diff);
+	if ((diff = pf_addr_compare(&a->fn_dst, &b->fn_dst, a->fn_af)) != 0)
+		return (diff);
+
+	return (0);
 }
 
 static __inline int
@@ -157,14 +196,6 @@ pf_frag_compare(struct pf_fragment *a, struct pf_fragment *b)
 	int	diff;
 
 	if ((diff = a->fr_id - b->fr_id) != 0)
-		return (diff);
-	if ((diff = a->fr_proto - b->fr_proto) != 0)
-		return (diff);
-	if ((diff = a->fr_af - b->fr_af) != 0)
-		return (diff);
-	if ((diff = pf_addr_compare(&a->fr_src, &b->fr_src, a->fr_af)) != 0)
-		return (diff);
-	if ((diff = pf_addr_compare(&a->fr_dst, &b->fr_dst, a->fr_af)) != 0)
 		return (diff);
 
 	return (0);
@@ -176,15 +207,18 @@ pf_purge_expired_fragments(void)
 	struct pf_fragment	*frag;
 	int32_t			 expire;
 
-	NET_ASSERT_LOCKED();
+	PF_ASSERT_UNLOCKED();
 
 	expire = time_uptime - pf_default_rule.timeout[PFTM_FRAG];
+
+	PF_FRAG_LOCK();
 	while ((frag = TAILQ_LAST(&pf_fragqueue, pf_fragqueue)) != NULL) {
 		if (frag->fr_timeout > expire)
 			break;
 		DPFPRINTF(LOG_NOTICE, "expiring %d(%p)", frag->fr_id, frag);
 		pf_free_fragment(frag);
 	}
+	PF_FRAG_UNLOCK();
 }
 
 /*
@@ -213,8 +247,17 @@ void
 pf_free_fragment(struct pf_fragment *frag)
 {
 	struct pf_frent		*frent;
+	struct pf_frnode	*frnode;
 
-	RB_REMOVE(pf_frag_tree, &pf_frag_tree, frag);
+	frnode = frag->fr_node;
+	RB_REMOVE(pf_frag_tree, &frnode->fn_tree, frag);
+	KASSERT(frnode->fn_fragments >= 1);
+	frnode->fn_fragments--;
+	if (frnode->fn_fragments == 0) {
+		KASSERT(RB_EMPTY(&frnode->fn_tree));
+		RB_REMOVE(pf_frnode_tree, &pf_frnode_tree, frnode);
+		pool_put(&pf_frnode_pl, frnode);
+	}
 	TAILQ_REMOVE(&pf_fragqueue, frag, frag_next);
 
 	/* Free all fragment entries */
@@ -228,15 +271,40 @@ pf_free_fragment(struct pf_fragment *frag)
 }
 
 struct pf_fragment *
-pf_find_fragment(struct pf_fragment_cmp *key, struct pf_frag_tree *tree)
+pf_find_fragment(struct pf_frnode *key, u_int32_t id)
 {
-	struct pf_fragment	*frag;
+	struct pf_fragment	*frag, idkey;
+	struct pf_frnode	*frnode;
+	u_int32_t		 stale;
 
-	frag = RB_FIND(pf_frag_tree, tree, (struct pf_fragment *)key);
-	if (frag != NULL) {
-		TAILQ_REMOVE(&pf_fragqueue, frag, frag_next);
-		TAILQ_INSERT_HEAD(&pf_fragqueue, frag, frag_next);
+	frnode = RB_FIND(pf_frnode_tree, &pf_frnode_tree, key);
+	if (frnode == NULL)
+		return (NULL);
+	KASSERT(frnode->fn_fragments >= 1);
+	idkey.fr_id = id;
+	frag = RB_FIND(pf_frag_tree, &frnode->fn_tree, &idkey);
+	if (frag == NULL)
+		return (NULL);
+	/*
+	 * Limit the number of fragments we accept for each (proto,src,dst,af)
+	 * combination (aka pf_frnode), so we can deal better with a high rate
+	 * of fragments.  Problem analysis is in RFC 4963.
+	 * Store the current generation for each pf_frnode in fn_gen and on
+	 * lookup discard 'stale' fragments (pf_fragment, based on the fr_gen
+	 * member).  Instead of adding another button interpret the pf fragment
+	 * timeout in multiples of 200 fragments.  This way the default of 60s
+	 * means: pf_fragment objects older than 60*200 = 12,000 generations
+	 * are considered stale.
+	 */
+	stale = pf_default_rule.timeout[PFTM_FRAG] * PF_FRAG_STALE;
+	if ((frnode->fn_gen - frag->fr_gen) >= stale) {
+		DPFPRINTF(LOG_NOTICE, "stale fragment %d(%p), gen %u, num %u",
+		    frag->fr_id, frag, frag->fr_gen, frnode->fn_fragments);
+		pf_free_fragment(frag);
+		return (NULL);
 	}
+	TAILQ_REMOVE(&pf_fragqueue, frag, frag_next);
+	TAILQ_INSERT_HEAD(&pf_fragqueue, frag, frag_next);
 
 	return (frag);
 }
@@ -261,11 +329,12 @@ pf_create_fragment(u_short *reason)
 }
 
 struct pf_fragment *
-pf_fillup_fragment(struct pf_fragment_cmp *key, struct pf_frent *frent,
-    u_short *reason)
+pf_fillup_fragment(struct pf_frnode *key, u_int32_t id,
+    struct pf_frent *frent, u_short *reason)
 {
 	struct pf_frent		*after, *next, *prev;
 	struct pf_fragment	*frag;
+	struct pf_frnode	*frnode;
 	u_int16_t		 total;
 
 	/* No empty fragments */
@@ -288,12 +357,12 @@ pf_fillup_fragment(struct pf_fragment_cmp *key, struct pf_frent *frent,
 		goto bad_fragment;
 	}
 
-	DPFPRINTF(LOG_INFO, key->fr_af == AF_INET ?
+	DPFPRINTF(LOG_INFO, key->fn_af == AF_INET ?
 	    "reass frag %d @ %d-%d" : "reass frag %#08x @ %d-%d",
-	    key->fr_id, frent->fe_off, frent->fe_off + frent->fe_len);
+	    id, frent->fe_off, frent->fe_off + frent->fe_len);
 
 	/* Fully buffer all of the fragments in this fragment queue */
-	frag = pf_find_fragment(key, &pf_frag_tree);
+	frag = pf_find_fragment(key, id);
 
 	/* Create a new reassembly queue for this packet */
 	if (frag == NULL) {
@@ -306,13 +375,34 @@ pf_fillup_fragment(struct pf_fragment_cmp *key, struct pf_frent *frent,
 				goto drop_fragment;
 			}
 		}
-
-		*(struct pf_fragment_cmp *)frag = *key;
+		frnode = RB_FIND(pf_frnode_tree, &pf_frnode_tree, key);
+		if (frnode == NULL) {
+			frnode = pool_get(&pf_frnode_pl, PR_NOWAIT);
+			if (frnode == NULL) {
+				pf_flush_fragments();
+				frnode = pool_get(&pf_frnode_pl, PR_NOWAIT);
+				if (frnode == NULL) {
+					REASON_SET(reason, PFRES_MEMORY);
+					pool_put(&pf_frag_pl, frag);
+					goto drop_fragment;
+				}
+			}
+			*frnode = *key;
+			RB_INIT(&frnode->fn_tree);
+			frnode->fn_fragments = 0;
+			frnode->fn_gen = 0;
+		}
 		TAILQ_INIT(&frag->fr_queue);
 		frag->fr_timeout = time_uptime;
+		frag->fr_gen = frnode->fn_gen++;
 		frag->fr_maxlen = frent->fe_len;
-
-		RB_INSERT(pf_frag_tree, &pf_frag_tree, frag);
+		frag->fr_id = id;
+		frag->fr_node = frnode;
+		/* RB_INSERT cannot fail as pf_find_fragment() found nothing */
+		RB_INSERT(pf_frag_tree, &frnode->fn_tree, frag);
+		frnode->fn_fragments++;
+		if (frnode->fn_fragments == 1)
+			RB_INSERT(pf_frnode_tree, &pf_frnode_tree, frnode);
 		TAILQ_INSERT_HEAD(&pf_fragqueue, frag, frag_next);
 
 		/* We do not have a previous fragment */
@@ -322,6 +412,7 @@ pf_fillup_fragment(struct pf_fragment_cmp *key, struct pf_frent *frent,
 	}
 
 	KASSERT(!TAILQ_EMPTY(&frag->fr_queue));
+	KASSERT(frag->fr_node);
 
 	/* Remember maximum fragment len for refragmentation */
 	if (frent->fe_len > frag->fr_maxlen)
@@ -359,7 +450,7 @@ pf_fillup_fragment(struct pf_fragment_cmp *key, struct pf_frent *frent,
 		u_int16_t	precut;
 
 #ifdef INET6
-		if (frag->fr_af == AF_INET6)
+		if (frag->fr_node->fn_af == AF_INET6)
 			goto free_fragment;
 #endif /* INET6 */
 
@@ -379,7 +470,7 @@ pf_fillup_fragment(struct pf_fragment_cmp *key, struct pf_frent *frent,
 		u_int16_t	aftercut;
 
 #ifdef INET6
-		if (frag->fr_af == AF_INET6)
+		if (frag->fr_node->fn_af == AF_INET6)
 			goto free_fragment;
 #endif /* INET6 */
 
@@ -410,7 +501,7 @@ pf_fillup_fragment(struct pf_fragment_cmp *key, struct pf_frent *frent,
 
 free_ipv6_fragment:
 #ifdef INET6
-	if (frag->fr_af == AF_INET)
+	if (frag->fr_node->fn_af == AF_INET)
 		goto bad_fragment;
 free_fragment:
 	/*
@@ -512,7 +603,7 @@ pf_reassemble(struct mbuf **m0, int dir, u_short *reason)
 	struct ip		*ip = mtod(m, struct ip *);
 	struct pf_frent		*frent;
 	struct pf_fragment	*frag;
-	struct pf_fragment_cmp	 key;
+	struct pf_frnode	 key;
 	u_int16_t		 total, hdrlen;
 
 	/* Get an entry for the fragment queue */
@@ -526,21 +617,26 @@ pf_reassemble(struct mbuf **m0, int dir, u_short *reason)
 	frent->fe_off = (ntohs(ip->ip_off) & IP_OFFMASK) << 3;
 	frent->fe_mff = ntohs(ip->ip_off) & IP_MF;
 
-	key.fr_src.v4 = ip->ip_src;
-	key.fr_dst.v4 = ip->ip_dst;
-	key.fr_af = AF_INET;
-	key.fr_proto = ip->ip_p;
-	key.fr_id = ip->ip_id;
-	key.fr_direction = dir;
+	key.fn_src.v4 = ip->ip_src;
+	key.fn_dst.v4 = ip->ip_dst;
+	key.fn_af = AF_INET;
+	key.fn_proto = ip->ip_p;
+	key.fn_direction = dir;
 
-	if ((frag = pf_fillup_fragment(&key, frent, reason)) == NULL)
+	PF_FRAG_LOCK();
+	if ((frag = pf_fillup_fragment(&key, ip->ip_id, frent, reason))
+	    == NULL) {
+		PF_FRAG_UNLOCK();
 		return (PF_DROP);
+	}
 
 	/* The mbuf is part of the fragment entry, no direct free or access */
 	m = *m0 = NULL;
 
-	if (!pf_isfull_fragment(frag))
+	if (!pf_isfull_fragment(frag)) {
+		PF_FRAG_UNLOCK();
 		return (PF_PASS);  /* drop because *m0 is NULL, no error */
+	}
 
 	/* We have all the data */
 	frent = TAILQ_FIRST(&frag->fr_queue);
@@ -564,6 +660,7 @@ pf_reassemble(struct mbuf **m0, int dir, u_short *reason)
 	ip->ip_off &= ~(IP_MF|IP_OFFMASK);
 
 	if (hdrlen + total > IP_MAXPACKET) {
+		PF_FRAG_UNLOCK();
 		DPFPRINTF(LOG_NOTICE, "drop: too big: %d", total);
 		ip->ip_len = 0;
 		REASON_SET(reason, PFRES_SHORT);
@@ -571,6 +668,7 @@ pf_reassemble(struct mbuf **m0, int dir, u_short *reason)
 		return (PF_DROP);
 	}
 
+	PF_FRAG_UNLOCK();
 	DPFPRINTF(LOG_INFO, "complete: %p(%d)", m, ntohs(ip->ip_len));
 	return (PF_PASS);
 }
@@ -586,7 +684,7 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr,
 	struct pf_fragment_tag	*ftag;
 	struct pf_frent		*frent;
 	struct pf_fragment	*frag;
-	struct pf_fragment_cmp	 key;
+	struct pf_frnode	 key;
 	int			 off;
 	u_int16_t		 total, maxlen;
 	u_int8_t		 proto;
@@ -602,22 +700,27 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr,
 	frent->fe_off = ntohs(fraghdr->ip6f_offlg & IP6F_OFF_MASK);
 	frent->fe_mff = fraghdr->ip6f_offlg & IP6F_MORE_FRAG;
 
-	key.fr_src.v6 = ip6->ip6_src;
-	key.fr_dst.v6 = ip6->ip6_dst;
-	key.fr_af = AF_INET6;
+	key.fn_src.v6 = ip6->ip6_src;
+	key.fn_dst.v6 = ip6->ip6_dst;
+	key.fn_af = AF_INET6;
 	/* Only the first fragment's protocol is relevant */
-	key.fr_proto = 0;
-	key.fr_id = fraghdr->ip6f_ident;
-	key.fr_direction = dir;
+	key.fn_proto = 0;
+	key.fn_direction = dir;
 
-	if ((frag = pf_fillup_fragment(&key, frent, reason)) == NULL)
+	PF_FRAG_LOCK();
+	if ((frag = pf_fillup_fragment(&key, fraghdr->ip6f_ident, frent,
+	    reason)) == NULL) {
+		PF_FRAG_UNLOCK();
 		return (PF_DROP);
+	}
 
 	/* The mbuf is part of the fragment entry, no direct free or access */
 	m = *m0 = NULL;
 
-	if (!pf_isfull_fragment(frag))
+	if (!pf_isfull_fragment(frag)) {
+		PF_FRAG_UNLOCK();
 		return (PF_PASS);  /* drop because *m0 is NULL, no error */
+	}
 
 	/* We have all the data */
 	extoff = frent->fe_extoff;
@@ -671,17 +774,20 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr,
 		ip6->ip6_nxt = proto;
 
 	if (hdrlen - sizeof(struct ip6_hdr) + total > IPV6_MAXPACKET) {
+		PF_FRAG_UNLOCK();
 		DPFPRINTF(LOG_NOTICE, "drop: too big: %d", total);
 		ip6->ip6_plen = 0;
 		REASON_SET(reason, PFRES_SHORT);
 		/* PF_DROP requires a valid mbuf *m0 in pf_test6() */
 		return (PF_DROP);
 	}
+	PF_FRAG_UNLOCK();
 
 	DPFPRINTF(LOG_INFO, "complete: %p(%d)", m, ntohs(ip6->ip6_plen));
 	return (PF_PASS);
 
 fail:
+	PF_FRAG_UNLOCK();
 	REASON_SET(reason, PFRES_MEMORY);
 	/* PF_DROP requires a valid mbuf *m0 in pf_test6(), will free later */
 	return (PF_DROP);
@@ -740,8 +846,7 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 	(*m0)->m_nextpkt = NULL;
 	if (error == 0) {
 		/* The first mbuf contains the unfragmented packet */
-		m_freem(*m0);
-		*m0 = NULL;
+		m_freemp(m0);
 		action = PF_PASS;
 	} else {
 		/* Drop expects an mbuf to free */

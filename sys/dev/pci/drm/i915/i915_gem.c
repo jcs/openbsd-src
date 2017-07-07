@@ -157,10 +157,12 @@ i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
 static int
 i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 {
-	printf("XXX %s\n", __func__);
 #ifdef __linux__
 	struct address_space *mapping = file_inode(obj->base.filp)->i_mapping;
 	char *vaddr = obj->phys_handle->vaddr;
+#else
+	char *vaddr = obj->phys_handle->kva;
+#endif
 	struct sg_table *st;
 	struct scatterlist *sg;
 	int i;
@@ -169,19 +171,31 @@ i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 		return -EINVAL;
 
 	for (i = 0; i < obj->base.size / PAGE_SIZE; i++) {
-		struct page *page;
+		struct vm_page *page;
 		char *src;
 
+#ifdef __linux__
 		page = shmem_read_mapping_page(mapping, i);
 		if (IS_ERR(page))
 			return PTR_ERR(page);
+#else
+		struct pglist plist;
+		TAILQ_INIT(&plist);
+		if (uvm_objwire(obj->base.uao, i * PAGE_SIZE, (i + 1) * PAGE_SIZE, &plist))
+			return -ENOMEM;
+		page = TAILQ_FIRST(&plist);
+#endif
 
 		src = kmap_atomic(page);
 		memcpy(vaddr, src, PAGE_SIZE);
 		drm_clflush_virt_range(vaddr, PAGE_SIZE);
 		kunmap_atomic(src);
 
+#ifdef __linux__
 		page_cache_release(page);
+#else
+		uvm_objunwire(obj->base.uao, i * PAGE_SIZE, (i + 1) * PAGE_SIZE);
+#endif
 		vaddr += PAGE_SIZE;
 	}
 
@@ -200,19 +214,20 @@ i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 	sg->offset = 0;
 	sg->length = obj->base.size;
 
+#ifdef __linux__
 	sg_dma_address(sg) = obj->phys_handle->busaddr;
+#else
+	sg_dma_address(sg) = obj->phys_handle->segs[0].ds_addr;
+#endif
 	sg_dma_len(sg) = obj->base.size;
 
 	obj->pages = st;
-#endif
 	return 0;
 }
 
 static void
 i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj)
 {
-	printf("XXX %s\n", __func__);
-#ifdef __linux__
 	int ret;
 
 	BUG_ON(obj->madv == __I915_MADV_PURGED);
@@ -230,17 +245,29 @@ i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj)
 		obj->dirty = 0;
 
 	if (obj->dirty) {
+#ifdef __linux__
 		struct address_space *mapping = file_inode(obj->base.filp)->i_mapping;
 		char *vaddr = obj->phys_handle->vaddr;
+#else
+		char *vaddr = obj->phys_handle->kva;
+#endif
 		int i;
 
 		for (i = 0; i < obj->base.size / PAGE_SIZE; i++) {
-			struct page *page;
+			struct vm_page *page;
 			char *dst;
 
+#ifdef __linux__
 			page = shmem_read_mapping_page(mapping, i);
 			if (IS_ERR(page))
 				continue;
+#else
+			struct pglist plist;
+			TAILQ_INIT(&plist);
+			if (uvm_objwire(obj->base.uao, i * PAGE_SIZE, (i + 1) * PAGE_SIZE, &plist))
+				continue;
+			page = TAILQ_FIRST(&plist);
+#endif
 
 			dst = kmap_atomic(page);
 			drm_clflush_virt_range(vaddr, PAGE_SIZE);
@@ -248,9 +275,13 @@ i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj)
 			kunmap_atomic(dst);
 
 			set_page_dirty(page);
+#ifdef __linux__
 			if (obj->madv == I915_MADV_WILLNEED)
 				mark_page_accessed(page);
 			page_cache_release(page);
+#else
+			uvm_objunwire(obj->base.uao, i * PAGE_SIZE, (i + 1) * PAGE_SIZE);
+#endif
 			vaddr += PAGE_SIZE;
 		}
 		obj->dirty = 0;
@@ -258,15 +289,15 @@ i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj)
 
 	sg_free_table(obj->pages);
 	kfree(obj->pages);
-#endif
 }
 
 static void
 i915_gem_object_release_phys(struct drm_i915_gem_object *obj)
 {
-	printf("XXX %s\n", __func__);
 #ifdef __linux__
 	drm_pci_free(obj->base.dev, obj->phys_handle);
+#else
+	drm_dmamem_free(obj->base.dev->dmat, obj->phys_handle);
 #endif
 }
 
@@ -1264,7 +1295,7 @@ static int __i915_spin_request(struct drm_i915_gem_request *req, int state)
 		return -EAGAIN;
 
 	timeout = local_clock_us(&cpu) + 5;
-	while (!need_resched()) {
+	while (!drm_need_resched()) {
 		if (i915_gem_request_completed(req, true))
 			return 0;
 
@@ -2669,6 +2700,7 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 #ifdef __linux__
 	struct sg_page_iter sg_iter;
 #endif
+	struct pglist plist;
 	struct vm_page *page;
 #ifdef __linux__
 	unsigned long last_pfn = 0;	/* suppress gcc warning */
@@ -2757,14 +2789,19 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	sg = st->sgl;
 	st->nents = 0;
 
-	TAILQ_INIT(&sg->__plist);
-	if (uvm_objwire(obj->base.uao, 0, obj->base.size, &sg->__plist))
+	TAILQ_INIT(&plist);
+	if (uvm_objwire(obj->base.uao, 0, obj->base.size, &plist)) {
+		ret = -ENOMEM;
 		goto err_pages;
+	}
 
 	i = 0;
-	TAILQ_FOREACH(page, &sg->__plist, pageq) {
+	TAILQ_FOREACH(page, &plist, pageq) {
 		st->nents++;
-		sg->__pages[i++] = page;
+		sg_dma_address(sg) = VM_PAGE_TO_PHYS(page);
+		sg_dma_len(sg) = sg->length = PAGE_SIZE;
+		sg++;
+		i++;
 	}
 #endif
 	obj->pages = st;

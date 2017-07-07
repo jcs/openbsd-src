@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.309 2017/05/31 20:01:51 claudio Exp $ */
+/*	$OpenBSD: parse.y,v 1.312 2017/06/26 10:08:06 phessler Exp $ */
 
 /*
  * Copyright (c) 2002, 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -1988,7 +1988,7 @@ filter_set_opt	: LOCALPREF NUMBER		{
 			}
 			if (($$ = calloc(1, sizeof(struct filter_set))) == NULL)
 				fatal(NULL);
-			if ($2 > 0) {
+			if ($2 >= 0) {
 				$$->type = ACTION_SET_LOCALPREF;
 				$$->action.metric = $2;
 			} else {
@@ -2989,7 +2989,11 @@ parsecommunity(struct filter_community *c, char *s)
 	int i, as;
 
 	/* Well-known communities */
-	if (strcasecmp(s, "NO_EXPORT") == 0) {
+	if (strcasecmp(s, "GRACEFUL_SHUTDOWN") == 0) {
+		c->as = COMMUNITY_WELLKNOWN;
+		c->type = COMMUNITY_GRACEFUL_SHUTDOWN;
+		return (0);
+	} else if (strcasecmp(s, "NO_EXPORT") == 0) {
 		c->as = COMMUNITY_WELLKNOWN;
 		c->type = COMMUNITY_NO_EXPORT;
 		return (0);
@@ -3019,10 +3023,6 @@ parsecommunity(struct filter_community *c, char *s)
 
 	if ((i = getcommunity(s)) == COMMUNITY_ERROR)
 		return (-1);
-	if (i == COMMUNITY_WELLKNOWN) {
-		yyerror("Bad community AS number");
-		return (-1);
-	}
 	as = i;
 
 	if ((i = getcommunity(p)) == COMMUNITY_ERROR)

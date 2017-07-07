@@ -1,4 +1,4 @@
-/*	$OpenBSD: asm.h,v 1.1 2016/12/17 23:38:33 patrick Exp $	*/
+/*	$OpenBSD: asm.h,v 1.3 2017/06/29 17:36:16 deraadt Exp $	*/
 /*	$NetBSD: asm.h,v 1.4 2001/07/16 05:43:32 matt Exp $	*/
 
 /*
@@ -72,7 +72,7 @@
 #define _ENTRY(x) \
 	.text; _ALIGN_TEXT; .globl x; .type x,_ASM_TYPE_FUNCTION; x:
 
-#ifdef GPROF
+#if defined(PROF) || defined(GPROF)
 #  define _PROF_PROLOGUE	\
 	stp	x29, x30, [sp, #-16]!; \
 	mov fp, sp;		\
@@ -90,9 +90,6 @@
 #define EENTRY(sym)	 .globl  sym; sym:
 #define EEND(sym)
 
-
-#define	ASMSTR		.asciz
-
 #if defined(__ELF__) && defined(__PIC__)
 #ifdef __STDC__
 #define	PIC_SYM(x,y)	x ## ( ## y ## )
@@ -101,12 +98,6 @@
 #endif
 #else
 #define	PIC_SYM(x,y)	x
-#endif
-
-#ifdef __ELF__
-#define RCSID(x)	.section ".ident"; .asciz x
-#else
-#define RCSID(x)	.text; .asciz x
 #endif
 
 #ifdef __ELF__

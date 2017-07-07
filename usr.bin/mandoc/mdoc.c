@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc.c,v 1.153 2017/05/05 15:16:25 schwarze Exp $ */
+/*	$OpenBSD: mdoc.c,v 1.156 2017/06/17 13:05:47 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010, 2012-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -177,6 +177,7 @@ static int
 mdoc_ptext(struct roff_man *mdoc, int line, char *buf, int offs)
 {
 	struct roff_node *n;
+	const char	 *cp, *sp;
 	char		 *c, *ws, *end;
 
 	n = mdoc->last;
@@ -242,15 +243,30 @@ mdoc_ptext(struct roff_man *mdoc, int line, char *buf, int offs)
 		mandoc_msg(MANDOCERR_SPACE_EOL, mdoc->parse,
 		    line, (int)(ws-buf), NULL);
 
+	/*
+	 * Blank lines are allowed in no-fill mode
+	 * and cancel preceding \c,
+	 * but add a single vertical space elsewhere.
+	 */
+
 	if (buf[offs] == '\0' && ! (mdoc->flags & MDOC_LITERAL)) {
+		switch (mdoc->last->type) {
+		case ROFFT_TEXT:
+			sp = mdoc->last->string;
+			cp = end = strchr(sp, '\0') - 2;
+			if (cp < sp || cp[0] != '\\' || cp[1] != 'c')
+				break;
+			while (cp > sp && cp[-1] == '\\')
+				cp--;
+			if ((end - cp) % 2)
+				break;
+			*end = '\0';
+			return 1;
+		default:
+			break;
+		}
 		mandoc_msg(MANDOCERR_FI_BLANK, mdoc->parse,
 		    line, (int)(c - buf), NULL);
-
-		/*
-		 * Insert a `sp' in the case of a blank line.  Technically,
-		 * blank lines aren't allowed, but enough manuals assume this
-		 * behaviour that we want to work around it.
-		 */
 		roff_elem_alloc(mdoc, line, offs, ROFF_sp);
 		mdoc->last->flags |= NODE_VALID | NODE_ENDED;
 		mdoc->next = ROFF_NEXT_SIBLING;
@@ -276,14 +292,20 @@ mdoc_ptext(struct roff_man *mdoc, int line, char *buf, int offs)
 	for (c = buf + offs; c != NULL; c = strchr(c + 1, '.')) {
 		if (c - buf < offs + 2)
 			continue;
-		if (end - c < 4)
+		if (end - c < 3)
 			break;
-		if (isalpha((unsigned char)c[-2]) &&
-		    isalpha((unsigned char)c[-1]) &&
-		    c[1] == ' ' &&
-		    isupper((unsigned char)(c[2] == ' ' ? c[3] : c[2])) &&
-		    (c[-2] != 'n' || c[-1] != 'c') &&
-		    (c[-2] != 'v' || c[-1] != 's'))
+		if (c[1] != ' ' ||
+		    isalpha((unsigned char)c[-2]) == 0 ||
+		    isalpha((unsigned char)c[-1]) == 0 ||
+		    (c[-2] == 'n' && c[-1] == 'c') ||
+		    (c[-2] == 'v' && c[-1] == 's'))
+			continue;
+		c += 2;
+		if (*c == ' ')
+			c++;
+		if (*c == ' ')
+			c++;
+		if (isupper((unsigned char)(*c)))
 			mandoc_msg(MANDOCERR_EOS, mdoc->parse,
 			    line, (int)(c - buf), NULL);
 	}
