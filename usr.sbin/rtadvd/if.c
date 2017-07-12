@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.41 2016/08/02 17:00:09 jca Exp $	*/
+/*	$OpenBSD: if.c,v 1.44 2017/07/12 06:11:45 florian Exp $	*/
 /*	$KAME: if.c,v 1.17 2001/01/21 15:27:30 itojun Exp $	*/
 
 /*
@@ -111,7 +111,7 @@ if_nametosdl(char *name)
 int
 if_getmtu(char *name)
 {
-	int		s;
+	int		s, save_errno;
 	struct ifreq	ifr;
 	u_long		mtu = 0;
 
@@ -123,7 +123,9 @@ if_getmtu(char *name)
 			fatalx("strlcpy");
 		if (ioctl(s, SIOCGIFMTU, (char *)&ifr) >= 0)
 			mtu = ifr.ifr_mtu;
+		save_errno = errno;
 		close(s);
+		errno = save_errno;
 	}
 
 	return (mtu);
@@ -179,8 +181,7 @@ lladdropt_fill(struct sockaddr_dl *sdl, struct nd_opt_hdr *ndopt)
 		memcpy(addr, LLADDR(sdl), ETHER_ADDR_LEN);
 		break;
 	default:
-		log_warn("unsupported link type(%d)", sdl->sdl_type);
-		exit(1);
+		fatalx("unsupported link type(%d)", sdl->sdl_type);
 	}
 }
 
@@ -434,7 +435,7 @@ parse_iflist(struct if_msghdr ***ifmlist_p, char *buf, size_t bufsize)
 	lim = buf + bufsize;
 	for (ifm = (struct if_msghdr *)buf; ifm < (struct if_msghdr *)lim;) {
 		if (ifm->ifm_msglen == 0) {
-			log_warn("ifm_msglen is 0 (buf=%p lim=%p ifm=%p)",
+			log_warnx("ifm_msglen is 0 (buf=%p lim=%p ifm=%p)",
 			    buf, lim, ifm);
 			return;
 		}
@@ -442,12 +443,11 @@ parse_iflist(struct if_msghdr ***ifmlist_p, char *buf, size_t bufsize)
 			if (ifm->ifm_version == RTM_VERSION)
 				(*ifmlist_p)[ifm->ifm_index] = ifm;
 		} else {
-			log_warn("out of sync parsing NET_RT_IFLIST,"
+			fatalx("out of sync parsing NET_RT_IFLIST,"
 			    " expected %d, got %d, msglen = %d,"
 			    " buf:%p, ifm:%p, lim:%p",
 			    RTM_IFINFO, ifm->ifm_type, ifm->ifm_msglen,
 			    buf, ifm, lim);
-			exit(1);
 		}
 		for (ifam = (struct ifa_msghdr *)
 			((char *)ifm + ifm->ifm_msglen);

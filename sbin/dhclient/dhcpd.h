@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.207 2017/07/07 16:58:45 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.211 2017/07/10 17:13:24 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -44,14 +44,9 @@
 #define	INTERNALSIG	INT_MAX
 #define DB_TIMEFMT	"%w %Y/%m/%d %T UTC"
 
-struct option {
-	char *name;
-	char *format;
-};
-
 struct option_data {
 	unsigned int	 len;
-	u_int8_t	*data;
+	uint8_t		*data;
 };
 
 struct reject_elem {
@@ -100,9 +95,9 @@ struct client_config {
 	struct in_addr		 address;
 	struct in_addr		 next_server;
 	struct option_data	 send_options[DHO_COUNT];
-	u_int8_t		 required_options[DHO_COUNT];
-	u_int8_t		 requested_options[DHO_COUNT];
-	u_int8_t		 ignored_options[DHO_COUNT];
+	uint8_t			 required_options[DHO_COUNT];
+	uint8_t			 requested_options[DHO_COUNT];
+	uint8_t			 ignored_options[DHO_COUNT];
 	int			 requested_option_count;
 	int			 required_option_count;
 	int			 ignored_option_count;
@@ -133,7 +128,7 @@ struct interface_info {
 	size_t			 rbuf_offset;
 	size_t			 rbuf_len;
 	int			 errors;
-	u_int16_t		 index;
+	uint16_t		 index;
 	int			 linkstat;
 	int			 rdomain;
 	int			 flags;
@@ -143,10 +138,10 @@ struct interface_info {
 	struct dhcp_packet	 recv_packet;
 	struct dhcp_packet	 sent_packet;
 	int			 sent_packet_length;
-	u_int32_t		 xid;
+	uint32_t		 xid;
 	time_t			 timeout;
 	void			(*timeout_func)(struct interface_info *);
-	u_int16_t		 secs;
+	uint16_t		 secs;
 	time_t			 first_sending;
 	time_t			 startup_time;
 	enum dhcp_state		 state;
@@ -176,6 +171,9 @@ char *pretty_print_domain_search(unsigned char *, size_t);
 char *pretty_print_string(unsigned char *, size_t, int);
 char *pretty_print_classless_routes(unsigned char *, size_t);
 struct option_data *unpack_options(struct dhcp_packet *);
+char *code_to_name(int);
+char *code_to_format(int);
+int name_to_code(char *);
 
 /* conflex.c */
 extern int lexline, lexchar;
@@ -193,12 +191,14 @@ int parse_cidr(FILE *, unsigned char *);
 void parse_lease_time(FILE *, time_t *);
 int parse_decimal(FILE *, unsigned char *, char);
 int parse_hex(FILE *, unsigned char *);
+int parse_boolean(FILE *, unsigned char *);
 time_t parse_date(FILE *);
 void parse_warn(char *);
 
 /* bpf.c */
-void if_register_send(struct interface_info *);
-void if_register_receive(struct interface_info *);
+int get_bpf_sock(char *);
+int get_udp_sock(int);
+int configure_bpf_sock(int);
 ssize_t send_packet(struct interface_info *, struct in_addr, struct in_addr);
 ssize_t receive_packet(struct interface_info *, struct sockaddr_in *,
     struct ether_addr *);
@@ -212,9 +212,6 @@ void interface_link_forceup(char *, int);
 int interface_status(char *);
 void get_hw_address(struct interface_info *);
 void sendhup(void);
-
-/* tables.c */
-extern const struct option dhcp_options[DHO_COUNT];
 
 /* dhclient.c */
 extern char *path_dhclient_conf;
@@ -230,10 +227,10 @@ void routehandler(struct interface_info *, int);
 
 /* packet.c */
 void assemble_eh_header(struct ether_addr, struct ether_header *);
-ssize_t decode_hw_header(unsigned char *, u_int32_t, struct ether_addr *);
-ssize_t decode_udp_ip_header(unsigned char *, u_int32_t, struct sockaddr_in *);
-u_int32_t checksum(unsigned char *, u_int32_t, u_int32_t);
-u_int32_t wrapsum(u_int32_t);
+ssize_t decode_hw_header(unsigned char *, uint32_t, struct ether_addr *);
+ssize_t decode_udp_ip_header(unsigned char *, uint32_t, struct sockaddr_in *);
+uint32_t checksum(unsigned char *, uint32_t, uint32_t);
+uint32_t wrapsum(uint32_t);
 
 /* clparse.c */
 void read_client_conf(char *);

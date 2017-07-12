@@ -1,4 +1,4 @@
-/*	$OpenBSD: ping.c,v 1.221 2017/07/05 07:15:40 florian Exp $	*/
+/*	$OpenBSD: ping.c,v 1.223 2017/07/08 16:22:29 florian Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -573,7 +573,7 @@ main(int argc, char *argv[])
 
 	if (v6flag) {
 		/* in F_VERBOSE case, we may get non-echoreply packets*/
-		if (options & F_VERBOSE && datalen < 2048) /* XXX 2048? */
+		if ((options & F_VERBOSE) && datalen < 2048) /* XXX 2048? */
 			packlen = 2048 + IP6LEN + ECHOLEN + EXTRA;
 		else
 			packlen = datalen + IP6LEN + ECHOLEN + EXTRA;
@@ -621,7 +621,7 @@ main(int argc, char *argv[])
 		 * let the kernel pass extension headers of incoming packets,
 		 * for privileged socket options
 		 */
-		if ((options & F_VERBOSE) != 0) {
+		if (options & F_VERBOSE) {
 			int opton = 1;
 
 			if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVHOPOPTS,
@@ -696,7 +696,7 @@ main(int argc, char *argv[])
 				options |= F_HDRINCL;
 		}
 
-		if (options & F_RROUTE && options & F_HDRINCL)
+		if ((options & F_RROUTE) && (options & F_HDRINCL))
 			errx(1, "-R option and -D or -T, or -t to unicast"
 			    " destinations are incompatible");
 
@@ -771,7 +771,7 @@ main(int argc, char *argv[])
 	(void)signal(SIGINT, onsignal);
 	(void)signal(SIGINFO, onsignal);
 
-	if ((options & F_FLOOD) == 0) {
+	if (!(options & F_FLOOD)) {
 		(void)signal(SIGALRM, onsignal);
 		itimer.it_interval = interval;
 		itimer.it_value = interval;
@@ -859,7 +859,7 @@ main(int argc, char *argv[])
 			 * a path MTU notification.)
 			 */
 			if ((mtu = get_pathmtu(&m, &dst6)) > 0) {
-				if ((options & F_VERBOSE) != 0) {
+				if (options & F_VERBOSE) {
 					printf("new path MTU (%d) is "
 					    "notified\n", mtu);
 				}
@@ -959,7 +959,7 @@ pr_addr(struct sockaddr *addr, socklen_t addrlen)
 	static char buf[NI_MAXHOST];
 	int flag = 0;
 
-	if ((options & F_HOSTNAME) == 0)
+	if (!(options & F_HOSTNAME))
 		flag |= NI_NUMERICHOST;
 
 	if (getnameinfo(addr, addrlen, buf, sizeof(buf), NULL, 0, flag) == 0)
@@ -1092,7 +1092,7 @@ pinger(int s)
 			warn("sendmsg");
 		printf("ping: wrote %s %d chars, ret=%d\n", hostname, cc, i);
 	}
-	if (!(options & F_QUIET) && options & F_FLOOD)
+	if (!(options & F_QUIET) && (options & F_FLOOD))
 		write(STDOUT_FILENO, &DOT, 1);
 
 	return (0);
@@ -1890,7 +1890,7 @@ get_pathmtu(struct msghdr *mhdr, struct sockaddr_in6 *dst)
 			    dst->sin6_scope_id &&
 			    mtuctl->ip6m_addr.sin6_scope_id !=
 			    dst->sin6_scope_id)) {
-				if ((options & F_VERBOSE) != 0) {
+				if (options & F_VERBOSE) {
 					printf("path MTU for %s is notified. "
 					    "(ignored)\n",
 					    pr_addr((struct sockaddr *)

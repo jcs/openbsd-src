@@ -1,4 +1,4 @@
-/*	$OpenBSD: malloc.c,v 1.226 2017/06/19 03:06:26 dlg Exp $	*/
+/*	$OpenBSD: malloc.c,v 1.228 2017/07/10 09:44:16 otto Exp $	*/
 /*
  * Copyright (c) 2008, 2010, 2011, 2016 Otto Moerbeek <otto@drijf.net>
  * Copyright (c) 2012 Matthew Dempsky <matthew@openbsd.org>
@@ -886,6 +886,7 @@ omalloc_make_chunks(struct dir_info *d, int bits, int listnum)
 		while (i >>= 1)
 			bp->shift++;
 		bp->total = bp->free = MALLOC_PAGESIZE >> bp->shift;
+		bp->offset = 0xdead;
 		bp->page = pp;
 
 		k = mprotect(pp, MALLOC_PAGESIZE, PROT_NONE);
@@ -1013,7 +1014,7 @@ malloc_bytes(struct dir_info *d, size_t size, void *f)
 	/* Adjust to the real offset of that chunk */
 	k += (lp - bp->bits) * MALLOC_BITS;
 
-	if (mopts.chunk_canaries)
+	if (mopts.chunk_canaries && size > 0)
 		bp->bits[bp->offset + k] = size;
 
 	k <<= bp->shift;
@@ -1793,7 +1794,7 @@ orecallocarray(struct dir_info *argpool, void *p, size_t oldsize,
 
 	REALSIZE(sz, r);
 	if (sz <= MALLOC_MAXCHUNK) {
-		if (mopts.chunk_canaries) {
+		if (mopts.chunk_canaries && sz > 0) {
 			struct chunk_info *info = (struct chunk_info *)r->size;
 			uint32_t chunknum = find_chunknum(pool, r, p, 0);
 

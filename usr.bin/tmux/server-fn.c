@@ -1,4 +1,4 @@
-/* $OpenBSD: server-fn.c,v 1.108 2017/05/12 13:00:56 nicm Exp $ */
+/* $OpenBSD: server-fn.c,v 1.110 2017/07/12 09:07:52 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -173,7 +173,7 @@ server_lock_client(struct client *c)
 	tty_raw(&c->tty, tty_term_string(c->tty.term, TTYC_E3));
 
 	c->flags |= CLIENT_SUSPENDED;
-	proc_send_s(c->peer, MSG_LOCK, cmd);
+	proc_send(c->peer, MSG_LOCK, -1, cmd, strlen(cmd) + 1);
 }
 
 void
@@ -333,7 +333,7 @@ server_destroy_session_group(struct session *s)
 	else {
 		TAILQ_FOREACH_SAFE(s, &sg->sessions, gentry, s1) {
 			server_destroy_session(s);
-			session_destroy(s);
+			session_destroy(s, __func__);
 		}
 	}
 }
@@ -399,7 +399,7 @@ server_check_unattached(void)
 		if (!(s->flags & SESSION_UNATTACHED))
 			continue;
 		if (options_get_number (s->options, "destroy-unattached"))
-			session_destroy(s);
+			session_destroy(s, __func__);
 	}
 }
 

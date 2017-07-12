@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.102 2017/07/02 09:11:13 krw Exp $	*/
+/*	$OpenBSD: kroute.c,v 1.107 2017/07/10 14:11:47 krw Exp $	*/
 
 /*
  * Copyright 2012 Kenneth R Westerback <krw@openbsd.org>
@@ -47,8 +47,8 @@
 #include "log.h"
 #include "privsep.h"
 
-#define ROUNDUP(a) \
-    ((a) > 0 ? (1 + (((a) - 1) | (sizeof(long) - 1))) : sizeof(long))
+#define ROUNDUP(a)	((a) > 0 ? (1 + (((a) - 1) | (sizeof(long) - 1))) : \
+    sizeof(long))
 
 /*
  * flush_unpriv_ibuf makes sure queued messages are delivered to the
@@ -99,26 +99,26 @@ check_route_label(struct sockaddr_rtlabel *label)
 	pid_t pid;
 
 	if (!label)
-		return (ROUTE_LABEL_NONE);
+		return ROUTE_LABEL_NONE;
 
 	if (strncmp("DHCLIENT ", label->sr_label, 9) != 0)
-		return (ROUTE_LABEL_NOT_DHCLIENT);
+		return ROUTE_LABEL_NOT_DHCLIENT;
 
 	pid = (pid_t)strtonum(label->sr_label + 9, 1, INT_MAX, NULL);
 	if (pid <= 0)
-		return (ROUTE_LABEL_DHCLIENT_UNKNOWN);
+		return ROUTE_LABEL_DHCLIENT_UNKNOWN;
 
 	if (pid == getpid())
-		return (ROUTE_LABEL_DHCLIENT_OURS);
+		return ROUTE_LABEL_DHCLIENT_OURS;
 
 	if (kill(pid, 0) == -1) {
 		if (errno == ESRCH)
-			return (ROUTE_LABEL_DHCLIENT_DEAD);
+			return ROUTE_LABEL_DHCLIENT_DEAD;
 		else
-			return (ROUTE_LABEL_DHCLIENT_UNKNOWN);
+			return ROUTE_LABEL_DHCLIENT_UNKNOWN;
 	}
 
-	return (ROUTE_LABEL_DHCLIENT_LIVE);
+	return ROUTE_LABEL_DHCLIENT_LIVE;
 }
 
 /*
@@ -130,7 +130,7 @@ check_route_label(struct sockaddr_rtlabel *label)
 void
 flush_routes(void)
 {
-	int			 rslt;
+	int	 rslt;
 
 	rslt = imsg_compose(unpriv_ibuf, IMSG_FLUSH_ROUTES, 0, 0, -1, NULL, 0);
 	if (rslt == -1)
@@ -236,8 +236,8 @@ priv_flush_routes(char *name, int routefd, int rdomain)
 void
 delete_route(int s, struct rt_msghdr *rtm)
 {
-	static int seqno;
-	ssize_t rlen;
+	static int	 seqno;
+	ssize_t		 rlen;
 
 	rtm->rtm_type = RTM_DELETE;
 	rtm->rtm_seq = seqno++;
@@ -259,7 +259,7 @@ void
 add_direct_route(struct in_addr dest, struct in_addr mask,
     struct in_addr iface)
 {
-	struct in_addr ifa = { INADDR_ANY };
+	struct in_addr	 ifa = { INADDR_ANY };
 
 	add_route(dest, mask, iface, ifa,
 	    RTA_DST | RTA_NETMASK | RTA_GATEWAY, RTF_CLONING | RTF_STATIC);
@@ -277,8 +277,8 @@ add_direct_route(struct in_addr dest, struct in_addr mask,
 void
 add_default_route(struct in_addr addr, struct in_addr gateway)
 {
-	struct in_addr netmask, dest;
-	int addrs, flags;
+	struct in_addr	 netmask, dest;
+	int		 addrs, flags;
 
 	memset(&netmask, 0, sizeof(netmask));
 	memset(&dest, 0, sizeof(dest));
@@ -313,7 +313,7 @@ add_static_routes(struct option_data *static_routes, struct in_addr iface)
 	netmask.s_addr = INADDR_ANY;	/* Not used for CLASSFULL! */
 
 	for (i = 0; (i + 2*sizeof(*addr)) <= static_routes->len;
-	    i += 2*sizeof(*addr)) {
+	     i += 2*sizeof(*addr)) {
 		addr = (struct in_addr *)&static_routes->data[i];
 		if (addr->s_addr == INADDR_ANY)
 			continue; /* RFC 2132 says 0.0.0.0 is not allowed. */
@@ -381,7 +381,7 @@ add_classless_static_routes(struct option_data *opt, struct in_addr iface)
 int
 create_route_label(struct sockaddr_rtlabel *label)
 {
-	int len;
+	int	 len;
 
 	memset(label, 0, sizeof(*label));
 
@@ -393,10 +393,10 @@ create_route_label(struct sockaddr_rtlabel *label)
 
 	if (len == -1 || (unsigned int)len >= sizeof(label->sr_label)) {
 		log_warn("could not create route label");
-		return (1);
+		return 1;
 	}
 
-	return (0);
+	return 0;
 }
 
 /*
@@ -425,18 +425,17 @@ add_route(struct in_addr dest, struct in_addr netmask,
 }
 
 void
-priv_add_route(int rdomain, struct imsg_add_route *imsg)
+priv_add_route(int rdomain, int routefd, struct imsg_add_route *imsg)
 {
-	char destbuf[INET_ADDRSTRLEN], gatewaybuf[INET_ADDRSTRLEN];
-	char maskbuf[INET_ADDRSTRLEN], ifabuf[INET_ADDRSTRLEN];
-	struct rt_msghdr rtm;
-	struct sockaddr_in dest, gateway, mask, ifa;
-	struct sockaddr_rtlabel label;
-	struct iovec iov[6];
-	int s, i, iovcnt = 0;
-
-	if ((s = socket(AF_ROUTE, SOCK_RAW, 0)) == -1)
-		fatal("Routing Socket open failed");
+	char			 destbuf[INET_ADDRSTRLEN];
+	char			 gatewaybuf[INET_ADDRSTRLEN];
+	char			 maskbuf[INET_ADDRSTRLEN];
+	char			 ifabuf[INET_ADDRSTRLEN];
+	struct iovec		 iov[6];
+	struct rt_msghdr	 rtm;
+	struct sockaddr_in	 dest, gateway, mask, ifa;
+	struct sockaddr_rtlabel	 label;
+	int			 i, iovcnt = 0;
 
 	memset(destbuf, 0, sizeof(destbuf));
 	memset(maskbuf, 0, sizeof(maskbuf));
@@ -525,7 +524,7 @@ priv_add_route(int rdomain, struct imsg_add_route *imsg)
 
 	/* Check for EEXIST since other dhclient may not be done. */
 	for (i = 0; i < 5; i++) {
-		if (writev(s, iov, iovcnt) != -1)
+		if (writev(routefd, iov, iovcnt) != -1)
 			break;
 		if (i == 4)
 			log_warn("failed to add route (%s/%s via %s/%s)",
@@ -533,8 +532,6 @@ priv_add_route(int rdomain, struct imsg_add_route *imsg)
 		else if (errno == EEXIST || errno == ENETUNREACH)
 			sleep(1);
 	}
-
-	close(s);
 }
 
 /*
@@ -544,8 +541,8 @@ priv_add_route(int rdomain, struct imsg_add_route *imsg)
 void
 delete_addresses(char *name)
 {
-	struct in_addr addr;
-	struct ifaddrs *ifap, *ifa;
+	struct in_addr		 addr;
+	struct ifaddrs		*ifap, *ifa;
 
 	if (getifaddrs(&ifap) != 0)
 		fatal("delete_addresses getifaddrs");
@@ -625,8 +622,8 @@ priv_delete_address(char *name, int ioctlfd, struct imsg_delete_address *imsg)
 void
 set_interface_mtu(int mtu)
 {
-	struct imsg_set_interface_mtu imsg;
-	int rslt;
+	struct imsg_set_interface_mtu	 imsg;
+	int				 rslt;
 
 	imsg.mtu = mtu;
 
@@ -642,7 +639,7 @@ void
 priv_set_interface_mtu(char *name, int ioctlfd,
     struct imsg_set_interface_mtu *imsg)
 {
-	struct ifreq ifr;
+	struct ifreq	 ifr;
 
 	memset(&ifr, 0, sizeof(ifr));
 
@@ -661,8 +658,8 @@ priv_set_interface_mtu(char *name, int ioctlfd,
 void
 add_address(struct in_addr addr, struct in_addr mask)
 {
-	struct imsg_add_address imsg;
-	int			rslt;
+	struct imsg_add_address	 imsg;
+	int			 rslt;
 
 	/* Note the address we are adding for RTM_NEWADDR filtering! */
 	adding = addr;
@@ -709,9 +706,9 @@ priv_add_address(char *name, int ioctlfd, struct imsg_add_address *imsg)
  * [priv_]write_resolv_conf write out a new resolv.conf.
  */
 void
-write_resolv_conf(u_int8_t *contents, size_t sz)
+write_resolv_conf(uint8_t *contents, size_t sz)
 {
-	int rslt;
+	int	 rslt;
 
 	rslt = imsg_compose(unpriv_ibuf, IMSG_WRITE_RESOLV_CONF,
 	    0, 0, -1, contents, sz);
@@ -722,11 +719,11 @@ write_resolv_conf(u_int8_t *contents, size_t sz)
 }
 
 void
-priv_write_resolv_conf(u_int8_t *contents, size_t sz)
+priv_write_resolv_conf(uint8_t *contents, size_t sz)
 {
-	const char *path = "/etc/resolv.conf";
-	ssize_t n;
-	int fd;
+	const char	*path = "/etc/resolv.conf";
+	ssize_t		 n;
+	int		 fd;
 
 	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC,
 	    S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -753,17 +750,17 @@ priv_write_resolv_conf(u_int8_t *contents, size_t sz)
 int
 resolv_conf_priority(int rdomain, int routefd)
 {
-	struct iovec iov[3];
+	struct iovec		 iov[3];
+	struct sockaddr_in	 sin;
 	struct {
 		struct rt_msghdr	m_rtm;
 		char			m_space[512];
-	} m_rtmsg;
-	struct sockaddr *rti_info[RTAX_MAX];
-	struct sockaddr_in sin;
+	}			 m_rtmsg;
+	struct sockaddr		*rti_info[RTAX_MAX];
 	struct sockaddr_rtlabel *sa_rl;
-	pid_t pid;
-	ssize_t len;
-	int seq, rslt, iovcnt = 0;
+	pid_t			 pid;
+	ssize_t			 len;
+	int			 seq, rslt, iovcnt = 0;
 
 	rslt = 0;
 
@@ -834,7 +831,7 @@ resolv_conf_priority(int rdomain, int routefd)
 		rslt = 1;
 
 done:
-	return (rslt);
+	return rslt;
 }
 
 /*
@@ -847,9 +844,9 @@ resolv_conf_contents(char *name,
     struct option_data *domainname, struct option_data *nameservers,
     struct option_data *domainsearch)
 {
-	char *dn, *ns, *nss[MAXNS], *contents, *courtesy, *p, *buf;
-	size_t len;
-	int i, rslt;
+	char		*dn, *ns, *nss[MAXNS], *contents, *courtesy, *p, *buf;
+	size_t		 len;
+	int		 i, rslt;
 
 	memset(nss, 0, sizeof(nss));
 
@@ -898,7 +895,7 @@ resolv_conf_contents(char *name,
 
 	if (len == 0) {
 		free(dn);
-		return (NULL);
+		return NULL;
 	}
 
 	rslt = asprintf(&courtesy, "# Generated by %s dhclient\n", name);
@@ -927,7 +924,7 @@ resolv_conf_contents(char *name,
 	if (config->resolv_tail)
 		strlcat(contents, config->resolv_tail, len);
 
-	return (contents);
+	return contents;
 }
 
 /*
@@ -937,8 +934,8 @@ resolv_conf_contents(char *name,
 void
 populate_rti_info(struct sockaddr **rti_info, struct rt_msghdr *rtm)
 {
-	struct sockaddr *sa;
-	int i;
+	struct sockaddr	*sa;
+	int		 i;
 
 	sa = (struct sockaddr *)((char *)(rtm) + rtm->rtm_hdrlen);
 

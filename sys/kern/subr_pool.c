@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_pool.c,v 1.217 2017/06/23 01:21:55 dlg Exp $	*/
+/*	$OpenBSD: subr_pool.c,v 1.219 2017/07/12 08:51:42 visa Exp $	*/
 /*	$NetBSD: subr_pool.c,v 1.61 2001/09/26 07:14:56 chs Exp $	*/
 
 /*-
@@ -1926,7 +1926,7 @@ pool_cache_destroy(struct pool *pp)
 void
 pool_cache_gc(struct pool *pp)
 {
-	unsigned int contention;
+	unsigned int contention, delta;
 
 	if ((ticks - pp->pr_cache_tick) > (hz * pool_wait_gc) &&
 	    !TAILQ_EMPTY(&pp->pr_cache_lists) &&
@@ -1954,9 +1954,13 @@ pool_cache_gc(struct pool *pp)
 	 */
 
 	contention = pp->pr_cache_contention;
-	if ((contention - pp->pr_cache_contention_prev) > 8 /* magic */) {
+	delta = contention - pp->pr_cache_contention_prev;
+	if (delta > 8 /* magic */) {
 		if ((ncpusfound * 8 * 2) <= pp->pr_cache_nitems)
 			pp->pr_cache_items += 8;
+	} else if (delta == 0) {
+		if (pp->pr_cache_items > 8)
+			pp->pr_cache_items--;
 	}
 	pp->pr_cache_contention_prev = contention;
 }

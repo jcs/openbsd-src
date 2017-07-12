@@ -1,4 +1,4 @@
-/*	$OpenBSD: roff.c,v 1.190 2017/07/04 22:49:59 schwarze Exp $ */
+/*	$OpenBSD: roff.c,v 1.193 2017/07/08 17:52:42 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -96,9 +96,8 @@ struct	roff {
 	struct tbl_node	*first_tbl; /* first table parsed */
 	struct tbl_node	*last_tbl; /* last table parsed */
 	struct tbl_node	*tbl; /* current table being parsed */
-	struct eqn_node	*last_eqn; /* last equation parsed */
-	struct eqn_node	*first_eqn; /* first equation parsed */
-	struct eqn_node	*eqn; /* current equation being parsed */
+	struct eqn_node	*last_eqn; /* equation parser */
+	struct eqn_node	*eqn; /* active equation parser */
 	int		 eqn_inline; /* current equation is inline */
 	int		 options; /* parse options */
 	int		 rstacksz; /* current size limit of rstack */
@@ -152,6 +151,7 @@ static	void		 roffnode_cleanscope(struct roff *);
 static	void		 roffnode_pop(struct roff *);
 static	void		 roffnode_push(struct roff *, enum roff_tok,
 				const char *, int, int);
+static	void		 roff_addtbl(struct roff_man *, struct tbl_node *);
 static	enum rofferr	 roff_als(ROFF_ARGS);
 static	enum rofferr	 roff_block(ROFF_ARGS);
 static	enum rofferr	 roff_block_text(ROFF_ARGS);
@@ -693,7 +693,6 @@ static void
 roff_free1(struct roff *r)
 {
 	struct tbl_node	*tbl;
-	struct eqn_node	*e;
 	int		 i;
 
 	while (NULL != (tbl = r->first_tbl)) {
@@ -702,11 +701,9 @@ roff_free1(struct roff *r)
 	}
 	r->first_tbl = r->last_tbl = r->tbl = NULL;
 
-	while (NULL != (e = r->first_eqn)) {
-		r->first_eqn = e->next;
-		eqn_free(e);
-	}
-	r->first_eqn = r->last_eqn = r->eqn = NULL;
+	if (r->last_eqn != NULL)
+		eqn_free(r->last_eqn);
+	r->last_eqn = r->eqn = NULL;
 
 	while (r->last)
 		roffnode_pop(r);
@@ -981,31 +978,21 @@ roff_body_alloc(struct roff_man *man, int line, int pos, int tok)
 	return n;
 }
 
-void
-roff_addeqn(struct roff_man *man, const struct eqn *eqn)
+static void
+roff_addtbl(struct roff_man *man, struct tbl_node *tbl)
 {
 	struct roff_node	*n;
-
-	n = roff_node_alloc(man, eqn->ln, eqn->pos, ROFFT_EQN, TOKEN_NONE);
-	n->eqn = eqn;
-	if (eqn->ln > man->last->line)
-		n->flags |= NODE_LINE;
-	roff_node_append(man, n);
-	man->next = ROFF_NEXT_SIBLING;
-}
-
-void
-roff_addtbl(struct roff_man *man, const struct tbl_span *tbl)
-{
-	struct roff_node	*n;
+	const struct tbl_span	*span;
 
 	if (man->macroset == MACROSET_MAN)
 		man_breakscope(man, ROFF_TS);
-	n = roff_node_alloc(man, tbl->line, 0, ROFFT_TBL, TOKEN_NONE);
-	n->span = tbl;
-	roff_node_append(man, n);
-	n->flags |= NODE_VALID | NODE_ENDED;
-	man->next = ROFF_NEXT_SIBLING;
+	while ((span = tbl_span(tbl)) != NULL) {
+		n = roff_node_alloc(man, tbl->line, 0, ROFFT_TBL, TOKEN_NONE);
+		n->span = span;
+		roff_node_append(man, n);
+		n->flags |= NODE_VALID | NODE_ENDED;
+		man->next = ROFF_NEXT_SIBLING;
+	}
 }
 
 void
@@ -1053,6 +1040,8 @@ roff_node_free(struct roff_node *n)
 		mdoc_argv_free(n->args);
 	if (n->type == ROFFT_BLOCK || n->type == ROFFT_ELEM)
 		free(n->norm);
+	if (n->eqn != NULL)
+		eqn_box_free(n->eqn);
 	free(n->string);
 	free(n);
 }
@@ -1510,10 +1499,15 @@ roff_parseln(struct roff *r, int ln, struct buf *buf, int *offs)
 			return e;
 		assert(e == ROFF_CONT);
 	}
-	if (r->eqn != NULL)
-		return eqn_read(&r->eqn, ln, buf->buf, ppos, offs);
-	if (r->tbl != NULL && ( ! ctl || buf->buf[pos] == '\0'))
-		return tbl_read(r->tbl, ln, buf->buf, ppos);
+	if (r->eqn != NULL && strncmp(buf->buf + ppos, ".EN", 3)) {
+		eqn_read(r->eqn, buf->buf + ppos);
+		return ROFF_IGN;
+	}
+	if (r->tbl != NULL && (ctl == 0 || buf->buf[pos] == '\0')) {
+		tbl_read(r->tbl, ln, buf->buf, ppos);
+		roff_addtbl(r->man, r->tbl);
+		return ROFF_IGN;
+	}
 	if ( ! ctl)
 		return roff_parsetext(r, buf, pos, offs);
 
@@ -1554,7 +1548,9 @@ roff_parseln(struct roff *r, int ln, struct buf *buf, int *offs)
 			pos++;
 		while (buf->buf[pos] == ' ')
 			pos++;
-		return tbl_read(r->tbl, ln, buf->buf, pos);
+		tbl_read(r->tbl, ln, buf->buf, pos);
+		roff_addtbl(r->man, r->tbl);
+		return ROFF_IGN;
 	}
 
 	/* For now, let high level macros abort .ce mode. */
@@ -1583,22 +1579,23 @@ roff_parseln(struct roff *r, int ln, struct buf *buf, int *offs)
 void
 roff_endparse(struct roff *r)
 {
-
-	if (r->last)
+	if (r->last != NULL)
 		mandoc_msg(MANDOCERR_BLK_NOEND, r->parse,
 		    r->last->line, r->last->col,
 		    roff_name[r->last->tok]);
 
-	if (r->eqn) {
+	if (r->eqn != NULL) {
 		mandoc_msg(MANDOCERR_BLK_NOEND, r->parse,
-		    r->eqn->eqn.ln, r->eqn->eqn.pos, "EQ");
-		eqn_end(&r->eqn);
+		    r->eqn->node->line, r->eqn->node->pos, "EQ");
+		eqn_parse(r->eqn);
+		r->eqn = NULL;
 	}
 
-	if (r->tbl) {
+	if (r->tbl != NULL) {
 		mandoc_msg(MANDOCERR_BLK_NOEND, r->parse,
 		    r->tbl->line, r->tbl->pos, "TS");
-		tbl_end(&r->tbl);
+		tbl_end(r->tbl);
+		r->tbl = NULL;
 	}
 }
 
@@ -2780,16 +2777,19 @@ roff_Dd(ROFF_ARGS)
 static enum rofferr
 roff_TE(ROFF_ARGS)
 {
-
-	if (NULL == r->tbl)
+	if (r->tbl == NULL) {
 		mandoc_msg(MANDOCERR_BLK_NOTOPEN, r->parse,
 		    ln, ppos, "TE");
-	else if ( ! tbl_end(&r->tbl)) {
+		return ROFF_IGN;
+	}
+	if (tbl_end(r->tbl) == 0) {
+		r->tbl = NULL;
 		free(buf->buf);
 		buf->buf = mandoc_strdup(".sp");
 		buf->sz = 4;
 		return ROFF_REPARSE;
 	}
+	r->tbl = NULL;
 	return ROFF_IGN;
 }
 
@@ -2875,20 +2875,23 @@ roff_eqndelim(struct roff *r, struct buf *buf, int pos)
 static enum rofferr
 roff_EQ(ROFF_ARGS)
 {
-	struct eqn_node *e;
+	struct roff_node	*n;
+
+	n = roff_node_alloc(r->man, ln, ppos, ROFFT_EQN, TOKEN_NONE);
+	if (ln > r->man->last->line)
+		n->flags |= NODE_LINE;
+	n->eqn = mandoc_calloc(1, sizeof(*n->eqn));
+	n->eqn->expectargs = UINT_MAX;
+	roff_node_append(r->man, n);
+	r->man->next = ROFF_NEXT_SIBLING;
 
 	assert(r->eqn == NULL);
-	e = eqn_alloc(ppos, ln, r->parse);
-
-	if (r->last_eqn) {
-		r->last_eqn->next = e;
-		e->delim = r->last_eqn->delim;
-		e->odelim = r->last_eqn->odelim;
-		e->cdelim = r->last_eqn->cdelim;
-	} else
-		r->first_eqn = r->last_eqn = e;
-
-	r->eqn = r->last_eqn = e;
+	if (r->last_eqn == NULL)
+		r->last_eqn = eqn_alloc(r->parse);
+	else
+		eqn_reset(r->last_eqn);
+	r->eqn = r->last_eqn;
+	r->eqn->node = n;
 
 	if (buf->buf[pos] != '\0')
 		mandoc_vmsg(MANDOCERR_ARG_SKIP, r->parse, ln, pos,
@@ -2900,30 +2903,31 @@ roff_EQ(ROFF_ARGS)
 static enum rofferr
 roff_EN(ROFF_ARGS)
 {
-
-	mandoc_msg(MANDOCERR_BLK_NOTOPEN, r->parse, ln, ppos, "EN");
+	if (r->eqn != NULL) {
+		eqn_parse(r->eqn);
+		r->eqn = NULL;
+	} else
+		mandoc_msg(MANDOCERR_BLK_NOTOPEN, r->parse, ln, ppos, "EN");
+	if (buf->buf[pos] != '\0')
+		mandoc_vmsg(MANDOCERR_ARG_SKIP, r->parse, ln, pos,
+		    "EN %s", buf->buf + pos);
 	return ROFF_IGN;
 }
 
 static enum rofferr
 roff_TS(ROFF_ARGS)
 {
-	struct tbl_node	*tbl;
-
-	if (r->tbl) {
+	if (r->tbl != NULL) {
 		mandoc_msg(MANDOCERR_BLK_BROKEN, r->parse,
 		    ln, ppos, "TS breaks TS");
-		tbl_end(&r->tbl);
+		tbl_end(r->tbl);
 	}
-
-	tbl = tbl_alloc(ppos, ln, r->parse);
-
+	r->tbl = tbl_alloc(ppos, ln, r->parse);
 	if (r->last_tbl)
-		r->last_tbl->next = tbl;
+		r->last_tbl->next = r->tbl;
 	else
-		r->first_tbl = r->last_tbl = tbl;
-
-	r->tbl = r->last_tbl = tbl;
+		r->first_tbl = r->tbl;
+	r->last_tbl = r->tbl;
 	return ROFF_IGN;
 }
 
@@ -2935,7 +2939,8 @@ roff_onearg(ROFF_ARGS)
 	int			 npos;
 
 	if (r->man->flags & (MAN_BLINE | MAN_ELINE) &&
-	    (tok == ROFF_sp || tok == ROFF_ti))
+	    (tok == ROFF_ce || tok == ROFF_rj || tok == ROFF_sp ||
+	     tok == ROFF_ti))
 		man_breakscope(r->man, tok);
 
 	if (roffce_node != NULL && (tok == ROFF_ce || tok == ROFF_rj)) {
@@ -3600,20 +3605,6 @@ roff_freestr(struct roffkv *r)
 }
 
 /* --- accessors and utility functions ------------------------------------ */
-
-const struct tbl_span *
-roff_span(const struct roff *r)
-{
-
-	return r->tbl ? tbl_span(r->tbl) : NULL;
-}
-
-const struct eqn *
-roff_eqn(const struct roff *r)
-{
-
-	return r->last_eqn ? &r->last_eqn->eqn : NULL;
-}
 
 /*
  * Duplicate an input string, making the appropriate character
