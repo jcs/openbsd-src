@@ -1,4 +1,4 @@
-/*	$OpenBSD: roff.c,v 1.193 2017/07/08 17:52:42 schwarze Exp $ */
+/*	$OpenBSD: roff.c,v 1.196 2017/07/14 17:16:13 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -1125,13 +1125,13 @@ roff_res(struct roff *r, struct buf *buf, int ln, int pos)
 	size_t		 maxl;  /* expected length of the escape name */
 	size_t		 naml;	/* actual length of the escape name */
 	enum mandoc_esc	 esc;	/* type of the escape sequence */
-	enum mandoc_os	 os_e;	/* kind of RCS id seen */
 	int		 inaml;	/* length returned from mandoc_escape() */
 	int		 expand_count;	/* to avoid infinite loops */
 	int		 npos;	/* position in numeric expression */
 	int		 arg_complete; /* argument not interrupted by eol */
 	int		 done;	/* no more input available */
 	int		 deftype; /* type of definition to paste */
+	int		 rcsid;	/* kind of RCS id seen */
 	char		 term;	/* character terminating the escape */
 
 	/* Search forward for comments. */
@@ -1147,20 +1147,21 @@ roff_res(struct roff *r, struct buf *buf, int ln, int pos)
 
 		/* Comment found, look for RCS id. */
 
+		rcsid = 0;
 		if ((cp = strstr(stesc, "$" "OpenBSD")) != NULL) {
-			os_e = MANDOC_OS_OPENBSD;
+			rcsid = 1 << MANDOC_OS_OPENBSD;
 			cp += 8;
 		} else if ((cp = strstr(stesc, "$" "NetBSD")) != NULL) {
-			os_e = MANDOC_OS_NETBSD;
+			rcsid = 1 << MANDOC_OS_NETBSD;
 			cp += 7;
 		}
 		if (cp != NULL &&
 		    isalnum((unsigned char)*cp) == 0 &&
 		    strchr(cp, '$') != NULL) {
-			if (r->man->meta.rcsids & (1 << os_e))
+			if (r->man->meta.rcsids & rcsid)
 				mandoc_msg(MANDOCERR_RCS_REP, r->parse,
 				    ln, stesc + 1 - buf->buf, stesc + 1);
-			r->man->meta.rcsids |= 1 << os_e;
+			r->man->meta.rcsids |= rcsid;
 		}
 
 		/* Handle trailing whitespace. */
@@ -1556,7 +1557,8 @@ roff_parseln(struct roff *r, int ln, struct buf *buf, int *offs)
 	/* For now, let high level macros abort .ce mode. */
 
 	if (ctl && roffce_node != NULL &&
-	    (t == TOKEN_NONE || t == ROFF_EQ || t == ROFF_TS)) {
+	    (t == TOKEN_NONE || t == ROFF_Dd || t == ROFF_EQ ||
+	     t == ROFF_TH || t == ROFF_TS)) {
 		r->man->last = roffce_node;
 		r->man->next = ROFF_NEXT_SIBLING;
 		roffce_lines = 0;
@@ -2877,6 +2879,8 @@ roff_EQ(ROFF_ARGS)
 {
 	struct roff_node	*n;
 
+	if (r->man->macroset == MACROSET_MAN)
+		man_breakscope(r->man, ROFF_EQ);
 	n = roff_node_alloc(r->man, ln, ppos, ROFFT_EQN, TOKEN_NONE);
 	if (ln > r->man->last->line)
 		n->flags |= NODE_LINE;
