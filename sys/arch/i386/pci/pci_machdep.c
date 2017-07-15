@@ -939,7 +939,7 @@ pci_init_extents(void)
 
 #include "acpi.h"
 #if NACPI > 0
-void acpi_pci_match(struct device *, struct pci_attach_args *);
+struct aml_node *acpi_pci_match(struct device *, struct pci_attach_args *);
 pcireg_t acpi_pci_min_powerstate(pci_chipset_tag_t, pcitag_t);
 void acpi_pci_set_powerstate(pci_chipset_tag_t, pcitag_t, int, int);
 #endif
