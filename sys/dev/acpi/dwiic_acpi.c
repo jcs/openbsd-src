@@ -55,7 +55,6 @@ void *		dwiic_i2c_intr_establish(void *, void *, int,
 const char *	dwiic_i2c_intr_string(void *, void *);
 
 int		dwiic_acpi_parse_crs(int, union acpi_resource *, void *);
-int		dwiic_acpi_found_hid(struct aml_node *, void *);
 int		dwiic_acpi_found_ihidev(struct dwiic_softc *,
 		    struct aml_node *, char *, struct dwiic_crs);
 int		dwiic_acpi_found_iatp(struct dwiic_softc *, struct aml_node *,

@@ -67,6 +67,11 @@ void		dwiic_pci_attach(struct device *, struct device *, void *);
 void		dwiic_pci_bus_scan(struct device *,
 		    struct i2cbus_attach_args *, void *);
 
+#include "acpi.h"
+#if NACPI > 0
+struct aml_node *acpi_pci_match(struct device *dev, struct pci_attach_args *pa);
+#endif
+
 struct cfattach dwiic_pci_ca = {
 	sizeof(struct dwiic_softc),
 	dwiic_pci_match,
@@ -96,6 +101,8 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 	const char *intrstr = NULL;
 	uint8_t type;
 
+	memcpy(&sc->sc_paa, pa, sizeof(sc->sc_paa));
+
 	pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D0);
 
 	if (pci_mapreg_map(pa, PCI_MAPREG_START, PCI_MAPREG_MEM_TYPE_64BIT, 0,
@@ -122,13 +129,6 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 	    LPSS_PRIV_ACTIVELTR);
 	bus_space_read_4(sc->sc_iot, sc->sc_ioh, LPSS_PRIV_OFFSET +
 	    LPSS_PRIV_IDLELTR);
-#if 0
-	for (j = 0; j < iosize; j += 4) {
-		t = bus_space_read_4(sc->sc_iot, sc->sc_ioh, j);
-		if (t != 0xffffffff && t != 0)
-			printf("[0x%x=0x%x]", j, t);
-	}
-#endif
 
 	/* fetch timing parameters */
 	sc->ss_hcnt = dwiic_read(sc, DW_IC_SS_SCL_HCNT);
@@ -147,7 +147,7 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 	dwiic_enable(sc, 0);
 	dwiic_read(sc, DW_IC_CLR_INTR);
 
-	/* Install interrupt handler */
+	/* install interrupt handler */
 	sc->sc_poll = 1;
 	if (pci_intr_map(pa, &ih) == 0) {
 		intrstr = pci_intr_string(pa->pa_pc, ih);
@@ -192,5 +192,14 @@ dwiic_pci_bus_scan(struct device *iic, struct i2cbus_attach_args *iba,
 
 	sc->sc_iic = iic;
 
-	/* TODO */
+#if NACPI > 0
+	{
+		struct aml_node *n = acpi_pci_match((struct device *)aux,
+		    &sc->sc_paa);
+		if (n == NULL)
+			return;
+
+		aml_find_node(n, "_HID", dwiic_acpi_found_hid, sc);
+	}
+#endif
 }

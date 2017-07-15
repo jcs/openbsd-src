@@ -28,6 +28,8 @@
 #include <dev/acpi/amltypes.h>
 #include <dev/acpi/dsdt.h>
 
+#include <dev/pci/pcivar.h>
+
 #include <dev/i2c/i2cvar.h>
 
 #include <dev/ic/dwiicreg.h>
@@ -50,6 +52,8 @@ struct dwiic_softc {
 	struct aml_node		*sc_devnode;
 	char			sc_hid[16];
 	void			*sc_ih;
+
+	struct pci_attach_args	sc_paa;
 
 	struct i2cbus_attach_args sc_iba;
 	struct device		*sc_iic;
@@ -94,3 +98,5 @@ void		dwiic_write(struct dwiic_softc *, int, uint32_t);
 int		dwiic_i2c_exec(void *, i2c_op_t, i2c_addr_t, const void *,
 		    size_t, void *, size_t, int);
 void		dwiic_xfer_msg(struct dwiic_softc *);
+
+int		dwiic_acpi_found_hid(struct aml_node *node, void *arg);
