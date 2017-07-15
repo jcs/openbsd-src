@@ -61,6 +61,7 @@ acpipwrres*	at acpi?
 aibs*		at acpi?
 bytgpio*	at acpi?
 chvgpio*	at acpi?
+sptgpio*	at acpi?
 sdhc*		at acpi?
 acpicbkbd*	at acpi?
 acpials*	at acpi?

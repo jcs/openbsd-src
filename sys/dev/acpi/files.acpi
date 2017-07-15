@@ -122,6 +122,11 @@ device	chvgpio
 attach	chvgpio at acpi
 file	dev/acpi/chvgpio.c		chvgpio
 
+# Intel Sunrisepoint GPIO
+device	sptgpio
+attach	sptgpio at acpi
+file	dev/acpi/sptgpio.c		sptgpio
+
 # SD Host Controller
 attach	sdhc at acpi with sdhc_acpi
 file	dev/acpi/sdhc_acpi.c		sdhc_acpi
