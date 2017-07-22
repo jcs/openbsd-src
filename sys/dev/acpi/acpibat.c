@@ -29,6 +29,9 @@
 #include <dev/acpi/amltypes.h>
 #include <dev/acpi/dsdt.h>
 
+#define sc_bix_bif(var) (sc->sc_use_bix ? sc->sc_bix.bix_##var : sc->sc_bif.bif_##var)
+#define BIX_BIF(var)    (sc->sc_use_bix ? BIX_##var : BIF_##var)
+
 int	acpibat_match(struct device *, void *, void *);
 void	acpibat_attach(struct device *, struct device *, void *);
 
@@ -45,6 +48,7 @@ const char *acpibat_hids[] = { ACPI_DEV_CMB, 0 };
 void	acpibat_monitor(struct acpibat_softc *);
 void	acpibat_refresh(void *);
 int	acpibat_getbif(struct acpibat_softc *);
+int	acpibat_getbix(struct acpibat_softc *);
 int	acpibat_getbst(struct acpibat_softc *);
 int	acpibat_notify(struct aml_node *, int, void *);
 
@@ -78,18 +82,25 @@ acpibat_attach(struct device *parent, struct device *self, void *aux)
 
 	if ((sta & STA_BATTERY) != 0) {
 		sc->sc_bat_present = 1;
-		acpibat_getbif(sc);
-		acpibat_getbst(sc);
 
 		printf(": %s", sc->sc_devnode->name);
-		if (sc->sc_bif.bif_model[0])
-			printf(" model \"%s\"", sc->sc_bif.bif_model);
-		if (sc->sc_bif.bif_serial[0])
-			printf(" serial %s", sc->sc_bif.bif_serial);
-		if (sc->sc_bif.bif_type[0])
-			printf(" type %s", sc->sc_bif.bif_type);
-		if (sc->sc_bif.bif_oem[0])
-			printf(" oem \"%s\"", sc->sc_bif.bif_oem);
+
+		if (acpibat_getbix(sc) == 0)
+			sc->sc_use_bix = 1;
+		else
+			acpibat_getbif(sc);
+
+		acpibat_getbst(sc);
+
+		if (sc_bix_bif(model)[0])
+			printf(" model \"%s\"", sc_bix_bif(model));
+		if (sc_bix_bif(serial)[0])
+			printf(" serial %s", sc_bix_bif(serial));
+		if (sc_bix_bif(type)[0])
+			printf(" type %s", sc_bix_bif(type));
+		if (sc_bix_bif(oem)[0])
+			printf(" oem \"%s\"", sc_bix_bif(oem));
+
 		printf("\n");
 	} else {
 		sc->sc_bat_present = 0;
@@ -111,34 +122,34 @@ acpibat_monitor(struct acpibat_softc *sc)
 {
 	int			type;
 
-	/* assume _BIF and _BST have been called */
+	/* assume _BIF/_BIX and _BST have been called */
 	strlcpy(sc->sc_sensdev.xname, DEVNAME(sc),
 	    sizeof(sc->sc_sensdev.xname));
 
-	type = sc->sc_bif.bif_power_unit ? SENSOR_AMPHOUR : SENSOR_WATTHOUR;
+	type = sc_bix_bif(power_unit) ? SENSOR_AMPHOUR : SENSOR_WATTHOUR;
 
 	strlcpy(sc->sc_sens[0].desc, "last full capacity",
 	    sizeof(sc->sc_sens[0].desc));
 	sc->sc_sens[0].type = type;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[0]);
-	sc->sc_sens[0].value = sc->sc_bif.bif_last_capacity * 1000;
+	sc->sc_sens[0].value = sc_bix_bif(last_capacity) * 1000;
 
 	strlcpy(sc->sc_sens[1].desc, "warning capacity",
 	    sizeof(sc->sc_sens[1].desc));
 	sc->sc_sens[1].type = type;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[1]);
-	sc->sc_sens[1].value = sc->sc_bif.bif_warning * 1000;
+	sc->sc_sens[1].value = sc_bix_bif(warning) * 1000;
 
 	strlcpy(sc->sc_sens[2].desc, "low capacity",
 	    sizeof(sc->sc_sens[2].desc));
 	sc->sc_sens[2].type = type;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[2]);
-	sc->sc_sens[2].value = sc->sc_bif.bif_low * 1000;
+	sc->sc_sens[2].value = sc_bix_bif(low) * 1000;
 
 	strlcpy(sc->sc_sens[3].desc, "voltage", sizeof(sc->sc_sens[3].desc));
 	sc->sc_sens[3].type = SENSOR_VOLTS_DC;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[3]);
-	sc->sc_sens[3].value = sc->sc_bif.bif_voltage * 1000;
+	sc->sc_sens[3].value = sc_bix_bif(voltage) * 1000;
 
 	strlcpy(sc->sc_sens[4].desc, "battery unknown",
 	    sizeof(sc->sc_sens[4].desc));
@@ -147,8 +158,7 @@ acpibat_monitor(struct acpibat_softc *sc)
 	sc->sc_sens[4].value = sc->sc_bst.bst_state;
 
 	strlcpy(sc->sc_sens[5].desc, "rate", sizeof(sc->sc_sens[5].desc));
-	sc->sc_sens[5].type =
-		sc->sc_bif.bif_power_unit ? SENSOR_AMPS : SENSOR_WATTS;
+	sc->sc_sens[5].type = sc_bix_bif(power_unit) ? SENSOR_AMPS : SENSOR_WATTS;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[5]);
 	sc->sc_sens[5].value = sc->sc_bst.bst_rate * 1000;
 
@@ -156,19 +166,27 @@ acpibat_monitor(struct acpibat_softc *sc)
 	    sizeof(sc->sc_sens[6].desc));
 	sc->sc_sens[6].type = type;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[6]);
-	sc->sc_sens[6].value = sc->sc_bst.bst_capacity * 1000;
+	sc->sc_sens[6].value = sc_bix_bif(capacity) * 1000;
 
 	strlcpy(sc->sc_sens[7].desc, "current voltage",
 	    sizeof(sc->sc_sens[7].desc));
 	sc->sc_sens[7].type = SENSOR_VOLTS_DC;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[7]);
-	sc->sc_sens[7].value = sc->sc_bst.bst_voltage * 1000;
+	sc->sc_sens[7].value = sc_bix_bif(voltage) * 1000;
 
 	strlcpy(sc->sc_sens[8].desc, "design capacity",
 	    sizeof(sc->sc_sens[8].desc));
 	sc->sc_sens[8].type = type;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[8]);
-	sc->sc_sens[8].value = sc->sc_bif.bif_capacity * 1000;
+	sc->sc_sens[8].value = sc_bix_bif(capacity) * 1000;
+
+	if (sc->sc_use_bix) {
+		strlcpy(sc->sc_sens[9].desc, "discharge cycles",
+		    sizeof(sc->sc_sens[9].desc));
+		sc->sc_sens[9].type = SENSOR_INTEGER;
+		sensor_attach(&sc->sc_sensdev, &sc->sc_sens[9]);
+		sc->sc_sens[9].value = sc->sc_bix.bix_cycle_count;
+	}
 
 	sensordev_install(&sc->sc_sensdev);
 }
@@ -183,7 +201,7 @@ acpibat_refresh(void *arg)
 	    sc->sc_devnode->name);
 
 	if (!sc->sc_bat_present) {
-		for (i = 0; i < 9; i++) {
+		for (i = 0; i <= 9; i++) {
 			sc->sc_sens[i].value = 0;
 			sc->sc_sens[i].status = SENSOR_S_UNSPEC;
 			sc->sc_sens[i].flags = SENSOR_FINVALID;
@@ -194,26 +212,26 @@ acpibat_refresh(void *arg)
 		return;
 	}
 
-	/* _BIF values are static, sensor 0..3 */
-	if (sc->sc_bif.bif_last_capacity == BIF_UNKNOWN) {
+	/* _BIF/_BIX values are static, sensor 0..3 */
+	if (sc_bix_bif(last_capacity) == BIX_BIF(UNKNOWN)) {
 		sc->sc_sens[0].value = 0;
 		sc->sc_sens[0].status = SENSOR_S_UNKNOWN;
 		sc->sc_sens[0].flags = SENSOR_FUNKNOWN;
 	} else {
-		sc->sc_sens[0].value = sc->sc_bif.bif_last_capacity * 1000;
+		sc->sc_sens[0].value = sc_bix_bif(last_capacity) * 1000;
 		sc->sc_sens[0].status = SENSOR_S_UNSPEC;
 		sc->sc_sens[0].flags = 0;
 	}
-	sc->sc_sens[1].value = sc->sc_bif.bif_warning * 1000;
+	sc->sc_sens[1].value = sc_bix_bif(warning) * 1000;
 	sc->sc_sens[1].flags = 0;
-	sc->sc_sens[2].value = sc->sc_bif.bif_low * 1000;
+	sc->sc_sens[2].value = sc_bix_bif(low) * 1000;
 	sc->sc_sens[2].flags = 0;
-	if (sc->sc_bif.bif_voltage == BIF_UNKNOWN) {
+	if (sc_bix_bif(voltage) == BIX_BIF(UNKNOWN)) {
 		sc->sc_sens[3].value = 0;
 		sc->sc_sens[3].status = SENSOR_S_UNKNOWN;
 		sc->sc_sens[3].flags = SENSOR_FUNKNOWN;
 	} else {
-		sc->sc_sens[3].value = sc->sc_bif.bif_voltage * 1000;
+		sc->sc_sens[3].value = sc_bix_bif(voltage) * 1000;
 		sc->sc_sens[3].status = SENSOR_S_UNSPEC;
 		sc->sc_sens[3].flags = 0;
 	}
@@ -221,13 +239,13 @@ acpibat_refresh(void *arg)
 	/* _BST values are dynamic, sensor 4..7 */
 	sc->sc_sens[4].status = SENSOR_S_OK;
 	sc->sc_sens[4].flags = 0;
-	if (sc->sc_bif.bif_last_capacity == BIF_UNKNOWN ||
+	if (sc_bix_bif(last_capacity) == BIX_BIF(UNKNOWN) ||
 	    sc->sc_bst.bst_capacity == BST_UNKNOWN) {
 		sc->sc_sens[4].status = SENSOR_S_UNKNOWN;
 		sc->sc_sens[4].flags = SENSOR_FUNKNOWN;
 		strlcpy(sc->sc_sens[4].desc, "battery unknown",
 		    sizeof(sc->sc_sens[4].desc));
-	} else if (sc->sc_bst.bst_capacity >= sc->sc_bif.bif_last_capacity)
+	} else if (sc->sc_bst.bst_capacity >= sc_bix_bif(last_capacity))
 		strlcpy(sc->sc_sens[4].desc, "battery full",
 		    sizeof(sc->sc_sens[4].desc));
 	else if (sc->sc_bst.bst_state & BST_DISCHARGE)
@@ -263,10 +281,10 @@ acpibat_refresh(void *arg)
 		sc->sc_sens[6].value = sc->sc_bst.bst_capacity * 1000;
 		sc->sc_sens[6].flags = 0;
 
-		if (sc->sc_bst.bst_capacity < sc->sc_bif.bif_low)
+		if (sc->sc_bst.bst_capacity < sc_bix_bif(low))
 			/* XXX we should shutdown the system */
 			sc->sc_sens[6].status = SENSOR_S_CRIT;
-		else if (sc->sc_bst.bst_capacity < sc->sc_bif.bif_warning)
+		else if (sc->sc_bst.bst_capacity < sc_bix_bif(warning))
 			sc->sc_sens[6].status = SENSOR_S_WARN;
 		else
 			sc->sc_sens[6].status = SENSOR_S_OK;
@@ -282,15 +300,28 @@ acpibat_refresh(void *arg)
 		sc->sc_sens[7].flags = 0;
 	}
 
-	if (sc->sc_bif.bif_capacity == BIF_UNKNOWN) {
+	if (sc_bix_bif(capacity) == BIX_BIF(UNKNOWN)) {
 		sc->sc_sens[8].value = 0;
 		sc->sc_sens[8].status = SENSOR_S_UNKNOWN;
 		sc->sc_sens[8].flags = SENSOR_FUNKNOWN;
 	} else {
-		sc->sc_sens[8].value = sc->sc_bif.bif_capacity * 1000;
+		sc->sc_sens[8].value = sc_bix_bif(capacity) * 1000;
 		sc->sc_sens[8].status = SENSOR_S_UNSPEC;
 		sc->sc_sens[8].flags = 0;
 	}
+
+	if (sc->sc_use_bix) {
+		if (sc_bix_bif(capacity) == BIX_BIF(UNKNOWN)) {
+			sc->sc_sens[9].value = 0;
+			sc->sc_sens[9].status = SENSOR_S_UNKNOWN;
+			sc->sc_sens[9].flags = SENSOR_FUNKNOWN;
+		} else {
+			sc->sc_sens[9].value = sc->sc_bix.bix_cycle_count;
+			sc->sc_sens[9].status = SENSOR_S_UNSPEC;
+			sc->sc_sens[9].flags = 0;
+		}
+	}
+
 	acpi_record_event(sc->sc_acpi, APM_POWER_CHANGE);
 }
 
@@ -351,6 +382,85 @@ acpibat_getbif(struct acpibat_softc *sc)
 	    sc->sc_bif.bif_serial,
 	    sc->sc_bif.bif_type,
 	    sc->sc_bif.bif_oem);
+
+	rv = 0;
+out:
+	aml_freevalue(&res);
+	return (rv);
+}
+
+int
+acpibat_getbix(struct acpibat_softc *sc)
+{
+	struct aml_value	res;
+	int			rv = EINVAL;
+
+	if (!sc->sc_bat_present) {
+		memset(&sc->sc_bix, 0, sizeof(sc->sc_bix));
+		return (0);
+	}
+
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_BIX", 0, NULL, &res)) {
+		dnprintf(10, "%s: no _BIX\n", DEVNAME(sc));
+		goto out;
+	}
+
+	if (res.length != 20) {
+		dnprintf(10, "%s: invalid _BIX (%d != 20)\n", DEVNAME(sc),
+		    res.length);
+		goto out;
+	}
+
+	sc->sc_bix.bix_revision = aml_val2int(res.v_package[0]);
+	sc->sc_bix.bix_power_unit = aml_val2int(res.v_package[1]);
+	sc->sc_bix.bix_capacity = aml_val2int(res.v_package[2]);
+	sc->sc_bix.bix_last_capacity = aml_val2int(res.v_package[3]);
+	sc->sc_bix.bix_technology = aml_val2int(res.v_package[4]);
+	sc->sc_bix.bix_voltage = aml_val2int(res.v_package[5]);
+	sc->sc_bix.bix_warning = aml_val2int(res.v_package[6]);
+	sc->sc_bix.bix_low = aml_val2int(res.v_package[7]);
+	sc->sc_bix.bix_cycle_count = aml_val2int(res.v_package[8]);
+	sc->sc_bix.bix_accuracy = aml_val2int(res.v_package[9]);
+	sc->sc_bix.bix_max_sample = aml_val2int(res.v_package[10]);
+	sc->sc_bix.bix_min_sample = aml_val2int(res.v_package[11]);
+	sc->sc_bix.bix_max_avg = aml_val2int(res.v_package[12]);
+	sc->sc_bix.bix_min_avg = aml_val2int(res.v_package[13]);
+	sc->sc_bix.bix_cap_granu1 = aml_val2int(res.v_package[14]);
+	sc->sc_bix.bix_cap_granu2 = aml_val2int(res.v_package[15]);
+
+	strlcpy(sc->sc_bix.bix_model, aml_val_to_string(res.v_package[16]),
+		sizeof(sc->sc_bix.bix_model));
+	strlcpy(sc->sc_bix.bix_serial, aml_val_to_string(res.v_package[17]),
+		sizeof(sc->sc_bix.bix_serial));
+	strlcpy(sc->sc_bix.bix_type, aml_val_to_string(res.v_package[18]),
+		sizeof(sc->sc_bix.bix_type));
+	strlcpy(sc->sc_bix.bix_oem, aml_val_to_string(res.v_package[19]),
+		sizeof(sc->sc_bix.bix_oem));
+
+	dnprintf(60, "revision: %u power_unit: %u capacity: %u last_cap: %u "
+	    "tech: %u volt: %u warn: %u low: %u cycles: %u accuracy: %u "
+	    "max_sample: %u min_sample: %u max_avg: %u min_avg: %u gran1: %u "
+	    "gran2: %d model: %s serial: %s type: %s oem: %s\n",
+	    sc->sc_bix.bix_revision,
+	    sc->sc_bix.bix_power_unit,
+	    sc->sc_bix.bix_capacity,
+	    sc->sc_bix.bix_last_capacity,
+	    sc->sc_bix.bix_technology,
+	    sc->sc_bix.bix_voltage,
+	    sc->sc_bix.bix_warning,
+	    sc->sc_bix.bix_low,
+	    sc->sc_bix.bix_cycle_count,
+	    sc->sc_bix.bix_accuracy,
+	    sc->sc_bix.bix_max_sample,
+	    sc->sc_bix.bix_min_sample,
+	    sc->sc_bix.bix_max_avg,
+	    sc->sc_bix.bix_min_avg,
+	    sc->sc_bix.bix_cap_granu1,
+	    sc->sc_bix.bix_cap_granu2,
+	    sc->sc_bix.bix_model,
+	    sc->sc_bix.bix_serial,
+	    sc->sc_bix.bix_type,
+	    sc->sc_bix.bix_oem);
 
 	rv = 0;
 out:
@@ -430,7 +540,10 @@ acpibat_notify(struct aml_node *node, int notify_type, void *arg)
 		acpibat_getbst(sc);
 		break;
 	case 0x81:	/* _BIF changed */
-		acpibat_getbif(sc);
+		if (sc->sc_use_bix)
+			acpibat_getbix(sc);
+		else
+			acpibat_getbif(sc);
 		break;
 	default:
 		break;
