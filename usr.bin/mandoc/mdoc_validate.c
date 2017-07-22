@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_validate.c,v 1.263 2017/07/03 17:33:01 schwarze Exp $ */
+/*	$OpenBSD: mdoc_validate.c,v 1.265 2017/07/20 12:53:55 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2017 Ingo Schwarze <schwarze@openbsd.org>
@@ -698,7 +698,7 @@ post_bl_norm(POST_ARGS)
 
 	switch (n->norm->Bl.type) {
 	case LIST_tag:
-		if (NULL == n->norm->Bl.width)
+		if (n->norm->Bl.width == NULL)
 			mandoc_msg(MANDOCERR_BL_NOWIDTH, mdoc->parse,
 			    n->line, n->pos, "Bl -tag");
 		break;
@@ -707,19 +707,20 @@ post_bl_norm(POST_ARGS)
 	case LIST_ohang:
 	case LIST_inset:
 	case LIST_item:
-		if (n->norm->Bl.width)
+		if (n->norm->Bl.width != NULL)
 			mandoc_vmsg(MANDOCERR_BL_SKIPW, mdoc->parse,
 			    wa->line, wa->pos, "Bl -%s",
 			    mdoc_argnames[mdoclt]);
+		n->norm->Bl.width = NULL;
 		break;
 	case LIST_bullet:
 	case LIST_dash:
 	case LIST_hyphen:
-		if (NULL == n->norm->Bl.width)
+		if (n->norm->Bl.width == NULL)
 			n->norm->Bl.width = "2n";
 		break;
 	case LIST_enum:
-		if (NULL == n->norm->Bl.width)
+		if (n->norm->Bl.width == NULL)
 			n->norm->Bl.width = "3n";
 		break;
 	default:
@@ -1407,6 +1408,7 @@ post_xx(POST_ARGS)
 {
 	struct roff_node	*n;
 	const char		*os;
+	char			*v;
 
 	post_delim_nb(mdoc);
 
@@ -1423,6 +1425,20 @@ post_xx(POST_ARGS)
 		break;
 	case MDOC_Nx:
 		os = "NetBSD";
+		if (n->child == NULL)
+			break;
+		v = n->child->string;
+		if ((v[0] != '0' && v[0] != '1') || v[1] != '.' ||
+		    v[2] < '0' || v[2] > '9' ||
+		    v[3] < 'a' || v[3] > 'z' || v[4] != '\0')
+			break;
+		n->child->flags |= NODE_NOPRT;
+		mdoc->next = ROFF_NEXT_CHILD;
+		roff_word_alloc(mdoc, n->child->line, n->child->pos, v);
+		v = mdoc->last->string;
+		v[3] = toupper((unsigned char)v[3]);
+		mdoc->last->flags |= NODE_NOSRC;
+		mdoc->last = n;
 		break;
 	case MDOC_Ox:
 		os = "OpenBSD";

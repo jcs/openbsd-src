@@ -1,4 +1,4 @@
-/*	$OpenBSD: siginfo-fault.c,v 1.4 2017/07/13 00:29:14 bluhm Exp $	*/
+/*	$OpenBSD: siginfo-fault.c,v 1.6 2017/07/22 16:12:27 kettenis Exp $	*/
 /*
  * Copyright (c) 2014 Google Inc.
  *
@@ -24,9 +24,19 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+/*
+ * Some architectures deliver an imprecise fault address.
+ */
+#ifdef __sparc64__
+#define EXPADDR_MASK	~(3UL)
+#else
+#define EXPADDR_MASK	~(0UL)
+#endif
 
 #define CHECK_EQ(a, b) assert((a) == (b))
 #define CHECK_NE(a, b) assert((a) != (b))
@@ -76,6 +86,9 @@ checksig(const char *name, int expsigno, int expcode, volatile char *expaddr)
 {
 	int fail = 0;
 	char str1[NL_TEXTMAX], str2[NL_TEXTMAX];
+
+	expaddr = (char *)((uintptr_t)expaddr & EXPADDR_MASK);
+
 	if (expsigno != gotsigno) {
 		strlcpy(str1, strsignal(expsigno), sizeof(str1));
 		strlcpy(str2, strsignal(gotsigno), sizeof(str2));
@@ -156,7 +169,7 @@ main()
 		p[3] = 1;
 		FAIL();
 	}
-	fail += checksig("mmap file", SIGBUS, BUS_ADRERR, p + 3);
+	fail += checksig("mmap file", SIGBUS, BUS_OBJERR, p + 3);
 
 	return (fail);
 }

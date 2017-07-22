@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_socket.c,v 1.194 2017/07/13 16:19:38 bluhm Exp $	*/
+/*	$OpenBSD: uipc_socket.c,v 1.196 2017/07/20 09:49:45 bluhm Exp $	*/
 /*	$NetBSD: uipc_socket.c,v 1.21 1996/02/04 02:17:52 christos Exp $	*/
 
 /*
@@ -1073,6 +1073,7 @@ sosplice(struct socket *so, int fd, off_t max, struct timeval *tv)
 {
 	struct file	*fp;
 	struct socket	*sosp;
+	struct sosplice	*sp;
 	int		 s, error = 0;
 
 	if (sosplice_taskq == NULL)
@@ -1087,8 +1088,13 @@ sosplice(struct socket *so, int fd, off_t max, struct timeval *tv)
 	if ((so->so_state & (SS_ISCONNECTED|SS_ISCONNECTING)) == 0 &&
 	    (so->so_proto->pr_flags & PR_CONNREQUIRED))
 		return (ENOTCONN);
-	if (so->so_sp == NULL)
-		so->so_sp = pool_get(&sosplice_pool, PR_WAITOK | PR_ZERO);
+	if (so->so_sp == NULL) {
+		sp = pool_get(&sosplice_pool, PR_WAITOK | PR_ZERO);
+		if (so->so_sp == NULL)
+			so->so_sp = sp;
+		else
+			pool_put(&sosplice_pool, sp);
+	}
 
 	/* If no fd is given, unsplice by removing existing link. */
 	if (fd < 0) {
@@ -1116,8 +1122,13 @@ sosplice(struct socket *so, int fd, off_t max, struct timeval *tv)
 	if ((error = getsock(curproc, fd, &fp)) != 0)
 		return (error);
 	sosp = fp->f_data;
-	if (sosp->so_sp == NULL)
-		sosp->so_sp = pool_get(&sosplice_pool, PR_WAITOK | PR_ZERO);
+	if (sosp->so_sp == NULL) {
+		sp = pool_get(&sosplice_pool, PR_WAITOK | PR_ZERO);
+		if (sosp->so_sp == NULL)
+			sosp->so_sp = sp;
+		else
+			pool_put(&sosplice_pool, sp);
+	}
 
 	s = solock(so);
 	/* Lock both receive and send buffer. */
@@ -1965,22 +1976,27 @@ int
 filt_soread(struct knote *kn, long hint)
 {
 	struct socket *so = kn->kn_fp->f_data;
+	int rv;
 
 	kn->kn_data = so->so_rcv.sb_cc;
 #ifdef SOCKET_SPLICE
-	if (isspliced(so))
-		return (0);
+	if (isspliced(so)) {
+		rv = 0;
+	} else
 #endif /* SOCKET_SPLICE */
 	if (so->so_state & SS_CANTRCVMORE) {
 		kn->kn_flags |= EV_EOF;
 		kn->kn_fflags = so->so_error;
-		return (1);
+		rv = 1;
+	} else if (so->so_error) {	/* temporary udp error */
+		rv = 1;
+	} else if (kn->kn_sfflags & NOTE_LOWAT) {
+		rv = (kn->kn_data >= kn->kn_sdata);
+	} else {
+		rv = (kn->kn_data >= so->so_rcv.sb_lowat);
 	}
-	if (so->so_error)	/* temporary udp error */
-		return (1);
-	if (kn->kn_sfflags & NOTE_LOWAT)
-		return (kn->kn_data >= kn->kn_sdata);
-	return (kn->kn_data >= so->so_rcv.sb_lowat);
+
+	return rv;
 }
 
 void

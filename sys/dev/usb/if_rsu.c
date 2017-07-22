@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_rsu.c,v 1.38 2017/03/26 15:31:15 deraadt Exp $	*/
+/*	$OpenBSD: if_rsu.c,v 1.40 2017/07/21 13:15:05 stsp Exp $	*/
 
 /*-
  * Copyright (c) 2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -819,7 +819,9 @@ rsu_newstate_cb(struct rsu_softc *sc, void *arg)
 
 	s = splnet();
 	ostate = ic->ic_state;
-	DPRINTF(("newstate %d -> %d\n", ostate, cmd->state));
+	DPRINTF(("newstate %s -> %s\n",
+	    ieee80211_state_name[ostate],
+	    ieee80211_state_name[cmd->state]));
 
 	if (ostate == IEEE80211_S_RUN) {
 		/* Stop calibration. */
@@ -840,6 +842,7 @@ rsu_newstate_cb(struct rsu_softc *sc, void *arg)
 		splx(s);
 		return;
 	case IEEE80211_S_AUTH:
+		ic->ic_bss->ni_rsn_supp_state = RSNA_SUPP_INITIALIZE;
 		error = rsu_join_bss(sc, ic->ic_bss);
 		if (error != 0) {
 			printf("%s: could not send join command\n",
@@ -849,9 +852,12 @@ rsu_newstate_cb(struct rsu_softc *sc, void *arg)
 			return;
 		}
 		ic->ic_state = cmd->state;
+		if (ic->ic_flags & IEEE80211_F_RSNON)
+			ic->ic_bss->ni_rsn_supp_state = RSNA_SUPP_PTKSTART;
 		splx(s);
 		return;
 	case IEEE80211_S_ASSOC:
+		/* No-op for this driver. See rsu_event_join_bss(). */
 		ic->ic_state = cmd->state;
 		splx(s);
 		return;
@@ -1056,12 +1062,13 @@ rsu_event_survey(struct rsu_softc *sc, uint8_t *buf, int len)
 	struct ieee80211_frame *wh;
 	struct ndis_wlan_bssid_ex *bss;
 	struct mbuf *m;
-	int pktlen;
+	uint32_t pktlen, ieslen;
 
 	if (__predict_false(len < sizeof(*bss)))
 		return;
 	bss = (struct ndis_wlan_bssid_ex *)buf;
-	if (__predict_false(len < sizeof(*bss) + letoh32(bss->ieslen)))
+	ieslen = letoh32(bss->ieslen);
+	if (ieslen > len - sizeof(*bss))
 		return;
 
 	DPRINTFN(2, ("found BSS %s: len=%d chan=%d inframode=%d "
@@ -1071,7 +1078,7 @@ rsu_event_survey(struct rsu_softc *sc, uint8_t *buf, int len)
 	    letoh32(bss->networktype), letoh32(bss->privacy)));
 
 	/* Build a fake beacon frame to let net80211 do all the parsing. */
-	pktlen = sizeof(*wh) + letoh32(bss->ieslen);
+	pktlen = sizeof(*wh) + ieslen;
 	if (__predict_false(pktlen > MCLBYTES))
 		return;
 	MGETHDR(m, M_DONTWAIT, MT_DATA);
@@ -1093,7 +1100,7 @@ rsu_event_survey(struct rsu_softc *sc, uint8_t *buf, int len)
 	IEEE80211_ADDR_COPY(wh->i_addr2, bss->macaddr);
 	IEEE80211_ADDR_COPY(wh->i_addr3, bss->macaddr);
 	*(uint16_t *)wh->i_seq = 0;
-	memcpy(&wh[1], (uint8_t *)&bss[1], letoh32(bss->ieslen));
+	memcpy(&wh[1], (uint8_t *)&bss[1], ieslen);
 
 	/* Finalize mbuf. */
 	m->m_pkthdr.len = m->m_len = pktlen;
@@ -1133,6 +1140,8 @@ rsu_event_join_bss(struct rsu_softc *sc, uint8_t *buf, int len)
 	if (ic->ic_flags & IEEE80211_F_WEPON)
 		ni->ni_flags |= IEEE80211_NODE_TXRXPROT;
 
+	/* Force an ASSOC->RUN transition. AUTH->RUN is invalid. */
+	ic->ic_state = IEEE80211_S_ASSOC;
 	ieee80211_new_state(ic, IEEE80211_S_RUN,
 	    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 }
@@ -1206,6 +1215,8 @@ rsu_rx_multi_event(struct rsu_softc *sc, uint8_t *buf, int len)
 		/* Check that command payload fits. */
 		cmdsz = letoh16(cmd->len);
 		if (__predict_false(len < sizeof(*cmd) + cmdsz))
+			break;
+		if (cmdsz > len)
 			break;
 
 		/* Process firmware event. */
@@ -1333,8 +1344,8 @@ rsu_rx_frame(struct rsu_softc *sc, uint8_t *buf, int pktlen)
 			tap->wr_rate = 0x80 | (rate - 12);
 		}
 		tap->wr_dbm_antsignal = rssi;
-		tap->wr_chan_freq = htole16(ic->ic_ibss_chan->ic_freq);
-		tap->wr_chan_flags = htole16(ic->ic_ibss_chan->ic_flags);
+		tap->wr_chan_freq = htole16(ic->ic_bss->ni_chan->ic_freq);
+		tap->wr_chan_flags = htole16(ic->ic_bss->ni_chan->ic_flags);
 
 		mb.m_data = (caddr_t)tap;
 		mb.m_len = sc->sc_rxtap_len;
@@ -1402,6 +1413,7 @@ rsu_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 	struct rsu_rx_data *data = priv;
 	struct rsu_softc *sc = data->sc;
 	struct r92s_rx_stat *stat;
+	struct ifnet *ifp = &sc->sc_ic.ic_if;
 	int len;
 
 	if (__predict_false(status != USBD_NORMAL_COMPLETION)) {
@@ -1416,8 +1428,15 @@ rsu_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 
 	if (__predict_false(len < sizeof(*stat))) {
 		DPRINTF(("xfer too short %d\n", len));
+		ifp->if_ierrors++;
 		goto resubmit;
 	}
+	if (len > RSU_RXBUFSZ) {
+		DPRINTF(("xfer too large %d\n", len));
+		ifp->if_ierrors++;
+		goto resubmit;
+	}
+		
 	/* Determine if it is a firmware C2H event or an 802.11 frame. */
 	stat = (struct r92s_rx_stat *)data->buf;
 	if ((letoh32(stat->rxdw1) & 0x1ff) == 0x1ff)

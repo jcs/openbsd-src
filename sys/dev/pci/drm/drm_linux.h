@@ -1,4 +1,4 @@
-/*	$OpenBSD: drm_linux.h,v 1.56 2017/07/14 11:18:04 kettenis Exp $	*/
+/*	$OpenBSD: drm_linux.h,v 1.58 2017/07/22 14:33:45 kettenis Exp $	*/
 /*
  * Copyright (c) 2013, 2014, 2015 Mark Kettenis
  *
@@ -40,6 +40,7 @@
 
 #include <dev/pci/drm/linux_types.h>
 #include <dev/pci/drm/drm_linux_atomic.h>
+#include <dev/pci/drm/drm_linux_list.h>
 
 /* The Linux code doesn't meet our usual standards! */
 #ifdef __clang__
@@ -202,16 +203,42 @@ bitmap_weight(void *p, u_int n)
 	return sum;
 }
 
-#define DECLARE_HASHTABLE(x, y) struct hlist_head x;
+#define DECLARE_HASHTABLE(name, bits) struct hlist_head name[1 << (bits)]
 
-#define hash_init(x)		INIT_HLIST_HEAD(&(x))
-#define hash_add(x, y, z)	hlist_add_head(y, &(x))
-#define hash_del(x)		hlist_del_init(x)
-#define hash_empty(x)		hlist_empty(&(x))
-#define hash_for_each_possible(a, b, c, d) \
-	hlist_for_each_entry(b, &(a), c)
-#define hash_for_each_safe(a, b, c, d, e) (void)(b); \
-	hlist_for_each_entry_safe(d, c, &(a), e)
+static inline void
+__hash_init(struct hlist_head *table, u_int size)
+{
+	u_int i;
+
+	for (i = 0; i < size; i++)
+		INIT_HLIST_HEAD(&table[i]);
+}
+
+static inline bool
+__hash_empty(struct hlist_head *table, u_int size)
+{
+	u_int i;
+
+	for (i = 0; i < size; i++) {
+		if (!hlist_empty(&table[i]))
+			return false;
+	}
+
+	return true;
+}
+
+#define __hash(table, key)	&table[key % (nitems(table) - 1)]
+
+#define hash_init(table)	__hash_init(table, nitems(table))
+#define hash_add(table, node, key) \
+	hlist_add_head(node, __hash(table, key))
+#define hash_del(node)		hlist_del_init(node)
+#define hash_empty(table)	__hash_empty(table, nitems(table))
+#define hash_for_each_possible(table, obj, member, key) \
+	hlist_for_each_entry(obj, __hash(table, key), member)
+#define hash_for_each_safe(table, i, tmp, obj, member) 	\
+	for (i = 0; i < nitems(table); i++)		\
+	       hlist_for_each_entry_safe(obj, tmp, &table[i], member)
 
 #define ACCESS_ONCE(x)		(x)
 
@@ -812,8 +839,7 @@ timespec_sub(struct timespec t1, struct timespec t2)
 
 #define time_in_range(x, min, max) ((x) >= (min) && (x) <= (max))
 
-extern int ticks;
-#define jiffies ticks
+extern volatile unsigned long jiffies;
 #undef HZ
 #define HZ	hz
 
@@ -831,10 +857,10 @@ round_jiffies_up_relative(unsigned long j)
 	return roundup(j, hz);
 }
 
-#define jiffies_to_msecs(x)	(((int64_t)(x)) * 1000 / hz)
-#define jiffies_to_usecs(x)	(((int64_t)(x)) * 1000000 / hz)
-#define msecs_to_jiffies(x)	(((int64_t)(x)) * hz / 1000)
-#define nsecs_to_jiffies64(x)	(((int64_t)(x)) * hz / 1000000000)
+#define jiffies_to_msecs(x)	(((uint64_t)(x)) * 1000 / hz)
+#define jiffies_to_usecs(x)	(((uint64_t)(x)) * 1000000 / hz)
+#define msecs_to_jiffies(x)	(((uint64_t)(x)) * hz / 1000)
+#define nsecs_to_jiffies64(x)	(((uint64_t)(x)) * hz / 1000000000)
 #define get_jiffies_64()	jiffies
 #define time_after(a,b)		((long)(b) - (long)(a) < 0)
 #define time_after_eq(a,b)	((long)(b) - (long)(a) <= 0)
@@ -859,7 +885,7 @@ timespec_to_ns(const struct timespec *ts)
 	return ((ts->tv_sec * NSEC_PER_SEC) + ts->tv_nsec);
 }
 
-static inline int
+static inline unsigned long
 timespec_to_jiffies(const struct timespec *ts)
 {
 	long long to_ticks;

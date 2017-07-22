@@ -1,5 +1,7 @@
 #!/bin/sh
 #
+# $OpenBSD: vi.sh,v 1.5 2017/07/22 13:50:54 anton Exp $
+#
 # Copyright (c) 2016 Ingo Schwarze <schwarze@openbsd.org>
 # Copyright (c) 2017 Anton Lindqvist <anton@openbsd.org>
 #
@@ -14,8 +16,6 @@
 # WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
-set -e
 
 . "${1:-.}/subr.sh"
 

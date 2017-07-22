@@ -1,4 +1,4 @@
-/*	$OpenBSD: time.c,v 1.22 2017/07/13 06:39:54 tedu Exp $	*/
+/*	$OpenBSD: time.c,v 1.24 2017/07/22 17:01:09 schwarze Exp $	*/
 /*	$NetBSD: time.c,v 1.7 1995/06/27 00:34:00 jtc Exp $	*/
 
 /*
@@ -42,22 +42,20 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-int lflag;
-int portableflag;
-
 __dead void usage(void);
 
 int
 main(int argc, char *argv[])
 {
-	pid_t pid;
-	int ch, status;
-	struct timespec before, after, during;
 	struct rusage ru;
-	int exitonsig = 0;
+	struct timespec before, after, during;
+	int ch, exitonsig, lflag, portableflag, status;
+	pid_t pid;
 
 	if (pledge("stdio proc exec", NULL) == -1)
 		err(1, "pledge");
+
+	exitonsig = lflag = portableflag = 0;
 
 	while ((ch = getopt(argc, argv, "lp")) != -1) {
 		switch(ch) {
@@ -93,8 +91,8 @@ main(int argc, char *argv[])
 	}
 
 	/* parent */
-	(void)signal(SIGINT, SIG_IGN);
-	(void)signal(SIGQUIT, SIG_IGN);
+	signal(SIGINT, SIG_IGN);
+	signal(SIGQUIT, SIG_IGN);
 	while (wait3(&status, 0, &ru) != pid)
 		;
 	clock_gettime(CLOCK_MONOTONIC, &after);
@@ -180,9 +178,7 @@ main(int argc, char *argv[])
 __dead void
 usage(void)
 {
-	extern char *__progname;
-
-	(void)fprintf(stderr, "usage: %s [-lp] utility [argument ...]\n",
-	    __progname);
+	fprintf(stderr, "usage: %s [-lp] utility [argument ...]\n",
+	    getprogname());
 	exit(1);
 }

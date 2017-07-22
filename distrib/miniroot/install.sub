@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1020 2017/07/07 16:21:34 tb Exp $
+#	$OpenBSD: install.sub,v 1.1029 2017/07/21 20:35:59 rpe Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -197,7 +197,7 @@ show_cols() {
 # Echo file $1 to stdout. Skip comment lines and delete everything
 # after the first '#' from other lines. Strip leading and trailing
 # whitespace if IFS is set.
-stripcom () {
+stripcom() {
 	local _file=$1 _line
 
 	[[ -f $_file ]] || return
@@ -248,7 +248,7 @@ __EOT
 # field provided as parameters and return the value of the first field found.
 #
 # Note that strings are unescaped but not unvis()'d.
-lease_value () {
+lease_value() {
 	local _lf=$1 _o
 
 	shift
@@ -305,12 +305,12 @@ scan_disknames() {
 }
 
 # Return disk devices found in hw.disknames.
-get_dkdevs () {
+get_dkdevs() {
 	echo $(scan_disknames "${MDDKDEVS:-/^[sw]d[0-9][0-9]* /s/ .*//p}")
 }
 
 # Return CDROM devices found in hw.disknames.
-get_cddevs () {
+get_cddevs() {
 	echo $(scan_disknames "${MDCDDEVS:-/^cd[0-9][0-9]* /s/ .*//p}")
 }
 
@@ -567,8 +567,8 @@ log_answers() {
 
 # Fetch response file for autoinstall.
 get_responsefile() {
-	local _rf _if _lf _hn _path _aifile
-	export AI_MAC= AI_MODE= AI_SERVER=
+	local _rf _if _lf _path _aifile
+	export AI_HOSTNAME= AI_MAC= AI_MODE= AI_SERVER=
 
 	[[ -f /auto_upgrade.conf ]] && _rf=/auto_upgrade.conf AI_MODE=upgrade
 	[[ -f /auto_install.conf ]] && _rf=/auto_install.conf AI_MODE=install
@@ -606,8 +606,8 @@ get_responsefile() {
 			server-name tftp-server-name next-server)
 
 		# Prime hostname with host-name option from lease file.
-		_hn=$(lease_value $_lf host-name)
-		hostname "$_hn"
+		AI_HOSTNAME=$(lease_value $_lf host-name)
+		hostname "$AI_HOSTNAME"
 	done
 
 	# Fetch response file if server and mode are known, otherwise tell which
@@ -615,7 +615,7 @@ get_responsefile() {
 	# and finally mode.conf.
 	if [[ -n $AI_SERVER && -n $AI_MODE ]]; then
 		AI_MAC=$(ifconfig $_if | sed 's/.*lladdr \(.*\)/\1/p;d')
-		for _rf in {$AI_MAC-,${_hn:+$_hn-,}}$AI_MODE; do
+		for _rf in {$AI_MAC-,${AI_HOSTNAME:+$AI_HOSTNAME-,}}$AI_MODE; do
 			_url="http://$AI_SERVER/$_path$_rf.conf?path=$HTTP_SETDIR"
 			echo "Fetching $_url"
 			if unpriv ftp -Vo - "$_url" \
@@ -654,7 +654,7 @@ get_responsefile() {
 	return 1
 }
 
-# Search question in $RESPFILE, return answer in $resp.
+# Search question in $AI_RESPFILE, return answer in $resp.
 #
 # 1) split question and answer at leftmost =
 # 2) strip leading/trailing blanks
@@ -672,7 +672,7 @@ _autorespond() {
 	typeset -l _q=$1 _key
 	local _def=$2 _l _val
 
-	[[ -f $RESPFILE ]] || return
+	[[ -f $AI_RESPFILE ]] || return
 
 	# Find a suitable response in /tmp/ai/ai.conf and remove it if found.
 	mv /tmp/ai/ai.conf /tmp/ai/ai.conf.tmp
@@ -804,7 +804,7 @@ ask_which() {
 			break
 		fi
 		echo "'$resp' is not a valid choice."
-		$AUTO && [[ -n $RESPFILE ]] && exit 1
+		$AUTO && [[ -n $AI_RESPFILE ]] && exit 1
 	done
 }
 
@@ -896,13 +896,16 @@ __EOT
 }
 
 # Obtain and output the inet information related to interface $1.
-# Should output '<UP/DOWN> <addr> <netmask> <rest of inet line>'.
+# Outputs one of:
+# DOWN
+# UP
+# UP\n<addr> <netmask> <rest of inet line>[\n<more inet lines>]
 v4_info() {
 	ifconfig $1 inet | sed -n '
 		1s/.*<UP,.*/UP/p
 		1s/.*<.*/DOWN/p
-		/inet/s/netmask//
-		/inet/s///p'
+		/inet/s/netmask //
+		/.inet /s///p'
 }
 
 # Convert a netmask in hex format ($1) to dotted decimal format.
@@ -929,6 +932,78 @@ add_hostent() {
 		/tmp/i/hosts 2>/dev/null
 
 	echo "$_addr $_name" >>/tmp/i/hosts
+}
+
+# Configure VLAN interface.
+#
+# Parameters:
+#
+# $1 = name of the network device
+#
+vlan_config() {
+	local _if=$1 _hn=/tmp/i/hostname.$1 _hn_vd _vd _vdvi _vdvi_used _vi
+	local _sed_vdvi='s/.encap: vnetid ([[:alnum:]]+) parent ([[:alnum:]]+)/\2:\1/p'
+
+	# Use existing parent device and vnetid for this interface as default in
+	# case of a restart.
+	_vdvi=$(ifconfig $_if 2>/dev/null | sed -En "$_sed_vdvi")
+	_vd=${_vdvi%%:*}
+	_vi=${_vdvi##*:}
+
+	# Use the vlan interface minor as the default vnetid. If it's 0, set it
+	# to 'none' which equals to the default vlan.
+	if [[ $_vi == @(|none) ]]; then
+		((${_if##vlan} == 0)) && _vi=none || _vi=${_if##vlan}
+	fi
+
+	# Use the first non vlan interface as the default parent.
+	if [[ $_vd == @(|none) ]]; then
+		_vd=$(get_ifs | sed '/^vlan/d' | sed q)
+	fi
+
+	ask "Which interface:tag should $_if be on?" "$_vd:$_vi"
+	_vd=${resp%%:*}
+	_vi=${resp##*:}
+
+	# Ensure that the given parent is an existing (non vlan) interface.
+	if ! isin "$_vd" $(get_ifs | sed '/^vlan/d'); then
+		echo "Invalid parent interface choice '$_vd'."
+		return 1
+	fi
+
+	# Get a list of parent:vnetid tuples of all configured vlan interfaces.
+	_vdvi_used=$(ifconfig vlan 2>/dev/null | sed -En "$_sed_vdvi")
+
+	# Ensure that the given vnetid is not already configured on the given
+	# parent interface.
+	for _vdvi in $_vdvi_used; do
+		if [[ $_vdvi == $_vd:* && ${_vdvi##*:} == $_vi ]]; then
+			echo "vlan tag '$_vi' already used on parent '$_vd'"
+			return 1
+		fi
+	done
+
+	# Further ensure that the given vnetid is 'none', or within 1-4095.
+	if [[ $_vi == none ]]; then
+		_vi="-vnetid"
+	elif (($_vi > 0 && $_vi < 4096)); then
+		_vi="vnetid $_vi"
+	else
+		echo "Invalid vlan tag '$_vi'."
+		return 1
+	fi
+
+	# Write the config to the hostname.if files and set proper permissions.
+	_hn_vd=/tmp/i/hostname.$_vd
+	grep -qs "^up" $_hn_vd || echo up >>$_hn_vd
+	echo "$_vi parent $_vd" >>$_hn
+	chmod 640 $_hn_vd $_hn
+
+	# Bring up the parent interface and configure the vlan interface.
+	ifconfig $_vd up
+	ifconfig $_if destroy >/dev/null 2>&1
+	ifconfig $_if create >/dev/null 2>&1
+	ifconfig $_if $_vi parent $_vd
 }
 
 # Configure IPv4 interface.
@@ -981,14 +1056,17 @@ v4_config() {
 }
 
 # Obtain and output the inet6 information related to interface $1.
-# Should output '<UP/DOWN> <addr> <prefixlen> <rest of inet line> '.
+# Outputs one of:
+# DOWN
+# UP
+# UP\n<addr> <prefixlen> <rest of inet6 line>[\n<more inet6 lines>]
 v6_info() {
 	ifconfig $1 inet6 | sed -n '
 		1s/.*<UP,.*/UP/p
 		1s/.*<.*/DOWN/p
 		/scopeid/d
-		/inet6/s/prefixlen//
-		/inet6/s///p'
+		/inet6/s/prefixlen //
+		/.inet6 /s///p'
 }
 
 # Set up IPv6 default route on interface $1.
@@ -998,8 +1076,7 @@ v6_defroute() {
 	route -n show -inet6 | egrep -q '^default[[:space:]]' && return
 
 	_routers=$(bsort $(ping6 -n -c 2 ff02::2%$_if 2>/dev/null |
-		sed -n '/bytes from/{s/^.*from //;s/,.*$//;p;}' |
-		sed -n 'G;s/\n/&&/;/^\(.*\n\).*\n\1/d;h;P'))
+		sed -En '/^[0-9]+ bytes from /{s///;s/: .*$//p;}'))
 
 	_prompt="IPv6 default router?"
 
@@ -1131,17 +1208,7 @@ ieee80211_config() {
 
 # Set up IPv4 and IPv6 interface configuration.
 configure_ifs() {
-	local _first _ifs _if _name _hn _vl=0 _vd _vi _p _tags
-
-	# In case of restart, discover last vlan configured.
-	while :; do
-		_vd=$(ifconfig vlan$_vl 2>&1)
-		[[ $_vd == @(*no such interface*) ]] && break
-		[[ $_vd == @(*vlan: +([[:digit:]]) parent interface:*) ]] ||
-			break
-		((_vl++))
-	done
-	_vd=
+	local _first _hn _if _name _p _vi
 
 	# Always need lo0 configured.
 	ifconfig lo0 inet 127.0.0.1/8
@@ -1150,11 +1217,13 @@ configure_ifs() {
 	rm -f /tmp/i/mygate
 
 	while :; do
-		# Create new vlan if possible.
-		ifconfig vlan$_vl create >/dev/null 2>&1
+		# Discover last configured vlan interface and increment it's
+		# minor for the next offered vlan interface.
+		_vi=$(get_ifs vlan | sed '$!d;s/^vlan//')
+		[[ -n $_vi ]] && ((_vi++))
 
 		ask_which "network interface" "do you wish to configure" \
-			'$(get_ifs)' \
+			"\$(get_ifs) vlan${_vi:-0}" \
 			${_p:-'$( (get_ifs netboot; get_ifs) | sed q )'}
 		[[ $resp == done ]] && break
 
@@ -1165,57 +1234,7 @@ configure_ifs() {
 		# If the offered vlan is chosen, ask the relevant
 		# questions and bring it up.
 		if [[ $_if == vlan+([0-9]) ]]; then
-			# Get existing tag for this vlan.
-			_vi=$(ifconfig $_if 2>/dev/null |
-				sed -n 's/vlan: \([0-9]*\).*/\1/p')
-			# Get list of all in-use tags.
-			_tags=$(ifconfig vlan 2>/dev/null |
-				sed -n 's/vlan: \([0-9]*\).*/\1/p')
-			# Current tag is a valid tag for this vlan.
-			[[ -n $_tags ]] && _tags=$(rmel "$_vi" $_tags)
-			if [[ -z $_vi ]]; then
-				_vi=0
-				while ((++_vi < 4096)); do
-					! isin "$_vi" $_tags && break
-				done
-			fi
-			_ifs=$(get_ifs)
-			set -- $_ifs
-			while [[ $1 == vlan+([0-9]) ]]; do
-				shift
-			done
-			ask "Which interface:tag should $_if be on?" \
-				"${_vd:=$1}:$_vi"
-			_vd=${resp%%:*}
-			_vi=${resp##*:}
-
-			# Validate that $_vd is a real interface.
-			if ! (isin "$_vd" $_ifs &&
-				[[ $_vd != vlan+([0-9]) ]]); then
-				echo "Invalid interface choice '$_vd'"
-				_vd=
-				continue
-			fi
-
-			# Validate range of $_vi as 1-4095, and $_vi not in use.
-			if ((_vi < 1 || _vi > 4095)) || isin "$_vi" $_tags; then
-				echo "Invalid or in-use vlan tag '$_vi'"
-				continue
-			fi
-
-			# hostname.$_vd must say something, anything, to
-			# make sure it is up.
-			grep -qs "^up" /tmp/i/hostname.$_vd ||
-				echo "up" >>/tmp/i/hostname.$_vd
-			chmod 640 /tmp/i/hostname.$_vd
-			ifconfig $_vd up
-
-			# Make sure a hostname.$_if is created with this info.
-			ifconfig $_if destroy >/dev/null 2>&1
-			ifconfig $_if vlan $_vi vlandev $_vd
-			echo "vlan $_vi vlandev $_vd" >>$_hn
-			# Create a new vlan if we just configured the highest.
-			[[ ${_if##vlan} == $_vl ]] && ((_vl++))
+			vlan_config $_if || continue
 		fi
 
 		# Test if it is an 802.11 interface.
@@ -2213,8 +2232,8 @@ parse_hn_line() {
 
 # Start interface using the on-disk hostname.if file passed as argument $1.
 # Much of this is gratuitously stolen from /etc/netstart.
-ifstart () {
-	local _hn=$1 _if=${1#/mnt/etc/hostname.} _cmds _i=0 _line
+ifstart() {
+	local _if=$1 _hn=/mnt/etc/hostname.$1 _cmds _i=0 _line
 	set -A _cmds
 
 	((NIFS++))
@@ -2262,19 +2281,19 @@ enable_network() {
 		if isin "${_if%%+([0-9])}" $(ifconfig -C); then
 			# Dynamic interfaces must be done later.
 			case ${_if%%+([0-9])} in
-			trunk)	_trunks="$_trunks $_hn";;
-			svlan)	_svlans="$_svlans $_hn";;
-			vlan)	_vlans="$_vlans $_hn";;
+			trunk)	_trunks="$_trunks $_if";;
+			svlan)	_svlans="$_svlans $_if";;
+			vlan)	_vlans="$_vlans $_if";;
 			esac
 		else
 			# 'Real' interfaces (if available) are done now.
-			ifconfig $_if >/dev/null 2>&1 && ifstart $_hn
+			ifconfig $_if >/dev/null 2>&1 && ifstart $_if
 		fi
 	done
 	# Configure any dynamic interfaces now that 'real' ones are up.
 	# ORDER IS IMPORTANT! (see /etc/netstart).
 	for _hn in $_trunks $_svlans $_vlans; do
-		ifstart $_hn
+		ifstart $_if
 	done
 
 	# /mnt/etc/mygate, if it exists, contains the address(es) of my
@@ -2620,8 +2639,6 @@ finish_up() {
 		)
 	fi
 
-	[[ -x /mnt/$MODE.site ]] && chroot /mnt /$MODE.site
-
 	# In case this is a softraid device, make sure all underlying
 	# device nodes exist before installing boot-blocks on disk.
 	make_dev $(bioctl $ROOTDISK 2>/dev/null | sed -n 's/.*<\(.*\)>$/\1/p')
@@ -2661,6 +2678,8 @@ finish_up() {
 
 	# Email installer questions and their answers to root on next boot.
 	prep_root_mail /tmp/i/$MODE.resp "$(hostname) $MODE response file"
+
+	[[ -x /mnt/$MODE.site ]] && chroot /mnt /$MODE.site
 
 	# Store entropy for the next boot.
 	store_random
@@ -2985,6 +3004,8 @@ do_upgrade() {
 		[[ -f $_f ]] || { echo "No $_f!"; exit; }
 		cp $_f /tmp/i/${_f##*/}
 	done
+
+	# Set system hostname and register hostname specific site set.
 	hostname $(stripcom /tmp/i/myname)
 	THESETS="$THESETS site$VERSION-$(hostname -s).tgz"
 
@@ -3029,11 +3050,11 @@ do_upgrade() {
 AUTO=false
 MODE=
 PROGNAME=${0##*/}
-RESPFILE=
+AI_RESPFILE=
 while getopts "af:m:" opt; do
 	case $opt in
 	a)	AUTO=true;;
-	f)	RESPFILE=$OPTARG;;
+	f)	AI_RESPFILE=$OPTARG;;
 	m)	MODE=$OPTARG;;
 	*)	usage;;
 	esac
@@ -3158,13 +3179,13 @@ pressing RETURN.  You can exit this program at any time by pressing
 Control-C, but this can leave your system in an inconsistent state.
 
 __EOT
-elif [[ -z $RESPFILE ]]; then
+elif [[ -z $AI_RESPFILE ]]; then
 	get_responsefile ||
 		err_exit "No response file found; non-interactive mode aborted."
 
 	do_autoinstall
 else
-	cp $RESPFILE /tmp/ai/ai.conf || exit
+	cp $AI_RESPFILE /tmp/ai/ai.conf || exit
 fi
 
 # Configure the terminal and keyboard.

@@ -1,4 +1,4 @@
-/* $OpenBSD: wsdisplay.c,v 1.126 2017/01/11 08:21:33 fcambus Exp $ */
+/* $OpenBSD: wsdisplay.c,v 1.129 2017/07/19 20:12:54 kettenis Exp $ */
 /* $NetBSD: wsdisplay.c,v 1.82 2005/02/27 00:27:52 perry Exp $ */
 
 /*
@@ -1305,6 +1305,10 @@ wsdisplay_cfg_ioctl(struct wsdisplay_softc *sc, u_long cmd, caddr_t data,
 #define d ((struct wsdisplay_font *)data)
 		if (!sc->sc_accessops->load_font)
 			return (EINVAL);
+		if (d->fontheight > 64 || d->stride > 8) /* 64x64 pixels */
+			return (EINVAL);
+		if (d->numchars > 65536) /* unicode plane */
+			return (EINVAL);
 		fontsz = d->fontheight * d->stride * d->numchars;
 		if (fontsz > WSDISPLAY_MAXFONTSZ)
 			return (EINVAL);
@@ -2129,6 +2133,30 @@ wsdisplay_switchtoconsole(void)
 			return;
 		(*sc->sc_accessops->show_screen)(sc->sc_accesscookie,
 		    scr->scr_dconf->emulcookie, 0, NULL, NULL);
+	}
+}
+
+/*
+ * Switch rhe console display to its ddb screen, avoiding locking
+ * where we can.
+ */
+void
+wsdisplay_enter_ddb(void)
+{
+	struct wsdisplay_softc *sc;
+	struct wsscreen *scr;
+
+	if (wsdisplay_console_device != NULL && cn_tab == &wsdisplay_cons) {
+		sc = wsdisplay_console_device;
+		if ((scr = sc->sc_scr[0]) == NULL)
+			return;
+		if (sc->sc_accessops->enter_ddb) {
+			(*sc->sc_accessops->enter_ddb)(sc->sc_accesscookie,
+			    scr->scr_dconf->emulcookie);
+		} else {
+			(*sc->sc_accessops->show_screen)(sc->sc_accesscookie,
+			    scr->scr_dconf->emulcookie, 0, NULL, NULL);
+		}
 	}
 }
 

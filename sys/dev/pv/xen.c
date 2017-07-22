@@ -1,4 +1,4 @@
-/*	$OpenBSD: xen.c,v 1.84 2017/07/14 20:08:46 mikeb Exp $	*/
+/*	$OpenBSD: xen.c,v 1.89 2017/07/21 20:00:47 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2015, 2016, 2017 Mike Belopuhov
@@ -152,6 +152,7 @@ xen_attach(struct device *parent, struct device *self, void *aux)
 	struct xen_softc *sc = (struct xen_softc *)self;
 
 	sc->sc_base = hv->hv_base;
+	sc->sc_dmat = pva->pva_dmat;
 
 	if (xen_init_hypercall(sc))
 		return;
@@ -652,8 +653,7 @@ xen_intr_unmask_release(struct xen_softc *sc, struct xen_intsrc *xi)
 		return (0);
 	eu.port = xi->xi_port;
 	xen_intsrc_release(sc, xi);
-	return (xen_evtchn_hypercall(sc, EVTCHNOP_unmask, &eu,
-	    sizeof(eu)));
+	return (xen_evtchn_hypercall(sc, EVTCHNOP_unmask, &eu, sizeof(eu)));
 }
 
 void
@@ -1179,6 +1179,11 @@ xen_grant_table_enter(struct xen_softc *sc, grant_ref_t ref, paddr_t pa,
 	}
 #endif
 	ref -= ge->ge_start;
+	if (ge->ge_table[ref].flags != GTF_invalid) {
+		panic("reference %u is still in use, flags %#x frame %#x",
+		    ref + ge->ge_start, ge->ge_table[ref].flags,
+		    ge->ge_table[ref].frame);
+	}
 	ge->ge_table[ref].frame = atop(pa);
 	ge->ge_table[ref].domid = domain;
 	virtio_membar_sync();
@@ -1213,11 +1218,12 @@ xen_grant_table_remove(struct xen_softc *sc, grant_ref_t ref)
 	    (ge->ge_table[ref].domid << 16);
 	loop = 0;
 	while (atomic_cas_uint(ptr, flags, GTF_invalid) != flags) {
-		if (loop++ > 1000) {
-			printf("%s: grant table reference %u is held "
-			    "by domain %d\n", sc->sc_dev.dv_xname, ref +
-			    ge->ge_start, ge->ge_table[ref].domid);
-			return;
+		if (loop++ > 10) {
+			panic("%s: grant table reference %u is held "
+			    "by domain %d: frame %#x flags %#x\n",
+			    sc->sc_dev.dv_xname, ref + ge->ge_start,
+			    ge->ge_table[ref].domid, ge->ge_table[ref].frame,
+			    ge->ge_table[ref].flags);
 		}
 #if (defined(__amd64__) || defined(__i386__))
 		__asm volatile("pause": : : "memory");
@@ -1238,15 +1244,15 @@ xen_bus_dmamap_create(bus_dma_tag_t t, bus_size_t size, int nsegments,
 		return (EINVAL);
 
 	/* Allocate a dma map structure */
-	error = _bus_dmamap_create(t, size, nsegments, maxsegsz, boundary,
-	    flags, dmamp);
+	error = bus_dmamap_create(sc->sc_dmat, size, nsegments, maxsegsz,
+	    boundary, flags, dmamp);
 	if (error)
 		return (error);
 	/* Allocate an array of grant table pa<->ref maps */
 	gm = mallocarray(nsegments, sizeof(struct xen_gntmap), M_DEVBUF,
 	    M_ZERO | ((flags & BUS_DMA_NOWAIT) ? M_NOWAIT : M_WAITOK));
 	if (gm == NULL) {
-		_bus_dmamap_destroy(t, *dmamp);
+		bus_dmamap_destroy(sc->sc_dmat, *dmamp);
 		*dmamp = NULL;
 		return (ENOMEM);
 	}
@@ -1277,7 +1283,7 @@ xen_bus_dmamap_destroy(bus_dma_tag_t t, bus_dmamap_t map)
 		xen_grant_table_free(sc, gm[i].gm_ref);
 	}
 	free(gm, M_DEVBUF, map->_dm_segcnt * sizeof(struct xen_gntmap));
-	_bus_dmamap_destroy(t, map);
+	bus_dmamap_destroy(sc->sc_dmat, map);
 }
 
 int
@@ -1290,7 +1296,7 @@ xen_bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *buf,
 
 	domain = flags >> 16;
 	flags &= 0xffff;
-	error = _bus_dmamap_load(t, map, buf, buflen, p, flags);
+	error = bus_dmamap_load(sc->sc_dmat, map, buf, buflen, p, flags);
 	if (error)
 		return (error);
 	for (i = 0; i < map->dm_nsegs; i++) {
@@ -1312,7 +1318,7 @@ xen_bus_dmamap_load_mbuf(bus_dma_tag_t t, bus_dmamap_t map, struct mbuf *m0,
 
 	domain = flags >> 16;
 	flags &= 0xffff;
-	error = _bus_dmamap_load_mbuf(t, map, m0, flags);
+	error = bus_dmamap_load_mbuf(sc->sc_dmat, map, m0, flags);
 	if (error)
 		return (error);
 	for (i = 0; i < map->dm_nsegs; i++) {
@@ -1338,7 +1344,7 @@ xen_bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
 		map->dm_segs[i].ds_addr = gm[i].gm_paddr;
 		gm[i].gm_paddr = 0;
 	}
-	_bus_dmamap_unload(t, map);
+	bus_dmamap_unload(sc->sc_dmat, map);
 }
 
 void

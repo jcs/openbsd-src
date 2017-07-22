@@ -1,4 +1,4 @@
-/*	$OpenBSD: newsyslog.c,v 1.102 2017/03/16 10:32:01 bluhm Exp $	*/
+/*	$OpenBSD: newsyslog.c,v 1.107 2017/07/22 17:06:40 jca Exp $	*/
 
 /*
  * Copyright (c) 1999, 2002, 2003 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -79,6 +79,7 @@
 #define SENDMAIL "/usr/sbin/sendmail"
 
 #include <sys/param.h>	/* DEV_BSIZE */
+#include <sys/queue.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -126,8 +127,9 @@ struct conf_entry {
 	char	*whom;		/* Whom to notify if logfile changes */
 	char	*pidfile;	/* Path to file containing pid to signal */
 	char	*runcmd;	/* Command to run instead of sending a signal */
-	struct conf_entry *next; /* Linked list pointer */
+	TAILQ_ENTRY(conf_entry) next;
 };
+TAILQ_HEAD(entrylist, conf_entry);
 
 struct pidinfo {
 	char	*file;
@@ -158,8 +160,7 @@ int	movefile(char *, char *, uid_t, gid_t, mode_t);
 int	stat_suffix(char *, size_t, char *, struct stat *,
 	    int (*)(const char *, struct stat *));
 off_t	sizefile(struct stat *);
-struct conf_entry *
-	parse_file(int *);
+int	parse_file(struct entrylist *, int *);
 time_t	parse8601(char *);
 time_t	parseDWM(char *);
 void	child_killer(int);
@@ -175,11 +176,12 @@ void	usage(void);
 int
 main(int argc, char **argv)
 {
-	struct conf_entry *p, *q, *x, *y;
+	struct entrylist config, runlist;
+	struct conf_entry *p, *q, *tmp;
 	struct pidinfo *pidlist, *pl;
-	int status, listlen;
+	int status, listlen, ret;
 	char **av;
-	
+
 	parse_args(argc, argv);
 	argc -= optind;
 	argv += optind;
@@ -187,44 +189,43 @@ main(int argc, char **argv)
 	if (needroot && getuid() && geteuid())
 		errx(1, "You must be root.");
 
-	p = parse_file(&listlen);
-	if (argc > 0) {
+	TAILQ_INIT(&config);
+	TAILQ_INIT(&runlist);
+
+	ret = parse_file(&config, &listlen);
+	if (argc == 0)
+		TAILQ_CONCAT(&runlist, &config, next);
+	else {
 		/* Only rotate specified files. */
-		x = y = NULL;
 		listlen = 0;
 		for (av = argv; *av; av++) {
-			for (q = p; q; q = q->next)
+			TAILQ_FOREACH_SAFE(q, &config, next, tmp)
 				if (strcmp(*av, q->log) == 0) {
-					if (x == NULL)
-						x = y = q;
-					else {
-						y->next = q;
-						y = q;
-					}
+					TAILQ_REMOVE(&config, q, next);
+					TAILQ_INSERT_TAIL(&runlist, q, next);
 					listlen++;
 					break;
 				}
 			if (q == NULL)
 				warnx("%s: %s not found", conf, *av);
 		}
-		if (x == NULL)
+		if (TAILQ_EMPTY(&runlist))
 			errx(1, "%s: no specified log files", conf);
-		y->next = NULL;
-		p = x;
 	}
 
 	pidlist = calloc(listlen + 1, sizeof(struct pidinfo));
 	if (pidlist == NULL)
-		err(1, "calloc");
+		err(1, NULL);
 
 	signal(SIGCHLD, child_killer);
 
 	/* Step 1, rotate all log files */
-	for (q = p; q; q = q->next)
+	TAILQ_FOREACH(q, &runlist, next)
 		do_entry(q);
 
 	/* Step 2, make a list of unique pid files */
-	for (q = p, pl = pidlist; q; ) {
+	pl = pidlist;
+	TAILQ_FOREACH(q, &runlist, next) {
 		if (q->flags & CE_ROTATED) {
 			struct pidinfo *pltmp;
 
@@ -247,7 +248,6 @@ main(int argc, char **argv)
 				pl++;
 			}
 		}
-		q = q->next;
 	}
 
 	/* Step 3, send a signal or run a command */
@@ -263,19 +263,16 @@ main(int argc, char **argv)
 		sleep(5);
 
 	/* Step 4, compress the log.0 file if configured to do so and free */
-	while (p) {
+	TAILQ_FOREACH(p, &runlist, next) {
 		if ((p->flags & CE_COMPACT) && (p->flags & CE_ROTATED) &&
 		    p->numlogs > 0)
 			compress_log(p);
-		q = p;
-		p = p->next;
-		free(q);
 	}
 
 	/* Wait for children to finish, then exit */
 	while (waitpid(-1, &status, 0) != -1)
 		;
-	exit(0);
+	return (ret);
 }
 
 void
@@ -464,18 +461,19 @@ usage(void)
 }
 
 /*
- * Parse a configuration file and return a linked list of all the logs
+ * Parse a configuration file and build a linked list of all the logs
  * to process
  */
-struct conf_entry *
-parse_file(int *nentries)
+int
+parse_file(struct entrylist *list, int *nentries)
 {
 	char line[BUFSIZ], *parse, *q, *errline, *group, *tmp, *ep;
-	struct conf_entry *working = NULL, *first = NULL;
+	struct conf_entry *working;
 	struct passwd *pwd;
 	struct group *grp;
 	struct stat sb;
-	int lineno;
+	int lineno = 0;
+	int ret = 0;
 	FILE *f;
 	long l;
 
@@ -485,31 +483,25 @@ parse_file(int *nentries)
 		err(1, "can't open %s", conf);
 
 	*nentries = 0;
-	for (lineno = 1; fgets(line, sizeof(line), f); lineno++) {
+
+nextline:
+	while (fgets(line, sizeof(line), f) != NULL) {
+		lineno++;
 		tmp = sob(line);
 		if (*tmp == '\0' || *tmp == '#')
 			continue;
 		errline = strdup(tmp);
 		if (errline == NULL)
-			err(1, "strdup");
-		(*nentries)++;
-		if (!first) {
-			working = malloc(sizeof(struct conf_entry));
-			if (working == NULL)
-				err(1, "malloc");
-			first = working;
-		} else {
-			working->next = malloc(sizeof(struct conf_entry));
-			if (working->next == NULL)
-				err(1, "malloc");
-			working = working->next;
-		}
+			err(1, NULL);
+		working = calloc(1, sizeof(*working));
+		if (working == NULL)
+			err(1, NULL);
 
 		q = parse = missing_field(sob(line), errline, lineno);
 		*(parse = son(line)) = '\0';
 		working->log = strdup(q);
 		if (working->log == NULL)
-			err(1, "strdup");
+			err(1, NULL);
 
 		if ((working->logbase = strrchr(working->log, '/')) != NULL)
 			working->logbase++;
@@ -521,27 +513,35 @@ parse_file(int *nentries)
 			*group++ = '\0';
 			if (*q) {
 				if (!(isnumberstr(q))) {
-					if ((pwd = getpwnam(q)) == NULL)
-						errx(1, "%s:%d: unknown user: %s",
+					if ((pwd = getpwnam(q)) == NULL) {
+						warnx("%s:%d: unknown user"
+						    " %s --> skipping",
 						    conf, lineno, q);
+						ret = 1;
+						goto nextline;
+					}
 					working->uid = pwd->pw_uid;
 				} else
 					working->uid = atoi(q);
 			} else
 				working->uid = (uid_t)-1;
-			
+
 			q = group;
 			if (*q) {
 				if (!(isnumberstr(q))) {
-					if ((grp = getgrnam(q)) == NULL)
-						errx(1, "%s:%d: unknown group: %s",
+					if ((grp = getgrnam(q)) == NULL) {
+						warnx("%s:%d: unknown group"
+						    " %s --> skipping",
 						    conf, lineno, q);
+						ret = 1;
+						goto nextline;
+					}
 					working->gid = grp->gr_gid;
 				} else
 					working->gid = atoi(q);
 			} else
 				working->gid = (gid_t)-1;
-			
+
 			q = parse = missing_field(sob(++parse), errline, lineno);
 			*(parse = son(parse)) = '\0';
 		} else {
@@ -550,15 +550,23 @@ parse_file(int *nentries)
 		}
 
 		l = strtol(q, &ep, 8);
-		if (*ep != '\0' || l < 0 || l > ALLPERMS)
-			errx(1, "%s:%d: bad permissions: %s", conf, lineno, q);
+		if (*ep != '\0' || l < 0 || l > ALLPERMS) {
+			warnx("%s:%d: bad permissions: %s --> skipping", conf,
+			    lineno, q);
+			ret = 1;
+			goto nextline;
+		}
 		working->permissions = (mode_t)l;
 
 		q = parse = missing_field(sob(++parse), errline, lineno);
 		*(parse = son(parse)) = '\0';
 		l = strtol(q, &ep, 10);
-		if (*ep != '\0' || l < 0 || l >= INT_MAX)
-			errx(1, "%s:%d: bad number: %s", conf, lineno, q);
+		if (*ep != '\0' || l < 0 || l >= INT_MAX) {
+			warnx("%s:%d: bad number: %s --> skipping", conf,
+			    lineno, q);
+			ret = 1;
+			goto nextline;
+		}
 		working->numlogs = (int)l;
 
 		q = parse = missing_field(sob(++parse), errline, lineno);
@@ -567,28 +575,39 @@ parse_file(int *nentries)
 			working->size = atoi(q) * 1024;
 		else
 			working->size = -1;
-		
+
 		working->flags = 0;
 		q = parse = missing_field(sob(++parse), errline, lineno);
 		*(parse = son(parse)) = '\0';
 		l = strtol(q, &ep, 10);
-		if (l < 0 || l >= INT_MAX)
-			errx(1, "%s:%d: interval out of range: %s", conf,
-			    lineno, q);
+		if (l < 0 || l >= INT_MAX) {
+			warnx("%s:%d: interval out of range: %s --> skipping",
+			    conf, lineno, q);
+			ret = 1;
+			goto nextline;
+		}
 		working->hours = (int)l;
 		switch (*ep) {
 		case '\0':
 			break;
 		case '@':
 			working->trim_at = parse8601(ep + 1);
-			if (working->trim_at == (time_t) - 1)
-				errx(1, "%s:%d: bad time: %s", conf, lineno, q);
+			if (working->trim_at == (time_t) - 1) {
+				warnx("%s:%d: bad time: %s --> skipping", conf,
+				    lineno, q);
+				ret = 1;
+				goto nextline;
+			}
 			working->flags |= CE_TRIMAT;
 			break;
 		case '$':
 			working->trim_at = parseDWM(ep + 1);
-			if (working->trim_at == (time_t) - 1)
-				errx(1, "%s:%d: bad time: %s", conf, lineno, q);
+			if (working->trim_at == (time_t) - 1) {
+				warnx("%s:%d: bad time: %s --> skipping", conf,
+				    lineno, q);
+				ret = 1;
+				goto nextline;
+			}
 			working->flags |= CE_TRIMAT;
 			break;
 		case '*':
@@ -596,8 +615,10 @@ parse_file(int *nentries)
 				break;
 			/* FALLTHROUGH */
 		default:
-			errx(1, "%s:%d: bad interval/at: %s", conf, lineno, q);
-			break;
+			warnx("%s:%d: bad interval/at: %s --> skipping", conf,
+			    lineno, q);
+			ret = 1;
+			goto nextline;
 		}
 
 		q = sob(++parse);	/* Optional field */
@@ -623,9 +644,11 @@ parse_file(int *nentries)
 					working->flags |= CE_FOLLOW;
 					break;
 				default:
-					errx(1, "%s:%d: illegal flag: `%c'",
+					warnx("%s:%d: illegal flag: `%c'"
+					    " --> skipping",
 					    conf, lineno, *q);
-					break;
+					ret = 1;
+					goto nextline;
 				}
 				q++;
 			}
@@ -642,18 +665,22 @@ parse_file(int *nentries)
 				break;
 			if (*q == '/') {
 				*(parse = son(parse)) = '\0';
-				if (strlen(q) >= PATH_MAX)
-					errx(1, "%s:%d: pathname too long: %s",
+				if (strlen(q) >= PATH_MAX) {
+					warnx("%s:%d: pathname too long: %s"
+					    " --> skipping",
 					    conf, lineno, q);
+					ret = 1;
+					goto nextline;
+				}
 				working->pidfile = strdup(q);
 				if (working->pidfile == NULL)
-					err(1, "strdup");
+					err(1, NULL);
 			} else if (*q == '"' && (tmp = strchr(q + 1, '"'))) {
 				*(parse = tmp) = '\0';
 				if (*++q != '\0') {
 					working->runcmd = strdup(q);
 					if (working->runcmd == NULL)
-						err(1, "strdup");
+						err(1, NULL);
 				}
 				working->pidfile = NULL;
 				working->signal = -1;
@@ -667,23 +694,35 @@ parse_file(int *nentries)
 						break;
 					}
 				}
-				if (i == NSIG)
-					errx(1, "%s:%d: unknown signal: %s",
+				if (i == NSIG) {
+					warnx("%s:%d: unknown signal: %s"
+					    " --> skipping",
 					    conf, lineno, q);
+					ret = 1;
+					goto nextline;
+				}
 			} else if (working->flags & CE_MONITOR) {
 				*(parse = son(parse)) = '\0';
 				working->whom = strdup(q);
 				if (working->whom == NULL)
-					err(1, "strdup");
-			} else
-				errx(1, "%s:%d: unrecognized field: %s",
+					err(1, NULL);
+			} else {
+				warnx("%s:%d: unrecognized field: %s"
+				    " --> skipping",
 				    conf, lineno, q);
+				ret = 1;
+				goto nextline;
+			}
 		}
 		free(errline);
 
-		if ((working->flags & CE_MONITOR) && working->whom == NULL)
-			errx(1, "%s:%d: missing monitor notification field",
+		if ((working->flags & CE_MONITOR) && working->whom == NULL) {
+			warnx("%s:%d: missing monitor notification field"
+			    " --> skipping",
 			    conf, lineno);
+			ret = 1;
+			goto nextline;
+		}
 
 		/* If there is an arcdir, set working->backdir. */
 		if (arcdir != NULL && working->logbase != NULL) {
@@ -695,7 +734,7 @@ parse_file(int *nentries)
 				*(working->logbase - 1) = '\0';
 				if ((asprintf(&working->backdir, "%s/%s",
 				    working->log, arcdir)) == -1)
-					err(1, "malloc");
+					err(1, NULL);
 				*(working->logbase - 1) = '/';
 			}
 			/* Ignore arcdir if it doesn't exist. */
@@ -712,21 +751,28 @@ parse_file(int *nentries)
 		if (working->backdir != NULL) {
 			if (snprintf(line, sizeof(line), "%s/%s.%d%s",
 			    working->backdir, working->logbase,
-			    working->numlogs, COMPRESS_POSTFIX) >= PATH_MAX)
-				errx(1, "%s:%d: pathname too long: %s",
-				    conf, lineno, q);
+			    working->numlogs, COMPRESS_POSTFIX) >= PATH_MAX) {
+				warnx("%s:%d: pathname too long: %s"
+				    " --> skipping", conf, lineno, q);
+				ret = 1;
+				goto nextline;
+			}
 		} else {
 			if (snprintf(line, sizeof(line), "%s.%d%s",
 			    working->log, working->numlogs, COMPRESS_POSTFIX)
-			    >= PATH_MAX)
-				errx(1, "%s:%d: pathname too long: %s",
-				    conf, lineno, working->log);
+			    >= PATH_MAX) {
+				warnx("%s:%d: pathname too long: %s"
+				    " --> skipping", conf, lineno,
+				    working->log);
+				ret = 1;
+				goto nextline;
+			}
 		}
+		TAILQ_INSERT_TAIL(list, working, next);
+		(*nentries)++;
 	}
-	if (working)
-		working->next = NULL;
 	(void)fclose(f);
-	return (first);
+	return (ret);
 }
 
 char *
@@ -978,7 +1024,7 @@ domonitor(struct conf_entry *ent)
 
 	flog = strdup(ent->log);
 	if (flog == NULL)
-		err(1, "strdup");
+		err(1, NULL);
 
 	for (p = flog; *p != '\0'; p++) {
 		if (*p == '/')
@@ -1011,7 +1057,7 @@ domonitor(struct conf_entry *ent)
 	if (sb.st_size > osize) {
 		rb = malloc(sb.st_size - osize);
 		if (rb == NULL)
-			err(1, "malloc");
+			err(1, NULL);
 
 		/* Open logfile, seek. */
 		fp = fopen(ent->log, "r");
@@ -1026,7 +1072,7 @@ domonitor(struct conf_entry *ent)
 			fclose(fp);
 			goto cleanup;
 		}
-		
+
 		/* Send message. */
 		fclose(fp);
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: sysctl.c,v 1.226 2017/04/25 17:33:16 tb Exp $	*/
+/*	$OpenBSD: sysctl.c,v 1.228 2017/07/19 06:30:54 florian Exp $	*/
 /*	$NetBSD: sysctl.c,v 1.9 1995/09/30 07:12:50 thorpej Exp $	*/
 
 /*

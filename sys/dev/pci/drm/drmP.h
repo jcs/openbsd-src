@@ -1,4 +1,4 @@
-/* $OpenBSD: drmP.h,v 1.213 2017/07/05 20:30:13 kettenis Exp $ */
+/* $OpenBSD: drmP.h,v 1.215 2017/07/22 14:33:45 kettenis Exp $ */
 /* drmP.h -- Private header for Direct Rendering Manager -*- linux-c -*-
  * Created: Mon Jan  4 10:05:05 1999 by faith@precisioninsight.com
  */
@@ -121,8 +121,6 @@ struct fb_image;
 #define DRM_MTRR_WC		MDF_WRITECOMBINE
 
 #define DRM_WAKEUP(x)		wakeup(x)
-
-extern int ticks;
 
 #define drm_msleep(x)		mdelay(x)
 
@@ -337,7 +335,13 @@ struct drm_dmamem {
 	int			nsegs;
 	bus_dma_segment_t	segs[1];
 };
-typedef struct drm_dmamem drm_dma_handle_t;
+
+typedef struct drm_dma_handle {
+	struct drm_dmamem *mem;
+	dma_addr_t busaddr;
+	void *vaddr;
+	size_t size;
+} drm_dma_handle_t;
 
 struct drm_pending_event {
 	struct drm_event *event;
@@ -870,6 +874,10 @@ struct drm_local_map	*drm_getsarea(struct drm_device *);
 struct drm_dmamem	*drm_dmamem_alloc(bus_dma_tag_t, bus_size_t, bus_size_t,
 			     int, bus_size_t, int, int);
 void			 drm_dmamem_free(bus_dma_tag_t, struct drm_dmamem *);
+
+extern struct drm_dma_handle *drm_pci_alloc(struct drm_device *dev, size_t size,
+					    size_t align);
+extern void drm_pci_free(struct drm_device *dev, struct drm_dma_handle * dmah);
 
 const struct drm_pcidev	*drm_find_description(int , int ,
 			     const struct drm_pcidev *);

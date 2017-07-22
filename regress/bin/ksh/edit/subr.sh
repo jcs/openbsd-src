@@ -1,3 +1,5 @@
+# $OpenBSD: subr.sh,v 1.6 2017/07/22 13:50:54 anton Exp $
+#
 # Copyright (c) 2016 Ingo Schwarze <schwarze@openbsd.org>
 # Copyright (c) 2017 Anton Lindqvist <anton@openbsd.org>
 #
@@ -16,8 +18,8 @@
 testseq() {
 	stdin=$1
 	exp=$(echo "$2")
-	act=$(echo -n "$stdin" | ./edit ksh -r)
-	[ "$exp" = "$act" ] && return 0
+	act=$(echo -n "$stdin" | ./edit -p "$PS1" ksh -r)
+	[ $? = 0 ] && [ "$exp" = "$act" ] && return 0
 
 	echo input:
 	echo ">>>$stdin<<<"
@@ -29,5 +31,5 @@ testseq() {
 	echo ">>>$act<<<"
 	echo -n "$act" | hexdump -Cv
 
-	return 1
+	exit 1
 }

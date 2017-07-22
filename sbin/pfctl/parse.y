@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.660 2017/05/28 15:15:21 akfaew Exp $	*/
+/*	$OpenBSD: parse.y,v 1.662 2017/07/19 12:58:31 mikeb Exp $	*/
 
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -395,7 +395,7 @@ typedef struct {
 		int			 i;
 		char			*string;
 		u_int			 rtableid;
-		u_int16_t		 weight;		
+		u_int16_t		 weight;
 		struct {
 			u_int8_t	 b1;
 			u_int8_t	 b2;
@@ -1304,10 +1304,6 @@ queuespec	: QUEUE STRING interface queue_opts		{
 				yyerror("root queue without interface");
 				YYERROR;
 			}
-			if ($2[0] == '_') {
-				yyerror("queue names must not start with _");
-				YYERROR;
-			}
 			expand_queue($2, $3, &$4);
 		}
 		;
@@ -1326,11 +1322,6 @@ queue_opts_l	: queue_opts_l queue_opt
 queue_opt	: BANDWIDTH scspec optscs			{
 			if (queue_opts.marker & QOM_BWSPEC) {
 				yyerror("bandwidth cannot be respecified");
-				YYERROR;
-			}
-			if (queue_opts.marker & QOM_FLOWS) {
-				yyerror("bandwidth cannot be specified for "
-				    "a flow queue");
 				YYERROR;
 			}
 			queue_opts.marker |= QOM_BWSPEC;
@@ -1369,11 +1360,6 @@ queue_opt	: BANDWIDTH scspec optscs			{
 		| FLOWS NUMBER					{
 			if (queue_opts.marker & QOM_FLOWS) {
 				yyerror("number of flows cannot be respecified");
-				YYERROR;
-			}
-			if (queue_opts.marker & QOM_BWSPEC) {
-				yyerror("bandwidth cannot be specified for "
-				    "a flow queue");
 				YYERROR;
 			}
 			if ($2 < 1 || $2 > 32767) {
@@ -4343,8 +4329,11 @@ expand_queue(char *qname, struct node_if *interfaces, struct queue_opts *opts)
 
 	LOOP_THROUGH(struct node_if, interface, interfaces,
 		bzero(&qspec, sizeof(qspec));
-		if ((opts->flags & PFQS_FLOWQUEUE) && opts->parent) {
-			yyerror("discipline doesn't support hierarchy");
+		if (!opts->parent && (opts->marker & QOM_BWSPEC))
+			opts->flags |= PFQS_ROOTCLASS;
+		if (!(opts->marker & QOM_BWSPEC) &&
+		    !(opts->marker & QOM_FLOWS)) {
+			yyerror("no bandwidth or flow specification");
 			return (1);
 		}
 		if (strlcpy(qspec.qname, qname, sizeof(qspec.qname)) >=
