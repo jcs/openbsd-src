@@ -201,7 +201,7 @@ acpibat_refresh(void *arg)
 	    sc->sc_devnode->name);
 
 	if (!sc->sc_bat_present) {
-		for (i = 0; i <= 9; i++) {
+		for (i = 0; i < nitems(sc->sc_sens); i++) {
 			sc->sc_sens[i].value = 0;
 			sc->sc_sens[i].status = SENSOR_S_UNSPEC;
 			sc->sc_sens[i].flags = SENSOR_FINVALID;
