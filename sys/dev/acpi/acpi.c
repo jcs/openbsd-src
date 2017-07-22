@@ -3100,19 +3100,15 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 		minutes = 0;
 		rate = 0;
 		SLIST_FOREACH(bat, &sc->sc_bat, aba_link) {
-			u_int32_t last_capacity = bat->aba_softc->sc_use_bix ?
-			    bat->aba_softc->sc_bix.bix_last_capacity :
-			    bat->aba_softc->sc_bif.bif_last_capacity;
-
 			if (bat->aba_softc->sc_bat_present == 0)
 				continue;
 
-			if (last_capacity == 0)
+			if (bat->aba_softc->sc_bix.bix_last_capacity == 0)
 				continue;
 
 			bats++;
 			rem = (bat->aba_softc->sc_bst.bst_capacity * 100) /
-			    last_capacity;
+			    bat->aba_softc->sc_bix.bix_last_capacity;
 			if (rem > 100)
 				rem = 100;
 			remaining += rem;

@@ -334,9 +334,8 @@ struct acpibat_softc {
 	struct acpi_softc	*sc_acpi;
 	struct aml_node		*sc_devnode;
 
-	struct acpibat_bif	sc_bif;
 	struct acpibat_bix	sc_bix;
-	int			sc_use_bix;
+	int			sc_use_bif;
 	struct acpibat_bst	sc_bst;
 	volatile int		sc_bat_present;
 
