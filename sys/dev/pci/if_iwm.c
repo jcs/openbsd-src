@@ -7050,6 +7050,9 @@ iwm_notif_intr(struct iwm_softc *sc)
 			break;
 		}
 
+		case 0x4ff:
+			break;
+
 		default:
 			printf("%s: unhandled firmware response 0x%x/0x%x "
 			    "rx ring %d[%d]\n",
