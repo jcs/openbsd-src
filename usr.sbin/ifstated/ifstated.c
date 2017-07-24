@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifstated.c,v 1.52 2017/07/21 16:32:18 jca Exp $	*/
+/*	$OpenBSD: ifstated.c,v 1.55 2017/07/23 13:53:54 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2004 Marco Pfatschbacher <mpf@openbsd.org>
@@ -24,7 +24,6 @@
 
 #include <sys/types.h>
 #include <sys/time.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 
@@ -46,10 +45,10 @@
 #include "ifstated.h"
 #include "log.h"
 
-struct	 ifsd_config *conf = NULL, *newconf = NULL;
+struct	 ifsd_config *conf, *newconf;
 
-int	 opts = 0;
-int	 opt_inhibit = 0;
+int	 opts;
+int	 opt_inhibit;
 char	*configfile = "/etc/ifstated.conf";
 struct event	rt_msg_ev, sighup_ev, startup_ev, sigchld_ev;
 
@@ -231,7 +230,7 @@ rt_msg_handler(int fd, short event, void *arg)
 	char msg[2048];
 	struct rt_msghdr *rtm = (struct rt_msghdr *)&msg;
 	struct if_msghdr ifm;
-	int len;
+	ssize_t len;
 
 	len = read(fd, msg, sizeof(msg));
 

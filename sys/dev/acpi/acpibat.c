@@ -1,4 +1,4 @@
-/* $OpenBSD: acpibat.c,v 1.63 2017/03/12 21:30:44 jcs Exp $ */
+/* $OpenBSD: acpibat.c,v 1.64 2017/07/22 21:06:17 jcs Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -389,7 +389,7 @@ acpibat_getbix(struct acpibat_softc *sc)
 		dnprintf(60, "revision: %u ", sc->sc_bix.bix_revision);
 
 	dnprintf(60, "power_unit: %u capacity: %u last_cap: %u "
-	    "tech: %u volt: %u warn: %u low: %u "
+	    "tech: %u volt: %u warn: %u low: %u ",
 	    sc->sc_bix.bix_power_unit,
 	    sc->sc_bix.bix_capacity,
 	    sc->sc_bix.bix_last_capacity,
