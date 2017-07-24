@@ -347,11 +347,11 @@ drm0		at inteldrm? console 1
 drm*		at inteldrm?
 wsdisplay0	at inteldrm? console 1
 wsdisplay*	at inteldrm? mux -1
-#radeondrm*	at pci? 	# ATI Radeon DRM driver
-#drm0		at radeondrm? console 1
-#drm*		at radeondrm?
-#wsdisplay0	at radeondrm? console 1
-#wsdisplay*	at radeondrm? mux -1
+radeondrm*	at pci? 	# ATI Radeon DRM driver
+drm0		at radeondrm? console 1
+drm*		at radeondrm?
+wsdisplay0	at radeondrm? console 1
+wsdisplay*	at radeondrm? mux -1
 
 pcppi0		at isa?
 
