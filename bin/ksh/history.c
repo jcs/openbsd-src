@@ -1,4 +1,4 @@
-/*	$OpenBSD: history.c,v 1.59 2017/05/29 13:09:17 tb Exp $	*/
+/*	$OpenBSD: history.c,v 1.62 2017/07/24 23:56:37 tb Exp $	*/
 
 /*
  * command history
@@ -594,7 +594,7 @@ void
 histsave(int lno, const char *cmd, int dowrite)
 {
 	struct stat	sb;
-	char		**hp, *c, *cp, *encoded;
+	char		*c, *cp, *encoded;
 
 	if (dowrite && histfh) {
 		history_lock(LOCK_EX);
@@ -614,14 +614,14 @@ histsave(int lno, const char *cmd, int dowrite)
 	if ((cp = strrchr(c, '\n')) != NULL)
 		*cp = '\0';
 
-	hp = histptr;
-	if (++hp >= history + histsize) { /* remove oldest command */
+	if (histptr < history + histsize - 1)
+		histptr++;
+	else { /* remove oldest command */
 		afree(*history, APERM);
-		for (hp = history; hp < history + histsize - 1; hp++)
-			hp[0] = hp[1];
+		memmove(history, history + 1,
+		    (histsize - 1) * sizeof(*history));
 	}
-	*hp = c;
-	histptr = hp;
+	*histptr = c;
 
 	if (dowrite && histfh) {
 		/* append to file */

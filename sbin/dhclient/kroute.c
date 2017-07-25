@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.114 2017/07/23 13:44:53 krw Exp $	*/
+/*	$OpenBSD: kroute.c,v 1.118 2017/07/24 18:13:19 krw Exp $	*/
 
 /*
  * Copyright 2012 Kenneth R Westerback <krw@openbsd.org>
@@ -47,8 +47,8 @@
 #include "log.h"
 #include "privsep.h"
 
-#define ROUNDUP(a)	((a) > 0 ? (1 + (((a) - 1) | (sizeof(long) - 1))) : \
-    sizeof(long))
+#define ROUNDUP(a) \
+	((a) > 0 ? (1 + (((a) - 1) | (sizeof(long) - 1))) : sizeof(long))
 
 /*
  * flush_unpriv_ibuf makes sure queued messages are delivered to the
@@ -74,7 +74,10 @@ int	create_route_label(struct sockaddr_rtlabel *);
 int	check_route_label(struct sockaddr_rtlabel *);
 void	populate_rti_info(struct sockaddr **, struct rt_msghdr *);
 void	delete_route(int, struct rt_msghdr *);
-
+void	add_route(struct in_addr, struct in_addr, struct in_addr,
+    struct in_addr, int, int);
+void	flush_routes(void);
+void	delete_addresses(char *);
 
 #define	ROUTE_LABEL_NONE		1
 #define	ROUTE_LABEL_NOT_DHCLIENT	2
@@ -370,9 +373,11 @@ create_route_label(struct sockaddr_rtlabel *label)
 void
 set_routes(struct in_addr addr, struct option_data *classless,
     struct option_data *msclassless, struct option_data *routers,
-    struct option_data *classfull, struct option_data *subnet)
+    struct option_data *subnet)
 {
 	struct in_addr	gateway, mask;
+
+	flush_routes();
 
 	if (classless->len != 0) {
 		add_classless_static_routes(classless, addr);
@@ -401,9 +406,6 @@ set_routes(struct in_addr addr, struct option_data *classless,
 
 		add_default_route(gateway, addr);
 	}
-
-	if (classfull->len != 0) 
-		log_warnx("DHO_STATIC_ROUTES (option 33) not supported");
 }
 
 /*
@@ -667,10 +669,13 @@ priv_set_mtu(char *name, int ioctlfd, struct imsg_set_mtu *imsg)
  *	ifconfig <if> inet <addr> netmask <mask> broadcast <addr>
  */
 void
-set_address(struct in_addr addr, struct option_data *mask)
+set_address(char *name, struct in_addr addr, struct option_data *mask)
 {
 	struct imsg_set_address	 imsg;
 	int			 rslt;
+
+	/* Deleting the addresses also clears out arp entries. */
+	delete_addresses(name);
 
 	imsg.addr = addr;
 	if (mask->len == sizeof(imsg.mask))

@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.478 2017/07/22 17:55:20 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.483 2017/07/24 18:13:19 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -61,6 +61,8 @@
 #include <sys/queue.h>
 
 #include <net/if.h>
+#include <net/if_types.h>
+#include <net/if_dl.h>
 #include <net/route.h>
 
 #include <netinet/in.h>
@@ -134,6 +136,9 @@ int		 addressinuse(char *, struct in_addr, char *);
 void		 fork_privchld(struct interface_info *, int, int);
 void		 get_ifname(struct interface_info *, int, char *);
 int		 get_ifa_family(char *, int);
+void		 interface_link_forceup(char *, int);
+int		 interface_status(char *);
+void		 get_hw_address(struct interface_info *);
 
 struct client_lease *apply_defaults(struct client_lease *);
 struct client_lease *clone_lease(struct client_lease *);
@@ -172,8 +177,8 @@ void	take_charge(struct interface_info *, int);
 void	set_default_client_identifier(struct interface_info *);
 struct client_lease *get_recorded_lease(struct interface_info *);
 
-#define ROUNDUP(a)	((a) > 0 ? (1 + (((a) - 1) | (sizeof(long) - 1))) : \
-    sizeof(long))
+#define ROUNDUP(a) \
+	((a) > 0 ? (1 + (((a) - 1) | (sizeof(long) - 1))) : sizeof(long))
 #define	ADVANCE(x, n) (x += ROUNDUP((n)->sa_len))
 
 static FILE *leaseFile;
@@ -201,6 +206,103 @@ get_ifa_family(char *cp, int n)
 	}
 
 	return AF_UNSPEC;
+}
+
+void
+interface_link_forceup(char *name, int ioctlfd)
+{
+	struct ifreq ifr;
+
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+	if (ioctl(ioctlfd, SIOCGIFFLAGS, (caddr_t)&ifr) == -1) {
+		log_warn("SIOCGIFFLAGS");
+		return;
+	}
+
+	/* Force it up if it isn't already. */
+	if ((ifr.ifr_flags & IFF_UP) == 0) {
+		ifr.ifr_flags |= IFF_UP;
+		if (ioctl(ioctlfd, SIOCSIFFLAGS, (caddr_t)&ifr) == -1) {
+			log_warn("SIOCSIFFLAGS");
+			return;
+		}
+	}
+}
+
+int
+interface_status(char *name)
+{
+	struct ifaddrs *ifap, *ifa;
+	struct if_data *ifdata;
+
+	if (getifaddrs(&ifap) != 0)
+		fatalx("getifaddrs failed");
+
+	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+		if ((ifa->ifa_flags & IFF_LOOPBACK) ||
+		    (ifa->ifa_flags & IFF_POINTOPOINT))
+			continue;
+
+		if (strcmp(name, ifa->ifa_name) != 0)
+			continue;
+
+		if (ifa->ifa_addr->sa_family != AF_LINK)
+			continue;
+
+		if ((ifa->ifa_flags & (IFF_UP|IFF_RUNNING)) !=
+		    (IFF_UP|IFF_RUNNING))
+			return 0;
+
+		ifdata = ifa->ifa_data;
+
+		return LINK_STATE_IS_UP(ifdata->ifi_link_state);
+	}
+
+	return 0;
+}
+
+void
+get_hw_address(struct interface_info *ifi)
+{
+	struct ifaddrs *ifap, *ifa;
+	struct sockaddr_dl *sdl;
+	struct if_data *ifdata;
+	int found;
+
+	if (getifaddrs(&ifap) != 0)
+		fatalx("getifaddrs failed");
+
+	found = 0;
+	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+		if ((ifa->ifa_flags & IFF_LOOPBACK) ||
+		    (ifa->ifa_flags & IFF_POINTOPOINT))
+			continue;
+
+		if (strcmp(ifi->name, ifa->ifa_name) != 0)
+			continue;
+		found = 1;
+
+		if (ifa->ifa_addr->sa_family != AF_LINK)
+			continue;
+
+		sdl = (struct sockaddr_dl *)ifa->ifa_addr;
+		if (sdl->sdl_type != IFT_ETHER ||
+		    sdl->sdl_alen != ETHER_ADDR_LEN)
+			continue;
+
+		ifdata = ifa->ifa_data;
+		ifi->rdomain = ifdata->ifi_rdomain;
+
+		memcpy(ifi->hw_address.ether_addr_octet, LLADDR(sdl),
+		    ETHER_ADDR_LEN);
+		ifi->flags |= IFI_VALID_LLADDR;
+	}
+
+	if (found == 0)
+		fatalx("%s: no such interface", ifi->name);
+
+	freeifaddrs(ifap);
 }
 
 void
@@ -928,19 +1030,14 @@ bind_lease(struct interface_info *ifi)
 	ifi->active = ifi->offer;
 	ifi->offer = NULL;
 
-	/* Deleting the addresses also clears out arp entries. */
-	delete_addresses(ifi->name);
-	flush_routes();
-
 	set_mtu(&options[DHO_INTERFACE_MTU]);
 
-	set_address(ifi->active->address, &options[DHO_SUBNET_MASK]);
+	set_address(ifi->name, ifi->active->address, &options[DHO_SUBNET_MASK]);
 
 	set_routes(ifi->active->address,
 	    &options[DHO_CLASSLESS_STATIC_ROUTES],
 	    &options[DHO_CLASSLESS_MS_STATIC_ROUTES],
 	    &options[DHO_ROUTERS],
-	    &options[DHO_STATIC_ROUTES],
 	    &options[DHO_SUBNET_MASK]);
 
 newlease:
@@ -1123,7 +1220,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 	}
 
 	/*
-	 * If this lease doesn't supply a required parameter, blow it off.
+	 * If this lease doesn't supply a required parameter, decline it.
 	 */
 	for (i = 0; i < config->required_option_count; i++) {
 		if (lease->options[config->required_options[i]].len == 0) {
@@ -1136,7 +1233,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 
 	/*
 	 * If this lease is trying to sell us an address we are already
-	 * using, blow it off.
+	 * using, decline it.
 	 */
 	lease->address.s_addr = packet->yiaddr.s_addr;
 	memset(ifname, 0, sizeof(ifname));
@@ -1167,7 +1264,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 		}
 	}
 
-	/* Ditto for the filename. */
+	/* If the file name was filled out, copy it. */
 	if ((lease->options[DHO_DHCP_OPTION_OVERLOAD].len == 0 ||
 	    (lease->options[DHO_DHCP_OPTION_OVERLOAD].data[0] & 1) == 0) &&
 	    packet->file[0]) {
@@ -1229,8 +1326,10 @@ send_discover(struct interface_info *ifi)
 	if (ifi->interval > config->backoff_cutoff)
 		ifi->interval = config->backoff_cutoff;
 
-	/* If the backoff would take us to the panic timeout, just use that
-	   as the interval. */
+	/*
+	 * If the backoff would take us to the panic timeout, just use that
+	 * as the interval.
+	 */
 	if (cur_time + ifi->interval >
 	    ifi->first_sending + config->timeout)
 		ifi->interval = (ifi->first_sending +
@@ -1297,7 +1396,7 @@ send_request(struct interface_info *ifi)
 	 * If we're in the INIT-REBOOT state and we've been trying longer
 	 * than reboot_timeout, go to INIT state and DISCOVER an address.
 	 *
-	 * XXX In the INIT-REBOOT state, if we don't get an ACK, it
+	 * In the INIT-REBOOT state, if we don't get an ACK, it
 	 * means either that we're on a network with no DHCP server,
 	 * or that our server is down.  In the latter case, assuming
 	 * that there is a backup DHCP server, DHCPDISCOVER will get
@@ -2219,23 +2318,22 @@ apply_defaults(struct client_lease *lease)
 		}
 	}
 
+	if (newlease->options[DHO_STATIC_ROUTES].len != 0) {
+		log_warnx("DHO_STATIC_ROUTES (option 33) not supported");
+		free(newlease->options[DHO_STATIC_ROUTES].data);
+		newlease->options[DHO_STATIC_ROUTES].data = NULL;
+		newlease->options[DHO_STATIC_ROUTES].len = 0;
+	}
 
 	/*
-	 * RFC 3442 says client *MUST* ignore both DHO_ROUTERS and
-	 * DHO_STATIC_ROUTES when DHO_CLASSLESS_[MS_]_ROUTES present.
-	 *
-	 * Remove them from 'newlease' so that -L will not show them
-	 * as part of the effective lease.
+	 * RFC 3442 says client *MUST* ignore DHO_ROUTERS
+	 * when DHO_CLASSLESS_[MS_]_ROUTES present.
 	 */
 	if ((newlease->options[DHO_CLASSLESS_MS_STATIC_ROUTES].len != 0) ||
 	    (newlease->options[DHO_CLASSLESS_STATIC_ROUTES].len != 0)) {
 		free(newlease->options[DHO_ROUTERS].data);
 		newlease->options[DHO_ROUTERS].data = NULL;
 		newlease->options[DHO_ROUTERS].len = 0;
-
-		free(newlease->options[DHO_STATIC_ROUTES].data);
-		newlease->options[DHO_STATIC_ROUTES].data = NULL;
-		newlease->options[DHO_STATIC_ROUTES].len = 0;
 	}
 
 	return newlease;
@@ -2507,7 +2605,6 @@ set_default_client_identifier(struct interface_info *ifi)
 	struct option_data	*opt;
 
 	/*
-	 *
 	 * Check both len && data so
 	 *
 	 *     send dhcp-client-identifier "";
