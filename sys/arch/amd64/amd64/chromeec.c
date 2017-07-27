@@ -353,8 +353,8 @@ chromeec_attach(struct device *parent, struct device *self, void *aux)
 	ver = (struct ec_response_get_version *)sc->response_data;
 	if (ver->current_image == 1)
 		printf(": %s", ver->version_string_ro);
-	else if (ver->version_string_rw)
-		printf(": %s", ver->version_string_rw);
+	else if (ver->version_string_rw[0])
+		printf(": %s", ver->version_string_rw[0]);
 	else
 		printf(": unknown image (%d)", ver->current_image);
 
