@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.483 2017/07/24 18:13:19 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.486 2017/07/26 18:16:21 jca Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -211,7 +211,7 @@ get_ifa_family(char *cp, int n)
 void
 interface_link_forceup(char *name, int ioctlfd)
 {
-	struct ifreq ifr;
+	struct ifreq	 ifr;
 
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
@@ -233,8 +233,8 @@ interface_link_forceup(char *name, int ioctlfd)
 int
 interface_status(char *name)
 {
-	struct ifaddrs *ifap, *ifa;
-	struct if_data *ifdata;
+	struct ifaddrs	*ifap, *ifa;
+	struct if_data	*ifdata;
 
 	if (getifaddrs(&ifap) != 0)
 		fatalx("getifaddrs failed");
@@ -265,10 +265,10 @@ interface_status(char *name)
 void
 get_hw_address(struct interface_info *ifi)
 {
-	struct ifaddrs *ifap, *ifa;
-	struct sockaddr_dl *sdl;
-	struct if_data *ifdata;
-	int found;
+	struct ifaddrs		*ifap, *ifa;
+	struct sockaddr_dl	*sdl;
+	struct if_data		*ifdata;
+	int			 found;
 
 	if (getifaddrs(&ifap) != 0)
 		fatalx("getifaddrs failed");
@@ -1806,7 +1806,7 @@ append_statement(char *string, size_t sz, char *s1, char *s2)
 struct proposal *
 lease_as_proposal(struct client_lease *lease)
 {
-	struct proposal	*proposal;
+	struct proposal		*proposal;
 	struct option_data	*opt;
 	char			*buf;
 
@@ -1818,7 +1818,7 @@ lease_as_proposal(struct client_lease *lease)
 	proposal->addrs |= RTA_IFA;
 
 	opt = &lease->options[DHO_INTERFACE_MTU];
-	if (opt->len == sizeof(u_int16_t)) {
+	if (opt->len == sizeof(uint16_t)) {
 		memcpy(&proposal->mtu, opt->data, sizeof(proposal->mtu));
 		proposal->mtu = ntohs(proposal->mtu);
 		proposal->inits |= RTV_MTU;
@@ -1878,7 +1878,7 @@ lease_as_proposal(struct client_lease *lease)
 		} else
 			log_warnx("DOMAIN_NAME too long");
 	}
-	if (&lease->options[DHO_DOMAIN_NAME_SERVERS].len != 0) {
+	if (lease->options[DHO_DOMAIN_NAME_SERVERS].len != 0) {
 		int servers;
 		opt = &lease->options[DHO_DOMAIN_NAME_SERVERS];
 		servers = opt->len / sizeof(struct in_addr);
