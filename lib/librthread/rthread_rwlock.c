@@ -1,4 +1,4 @@
-/*	$OpenBSD: rthread_rwlock.c,v 1.8 2016/09/04 10:13:35 akfaew Exp $ */
+/*	$OpenBSD: rthread_rwlock.c,v 1.10 2017/07/29 16:42:10 deraadt Exp $ */
 /*
  * Copyright (c) 2004,2005 Ted Unangst <tedu@openbsd.org>
  * Copyright (c) 2012 Philip Guenther <guenther@openbsd.org>

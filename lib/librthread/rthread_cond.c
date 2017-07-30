@@ -1,4 +1,4 @@
-/*	$OpenBSD: rthread_cond.c,v 1.1 2017/05/27 14:20:39 mpi Exp $ */
+/*	$OpenBSD: rthread_cond.c,v 1.3 2017/07/29 16:42:10 deraadt Exp $ */
 /*
  * Copyright (c) 2017 Martin Pieuchot <mpi@openbsd.org>
  * Copyright (c) 2012 Philip Guenther <guenther@openbsd.org>

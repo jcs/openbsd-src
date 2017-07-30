@@ -1,4 +1,4 @@
-/*	$OpenBSD: rthread_mutex.c,v 1.3 2017/05/29 14:47:54 mpi Exp $ */
+/*	$OpenBSD: rthread_mutex.c,v 1.5 2017/07/29 16:42:10 deraadt Exp $ */
 /*
  * Copyright (c) 2017 Martin Pieuchot <mpi@openbsd.org>
  * Copyright (c) 2012 Philip Guenther <guenther@openbsd.org>
