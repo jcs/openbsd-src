@@ -1420,6 +1420,7 @@ hibernate_write_chunks(union hibernate_info *hib)
 	vaddr_t hibernate_io_page = hib->piglet_va + PAGE_SIZE;
 	daddr_t blkctr = 0;
 	int i, rle, err;
+	int lastp = 0, chunkp = 0;
 	struct hibernate_zlib_state *hibernate_state;
 
 	hibernate_state =
@@ -1460,10 +1461,21 @@ hibernate_write_chunks(union hibernate_info *hib)
 	uvm_pmr_dirty_everything();
 	uvm_pmr_zero_everything();
 
+	printf("hibernating: 1%%");
+
 	/* Compress and write the chunks in the chunktable */
 	for (i = 0; i < hib->chunk_ctr; i++) {
 		range_base = chunks[i].base;
 		range_end = chunks[i].end;
+
+		chunkp = ((100 * i) + (hib->chunk_ctr / 2)) / hib->chunk_ctr;
+
+		if (chunkp != lastp && chunkp % 10 == 0) {
+			printf(" %d%%", chunkp);
+			if (chunkp == 100)
+				printf("\n");
+			lastp = chunkp;
+		}
 
 		chunks[i].offset = blkctr + hib->image_offset;
 
@@ -1490,7 +1502,7 @@ hibernate_write_chunks(union hibernate_info *hib)
 				 */
 				temp_inaddr = (inaddr & PAGE_MASK) +
 				    hibernate_copy_page;
-				
+
 				/* Deflate from temp_inaddr to IO page */
 				if (inaddr != range_end) {
 					if (inaddr % PAGE_SIZE == 0) {
@@ -1500,7 +1512,7 @@ hibernate_write_chunks(union hibernate_info *hib)
 							&blkctr,
 							&out_remaining);
 					}
-				
+
 					if (rle == 0) {
 						pmap_kenter_pa(hibernate_temp_page,
 							inaddr & PMAP_PA_MASK,
