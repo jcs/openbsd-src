@@ -124,7 +124,7 @@ glx_init(pci_chipset_tag_t pc, pcitag_t tag, int dev)
 	/*
 	 * MFGPT runs on powers of two, adjust the hz value accordingly.
 	 */
-	stathz = hz = 1024;
+	stathz = hz = 128;
 }
 
 uint64_t

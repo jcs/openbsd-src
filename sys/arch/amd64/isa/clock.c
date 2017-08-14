@@ -303,8 +303,8 @@ rtcdrain(void *v)
 void
 i8254_initclocks(void)
 {
-	stathz = 1024;
-	profhz = 8192;
+	stathz = 128;
+	profhz = 1024;
 
 	isa_intr_establish(NULL, 0, IST_PULSE, IPL_CLOCK, clockintr,
 	    0, "clock");
@@ -321,7 +321,7 @@ rtcstart(void)
 {
 	static struct timeout rtcdrain_timeout;
 
-	mc146818_write(NULL, MC_REGA, MC_BASE_32_KHz | MC_RATE_1024_Hz);
+	mc146818_write(NULL, MC_REGA, MC_BASE_32_KHz | MC_RATE_128_Hz);
 	mc146818_write(NULL, MC_REGB, MC_REGB_24HR | MC_REGB_PIE);
 
 	/*
@@ -577,10 +577,10 @@ setstatclockrate(int arg)
 	if (initclock_func == i8254_initclocks) {
 		if (arg == stathz)
 			mc146818_write(NULL, MC_REGA,
-			    MC_BASE_32_KHz | MC_RATE_1024_Hz);
+			    MC_BASE_32_KHz | MC_RATE_128_Hz);
 		else
 			mc146818_write(NULL, MC_REGA,
-			    MC_BASE_32_KHz | MC_RATE_8192_Hz);
+			    MC_BASE_32_KHz | MC_RATE_1024_Hz);
 	}
 }
 

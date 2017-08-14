@@ -283,8 +283,8 @@ void
 gptimer_cpu_initclocks()
 {
 //	u_int32_t now;
-	stathz = 1024;
-	profhz = 8192;
+	stathz = 128;
+	profhz = 1024;
 
 	ticks_per_second = TIMER_FREQUENCY;
 

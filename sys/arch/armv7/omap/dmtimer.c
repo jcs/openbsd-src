@@ -296,8 +296,8 @@ dmtimer_cpu_initclocks()
 {
 	struct dmtimer_softc	*sc = dmtimer_cd.cd_devs[1];
 
-	stathz = 1024;
-	profhz = 8192;
+	stathz = 128;
+	profhz = 1024;
 
 	sc->sc_ticks_per_second = TIMER_FREQUENCY; /* 32768 */
 

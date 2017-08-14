@@ -189,8 +189,9 @@ sxitimer_attach(struct device *parent, struct device *self, void *aux)
 	bus_space_write_4(sxitimer_iot, sxitimer_ioh,
 	    TIMER_CTRL(STATTIMER), TIMER_OSC24M);
 
-	stathz = 1024;
-	profhz = 8192;
+	/* 100/1000 or 128/1024 ? */
+	stathz = 128;
+	profhz = 1024;
 	sxitimer_setstatclockrate(stathz);
 
 	ival = sxitimer_stat_tpi = freq / stathz;
