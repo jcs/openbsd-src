@@ -302,8 +302,8 @@ cpu_initclocks()
 
 	ticks_per_intr = ticks_per_sec / hz;
 
-	stathz = 100;
-	profhz = 1000; /* must be a multiple of stathz */
+	stathz = 1000;
+	profhz = 10000; /* must be a multiple of stathz */
 
 	/* init secondary clock to stathz */
 	statint = ticks_per_sec / stathz;

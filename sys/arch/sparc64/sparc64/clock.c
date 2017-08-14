@@ -647,8 +647,8 @@ cpu_initclocks(void)
 	if (stathz == 0)
 		stathz = hz;
 	if (1000000 % stathz) {
-		printf("cannot get %d Hz statclock; using 100 Hz\n", stathz);
-		stathz = 100;
+		printf("cannot get %d Hz statclock; using 1000 Hz\n", stathz);
+		stathz = 1000;
 	}
 
 	profhz = stathz;		/* always */
@@ -665,7 +665,7 @@ cpu_initclocks(void)
 	schedint.ih_clr = NULL;
 	schedint.ih_arg = 0;
 	schedint.ih_pending = 0;
-	schedhz = stathz/4;
+	schedhz = 16;
 
 	/* 
 	 * Enable timers 
@@ -867,7 +867,7 @@ statintr(cap)
 	newint = statmin + r;
 
 	if (schedhz)
-		if ((++ci->ci_schedstate.spc_schedticks & 3) == 0)
+		if ((++ci->ci_schedstate.spc_schedticks & 0x3f) == 0)
 			send_softint(-1, PIL_SCHED, &schedint);
 	stxa((vaddr_t)&timerreg_4u.t_timer[1].t_limit, ASI_NUCLEUS, 
 	     tmr_ustolim(newint)|TMR_LIM_IEN|TMR_LIM_RELOAD);
