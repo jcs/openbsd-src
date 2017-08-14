@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmctl.c,v 1.33 2017/08/10 19:17:43 jasper Exp $	*/
+/*	$OpenBSD: vmctl.c,v 1.36 2017/08/14 19:46:44 jasper Exp $	*/
 
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
@@ -25,6 +25,7 @@
 
 #include <machine/vmmvar.h>
 
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -74,6 +75,7 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
 	struct vm_create_params *vcp;
 	unsigned int flags = 0;
 	int i;
+	const char *s;
 
 	if (memsize)
 		flags |= VMOP_CREATE_MEMORY;
@@ -131,12 +133,26 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
 			strlcpy(vmc->vmc_ifswitch[i], "", IF_NAMESIZE);
 			vmc->vmc_ifflags[i] |= VMIFF_LOCAL;
 		} else {
-			/* Add a interface to a switch */
+			/* Add an interface to a switch */
 			strlcpy(vmc->vmc_ifswitch[i], nics[i], IF_NAMESIZE);
 		}
 	}
-	if (name != NULL)
+	if (name != NULL) {
+		/* Allow VMs names with alphanumeric characters, dot, hyphen
+		 * and underscore. But disallow dot, hyphen and underscore at
+		 * the start.
+		 */
+		if (*name == '-' || *name == '.' || *name == '_')
+			errx(1, "Invalid VM name");
+
+		for (s = name; *s != '\0'; ++s) {
+			if (!(isalnum(*s) || *s == '.' || *s == '-' ||
+			      *s == '_'))
+				errx(1, "Invalid VM name");
+		}
+
 		strlcpy(vcp->vcp_name, name, VMM_MAX_NAME_LEN);
+	}
 	if (kernel != NULL)
 		strlcpy(vcp->vcp_kernel, kernel, VMM_MAX_KERNEL_PATH);
 
@@ -161,7 +177,7 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
  *
  * Return:
  *  Always 1 to indicate we have processed the return message (even if it
- *  was an incorrect/failure message) 
+ *  was an incorrect/failure message)
  *
  *  The function also sets 'ret' to the error code as follows:
  *   0     : Message successfully processed
@@ -179,8 +195,13 @@ vm_start_complete(struct imsg *imsg, int *ret, int autoconnect)
 		res = vmr->vmr_result;
 		if (res) {
 			errno = res;
-			warn("start vm command failed");
-			*ret = EIO;
+			if (res == ENOENT) {
+				warnx("could not find specified disk image(s)");
+				*ret = ENOENT;
+			} else {
+				warn("start vm command failed");
+				*ret = EIO;
+			}
 		} else if (autoconnect) {
 			/* does not return */
 			ctl_openconsole(vmr->vmr_ttyname);
@@ -373,7 +394,7 @@ terminate_vm(uint32_t terminate_id, const char *name)
  *
  * Return:
  *  Always 1 to indicate we have processed the return message (even if it
- *  was an incorrect/failure message) 
+ *  was an incorrect/failure message)
  *
  *  The function also sets 'ret' to the error code as follows:
  *   0     : Message successfully processed
@@ -412,7 +433,7 @@ terminate_vm_complete(struct imsg *imsg, int *ret)
  *
  * Parameters:
  *  id: optional ID of a VM to list
- *  name: optional name of a VM to list 
+ *  name: optional name of a VM to list
  *  console: if true, open the console of the selected VM (by name or ID)
  *
  * Request a list of running VMs from vmd

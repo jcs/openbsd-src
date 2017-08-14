@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfvar.h,v 1.463 2017/08/13 16:57:20 henning Exp $ */
+/*	$OpenBSD: pfvar.h,v 1.465 2017/08/14 15:58:16 henning Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -1296,6 +1296,7 @@ struct pf_status {
 	time_t		since;
 	u_int32_t	running;
 	u_int32_t	states;
+	u_int32_t	states_halfopen;
 	u_int32_t	src_nodes;
 	u_int32_t	debug;
 	u_int32_t	hostid;
@@ -1896,6 +1897,8 @@ int			 pf_state_key_isvalid(struct pf_state_key *);
 void			 pf_pkt_unlink_state_key(struct mbuf *);
 void			 pf_pkt_state_key_ref(struct mbuf *);
 
+u_int8_t		 pf_get_wscale(struct pf_pdesc *);
+u_int16_t		 pf_get_mss(struct pf_pdesc *);
 struct mbuf *		 pf_build_tcp(const struct pf_rule *, sa_family_t,
 			    const struct pf_addr *, const struct pf_addr *,
 			    u_int16_t, u_int16_t, u_int32_t, u_int32_t,
