@@ -320,13 +320,6 @@ static void gcm_init_4bit(u128 Htable[16], u64 H[2])
 		}
 #endif
 	}
-#else /* BIG_ENDIAN */
-	for (j=0;j<16;++j) {
-		V = Htable[j];
-		Htable[j].hi = V.lo<<32|V.lo>>32;
-		Htable[j].lo = V.hi<<32|V.hi>>32;
-	}
-#endif
 #endif
 }
 
