@@ -1,4 +1,4 @@
-/* $OpenBSD: wsconsio.h,v 1.83 2017/06/15 11:48:49 fcambus Exp $ */
+/* $OpenBSD: wsconsio.h,v 1.85 2017/08/18 21:29:59 deraadt Exp $ */
 /* $NetBSD: wsconsio.h,v 1.74 2005/04/28 07:15:44 martin Exp $ */
 
 /*

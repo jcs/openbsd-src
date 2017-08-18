@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacctl.c,v 1.7 2017/05/30 18:18:08 deraadt Exp $	*/
+/*	$OpenBSD: slaacctl.c,v 1.11 2017/08/18 18:43:33 florian Exp $	*/
 
 /*
  * Copyright (c) 2005 Claudio Jeker <claudio@openbsd.org>
@@ -30,6 +30,7 @@
 
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
+#include <netinet6/nd6.h>
 
 #include <err.h>
 #include <errno.h>
@@ -217,8 +218,7 @@ show_interface_msg(struct imsg *imsg)
 		t = localtime(&cei_ra->when.tv_sec);
 		strftime(whenbuf, sizeof(whenbuf), "%F %T", t);
 		printf("\tRouter Advertisement from %s\n", hbuf);
-		printf("\t\treceived: %s.%09ld; %lld.%09lds ago\n",
-		    whenbuf, cei_ra->when.tv_nsec, diff.tv_sec, diff.tv_nsec);
+		printf("\t\treceived: %s; %llds ago\n", whenbuf, diff.tv_sec);
 		printf("\t\tCur Hop Limit: %3u, M: %d, O: %d, Router Lifetime:"
 		    " %5us\n", cei_ra->curhoplimit, cei_ra->managed ? 1: 0,
 		    cei_ra->other ? 1 : 0, cei_ra->router_lifetime);
@@ -234,8 +234,14 @@ show_interface_msg(struct imsg *imsg)
 		printf("\t\t\tOn-link: %d, Autonomous address-configuration: %d"
 		    "\n", cei_ra_prefix->onlink ? 1 : 0,
 		    cei_ra_prefix->autonomous ? 1 : 0);
-		printf("\t\t\tvltime: %9u, pltime: %9u\n",
-		    cei_ra_prefix->vltime, cei_ra_prefix->pltime);
+		if (cei_ra_prefix->vltime == ND6_INFINITE_LIFETIME)
+			printf("\t\t\tvltime: %10s, ", "infinity");
+		else
+			printf("\t\t\tvltime: %10u, ", cei_ra_prefix->vltime);
+		if (cei_ra_prefix->pltime == ND6_INFINITE_LIFETIME)
+			printf("pltime: %10s\n", "infinity");
+		else
+			printf("pltime: %10u\n", cei_ra_prefix->pltime);
 		break;
 	case IMSG_CTL_SHOW_INTERFACE_INFO_RA_RDNS:
 		cei_ra_rdns = imsg->data;
@@ -262,19 +268,29 @@ show_interface_msg(struct imsg *imsg)
 		printf("\t\tid: %4lld, state: %15s, privacy: %s\n",
 		    cei_addr_proposal->id, cei_addr_proposal->state,
 		    cei_addr_proposal->privacy ? "y" : "n");
-		printf("\t\tvltime: %10u, pltime: %10u\n",
-		    cei_addr_proposal->vltime, cei_addr_proposal->pltime);
 
 		if (clock_gettime(CLOCK_MONOTONIC, &now))
 			err(1, "clock_gettime");
 
 		timespecsub(&now, &cei_addr_proposal->uptime, &diff);
 
+		if (cei_addr_proposal->vltime == ND6_INFINITE_LIFETIME)
+			printf("\t\tvltime: %10s, ", "infinity");
+		else
+			printf("\t\tvltime: %10u, ", cei_addr_proposal->vltime);
+		if (cei_addr_proposal->pltime == ND6_INFINITE_LIFETIME)
+			printf("pltime: %10s", "infinity");
+		else
+			printf("pltime: %10u", cei_addr_proposal->pltime);
+		if (cei_addr_proposal->next_timeout != 0)
+			printf(", timeout: %10llds\n",
+			    cei_addr_proposal->next_timeout - diff.tv_sec);
+		else
+			printf("\n");
+
 		t = localtime(&cei_addr_proposal->when.tv_sec);
 		strftime(whenbuf, sizeof(whenbuf), "%F %T", t);
-		printf("\t\tupdated: %s.%09ld; %lld.%09lds ago\n",
-		    whenbuf, cei_addr_proposal->when.tv_nsec, diff.tv_sec,
-		    diff.tv_nsec);
+		printf("\t\tupdated: %s; %llds ago\n", whenbuf, diff.tv_sec);
 		printf("\t\t%s, %s/%u\n", hbuf, inet_ntop(AF_INET6,
 		    &cei_addr_proposal->prefix, ntopbuf, INET6_ADDRSTRLEN),
 		    cei_addr_proposal->prefix_len);
@@ -290,6 +306,7 @@ show_interface_msg(struct imsg *imsg)
 		    NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV))
 			err(1, "cannot get router IP");
 
+		printf("\t\trouter: %s\n", hbuf);
 		printf("\t\tid: %4lld, state: %15s\n",
 		    cei_dfr_proposal->id, cei_dfr_proposal->state);
 		printf("\t\trouter lifetime: %10u\n",
@@ -302,9 +319,12 @@ show_interface_msg(struct imsg *imsg)
 
 		t = localtime(&cei_dfr_proposal->when.tv_sec);
 		strftime(whenbuf, sizeof(whenbuf), "%F %T", t);
-		printf("\t\tupdated: %s.%09ld; %lld.%09lds ago\n",
-		    whenbuf, cei_dfr_proposal->when.tv_nsec, diff.tv_sec,
-		    diff.tv_nsec);
+		printf("\t\tupdated: %s; %llds ago", whenbuf, diff.tv_sec);
+		if (cei_dfr_proposal->next_timeout != 0)
+			printf(", timeout: %10llds\n",
+			    cei_dfr_proposal->next_timeout - diff.tv_sec);
+		else
+			printf("\n");
 
 		break;
 	case IMSG_CTL_END:

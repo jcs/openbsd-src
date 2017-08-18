@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldasm.S,v 1.29 2017/01/24 07:48:37 guenther Exp $ */
+/*	$OpenBSD: ldasm.S,v 1.31 2017/08/16 19:48:49 deraadt Exp $ */
 
 /*
  * Copyright (c) 2002 Dale Rahn
@@ -33,7 +33,7 @@
 #include <machine/asm.h>
 
 	.text
-	.align  4
+	.align  16,0xcc
 	.globl  _dl_start
 	.type   _dl_start,@function
 _dl_start:
@@ -85,11 +85,10 @@ _dl_start:
 	movl $__CONCAT(SYS_, x),%eax;         \
 	int $0x80
 
-
 #define DL_SYSCALL(n) DL_SYSCALL2(n,n)
 #define DL_SYSCALL2(n,c)					\
 	.section	".text"					;\
-	.align		4					;\
+	.align		16,0xcc					;\
 	.global		__CONCAT(_dl_,n)			;\
 	.type		__CONCAT(_dl_,n),@function		;\
 __CONCAT(_dl_,n):						;\
@@ -97,46 +96,26 @@ __CONCAT(_dl_,n):						;\
 	jb	.L_cerr						;\
 	ret
 
-#define DL_SYSCALL(n) DL_SYSCALL2(n,n)
-#define DL_SYSCALL2(n,c)					\
-	.section	".text"					;\
-	.align		4					;\
-	.global		__CONCAT(_dl_,n)			;\
-	.type		__CONCAT(_dl_,n),@function		;\
-__CONCAT(_dl_,n):						;\
-	__DO_SYSCALL(c)						;\
-	jb	.L_cerr						;\
-	ret
-
-DL_SYSCALL(close)
-
-	.section	".text"
-	.align		4
-	.global _dl_exit
-	.type _dl_exit,@function
-_dl_exit:
-	mov	$SYS_exit, %eax
-	int	$0x80
-	ret
-
-DL_SYSCALL(issetugid)
-DL_SYSCALL(getthrid)
-DL_SYSCALL2(_syscall,__syscall)
-DL_SYSCALL(munmap)
-DL_SYSCALL(mprotect)
 DL_SYSCALL(open)
+DL_SYSCALL(fstat)
 DL_SYSCALL(read)
 DL_SYSCALL(write)
-DL_SYSCALL(fstat)
+DL_SYSCALL(close)
+DL_SYSCALL(issetugid)
+DL_SYSCALL(getthrid)
+DL_SYSCALL(getdents)
+DL_SYSCALL(mprotect)
+DL_SYSCALL(munmap)
+DL_SYSCALL(exit)
 DL_SYSCALL(readlink)
 DL_SYSCALL(utrace)
 DL_SYSCALL(getentropy)
 DL_SYSCALL(sendsyslog)
 DL_SYSCALL(pledge)
 DL_SYSCALL2(getcwd,__getcwd)
-DL_SYSCALL(sysctl)
-DL_SYSCALL(getdents)
 DL_SYSCALL2(set_tcb,__set_tcb)
+DL_SYSCALL2(_syscall,__syscall)
+DL_SYSCALL(sysctl)
 DL_SYSCALL(thrkill)
 
 .L_cerr:
@@ -144,8 +123,7 @@ DL_SYSCALL(thrkill)
 	neg	%eax
 	ret
 
-
-	.align 4
+	.align 16,0xcc
 	.global _dl_bind_start
 	.type _dl_bind_start,@function
 _dl_bind_start:
