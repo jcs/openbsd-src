@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_locl.h,v 1.190 2017/08/12 21:47:59 jsing Exp $ */
+/* $OpenBSD: ssl_locl.h,v 1.193 2017/08/28 16:37:04 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -233,7 +233,6 @@ __BEGIN_HIDDEN_DECLS
 #define SSL_AES128GCM		0x00000400L
 #define SSL_AES256GCM		0x00000800L
 #define SSL_CHACHA20POLY1305	0x00001000L
-#define SSL_CHACHA20POLY1305_OLD	0x00002000L
 
 #define SSL_AES        		(SSL_AES128|SSL_AES256|SSL_AES128GCM|SSL_AES256GCM)
 #define SSL_CAMELLIA		(SSL_CAMELLIA128|SSL_CAMELLIA256)
@@ -864,7 +863,7 @@ typedef struct ssl3_state_internal_st {
 	 * processed.
 	 */
 	unsigned char *alpn_selected;
-	unsigned int alpn_selected_len;
+	size_t alpn_selected_len;
 } SSL3_STATE_INTERNAL;
 #define S3I(s) (s->s3->internal)
 
@@ -1347,6 +1346,15 @@ void tls1_get_formatlist(SSL *s, int client_formats, const uint8_t **pformats,
     size_t *pformatslen);
 void tls1_get_curvelist(SSL *s, int client_curves, const uint16_t **pcurves,
     size_t *pcurveslen);
+
+#ifndef OPENSSL_NO_SRTP
+
+int srtp_find_profile_by_name(char *profile_name,
+    SRTP_PROTECTION_PROFILE **pptr, unsigned len);
+int srtp_find_profile_by_num(unsigned profile_num,
+    SRTP_PROTECTION_PROFILE **pptr);
+
+#endif /* OPENSSL_NO_SRTP */
 
 __END_HIDDEN_DECLS
 

@@ -1,4 +1,4 @@
-/* $OpenBSD: tty-keys.c,v 1.99 2017/06/23 15:36:52 nicm Exp $ */
+/* $OpenBSD: tty-keys.c,v 1.101 2017/08/29 09:18:48 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -271,6 +271,7 @@ static const struct tty_default_key_code tty_default_code_keys[] = {
 	{ TTYC_KDC5, KEYC_DC|KEYC_CTRL|KEYC_XTERM },
 	{ TTYC_KDC6, KEYC_DC|KEYC_SHIFT|KEYC_CTRL|KEYC_XTERM },
 	{ TTYC_KDC7, KEYC_DC|KEYC_ESCAPE|KEYC_CTRL|KEYC_XTERM },
+	{ TTYC_KIND, KEYC_UP|KEYC_SHIFT|KEYC_XTERM },
 	{ TTYC_KDN2, KEYC_DOWN|KEYC_SHIFT|KEYC_XTERM },
 	{ TTYC_KDN3, KEYC_DOWN|KEYC_ESCAPE|KEYC_XTERM },
 	{ TTYC_KDN4, KEYC_DOWN|KEYC_SHIFT|KEYC_ESCAPE|KEYC_XTERM },
@@ -319,6 +320,7 @@ static const struct tty_default_key_code tty_default_code_keys[] = {
 	{ TTYC_KRIT5, KEYC_RIGHT|KEYC_CTRL|KEYC_XTERM },
 	{ TTYC_KRIT6, KEYC_RIGHT|KEYC_SHIFT|KEYC_CTRL|KEYC_XTERM },
 	{ TTYC_KRIT7, KEYC_RIGHT|KEYC_ESCAPE|KEYC_CTRL|KEYC_XTERM },
+	{ TTYC_KRI, KEYC_UP|KEYC_SHIFT|KEYC_XTERM },
 	{ TTYC_KUP2, KEYC_UP|KEYC_SHIFT|KEYC_XTERM },
 	{ TTYC_KUP3, KEYC_UP|KEYC_ESCAPE|KEYC_XTERM },
 	{ TTYC_KUP4, KEYC_UP|KEYC_SHIFT|KEYC_ESCAPE|KEYC_XTERM },
@@ -593,7 +595,17 @@ tty_keys_next(struct tty *tty)
 	}
 
 first_key:
-	/* Handle keys starting with escape. */
+	/* Try to lookup complete key. */
+	n = tty_keys_next1(tty, buf, len, &key, &size, expired);
+	if (n == 0)	/* found */
+		goto complete_key;
+	if (n == 1)
+		goto partial_key;
+
+	/*
+	 * If not a complete key, look for key with an escape prefix (meta
+	 * modifier).
+	 */
 	if (*buf == '\033') {
 		/* Look for a key without the escape. */
 		n = tty_keys_next1(tty, buf + 1, len - 1, &key, &size, expired);
@@ -617,13 +629,6 @@ first_key:
 		if (n == 1)	/* partial */
 			goto partial_key;
 	}
-
-	/* Try to lookup key. */
-	n = tty_keys_next1(tty, buf, len, &key, &size, expired);
-	if (n == 0)	/* found */
-		goto complete_key;
-	if (n == 1)
-		goto partial_key;
 
 	/*
 	 * At this point, we know the key is not partial (with or without

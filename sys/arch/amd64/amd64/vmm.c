@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.165 2017/08/15 15:54:41 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.169 2017/08/25 06:34:51 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -994,9 +994,9 @@ vm_create_check_mem_ranges(struct vm_create_params *vcp)
 
 		/*
 		 * ... and disallow ranges that end inside the MMIO space:
-		 * [VMM_PCI_MMIO_BAR_BASE .. VMM_PCI_MMIO_BAR_END]
+		 * (VMM_PCI_MMIO_BAR_BASE .. VMM_PCI_MMIO_BAR_END]
 		 */
-		if (vmr->vmr_gpa + vmr->vmr_size >= VMM_PCI_MMIO_BAR_BASE &&
+		if (vmr->vmr_gpa + vmr->vmr_size > VMM_PCI_MMIO_BAR_BASE &&
 		    vmr->vmr_gpa + vmr->vmr_size <= VMM_PCI_MMIO_BAR_END)
 			return (0);
 
@@ -3658,8 +3658,9 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 	if (vrp->vrp_continue) {
 		switch (vcpu->vc_gueststate.vg_exit_reason) {
 		case VMX_EXIT_IO:
-			vcpu->vc_gueststate.vg_rax =
-			    vcpu->vc_exit.vei.vei_data;
+			if (vcpu->vc_exit.vei.vei_dir == VEI_DIR_IN)
+				vcpu->vc_gueststate.vg_rax =
+				    vcpu->vc_exit.vei.vei_data;
 			break;
 		case VMX_EXIT_HLT:
 			break;
@@ -4426,7 +4427,7 @@ vmx_handle_exit(struct vcpu *vcpu)
 int
 vmm_inject_ud(struct vcpu *vcpu)
 {
-	DPRINTF("%s: injecting #UD at guest %rip 0x%llx\n", __func__,
+	DPRINTF("%s: injecting #UD at guest %%rip 0x%llx\n", __func__,
 	    vcpu->vc_gueststate.vg_rip);
 	vcpu->vc_event = VMM_EX_UD;
 	
@@ -4447,7 +4448,7 @@ vmm_inject_ud(struct vcpu *vcpu)
 int
 vmm_inject_db(struct vcpu *vcpu)
 {
-	DPRINTF("%s: injecting #DB at guest %rip 0x%llx\n", __func__,
+	DPRINTF("%s: injecting #DB at guest %%rip 0x%llx\n", __func__,
 	    vcpu->vc_gueststate.vg_rip);
 	vcpu->vc_event = VMM_EX_DB;
 	
@@ -5378,41 +5379,8 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		/* mask off host's APIC ID, reset to vcpu id */
 		*rbx = cpu_ebxfeature & 0x0000FFFF;
 		*rbx |= (vcpu->vc_id & 0xFF) << 24;
-		/*
-		 * clone host capabilities minus:
-		 *  debug store (CPUIDECX_DTES64, CPUIDECX_DSCPL, CPUID_DS)
-		 *  monitor/mwait (CPUIDECX_MWAIT)
-		 *  vmx (CPUIDECX_VMX)
-		 *  smx (CPUIDECX_SMX)
-		 *  speedstep (CPUIDECX_EST)
-		 *  thermal (CPUIDECX_TM2, CPUID_ACPI, CPUID_TM)
-		 *  context id (CPUIDECX_CNXTID)
-		 *  silicon debug (CPUIDECX_SDBG)
-		 *  xTPR (CPUIDECX_XTPR)
-		 *  perf/debug (CPUIDECX_PDCM)
-		 *  pcid (CPUIDECX_PCID)
-		 *  direct cache access (CPUIDECX_DCA)
-		 *  x2APIC (CPUIDECX_X2APIC)
-		 *  apic deadline (CPUIDECX_DEADLINE)
-		 *  apic (CPUID_APIC)
-		 *  psn (CPUID_PSN)
-		 *  self snoop (CPUID_SS)
-		 *  hyperthreading (CPUID_HTT)
-		 *  pending break enabled (CPUID_PBE)
-		 *  MTRR (CPUID_MTRR)
-		 * plus:
-		 *  hypervisor (CPUIDECX_HV)
-		 */
-		*rcx = (cpu_ecxfeature | CPUIDECX_HV) &
-		    ~(CPUIDECX_EST | CPUIDECX_TM2 | CPUIDECX_MWAIT |
-		    CPUIDECX_PDCM | CPUIDECX_VMX | CPUIDECX_DTES64 |
-		    CPUIDECX_DSCPL | CPUIDECX_SMX | CPUIDECX_CNXTID |
-		    CPUIDECX_SDBG | CPUIDECX_XTPR | CPUIDECX_PCID |
-		    CPUIDECX_DCA | CPUIDECX_X2APIC | CPUIDECX_DEADLINE);
-		*rdx = curcpu()->ci_feature_flags &
-		    ~(CPUID_ACPI | CPUID_TM | CPUID_HTT |
-		      CPUID_DS | CPUID_APIC | CPUID_PSN |
-		      CPUID_SS | CPUID_PBE | CPUID_MTRR);
+		*rcx = (cpu_ecxfeature | CPUIDECX_HV) & VMM_CPUIDECX_MASK;
+		*rdx = curcpu()->ci_feature_flags & VMM_CPUIDEDX_MASK;
 		break;
 	case 0x02:	/* Cache and TLB information */
 		*rax = eax;
@@ -5460,37 +5428,9 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		break;
 	case 0x07:	/* SEFF */
 		if (*rcx == 0) {
-			/*
-			 * SEFF flags - copy from host minus:
-			 *  SGX (SEFF0EBX_SGX)
-			 *  HLE (SEFF0EBX_HLE)
-			 *  INVPCID (SEFF0EBX_INVPCID)
-			 *  RTM (SEFF0EBX_RTM)
-			 *  PQM (SEFF0EBX_PQM)
-			 *  AVX512F (SEFF0EBX_AVX512F)
-			 *  AVX512DQ (SEFF0EBX_AVX512DQ)
-			 *  AVX512IFMA (SEFF0EBX_AVX512IFMA)
-			 *  AVX512PF (SEFF0EBX_AVX512PF)
-			 *  AVX512ER (SEFF0EBX_AVX512ER)
-			 *  AVX512CD (SEFF0EBX_AVX512CD)
-			 *  AVX512BW (SEFF0EBX_AVX512BW)
-			 *  AVX512VL (SEFF0EBX_AVX512VL)
-			 *  MPX (SEFF0EBX_MPX)
-			 *  PCOMMIT (SEFF0EBX_PCOMMIT)
-			 *  PT (SEFF0EBX_PT)
-			 *  AVX512VBMI (SEFF0ECX_AVX512VBMI)
-			 */
 			*rax = 0;	/* Highest subleaf supported */
-			*rbx = curcpu()->ci_feature_sefflags_ebx &
-			    ~(SEFF0EBX_SGX | SEFF0EBX_HLE | SEFF0EBX_INVPCID |
-			      SEFF0EBX_RTM | SEFF0EBX_PQM | SEFF0EBX_MPX |
-			      SEFF0EBX_PCOMMIT | SEFF0EBX_PT |
-			      SEFF0EBX_AVX512F | SEFF0EBX_AVX512DQ |
-			      SEFF0EBX_AVX512IFMA | SEFF0EBX_AVX512PF |
-			      SEFF0EBX_AVX512ER | SEFF0EBX_AVX512CD |
-			      SEFF0EBX_AVX512BW | SEFF0EBX_AVX512VL);
-			*rcx = curcpu()->ci_feature_sefflags_ecx &
-			    ~(SEFF0ECX_AVX512VBMI);
+			*rbx = curcpu()->ci_feature_sefflags_ebx & VMM_SEFF0EBX_MASK;
+			*rcx = curcpu()->ci_feature_sefflags_ecx & VMM_SEFF0ECX_MASK;
 			*rdx = 0;
 		} else {
 			/* Unsupported subleaf */
@@ -5687,9 +5627,11 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 	if (vrp->vrp_continue) {
 		switch (vcpu->vc_gueststate.vg_exit_reason) {
 		case SVM_VMEXIT_IOIO:
-			vcpu->vc_gueststate.vg_rax =
-			    vcpu->vc_exit.vei.vei_data;
-			vmcb->v_rax = vcpu->vc_gueststate.vg_rax;
+			if (vcpu->vc_exit.vei.vei_dir == VEI_DIR_IN) {
+				vcpu->vc_gueststate.vg_rax =
+				    vcpu->vc_exit.vei.vei_data;
+				vmcb->v_rax = vcpu->vc_gueststate.vg_rax;
+			}
 		}
 	}
 
@@ -7388,9 +7330,9 @@ vmm_decode_cr0(uint64_t cr0)
 	DPRINTF("(");
 	for (i = 0; i < 11; i++)
 		if (cr0 & cr0_info[i].vrdi_bit)
-			DPRINTF("%c", cr0_info[i].vrdi_present);
+			DPRINTF("%s", cr0_info[i].vrdi_present);
 		else
-			DPRINTF("%c", cr0_info[i].vrdi_absent);
+			DPRINTF("%s", cr0_info[i].vrdi_absent);
 	
 	DPRINTF(")\n");
 }
@@ -7416,9 +7358,9 @@ vmm_decode_cr3(uint64_t cr3)
 		DPRINTF("(");
 		for (i = 0 ; i < 2 ; i++)
 			if (cr3 & cr3_info[i].vrdi_bit)
-				DPRINTF("%c", cr3_info[i].vrdi_present);
+				DPRINTF("%s", cr3_info[i].vrdi_present);
 			else
-				DPRINTF("%c", cr3_info[i].vrdi_absent);
+				DPRINTF("%s", cr3_info[i].vrdi_absent);
 
 		DPRINTF(")\n");
 	} else {
@@ -7456,9 +7398,9 @@ vmm_decode_cr4(uint64_t cr4)
 	DPRINTF("(");
 	for (i = 0; i < 19; i++)
 		if (cr4 & cr4_info[i].vrdi_bit)
-			DPRINTF("%c", cr4_info[i].vrdi_present);
+			DPRINTF("%s", cr4_info[i].vrdi_present);
 		else
-			DPRINTF("%c", cr4_info[i].vrdi_absent);
+			DPRINTF("%s", cr4_info[i].vrdi_absent);
 	
 	DPRINTF(")\n");
 }
@@ -7477,9 +7419,9 @@ vmm_decode_apicbase_msr_value(uint64_t apicbase)
 	DPRINTF("(");
 	for (i = 0; i < 3; i++)
 		if (apicbase & apicbase_info[i].vrdi_bit)
-			DPRINTF("%c", apicbase_info[i].vrdi_present);
+			DPRINTF("%s", apicbase_info[i].vrdi_present);
 		else
-			DPRINTF("%c", apicbase_info[i].vrdi_absent);
+			DPRINTF("%s", apicbase_info[i].vrdi_absent);
 	
 	DPRINTF(")\n");
 }
@@ -7499,9 +7441,9 @@ vmm_decode_ia32_fc_value(uint64_t fcr)
 	DPRINTF("(");
 	for (i = 0; i < 4; i++)
 		if (fcr & fcr_info[i].vrdi_bit)
-			DPRINTF("%c", fcr_info[i].vrdi_present);
+			DPRINTF("%s", fcr_info[i].vrdi_present);
 		else
-			DPRINTF("%c", fcr_info[i].vrdi_absent);
+			DPRINTF("%s", fcr_info[i].vrdi_absent);
 
 	if (fcr & IA32_FEATURE_CONTROL_SENTER_EN)
 		DPRINTF(" [SENTER param = 0x%llx]",
@@ -7524,9 +7466,9 @@ vmm_decode_mtrrcap_value(uint64_t val)
 	DPRINTF("(");
 	for (i = 0; i < 3; i++)
 		if (val & mtrrcap_info[i].vrdi_bit)
-			DPRINTF("%c", mtrrcap_info[i].vrdi_present);
+			DPRINTF("%s", mtrrcap_info[i].vrdi_present);
 		else
-			DPRINTF("%c", mtrrcap_info[i].vrdi_absent);
+			DPRINTF("%s", mtrrcap_info[i].vrdi_absent);
 
 	if (val & MTRRcap_FIXED)
 		DPRINTF(" [nr fixed ranges = 0x%llx]",
@@ -7561,9 +7503,9 @@ vmm_decode_mtrrdeftype_value(uint64_t mtrrdeftype)
 	DPRINTF("(");
 	for (i = 0; i < 2; i++)
 		if (mtrrdeftype & mtrrdeftype_info[i].vrdi_bit)
-			DPRINTF("%c", mtrrdeftype_info[i].vrdi_present);
+			DPRINTF("%s", mtrrdeftype_info[i].vrdi_present);
 		else
-			DPRINTF("%c", mtrrdeftype_info[i].vrdi_absent);
+			DPRINTF("%s", mtrrdeftype_info[i].vrdi_absent);
 
 	DPRINTF("type = ");
 	type = mtrr2mrt(mtrrdeftype & 0xff);
@@ -7597,9 +7539,9 @@ vmm_decode_efer_value(uint64_t efer)
 	DPRINTF("(");
 	for (i = 0; i < 4; i++)
 		if (efer & efer_info[i].vrdi_bit)
-			DPRINTF("%c", efer_info[i].vrdi_present);
+			DPRINTF("%s", efer_info[i].vrdi_present);
 		else
-			DPRINTF("%c", efer_info[i].vrdi_absent);
+			DPRINTF("%s", efer_info[i].vrdi_absent);
 
 	DPRINTF(")\n");
 }

@@ -473,7 +473,6 @@
 ./usr/share/man/man1/zforce.1
 ./usr/share/man/man1/zmore.1
 ./usr/share/man/man1/znew.1
-./usr/share/man/man3/legacy_coding.3
 ./usr/share/man/man3p/AnyDBM_File.3p
 ./usr/share/man/man3p/App::Cpan.3p
 ./usr/share/man/man3p/App::Prove.3p
@@ -1146,6 +1145,7 @@
 ./usr/share/man/man4/arc.4
 ./usr/share/man/man4/arcofi.4
 ./usr/share/man/man4/armv7/agtimer.4
+./usr/share/man/man4/armv7/amdisplay.4
 ./usr/share/man/man4/armv7/ampintc.4
 ./usr/share/man/man4/armv7/amptimer.4
 ./usr/share/man/man4/armv7/armliicc.4
@@ -1597,6 +1597,7 @@
 ./usr/share/man/man4/re.4
 ./usr/share/man/man4/rgephy.4
 ./usr/share/man/man4/ricohrtc.4
+./usr/share/man/man4/rktemp.4
 ./usr/share/man/man4/rl.4
 ./usr/share/man/man4/rlphy.4
 ./usr/share/man/man4/route.4
@@ -1774,7 +1775,6 @@
 ./usr/share/man/man4/twe.4
 ./usr/share/man/man4/txp.4
 ./usr/share/man/man4/txphy.4
-./usr/share/man/man4/ualea.4
 ./usr/share/man/man4/uark.4
 ./usr/share/man/man4/uath.4
 ./usr/share/man/man4/uaudio.4
@@ -1827,6 +1827,7 @@
 ./usr/share/man/man4/url.4
 ./usr/share/man/man4/urlphy.4
 ./usr/share/man/man4/urndis.4
+./usr/share/man/man4/urng.4
 ./usr/share/man/man4/urtw.4
 ./usr/share/man/man4/urtwn.4
 ./usr/share/man/man4/usb.4

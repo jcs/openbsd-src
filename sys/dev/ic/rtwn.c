@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtwn.c,v 1.28 2017/08/16 01:26:46 kevlo Exp $	*/
+/*	$OpenBSD: rtwn.c,v 1.33 2017/08/23 09:25:17 kevlo Exp $	*/
 
 /*-
  * Copyright (c) 2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -89,6 +89,18 @@ int rtwn_debug = 0;
 #define DPRINTFN(n, x)
 #endif
 
+/* Registers to save and restore during IQ calibration. */
+struct rtwn_iq_cal_regs {
+	uint32_t	adda[16];
+	uint8_t		txpause;
+	uint8_t		bcn_ctrl;
+	uint8_t		bcn_ctrl1;
+	uint32_t	gpio_muxcfg;
+	uint32_t	ofdm0_trxpathena;
+	uint32_t	ofdm0_trmuxpar;
+	uint32_t	fpga0_rfifacesw1;
+};
+
 void		rtwn_write_1(struct rtwn_softc *, uint16_t, uint8_t);
 void		rtwn_write_2(struct rtwn_softc *, uint16_t, uint16_t);
 void		rtwn_write_4(struct rtwn_softc *, uint16_t, uint32_t);
@@ -115,7 +127,6 @@ int		rtwn_r88e_ra_init(struct rtwn_softc *, u_int8_t, u_int32_t,
 void		rtwn_tsf_sync_enable(struct rtwn_softc *);
 void		rtwn_set_led(struct rtwn_softc *, int, int);
 void		rtwn_update_short_preamble(struct ieee80211com *);
-void		rtwn_update_avgrssi(struct rtwn_softc *, int, int8_t);
 int8_t		rtwn_r88e_get_rssi(struct rtwn_softc *, int, void *);
 void		rtwn_watchdog(struct ifnet *);
 void		rtwn_fw_reset(struct rtwn_softc *);
@@ -146,7 +157,7 @@ void		rtwn_set_chan(struct rtwn_softc *,
 int		rtwn_iq_calib_chain(struct rtwn_softc *, int, uint16_t[2],
 		    uint16_t[2]);
 void		rtwn_iq_calib_run(struct rtwn_softc *, int, uint16_t[2][2],
-		    uint16_t[2][2]);
+    		    uint16_t rx[2][2], struct rtwn_iq_cal_regs *);
 int		rtwn_iq_calib_compare_results(uint16_t[2][2], uint16_t[2][2],
 		    uint16_t[2][2], uint16_t[2][2], int);
 void		rtwn_iq_calib_write_results(struct rtwn_softc *, uint16_t[2],
@@ -515,7 +526,7 @@ rtwn_efuse_read(struct rtwn_softc *sc, uint8_t *rom, size_t size)
 	if (rtwn_debug >= 2) {
 		/* Dump ROM content. */
 		printf("\n");
-		for (i = 0; i < size); i++)
+		for (i = 0; i < size; i++)
 			printf("%02x:", rom[i]);
 		printf("\n");
 	}
@@ -1225,19 +1236,21 @@ rtwn_update_avgrssi(struct rtwn_softc *sc, int rate, int8_t rssi)
 		pwdb = 100;
 	else
 		pwdb = 100 + rssi;
-	if (rate <= 3) {
-		/* CCK gain is smaller than OFDM/MCS gain. */
-		pwdb += 6;
-		if (pwdb > 100)
-			pwdb = 100;
-		if (pwdb <= 14)
-			pwdb -= 4;
-		else if (pwdb <= 26)
-			pwdb -= 8;
-		else if (pwdb <= 34)
-			pwdb -= 6;
-		else if (pwdb <= 42)
-			pwdb -= 2;
+	if (sc->chip & (RTWN_CHIP_92C | RTWN_CHIP_88C)) {
+		if (rate <= 3) {
+			/* CCK gain is smaller than OFDM/MCS gain. */
+			pwdb += 6;
+			if (pwdb > 100)
+				pwdb = 100;
+			if (pwdb <= 14)
+				pwdb -= 4;
+			else if (pwdb <= 26)
+				pwdb -= 8;
+			else if (pwdb <= 34)
+				pwdb -= 6;
+			else if (pwdb <= 42)
+				pwdb -= 2;
+		}
 	}
 	if (sc->avg_pwdb == -1)	/* Init. */
 		sc->avg_pwdb = pwdb;
@@ -1280,50 +1293,23 @@ rtwn_get_rssi(struct rtwn_softc *sc, int rate, void *physt)
 int8_t
 rtwn_r88e_get_rssi(struct rtwn_softc *sc, int rate, void *physt)
 {
-	struct r92c_rx_phystat *phy;
-	struct r88e_rx_cck *cck;
-	uint8_t cck_agc_rpt, lna_idx, vga_idx;
+	static const int8_t cckoff[] = { 20, 14, 10, -4, -16, -22, -38, -40 };
+	struct r88e_rx_phystat *phy;
+	uint8_t rpt;
 	int8_t rssi;
 
-	rssi = 0;
+	phy = (struct r88e_rx_phystat *)physt;
+
 	if (rate <= 3) {
-		cck = (struct r88e_rx_cck *)physt;
-		cck_agc_rpt = cck->agc_rpt;
-		lna_idx = (cck_agc_rpt & 0xe0) >> 5;
-		vga_idx = cck_agc_rpt & 0x1f; 
-		switch (lna_idx) {
-		case 7:
-			if (vga_idx <= 27)
-				rssi = -100 + 2* (27 - vga_idx);
-			else
-				rssi = -100;
-			break;
-		case 6:
-			rssi = -48 + 2 * (2 - vga_idx);
-			break;
-		case 5:
-			rssi = -42 + 2 * (7 - vga_idx);
-			break;
-		case 4:
-			rssi = -36 + 2 * (7 - vga_idx);
-			break;
-		case 3:
-			rssi = -24 + 2 * (7 - vga_idx);
-			break;
-		case 2:
-			rssi = -12 + 2 * (5 - vga_idx);
-			break;
-		case 1:
-			rssi = 8 - (2 * vga_idx);
-			break;
-		case 0:
-			rssi = 14 - (2 * vga_idx);
-			break;
+		rpt = (phy->agc_rpt >> 5) & 0x7;
+		rssi = (phy->agc_rpt & 0x1f) << 1;
+		if (sc->sc_flags & RTWN_FLAG_CCK_HIPWR) {
+			if (rpt == 2)
+				rssi -= 6;
 		}
-		rssi += 6;
+		rssi = (phy->agc_rpt & 0x1f) > 27 ? -94 : cckoff[rpt] - rssi;
 	} else {	/* OFDM/HT. */
-		phy = (struct r92c_rx_phystat *)physt;
-		rssi = ((le32toh(phy->phydw1) >> 1) & 0x7f) - 110;
+		rssi = ((le32toh(phy->sq_rpt) >> 1) & 0x7f) - 110;
 	}
 	return (rssi);
 }
@@ -2227,19 +2213,8 @@ rtwn_iq_calib_chain(struct rtwn_softc *sc, int chain, uint16_t tx[2],
 
 void
 rtwn_iq_calib_run(struct rtwn_softc *sc, int n, uint16_t tx[2][2],
-    uint16_t rx[2][2])
+    uint16_t rx[2][2], struct rtwn_iq_cal_regs *iq_cal_regs)
 {
-	/* Registers to save and restore during IQ calibration. */
-	struct iq_cal_regs {
-		uint32_t	adda[16];
-		uint8_t		txpause;
-		uint8_t		bcn_ctrl;
-		uint8_t		bcn_ctrl1;
-		uint32_t	gpio_muxcfg;
-		uint32_t	ofdm0_trxpathena;
-		uint32_t	ofdm0_trmuxpar;
-		uint32_t	fpga0_rfifacesw1;
-	} iq_cal_regs;
 	static const uint16_t reg_adda[16] = {
 		0x85c, 0xe6c, 0xe70, 0xe74,
 		0xe78, 0xe7c, 0xe80, 0xe84,
@@ -2251,12 +2226,12 @@ rtwn_iq_calib_run(struct rtwn_softc *sc, int n, uint16_t tx[2][2],
 
 	if (n == 0) {
 		for (i = 0; i < nitems(reg_adda); i++)
-			iq_cal_regs.adda[i] = rtwn_bb_read(sc, reg_adda[i]);
+			iq_cal_regs->adda[i] = rtwn_bb_read(sc, reg_adda[i]);
 
-		iq_cal_regs.txpause = rtwn_read_1(sc, R92C_TXPAUSE);
-		iq_cal_regs.bcn_ctrl = rtwn_read_1(sc, R92C_BCN_CTRL);
-		iq_cal_regs.bcn_ctrl1 = rtwn_read_1(sc, R92C_BCN_CTRL1);
-		iq_cal_regs.gpio_muxcfg = rtwn_read_4(sc, R92C_GPIO_MUXCFG);
+		iq_cal_regs->txpause = rtwn_read_1(sc, R92C_TXPAUSE);
+		iq_cal_regs->bcn_ctrl = rtwn_read_1(sc, R92C_BCN_CTRL);
+		iq_cal_regs->bcn_ctrl1 = rtwn_read_1(sc, R92C_BCN_CTRL1);
+		iq_cal_regs->gpio_muxcfg = rtwn_read_4(sc, R92C_GPIO_MUXCFG);
 	}
 
 	if (sc->ntxchains == 1) {
@@ -2277,11 +2252,11 @@ rtwn_iq_calib_run(struct rtwn_softc *sc, int n, uint16_t tx[2][2],
 	}
 
 	if (n == 0) {
-		iq_cal_regs.ofdm0_trxpathena =
+		iq_cal_regs->ofdm0_trxpathena =
 		    rtwn_bb_read(sc, R92C_OFDM0_TRXPATHENA);
-		iq_cal_regs.ofdm0_trmuxpar =
+		iq_cal_regs->ofdm0_trmuxpar =
 		    rtwn_bb_read(sc, R92C_OFDM0_TRMUXPAR);
-		iq_cal_regs.fpga0_rfifacesw1 =
+		iq_cal_regs->fpga0_rfifacesw1 =
 		    rtwn_bb_read(sc, R92C_FPGA0_RFIFACESW(1));
 	}
 
@@ -2295,11 +2270,11 @@ rtwn_iq_calib_run(struct rtwn_softc *sc, int n, uint16_t tx[2][2],
 
 	rtwn_write_1(sc, R92C_TXPAUSE, 0x3f);
 	rtwn_write_1(sc, R92C_BCN_CTRL,
-	    iq_cal_regs.bcn_ctrl & ~(R92C_BCN_CTRL_EN_BCN));
+	    iq_cal_regs->bcn_ctrl & ~(R92C_BCN_CTRL_EN_BCN));
 	rtwn_write_1(sc, R92C_BCN_CTRL1,
-	    iq_cal_regs.bcn_ctrl1 & ~(R92C_BCN_CTRL_EN_BCN));
+	    iq_cal_regs->bcn_ctrl1 & ~(R92C_BCN_CTRL_EN_BCN));
 	rtwn_write_1(sc, R92C_GPIO_MUXCFG,
-	    iq_cal_regs.gpio_muxcfg & ~(R92C_GPIO_MUXCFG_ENBT));
+	    iq_cal_regs->gpio_muxcfg & ~(R92C_GPIO_MUXCFG_ENBT));
 
 	rtwn_bb_write(sc, 0x0b68, 0x00080000);
 	if (sc->ntxchains > 1)
@@ -2353,10 +2328,10 @@ rtwn_iq_calib_run(struct rtwn_softc *sc, int n, uint16_t tx[2][2],
 	}
 
 	rtwn_bb_write(sc, R92C_OFDM0_TRXPATHENA,
-	    iq_cal_regs.ofdm0_trxpathena); 
+	    iq_cal_regs->ofdm0_trxpathena); 
 	rtwn_bb_write(sc, R92C_FPGA0_RFIFACESW(1),
-	    iq_cal_regs.fpga0_rfifacesw1);
-	rtwn_bb_write(sc, R92C_OFDM0_TRMUXPAR, iq_cal_regs.ofdm0_trmuxpar);
+	    iq_cal_regs->fpga0_rfifacesw1);
+	rtwn_bb_write(sc, R92C_OFDM0_TRMUXPAR, iq_cal_regs->ofdm0_trmuxpar);
 
 	rtwn_bb_write(sc, 0x0e28, 0x00);
 	rtwn_bb_write(sc, R92C_LSSI_PARAM(0), 0x00032ed3);
@@ -2370,12 +2345,12 @@ rtwn_iq_calib_run(struct rtwn_softc *sc, int n, uint16_t tx[2][2],
 		}
 
 		for (i = 0; i < nitems(reg_adda); i++)
-			rtwn_bb_write(sc, reg_adda[i], iq_cal_regs.adda[i]);
+			rtwn_bb_write(sc, reg_adda[i], iq_cal_regs->adda[i]);
 
-		rtwn_write_1(sc, R92C_TXPAUSE, iq_cal_regs.txpause);
-		rtwn_write_1(sc, R92C_BCN_CTRL, iq_cal_regs.bcn_ctrl);
-		rtwn_write_1(sc, R92C_BCN_CTRL1, iq_cal_regs.bcn_ctrl1);
-		rtwn_write_4(sc, R92C_GPIO_MUXCFG, iq_cal_regs.gpio_muxcfg);
+		rtwn_write_1(sc, R92C_TXPAUSE, iq_cal_regs->txpause);
+		rtwn_write_1(sc, R92C_BCN_CTRL, iq_cal_regs->bcn_ctrl);
+		rtwn_write_1(sc, R92C_BCN_CTRL1, iq_cal_regs->bcn_ctrl1);
+		rtwn_write_4(sc, R92C_GPIO_MUXCFG, iq_cal_regs->gpio_muxcfg);
 	}
 }
 
@@ -2486,14 +2461,12 @@ rtwn_iq_calib(struct rtwn_softc *sc)
 {
 	uint16_t tx[RTWN_IQ_CAL_NRUN][2][2], rx[RTWN_IQ_CAL_NRUN][2][2];
 	int n, valid;
-
-	/* FIXME IQ calib breaks Rx on USB devices. */
-	if (sc->chip & RTWN_CHIP_USB)
-		return;
+	struct rtwn_iq_cal_regs regs;
 
 	valid = 0;
+	memset(&regs, 0, sizeof(regs));
 	for (n = 0; n < RTWN_IQ_CAL_NRUN; n++) {
-		rtwn_iq_calib_run(sc, n, tx[n], rx[n]);
+		rtwn_iq_calib_run(sc, n, tx[n], rx[n], &regs);
 
 		if (n == 0)
 			continue;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.h,v 1.59 2017/08/18 07:01:29 mlarkin Exp $	*/
+/*	$OpenBSD: vmd.h,v 1.61 2017/08/31 06:23:37 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -53,6 +53,7 @@
 /* vmd -> vmctl error codes */
 #define VMD_BIOS_MISSING	1001
 #define VMD_DISK_MISSING	1002
+#define VMD_DISK_INVALID	1003
 
 /* 100.64.0.0/10 from rfc6598 (IPv4 Prefix for Shared Address Space) */
 #define VMD_DHCP_PREFIX		"100.64.0.0/10"
@@ -149,12 +150,21 @@ struct vmop_create_params {
 	int64_t			 vmc_gid;
 };
 
+struct vm_dump_header_cpuid {
+	unsigned long code, leaf;
+	unsigned int a, b, c, d;
+};
+
+#define VM_DUMP_HEADER_CPUID_COUNT	5
+
 struct vm_dump_header {
 	uint8_t			 vmh_signature[12];
 #define VM_DUMP_SIGNATURE	 VMM_HV_SIGNATURE
 	uint8_t			 vmh_pad[3];
 	uint8_t			 vmh_version;
-#define VM_DUMP_VERSION		 1
+#define VM_DUMP_VERSION		 2
+	struct			 vm_dump_header_cpuid
+	    vmh_cpuids[VM_DUMP_HEADER_CPUID_COUNT];
 } __packed;
 
 struct vmboot_params {

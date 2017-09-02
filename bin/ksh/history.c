@@ -1,4 +1,4 @@
-/*	$OpenBSD: history.c,v 1.64 2017/08/11 19:37:58 tb Exp $	*/
+/*	$OpenBSD: history.c,v 1.70 2017/08/31 11:10:03 jca Exp $	*/
 
 /*
  * command history
@@ -42,6 +42,8 @@ static FILE	*histfh;
 static char   **current;	/* current position in history[] */
 static char    *hname;		/* current name of history file */
 static int	hstarted;	/* set after hist_init() called */
+static int	ignoredups;	/* ditch duplicated history lines? */
+static int	ignorespace;	/* ditch lines starting with a space? */
 static Source	*hist_source;
 static uint32_t	line_co;
 
@@ -434,6 +436,18 @@ histbackup(void)
 	}
 }
 
+static void
+histreset(void)
+{
+	char **hp;
+
+	for (hp = history; hp <= histptr; hp++)
+		afree(*hp, APERM);
+
+	histptr = history - 1;
+	hist_source->line = 0;
+}
+
 /*
  * Return the current position.
  */
@@ -501,6 +515,28 @@ findhistrel(const char *str)
 	return start + rec + 1;
 }
 
+void
+sethistcontrol(const char *str)
+{
+	char *spec, *tok, *state;
+
+	ignorespace = 0;
+	ignoredups = 0;
+
+	if (str == NULL)
+		return;
+
+	spec = str_save(str, ATEMP);
+	for (tok = strtok_r(spec, ":", &state); tok != NULL;
+	     tok = strtok_r(NULL, ":", &state)) {
+		if (strcmp(tok, "ignoredups") == 0)
+			ignoredups = 1;
+		else if (strcmp(tok, "ignorespace") == 0)
+			ignorespace = 1;
+	}
+	afree(spec, ATEMP);
+}
+
 /*
  *	set history
  *	this means reallocating the dataspace
@@ -509,18 +545,21 @@ void
 sethistsize(int n)
 {
 	if (n > 0 && n != histsize) {
-		int cursize = histptr - history;
+		int offset = histptr - history;
 
 		/* save most recent history */
-		if (n < cursize) {
-			memmove(history, histptr - n, n * sizeof(char *));
-			cursize = n;
+		if (offset > n - 1) {
+			char **hp;
+
+			offset = n - 1;
+			for (hp = history; hp < histptr - offset; hp++)
+				afree(*hp, APERM);
+			memmove(history, histptr - offset, n * sizeof(char *));
 		}
 
 		history = areallocarray(history, n, sizeof(char *), APERM);
-
 		histsize = n;
-		histptr = history + cursize;
+		histptr = history + offset;
 	}
 }
 
@@ -545,9 +584,7 @@ sethistfile(const char *name)
 	if (hname) {
 		afree(hname, APERM);
 		hname = NULL;
-		/* let's reset the history */
-		histptr = history - 1;
-		hist_source->line = 0;
+		histreset();
 	}
 
 	history_close();
@@ -595,6 +632,22 @@ histsave(int lno, const char *cmd, int dowrite)
 {
 	char		*c, *cp;
 
+	if (ignorespace && cmd[0] == ' ')
+		return;
+
+	c = str_save(cmd, APERM);
+	if ((cp = strrchr(c, '\n')) != NULL)
+		*cp = '\0';
+
+	/*
+	 * XXX to properly check for duplicated lines we should first reload
+	 * the histfile if needed
+	 */
+	if (ignoredups && histptr >= history && strcmp(*histptr, c) == 0) {
+		afree(c, APERM);
+		return;
+	}
+
 	if (dowrite && histfh) {
 #ifndef SMALL
 		struct stat	sb;
@@ -604,18 +657,12 @@ histsave(int lno, const char *cmd, int dowrite)
 			if (timespeccmp(&sb.st_mtim, &last_sb.st_mtim, ==))
 				; /* file is unchanged */
 			else {
-				/* reset history */
-				histptr = history - 1;
-				hist_source->line = 0;
+				histreset();
 				history_load(hist_source);
 			}
 		}
 #endif
 	}
-
-	c = str_save(cmd, APERM);
-	if ((cp = strrchr(c, '\n')) != NULL)
-		*cp = '\0';
 
 	if (histptr < history + histsize - 1)
 		histptr++;
@@ -756,8 +803,7 @@ hist_init(Source *s)
 static void
 history_write(void)
 {
-	char		*cmd, *encoded;
-	int		i;
+	char		**hp, *encoded;
 
 	/* see if file has grown over 25% */
 	if (line_co < histsize + (histsize / 4))
@@ -769,12 +815,8 @@ history_write(void)
 		bi_errorf("failed to rewrite history file - %s",
 		    strerror(errno));
 	}
-	for (i = 0; i < histsize; i++) {
-		cmd = history[i];
-		if (cmd == NULL)
-			break;
-
-		if (stravis(&encoded, cmd, VIS_SAFE | VIS_NL) != -1) {
+	for (hp = history; hp <= histptr; hp++) {
+		if (stravis(&encoded, *hp, VIS_SAFE | VIS_NL) != -1) {
 			if (fprintf(histfh, "%s\n", encoded) == -1) {
 				free(encoded);
 				return;

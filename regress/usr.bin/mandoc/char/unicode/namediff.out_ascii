@@ -9,20 +9,16 @@ DDEESSCCRRIIPPTTIIOONN
        BEGINTEST
        jj LATIN SMALL LETTER DOTLESS J
        .. DOT ABOVE
-       GG GREEK CAPITAL LETTER GAMMA
-       SS GREEK CAPITAL LETTER SIGMA
        -- OVERLINE
        /h/h/h PLANCK CONSTANT OVER TWO PI
        PP SCRIPT CAPITAL P
        ^v^v UP DOWN ARROW
        ^=v^=v UP DOWN DOUBLE ARROW
-       VV NABLA
-       !E!E NOT AN ELEMENT OF
-       TTTT N-ARY PRODUCT
-       UU N-ARY COPRODUCT
-       EE N-ARY SUMMATION
-       (!=(!= NOT A SUBSET OF
-       !=)!=) NOT A SUPERSET OF
+       <product><product> N-ARY PRODUCT
+       <coproduct><coproduct> N-ARY COPRODUCT
+       <sum><sum> N-ARY SUMMATION
+       <not subset><not subset> NOT A SUBSET OF
+       <not superset><not superset> NOT A SUPERSET OF
        // LEFT PARENTHESIS UPPER HOOK
        || LEFT PARENTHESIS EXTENSION
        \\ LEFT PARENTHESIS LOWER HOOK

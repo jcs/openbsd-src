@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfkey.c,v 1.49 2017/04/18 02:29:56 deraadt Exp $ */
+/*	$OpenBSD: pfkey.c,v 1.51 2017/08/21 14:43:33 phessler Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>

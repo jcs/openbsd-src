@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.494 2017/08/14 22:12:59 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.498 2017/09/01 19:23:50 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -235,31 +235,30 @@ interface_status(char *name)
 {
 	struct ifaddrs	*ifap, *ifa;
 	struct if_data	*ifdata;
+	int		 ret;
 
 	if (getifaddrs(&ifap) != 0)
 		fatalx("getifaddrs failed");
 
 	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
-		if ((ifa->ifa_flags & IFF_LOOPBACK) ||
-		    (ifa->ifa_flags & IFF_POINTOPOINT))
-			continue;
-
-		if (strcmp(name, ifa->ifa_name) != 0)
-			continue;
-
-		if (ifa->ifa_addr->sa_family != AF_LINK)
-			continue;
-
-		if ((ifa->ifa_flags & (IFF_UP|IFF_RUNNING)) !=
-		    (IFF_UP|IFF_RUNNING))
-			return 0;
-
-		ifdata = ifa->ifa_data;
-
-		return LINK_STATE_IS_UP(ifdata->ifi_link_state);
+		if (strcmp(name, ifa->ifa_name) == 0 &&
+		    (ifa->ifa_flags & IFF_LOOPBACK) == 0 &&
+		    (ifa->ifa_flags & IFF_POINTOPOINT) == 0 &&
+		    ifa->ifa_addr->sa_family == AF_LINK)
+			break;
 	}
 
-	return 0;
+	if (ifa == NULL ||
+	    (ifa->ifa_flags & IFF_UP) == 0 ||
+	    (ifa->ifa_flags & IFF_RUNNING) == 0) {
+		ret = 0;
+	} else {
+		ifdata = ifa->ifa_data;
+		ret = LINK_STATE_IS_UP(ifdata->ifi_link_state);
+	}
+
+	freeifaddrs(ifap);
+	return ret;
 }
 
 void
@@ -1354,7 +1353,7 @@ state_panic(struct interface_info *ifi)
 	log_info("No acceptable DHCPOFFERS received.");
 
 	ifi->offer = get_recorded_lease(ifi);
-	if (ifi->offer) {
+	if (ifi->offer != NULL) {
 		ifi->state = S_REQUESTING;
 		bind_lease(ifi);
 		return;
@@ -1409,7 +1408,7 @@ send_request(struct interface_info *ifi)
 	 */
 	if (ifi->state != S_REQUESTING &&
 	    cur_time > ifi->active->expiry) {
-		if (ifi->active)
+		if (ifi->active != NULL)
 			delete_address(ifi->active->address);
 		ifi->state = S_INIT;
 		state_init(ifi);
@@ -1985,7 +1984,11 @@ go_daemon(void)
 	/* Stop logging to stderr. */
 	log_perror = 0;
 	log_init(0, LOG_DAEMON);
+#ifdef DEBUG
+	log_setverbose(1);
+#else
 	log_setverbose(0);
+#endif	/* DEBUG */
 
 	if (rdaemon(nullfd) == -1)
 		fatal("Cannot daemonize");
@@ -2546,7 +2549,7 @@ take_charge(struct interface_info *ifi, int routefd)
 			fatal("routefd poll");
 		}
 		if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-			fatalx("routed poll error");
+			fatalx("routefd poll error");
 		if (nfds == 0 || (fds[0].revents & POLLIN) == 0)
 			continue;
 		routehandler(ifi, routefd);

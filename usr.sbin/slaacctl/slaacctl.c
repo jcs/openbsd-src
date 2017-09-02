@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacctl.c,v 1.11 2017/08/18 18:43:33 florian Exp $	*/
+/*	$OpenBSD: slaacctl.c,v 1.13 2017/08/28 15:35:48 florian Exp $	*/
 
 /*
  * Copyright (c) 2005 Claudio Jeker <claudio@openbsd.org>
@@ -263,7 +263,7 @@ show_interface_msg(struct imsg *imsg)
 		if (getnameinfo((struct sockaddr *)&cei_addr_proposal->addr,
 		    cei_addr_proposal->addr.sin6_len, hbuf, sizeof(hbuf),
 		    NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV))
-			err(1, "cannot get router IP");
+			err(1, "cannot get proposal IP");
 
 		printf("\t\tid: %4lld, state: %15s, privacy: %s\n",
 		    cei_addr_proposal->id, cei_addr_proposal->state,
@@ -306,9 +306,9 @@ show_interface_msg(struct imsg *imsg)
 		    NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV))
 			err(1, "cannot get router IP");
 
-		printf("\t\trouter: %s\n", hbuf);
 		printf("\t\tid: %4lld, state: %15s\n",
 		    cei_dfr_proposal->id, cei_dfr_proposal->state);
+		printf("\t\trouter: %s\n", hbuf);
 		printf("\t\trouter lifetime: %10u\n",
 		    cei_dfr_proposal->router_lifetime);
 		printf("\t\tPreference: %s\n", cei_dfr_proposal->rpref);

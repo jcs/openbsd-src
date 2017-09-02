@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.45 2017/07/23 13:53:54 deraadt Exp $	*/
+/*	$OpenBSD: parse.y,v 1.47 2017/08/21 17:38:55 rob Exp $	*/
 
 /*
  * Copyright (c) 2004 Ryan McBride <mcbride@openbsd.org>
@@ -85,7 +85,7 @@ struct ifsd_state		*curstate;
 void			 link_states(struct ifsd_action *);
 void			 set_expression_depth(struct ifsd_expression *, int);
 void			 init_state(struct ifsd_state *);
-struct ifsd_ifstate	*new_ifstate(u_short, int);
+struct ifsd_ifstate	*new_ifstate(char *, int);
 struct ifsd_external	*new_external(char *, u_int32_t);
 
 typedef struct {
@@ -93,7 +93,6 @@ typedef struct {
 		int64_t		 number;
 		char		*string;
 		struct in_addr	 addr;
-		u_short		 interface;
 
 		struct ifsd_expression	*expression;
 		struct ifsd_ifstate	*ifstate;
@@ -114,7 +113,7 @@ typedef struct {
 %token	<v.string>	STRING
 %token	<v.number>	NUMBER
 %type	<v.string>	string
-%type	<v.interface>	interface
+%type	<v.string>	interface
 %type	<v.ifstate>	if_test
 %type	<v.external>	ext_test
 %type	<v.expression>	expr term
@@ -170,12 +169,12 @@ conf_main	: INITSTATE STRING		{
 		;
 
 interface	: STRING		{
-			if (($$ = if_nametoindex($1)) == 0) {
+			if (if_nametoindex($1) == 0) {
 				yyerror("unknown interface %s", $1);
 				free($1);
 				YYERROR;
 			}
-			free($1);
+			$$ = $1;
 		}
 		;
 
@@ -193,8 +192,6 @@ action		: RUN STRING		{
 				err(1, "action: calloc");
 			action->type = IFSD_ACTION_COMMAND;
 			action->act.command = $2;
-			if (action->act.command == NULL)
-				err(1, "action: strdup");
 			TAILQ_INSERT_TAIL(&curaction->act.c.actions,
 			    action, entries);
 		}
@@ -687,7 +684,7 @@ pushfile(const char *name, int secret)
 		return (NULL);
 	}
 	if ((nfile->name = strdup(name)) == NULL) {
-		warn("malloc");
+		warn("strdup");
 		free(nfile);
 		return (NULL);
 	}
@@ -933,7 +930,7 @@ init_state(struct ifsd_state *state)
 }
 
 struct ifsd_ifstate *
-new_ifstate(u_short ifindex, int s)
+new_ifstate(char *ifname, int s)
 {
 	struct ifsd_ifstate *ifstate = NULL;
 	struct ifsd_state *state;
@@ -944,12 +941,16 @@ new_ifstate(u_short ifindex, int s)
 		state = &conf->initstate;
 
 	TAILQ_FOREACH(ifstate, &state->interface_states, entries)
-		if (ifstate->ifindex == ifindex && ifstate->ifstate == s)
+		if (strcmp(ifstate->ifname, ifname) == 0 &&
+		    ifstate->ifstate == s)
 			break;
 	if (ifstate == NULL) {
 		if ((ifstate = calloc(1, sizeof(*ifstate))) == NULL)
 			err(1, NULL);
-		ifstate->ifindex = ifindex;
+		if (strlcpy(ifstate->ifname, ifname,
+		    sizeof(ifstate->ifname)) >= sizeof(ifstate->ifname))
+			errx(1, "ifname strlcpy truncation");
+		free(ifname);
 		ifstate->ifstate = s;
 		TAILQ_INIT(&ifstate->expressions);
 		TAILQ_INSERT_TAIL(&state->interface_states, ifstate, entries);

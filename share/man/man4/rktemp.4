@@ -1,7 +1,6 @@
-.\"	$OpenBSD: ualea.4,v 1.1 2015/04/16 08:56:53 mpi Exp $
+.\"	$OpenBSD: rktemp.4,v 1.2 2017/08/25 14:25:39 jmc Exp $
 .\"
-.\" Copyright (c) 2007 Marc Balmer <mbalmer@openbsd.org>
-.\" Copyright (c) 2015 Sean Levy <attila@stalphonsos.com>
+.\" Copyright (c) 2016 Mark Kettenis <kettenis@openbsd.org>
 .\"
 .\" Permission to use, copy, modify, and distribute this software for any
 .\" purpose with or without fee is hereby granted, provided that the above
@@ -15,40 +14,37 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: April 16 2015 $
-.Dt UALEA 4
+.Dd $Mdocdate: August 25 2017 $
+.Dt RKTEMP 4
 .Os
 .Sh NAME
-.Nm ualea
-.Nd Araneus Alea II USB TRNG
+.Nm rktemp
+.Nd Rockchip RK3399 temperature monitor
 .Sh SYNOPSIS
-.Cd "ualea* at uhub?"
+.Cd "rktemp* at fdt?"
 .Sh DESCRIPTION
 The
 .Nm
-driver provides support for the Araneus Alea II, a USB true random
-number generator (TRNG).
-It delivers 100kbit/sec of hardware-generated entropy.
-.Nm
-reads raw entropy from the Alea II and uses
-.Xr add_true_randomness 9
-to add it to the system entropy pool.
+driver provides support for the temperature sensor found on the
+Rockchip RK3399 SoC.
+It configures the SoC to reset itself if the temperature raises above
+a certain temperature to protect it from damage caused by overheating.
 .Pp
-The product documentation states that the USB interface used by the
-Alea II is the same as that used by its predecessor the Alea I;
-theoretically this means that the Alea I should work but this has not
-been tested.
+Sensor values are made available through the
+.Xr sysctl 8
+interface.
 .Sh SEE ALSO
 .Xr intro 4 ,
-.Xr usb 4 ,
-.Xr add_true_randomness 9
+.Xr sensorsd 8 ,
+.Xr sysctl 8
 .Sh HISTORY
 The
 .Nm
 driver first appeared in
-.Ox 5.7 .
+.Ox 6.2 .
 .Sh AUTHORS
+.An -nosplit
 The
 .Nm
 driver was written by
-.An Sean Levy Aq Mt attila@stalphonsos.com .
+.An Mark Kettenis Mt kettenis@openbsd.org .

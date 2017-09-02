@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.63 2017/01/05 21:14:22 naddy Exp $
+#	$OpenBSD: Makefile,v 1.69 2017/08/27 22:18:08 deraadt Exp $
 
 SUBDIR=ldconfig ldd
 MAN=	ld.so.1
@@ -20,6 +20,18 @@ SRCS=	ldasm.S boot.c loader.c resolve.c dlfcn.c dl_printf.c rtld_machine.c
 SRCS+=	path.c util.c sod.c strsep.c strtol.c dir.c library_subr.c
 SRCS+=	dl_realpath.c dl_uname.c dl_dirname.c strlcat.c strlen.c trace.c
 SRCS+=	malloc.c reallocarray.c tib.c
+
+syscall=__syscall close exit fstat __getcwd getdents getentropy getthrid \
+	issetugid mprotect munmap open pledge read readlink sendsyslog \
+	__set_tcb sysctl thrkill utrace write
+
+.for _i in ${syscall}
+OBJS+=dl_${_i}.o
+dl_${_i}.o: SYS.h
+	printf '#include "SYS.h"\nDL_SYSCALL(${_i})\n' | \
+	    ${CC} ${DEBUG} -c -fPIC ${CFLAGS:M-[ID]*} ${CFLAGS:M-pipe} ${AINC} -P \
+	    -x assembler-with-cpp - ${DFLAGS} -MF ${.TARGET:R}.d -o ${.TARGET}
+.endfor
 
 .if (${MACHINE_ARCH} == "i386")
 SRCS+=	library_mquery.c
@@ -48,10 +60,11 @@ CLEANFILES+=	${candidate}
 
 $(test_prog):
 	printf '#include <stdio.h>\nint main(int argc, char **argv){ printf("%%s: ", argv[0]); printf("%%s!\\n", argv[1] ? argv[1] : "foo"); }\n' | \
-	$(CC) -x c - -Wl,-dynamic-linker,${.OBJDIR}/$(candidate) -o $@
+	$(CC) -x c - -Wl,-dynamic-linker,./$(candidate) -o $@
 
-$(PROG): $(test_prog) ${VERSION_SCRIPT}
-	$(LD) -x -e _dl_start $(ELF_LDFLAGS) -o $(candidate) $(OBJS) $(LDADD)
+$(PROG): $(test_prog) ${VERSION_SCRIPT} $(OBJS)
+	$(LD) ${DEBUG} -x -e _dl_start $(ELF_LDFLAGS) -o $(candidate) \
+	    `echo ${OBJS} | tr " " "\n" | sort -R`
 .ifndef CROSSDIR
 	ulimit -c 0; [ "`${.OBJDIR}/$(test_prog) ok`" = "${.OBJDIR}/$(test_prog): ok!" ]
 .endif
@@ -62,3 +75,12 @@ $(PROG): $(test_prog) ${VERSION_SCRIPT}
 
 boot.o: boot.c
 	${COMPILE.c} -fno-stack-protector ${.IMPSRC}
+
+all: ld.so.a
+
+ld.so.a: ${OBJS} ${.CURDIR}/Symbols.map ${test_prog}
+	ar cqD $@ $?
+
+afterinstall: ld.so.a
+	install -o ${BINOWN} -g ${BINGRP} -m ${NONBINMODE} \
+	    ld.so.a ${DESTDIR}/usr/libdata/ld.so.a

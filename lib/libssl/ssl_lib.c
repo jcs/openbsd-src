@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_lib.c,v 1.168 2017/08/13 17:04:36 doug Exp $ */
+/* $OpenBSD: ssl_lib.c,v 1.170 2017/08/30 16:24:21 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *

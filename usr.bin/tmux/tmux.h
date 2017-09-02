@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.800 2017/08/16 12:12:54 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.804 2017/08/30 18:13:47 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -361,6 +361,7 @@ enum tty_code_code {
 	TTYC_KIC6,
 	TTYC_KIC7,
 	TTYC_KICH1,
+	TTYC_KIND,
 	TTYC_KLFT2,
 	TTYC_KLFT3,
 	TTYC_KLFT4,
@@ -382,6 +383,7 @@ enum tty_code_code {
 	TTYC_KPRV5,
 	TTYC_KPRV6,
 	TTYC_KPRV7,
+	TTYC_KRI,
 	TTYC_KRIT2,
 	TTYC_KRIT3,
 	TTYC_KRIT4,
@@ -1766,20 +1768,22 @@ void		 cmd_find_copy_state(struct cmd_find_state *,
 		     struct cmd_find_state *);
 void		 cmd_find_log_state(const char *, struct cmd_find_state *);
 void		 cmd_find_from_session(struct cmd_find_state *,
-		     struct session *);
+		     struct session *, int);
 void		 cmd_find_from_winlink(struct cmd_find_state *,
-		     struct winlink *);
+		     struct winlink *, int);
 int		 cmd_find_from_session_window(struct cmd_find_state *,
-		     struct session *, struct window *);
-int		 cmd_find_from_window(struct cmd_find_state *, struct window *);
+		     struct session *, struct window *, int);
+int		 cmd_find_from_window(struct cmd_find_state *, struct window *,
+		     int);
 void		 cmd_find_from_winlink_pane(struct cmd_find_state *,
-		     struct winlink *, struct window_pane *);
+		     struct winlink *, struct window_pane *, int);
 int		 cmd_find_from_pane(struct cmd_find_state *,
-		     struct window_pane *);
-int		 cmd_find_from_client(struct cmd_find_state *, struct client *);
+		     struct window_pane *, int);
+int		 cmd_find_from_client(struct cmd_find_state *, struct client *,
+		     int);
 int		 cmd_find_from_mouse(struct cmd_find_state *,
-		     struct mouse_event *);
-int		 cmd_find_from_nothing(struct cmd_find_state *);
+		     struct mouse_event *, int);
+int		 cmd_find_from_nothing(struct cmd_find_state *, int);
 
 /* cmd.c */
 int		 cmd_pack_argv(int, char **, char *, size_t);
@@ -1969,7 +1973,7 @@ int	 grid_cells_equal(const struct grid_cell *, const struct grid_cell *);
 struct grid *grid_create(u_int, u_int, u_int);
 void	 grid_destroy(struct grid *);
 int	 grid_compare(struct grid *, struct grid *);
-void	 grid_collect_history(struct grid *, u_int);
+void	 grid_collect_history(struct grid *);
 void	 grid_scroll_history(struct grid *, u_int);
 void	 grid_scroll_history_region(struct grid *, u_int, u_int, u_int);
 void	 grid_clear_history(struct grid *);
@@ -2160,7 +2164,6 @@ int		 window_pane_set_mode(struct window_pane *,
 void		 window_pane_reset_mode(struct window_pane *);
 void		 window_pane_key(struct window_pane *, struct client *,
 		     struct session *, key_code, struct mouse_event *);
-int		 window_pane_outside(struct window_pane *);
 int		 window_pane_visible(struct window_pane *);
 u_int		 window_pane_search(struct window_pane *, const char *);
 const char	*window_printable_flags(struct winlink *);

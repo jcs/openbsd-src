@@ -1,5 +1,5 @@
 dnl
-dnl	$OpenBSD: m4.common,v 1.125 2017/04/24 20:44:24 rpe Exp $
+dnl	$OpenBSD: m4.common,v 1.127 2017/08/23 02:59:45 nayden Exp $
 dnl
 dnl Copyright (c) 2004 Todd T. Fries <todd@OpenBSD.org>
 dnl

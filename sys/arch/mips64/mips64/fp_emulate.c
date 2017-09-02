@@ -1,4 +1,4 @@
-/*	$OpenBSD: fp_emulate.c,v 1.15 2017/01/21 05:42:03 guenther Exp $	*/
+/*	$OpenBSD: fp_emulate.c,v 1.17 2017/08/30 15:54:33 visa Exp $	*/
 
 /*
  * Copyright (c) 2010 Miodrag Vallat.
@@ -134,6 +134,7 @@ MipsFPTrap(struct trapframe *tf)
 	union sigval sv;
 	vaddr_t pc;
 	uint32_t fsr, excbits;
+	uint32_t branch = 0;
 	uint32_t insn;
 	InstFmt inst;
 	int sig = 0;
@@ -187,12 +188,21 @@ MipsFPTrap(struct trapframe *tf)
 	 * if it does, it's probably not your lucky day.
 	 */
 
-	if (copyin((void *)pc, &insn, sizeof insn) != 0) {
+	if (copyin32((const void *)pc, &insn) != 0) {
 		sig = SIGBUS;
 		fault_type = BUS_OBJERR;
 		goto deliver;
 	}
 	inst = *(InstFmt *)&insn;
+
+	if (tf->cause & CR_BR_DELAY) {
+		if (copyin32((const void *)tf->pc, &branch) != 0) {
+			sig = SIGBUS;
+			fault_type = BUS_OBJERR;
+			sv.sival_ptr = (void *)tf->pc;
+			goto deliver;
+		}
+	}
 
 	/*
 	 * Emulate the instruction.
@@ -366,7 +376,8 @@ deliver:
 				 * only used to decide whether to branch or not
 				 * if the faulting instruction was BC1[FT].
 				 */
-				tf->pc = MipsEmulateBranch(tf, tf->pc, fsr, 0);
+				tf->pc = MipsEmulateBranch(tf, tf->pc, fsr,
+				    branch);
 			} else
 				tf->pc += 4;
 		}
@@ -1602,8 +1613,7 @@ nofpu_emulate_cop1(struct proc *p, struct trapframe *tf, uint32_t insn,
 			 */
 			/* inline MipsEmulateBranch(tf, tf->pc, tf->fsr, insn)*/
 			dest = tf->pc + 4 + ((short)inst.IType.imm << 2);
-			if (copyin((const void *)(tf->pc + 4), &dinsn,
-			    sizeof dinsn)) {
+			if (copyin32((const void *)(tf->pc + 4), &dinsn) != 0) {
 				sv->sival_ptr = (void *)(tf->pc + 4);
 				return SIGSEGV;
 			}

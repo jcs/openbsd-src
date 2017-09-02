@@ -1,4 +1,4 @@
-/* $OpenBSD: window-copy.c,v 1.180 2017/08/02 11:10:48 nicm Exp $ */
+/* $OpenBSD: window-copy.c,v 1.182 2017/08/29 20:26:25 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1001,7 +1001,7 @@ window_copy_search_lr(struct grid *gd,
 	int	matched;
 
 	for (ax = first; ax < last; ax++) {
-		if (ax + sgd->sx >= gd->sx)
+		if (ax + sgd->sx > gd->sx)
 			break;
 		for (bx = 0; bx < sgd->sx; bx++) {
 			px = ax + bx;
@@ -1508,10 +1508,17 @@ window_copy_update_selection(struct window_pane *wp, int may_redraw)
 		 * of lines, and redraw just past that in both directions
 		 */
 		cy = data->cy;
-		if (sy < cy)
-			window_copy_redraw_lines(wp, sy, cy - sy + 1);
-		else
-			window_copy_redraw_lines(wp, cy, sy - cy + 1);
+		if (data->cursordrag == CURSORDRAG_ENDSEL) {
+			if (sy < cy)
+				window_copy_redraw_lines(wp, sy, cy - sy + 1);
+			else
+				window_copy_redraw_lines(wp, cy, sy - cy + 1);
+		} else {
+			if (endsy < cy)
+				window_copy_redraw_lines(wp, endsy, cy - endsy + 1);
+			else
+				window_copy_redraw_lines(wp, cy, endsy - cy + 1);
+		}
 	}
 
 	return (1);

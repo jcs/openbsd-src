@@ -1,4 +1,4 @@
-/*	$OpenBSD: ar5xxx.c,v 1.60 2017/08/11 20:44:25 mestre Exp $	*/
+/*	$OpenBSD: ar5xxx.c,v 1.62 2017/08/25 10:04:36 tb Exp $	*/
 
 /*
  * Copyright (c) 2004, 2005, 2006, 2007 Reyk Floeter <reyk@openbsd.org>
@@ -513,6 +513,10 @@ ar5k_printver(enum ar5k_srev_type type, u_int32_t val)
 		if (names[i].sr_type != type ||
 		    names[i].sr_val == AR5K_SREV_UNKNOWN)
 			continue;
+		/*
+		 * The final iteration has names[i].sr_val == AR5K_SREV_UNKNOWN,
+		 * so there is no out-of-bounds access with names[i + 1] below.
+		 */
 		if ((val & 0xff) < names[i + 1].sr_val) {
 			name = names[i].sr_name;
 			break;
@@ -892,7 +896,7 @@ ar5k_eeprom_init(struct ath_hal *hal)
 	offset = AR5K_EEPROM_CTL(hal->ah_ee_version);
 	ee->ee_ctls = AR5K_EEPROM_N_CTLS(hal->ah_ee_version);
 
-	for (i = 0; i < ee->ee_ctls; i++) {
+	for (i = 0; i < ee->ee_ctls - 1; i++) {
 		AR5K_EEPROM_READ(offset++, val);
 		ee->ee_ctl[i] = (val >> 8) & 0xff;
 		ee->ee_ctl[i + 1] = val & 0xff;

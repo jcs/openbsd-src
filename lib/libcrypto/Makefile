@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.21 2017/08/13 19:42:33 doug Exp $
+# $OpenBSD: Makefile,v 1.23 2017/08/28 17:41:59 jsing Exp $
 
 LIB=	crypto
 LIBREBUILD=y
@@ -225,7 +225,7 @@ SRCS+= rmd_dgst.c rmd_one.c
 
 # rsa/
 SRCS+= rsa_eay.c rsa_gen.c rsa_lib.c rsa_sign.c rsa_saos.c rsa_err.c
-SRCS+= rsa_pk1.c rsa_ssl.c rsa_none.c rsa_oaep.c rsa_chk.c
+SRCS+= rsa_pk1.c rsa_none.c rsa_oaep.c rsa_chk.c
 SRCS+= rsa_pss.c rsa_x931.c rsa_asn1.c rsa_depr.c rsa_ameth.c rsa_prn.c
 SRCS+= rsa_pmeth.c rsa_crpt.c
 
@@ -419,11 +419,11 @@ GENERATED=obj_mac.h obj_dat.h
 CLEANFILES+=${GENERATED} obj_mac.num.tmp
 SSL_OBJECTS=${LCRYPTO_SRC}/objects
 
-obj_mac.h: ${SSL_OBJECTS}/objects.h ${SSL_OBJECTS}/obj_mac.num ${SSL_OBJECTS}/objects.txt
+obj_mac.h: ${SSL_OBJECTS}/objects.h ${SSL_OBJECTS}/obj_mac.num ${SSL_OBJECTS}/objects.txt ${SSL_OBJECTS}/objects.pl
 	cat ${SSL_OBJECTS}/obj_mac.num > obj_mac.num.tmp
 	/usr/bin/perl ${SSL_OBJECTS}/objects.pl ${SSL_OBJECTS}/objects.txt obj_mac.num.tmp obj_mac.h
 
-obj_dat.h: obj_mac.h
+obj_dat.h: obj_mac.h ${SSL_OBJECTS}/obj_dat.pl
 	/usr/bin/perl ${SSL_OBJECTS}/obj_dat.pl obj_mac.h obj_dat.h
 
 .if exists (${.CURDIR}/arch/${MACHINE_CPU}/Makefile.inc)

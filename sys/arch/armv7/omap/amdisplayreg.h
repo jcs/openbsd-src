@@ -1,5 +1,6 @@
+/* $OpenBSD: amdisplayreg.h,v 1.4 2017/08/31 21:39:25 ians Exp $ */
 /*
- * Copyright (c) 2016 Ian Sutton <ian@kremlin.cc>
+ * Copyright (c) 2016 Ian Sutton <ians@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above

@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.h,v 1.7 2017/08/18 07:45:03 florian Exp $	*/
+/*	$OpenBSD: slaacd.h,v 1.10 2017/08/23 15:49:08 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -20,9 +20,6 @@
 
 #define	SLAACD_SOCKET		"/dev/slaacd.sock"
 #define SLAACD_USER		"_slaacd"
-
-#define OPT_VERBOSE	0x00000001
-#define OPT_VERBOSE2	0x00000002
 
 /* MAXDNAME from arpa/namesr.h */
 #define SLAACD_MAX_DNSSL	1025
@@ -54,6 +51,7 @@ enum imsg_type {
 	IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSALS,
 	IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSAL,
 	IMSG_CTL_END,
+	IMSG_UPDATE_ADDRESS,
 #endif	/* SMALL */
 	IMSG_CTL_SEND_SOLICITATION,
 	IMSG_SOCKET_IPC,
@@ -151,6 +149,17 @@ struct ctl_engine_info_dfr_proposal {
 	uint32_t		 router_lifetime;
 	char			 rpref[sizeof("MEDIUM")];
 };
+
+struct imsg_addrinfo {
+	uint32_t		if_index;
+	struct ether_addr	hw_address;
+	struct sockaddr_in6	ll_address;
+	struct sockaddr_in6	addr;
+	struct in6_addr		mask;
+	int			privacy;
+	uint32_t		vltime;
+	uint32_t		pltime;
+};
 #endif	/* SMALL */
 
 struct imsg_ifinfo {
@@ -179,11 +188,14 @@ struct imsg_ra {
 	uint8_t			packet[1500];
 };
 
-extern uint32_t	 cmd_opts;
-
 /* slaacd.c */
-int	main_imsg_compose_frontend(int, pid_t, void *, uint16_t);
-int	main_imsg_compose_engine(int, pid_t, void *, uint16_t);
-void	imsg_event_add(struct imsgev *);
-int	imsg_compose_event(struct imsgev *, uint16_t, uint32_t, pid_t,
-	    int, void *, uint16_t);
+int		main_imsg_compose_frontend(int, pid_t, void *, uint16_t);
+int		main_imsg_compose_engine(int, pid_t, void *, uint16_t);
+void		imsg_event_add(struct imsgev *);
+int		imsg_compose_event(struct imsgev *, uint16_t, uint32_t, pid_t,
+		    int, void *, uint16_t);
+#ifndef	SMALL
+const char	*sin6_to_str(struct sockaddr_in6 *);
+#else
+#define	sin6_to_str(x...)	""
+#endif	/* SMALL */

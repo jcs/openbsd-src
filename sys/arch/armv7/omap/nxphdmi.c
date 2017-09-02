@@ -1,5 +1,6 @@
+/* $OpenBSD: nxphdmi.c,v 1.4 2017/08/31 21:39:25 ians Exp $ */
 /*
- * Copyright (c) 2016 Ian Sutton <ian@ce.gl>
+ * Copyright (c) 2016 Ian Sutton <ians@openbsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

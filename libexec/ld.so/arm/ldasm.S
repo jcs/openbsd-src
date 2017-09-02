@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldasm.S,v 1.25 2017/01/24 07:48:37 guenther Exp $ */
+/*	$OpenBSD: ldasm.S,v 1.27 2017/08/28 14:12:09 deraadt Exp $ */
 
 /*
  * Copyright (c) 2004 Dale Rahn
@@ -29,7 +29,6 @@
 #define DL_DATA_SIZE	(16 * 4)	/* XXX */
 #include <machine/asm.h>
 #include <sys/syscall.h>
-#include <SYS.h>
 
 ENTRY(_dl_start)
 	mov	fp, sp
@@ -45,7 +44,7 @@ ENTRY(_dl_start)
 1:	add	r8, pc, r8			@ into r8
 
 	ldr	r2, .L__DYNAMIC			@ &_DYNAMIC
-	add	r2, r2, r8 
+	add	r2, r2, r8
 
 	bl	_dl_boot_bind
 
@@ -63,7 +62,7 @@ ENTRY(_dl_start)
 
 	mov	r1, r0
 	ldr	r0, .L_dl_dtors
-	add	r0, r0, r8 
+	add	r0, r0, r8
 	mov	pc, r1
 .L_GOT:
 	.long	_GLOBAL_OFFSET_TABLE_-(1b+8)
@@ -90,54 +89,3 @@ ENTRY(_dl_bind_start)
 	mov	ip, r0
 	ldmia	sp!, {r0-r4,sl,fp,lr}
 	mov	pc, ip
-
-	/* STUB */
-
-
-/* ld.so SYSCALLS */
-
-#define DL_SYSCALL(n) DL_SYSCALL2(n,n)
-#define DL_SYSCALL2(n,c)					\
-	.global		__CONCAT(_dl_,n)		;\
-	.type		__CONCAT(_dl_,n)%function	;\
-__CONCAT(_dl_,n):					;\
-	SYSTRAP(c)					;\
-	bcs	.L_cerr					;\
-	mov	pc, lr
-
-	.section	".text"
-	.align		4
-DL_SYSCALL(close)
-
-
-	.global		_dl_exit
-	.type		_dl_exit%function
-_dl_exit:
-	SYSTRAP(exit)
-	1:
-		b 1b
-
-DL_SYSCALL(issetugid)
-DL_SYSCALL(getthrid)
-DL_SYSCALL2(_syscall,__syscall)
-DL_SYSCALL(munmap)
-DL_SYSCALL(mprotect)
-DL_SYSCALL(open)
-DL_SYSCALL(read)
-DL_SYSCALL(write)
-DL_SYSCALL(fstat)
-DL_SYSCALL(readlink)
-DL_SYSCALL(utrace)
-DL_SYSCALL(getentropy)
-DL_SYSCALL(sendsyslog)
-DL_SYSCALL(pledge)
-DL_SYSCALL2(getcwd,__getcwd)
-DL_SYSCALL(sysctl)
-DL_SYSCALL2(set_tcb,__set_tcb)
-DL_SYSCALL(thrkill)
-
-DL_SYSCALL(getdents)
-
-.L_cerr:
-	rsb	r0, r0, #0		/* r0 = -errno */
-	mov	pc, lr

@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile.octeon,v 1.42 2017/08/12 20:26:11 mpi Exp $
+#	$OpenBSD: Makefile.octeon,v 1.45 2017/08/19 12:52:32 visa Exp $
 
 # For instructions on building kernels consult the config(8) and options(4)
 # manual pages.
@@ -48,8 +48,7 @@ DEBUG?=		-g
 COPTS?=		-O2
 CFLAGS=		${DEBUG} ${CWARNFLAGS} ${CMACHFLAGS} ${COPTS} ${PIPE}
 AFLAGS=		-D_LOCORE -x assembler-with-cpp ${CWARNFLAGS} ${CMACHFLAGS}
-LINKFLAGS=	-e start -T ld.script -Ttext=${LINK_ADDRESS} -nopie
-STRIPFLAGS=	-g -x
+LINKFLAGS=	-e start -T ld.script -Ttext=${LINK_ADDRESS} --warn-common -nopie
 
 .if ${IDENT:M-DDDB_STRUCT}
 DB_STRUCTINFO=	db_structinfo.h
@@ -88,7 +87,7 @@ SYSTEM_LD=	@echo ${LD} ${LINKFLAGS} -o $@ '$${SYSTEM_HEAD} vers.o $${OBJS}'; \
 SYSTEM_LD_TAIL=	@${SIZE} $@
 
 .if ${DEBUG} == "-g"
-LINKFLAGS+=	-S
+STRIPFLAGS=	-S
 SYSTEM_LD_TAIL+=; umask 007; \
 		echo mv $@ $@.gdb; rm -f $@.gdb; mv $@ $@.gdb; \
 		echo ${STRIP} ${STRIPFLAGS} -o $@ $@.gdb; \
@@ -134,7 +133,7 @@ gapdummy.o:
 makegap.sh:
 	cp $S/conf/makegap.sh $@
 
-MAKE_GAP = LD=${LD} sh makegap.sh 0xefefefef gapdummy.o
+MAKE_GAP = LD="${LD}" sh makegap.sh 0xefefefef gapdummy.o
 
 gap.o:	Makefile makegap.sh gapdummy.o vers.o
 	${MAKE_GAP}

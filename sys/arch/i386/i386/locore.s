@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.s,v 1.178 2017/07/06 06:17:05 deraadt Exp $	*/
+/*	$OpenBSD: locore.s,v 1.180 2017/08/25 19:28:48 guenther Exp $	*/
 /*	$NetBSD: locore.s,v 1.145 1996/05/03 19:41:19 christos Exp $	*/
 
 /*-
@@ -105,6 +105,7 @@
  */
 #define	INTRENTRY \
 	cld			; \
+	SMAP_CLAC		; \
 	pushl	%eax		; \
 	pushl	%ecx		; \
 	pushl	%edx		; \
@@ -1320,10 +1321,11 @@ ENTRY(cpu_paenable)
 
 #include <i386/i386/mutex.S>
 
-.globl _C_LABEL(_stac)
+	.section .rodata
+	.globl _C_LABEL(_stac)
 _C_LABEL(_stac):
 	stac
 
-.globl _C_LABEL(_clac)
+	.globl _C_LABEL(_clac)
 _C_LABEL(_clac):
 	clac

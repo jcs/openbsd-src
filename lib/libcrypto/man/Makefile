@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.120 2017/04/10 17:45:06 schwarze Exp $
+# $OpenBSD: Makefile,v 1.124 2017/08/20 23:18:53 schwarze Exp $
 
 .include <bsd.own.mk>
 
@@ -8,6 +8,7 @@ MAN=	\
 	ASN1_STRING_length.3 \
 	ASN1_STRING_new.3 \
 	ASN1_STRING_print_ex.3 \
+	ASN1_STRING_TABLE_add.3 \
 	ASN1_TIME_set.3 \
 	ASN1_TYPE_get.3 \
 	ASN1_generate_nconf.3 \
@@ -120,6 +121,7 @@ MAN=	\
 	EVP_PKEY_encrypt.3 \
 	EVP_PKEY_get_default_digest_nid.3 \
 	EVP_PKEY_keygen.3 \
+	EVP_PKEY_meth_get0_info.3 \
 	EVP_PKEY_new.3 \
 	EVP_PKEY_print_private.3 \
 	EVP_PKEY_set1_RSA.3 \
@@ -149,6 +151,7 @@ MAN=	\
 	OPENSSL_load_builtin_modules.3 \
 	OPENSSL_malloc.3 \
 	OpenSSL_add_all_algorithms.3 \
+	PEM_bytes_read_bio.3 \
 	PEM_read.3 \
 	PEM_read_bio_PrivateKey.3 \
 	PEM_write_bio_PKCS7_stream.3 \
@@ -226,6 +229,7 @@ MAN=	\
 	X509_check_ca.3 \
 	X509_check_host.3 \
 	X509_check_issued.3 \
+	X509_check_private_key.3 \
 	X509_cmp_time.3 \
 	X509_digest.3 \
 	X509_get_pubkey.3 \

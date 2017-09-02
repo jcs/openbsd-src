@@ -211,9 +211,6 @@
 ./etc/rpc
 ./etc/services
 ./etc/signify
-./etc/signify/openbsd-59-base.pub
-./etc/signify/openbsd-59-fw.pub
-./etc/signify/openbsd-59-pkg.pub
 ./etc/signify/openbsd-60-base.pub
 ./etc/signify/openbsd-60-fw.pub
 ./etc/signify/openbsd-60-pkg.pub
@@ -225,6 +222,9 @@
 ./etc/signify/openbsd-62-fw.pub
 ./etc/signify/openbsd-62-pkg.pub
 ./etc/signify/openbsd-62-syspatch.pub
+./etc/signify/openbsd-63-base.pub
+./etc/signify/openbsd-63-fw.pub
+./etc/signify/openbsd-63-pkg.pub
 ./etc/skel
 ./etc/skel/.ssh
 ./etc/ssh
@@ -353,6 +353,8 @@
 ./usr/bin/crontab
 ./usr/bin/csplit
 ./usr/bin/ctags
+./usr/bin/ctfconv
+./usr/bin/ctfstrip
 ./usr/bin/cu
 ./usr/bin/cut
 ./usr/bin/cvs
@@ -619,8 +621,8 @@
 ./usr/lib
 ./usr/lib/libc.so.89.6
 ./usr/lib/libc.so.89.6.a
-./usr/lib/libcrypto.so.41.2
-./usr/lib/libcrypto.so.41.2.a
+./usr/lib/libcrypto.so.42.0
+./usr/lib/libcrypto.so.42.0.a
 ./usr/lib/libcurses.so.14.0
 ./usr/lib/libedit.so.5.2
 ./usr/lib/libevent.so.4.1
@@ -646,10 +648,10 @@
 ./usr/lib/librpcsvc.so.2.0
 ./usr/lib/libskey.so.6.0
 ./usr/lib/libsndio.so.6.1
-./usr/lib/libssl.so.43.3
+./usr/lib/libssl.so.44.1
 ./usr/lib/libtermcap.so.14.0
 ./usr/lib/libtermlib.so.14.0
-./usr/lib/libtls.so.15.8
+./usr/lib/libtls.so.16.1
 ./usr/lib/libusbhid.so.7.0
 ./usr/lib/libutil.so.12.2
 ./usr/lib/libz.so.5.0
@@ -667,6 +669,7 @@
 ./usr/libdata/cvs/contrib
 ./usr/libdata/cvs/contrib/README
 ./usr/libdata/cvs/contrib/intro.doc
+./usr/libdata/ld.so.a
 ./usr/libdata/perl5
 ./usr/libdata/perl5/AnyDBM_File.pm
 ./usr/libdata/perl5/App
@@ -2215,6 +2218,7 @@
 ./usr/libexec/radiusd
 ./usr/libexec/radiusd/radiusd_bsdauth
 ./usr/libexec/radiusd/radiusd_radius
+./usr/libexec/reorder_kernel
 ./usr/libexec/rpc.rquotad
 ./usr/libexec/rpc.rstatd
 ./usr/libexec/rpc.rusersd
@@ -2573,6 +2577,7 @@
 ./usr/share/calendar/ru_RU.UTF-8/calendar.orthodox
 ./usr/share/calendar/ru_RU.UTF-8/calendar.pagan
 ./usr/share/calendar/ru_RU.UTF-8/calendar.primety
+./usr/share/compile
 ./usr/share/compile.tgz
 ./usr/share/dict
 ./usr/share/dict/README

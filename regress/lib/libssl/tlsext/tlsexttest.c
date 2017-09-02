@@ -1,4 +1,4 @@
-/* $OpenBSD: tlsexttest.c,v 1.12 2017/08/12 23:39:24 beck Exp $ */
+/* $OpenBSD: tlsexttest.c,v 1.16 2017/08/29 17:24:59 jsing Exp $ */
 /*
  * Copyright (c) 2017 Joel Sing <jsing@openbsd.org>
  * Copyright (c) 2017 Doug Hogan <doug@openbsd.org>
@@ -74,6 +74,395 @@ do {								\
 } while(0)
 
 /*
+ * Supported Application-Layer Protocol Negotiation - RFC 7301
+ *
+ * There are already extensive unit tests for this so this just
+ * tests the state info.
+ */
+
+const uint8_t tlsext_alpn_multiple_protos_val[] = {
+	/* opaque ProtocolName<1..2^8-1> -- 'http/1.1' */
+	0x08, /* len */
+	0x68, 0x74, 0x74, 0x70, 0x2f, 0x31, 0x2e, 0x31,
+	/* opaque ProtocolName<1..2^8-1> -- 'stun.nat' */
+	0x09, /* len */
+	0x73, 0x74, 0x75, 0x6e, 0x2e, 0x74, 0x75, 0x72, 0x6e
+};
+
+const uint8_t tlsext_alpn_multiple_protos[] = {
+	/* ProtocolName protocol_name_list<2..2^16-1> -- ALPN names */
+	0x00, 0x13, /* len of all names */
+	/* opaque ProtocolName<1..2^8-1> -- 'http/1.1' */
+	0x08, /* len */
+	0x68, 0x74, 0x74, 0x70, 0x2f, 0x31, 0x2e, 0x31,
+	/* opaque ProtocolName<1..2^8-1> -- 'stun.nat' */
+	0x09, /* len */
+	0x73, 0x74, 0x75, 0x6e, 0x2e, 0x74, 0x75, 0x72, 0x6e
+};
+
+const uint8_t tlsext_alpn_single_proto_val[] = {
+	/* opaque ProtocolName<1..2^8-1> -- 'http/1.1' */
+	0x08, /* len */
+	0x68, 0x74, 0x74, 0x70, 0x2f, 0x31, 0x2e, 0x31
+};
+
+const uint8_t tlsext_alpn_single_proto_name[] = {
+	0x68, 0x74, 0x74, 0x70, 0x2f, 0x31, 0x2e, 0x31 /* 'http/1.1' */
+};
+
+const uint8_t tlsext_alpn_single_proto[] = {
+	/* ProtocolName protocol_name_list<2..2^16-1> -- ALPN names */
+	0x00, 0x09, /* len of all names */
+	/* opaque ProtocolName<1..2^8-1> -- 'http/1.1' */
+	0x08, /* len */
+	0x68, 0x74, 0x74, 0x70, 0x2f, 0x31, 0x2e, 0x31
+};
+
+static int
+test_tlsext_alpn_clienthello(void)
+{
+	SSL_CTX *ssl_ctx = NULL;
+	SSL *ssl = NULL;
+	uint8_t *data = NULL;
+	CBB cbb;
+	CBS cbs;
+	int failure, alert;
+	size_t dlen;
+
+	CBB_init(&cbb, 0);
+
+	failure = 1;
+
+	if ((ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL)
+		errx(1, "failed to create SSL_CTX");
+	if ((ssl = SSL_new(ssl_ctx)) == NULL)
+		errx(1, "failed to create SSL");
+
+	/* By default, we don't need this */
+	if (tlsext_alpn_clienthello_needs(ssl)) {
+		FAIL("clienthello should not need ALPN by default");
+		goto err;
+	}
+
+	/*
+	 * Prereqs:
+	 * 1) Set s->internal->alpn_client_proto_list
+	 *    - Using SSL_set_alpn_protos()
+	 * 2) We have not finished or renegotiated.
+	 *    - S3I(s)->tmp.finish_md_len == 0
+	 */
+	if (SSL_set_alpn_protos(ssl, tlsext_alpn_single_proto_val,
+	    sizeof(tlsext_alpn_single_proto_val)) != 0) {
+		FAIL("should be able to set ALPN to http/1.1");
+		goto err;
+	}
+	if (!tlsext_alpn_clienthello_needs(ssl)) {
+		FAIL("clienthello should need ALPN by now");
+		goto err;
+	}
+
+	/* Make sure we can build the clienthello with a single proto. */
+
+	if (!tlsext_alpn_clienthello_build(ssl, &cbb)) {
+		FAIL("clienthello failed to build ALPN\n");
+		goto err;
+	}
+	if (!CBB_finish(&cbb, &data, &dlen))
+		errx(1, "failed to finish CBB");
+
+	if (dlen != sizeof(tlsext_alpn_single_proto)) {
+		FAIL("got clienthello ALPN with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_alpn_single_proto));
+		compare_data(data, dlen, tlsext_alpn_single_proto,
+		    sizeof(tlsext_alpn_single_proto));
+		goto err;
+	}
+	if (memcmp(data, tlsext_alpn_single_proto, dlen) != 0) {
+		FAIL("clienthello ALPN differs:\n");
+		compare_data(data, dlen, tlsext_alpn_single_proto,
+		    sizeof(tlsext_alpn_single_proto));
+		goto err;
+	}
+
+	CBB_cleanup(&cbb);
+	CBB_init(&cbb, 0);
+	free(data);
+	data = NULL;
+
+	/* Make sure we can parse the single proto. */
+
+	CBS_init(&cbs, tlsext_alpn_single_proto,
+	    sizeof(tlsext_alpn_single_proto));
+	if (!tlsext_alpn_clienthello_parse(ssl, &cbs, &alert)) {
+		FAIL("failed to parse ALPN");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	if (ssl->internal->alpn_client_proto_list_len !=
+	    sizeof(tlsext_alpn_single_proto_val)) {
+		FAIL("got clienthello ALPN with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_alpn_single_proto_val));
+		compare_data(ssl->internal->alpn_client_proto_list,
+		    ssl->internal->alpn_client_proto_list_len,
+		    tlsext_alpn_single_proto_val,
+		    sizeof(tlsext_alpn_single_proto_val));
+		goto err;
+	}
+	if (memcmp(ssl->internal->alpn_client_proto_list,
+	    tlsext_alpn_single_proto_val,
+	    sizeof(tlsext_alpn_single_proto_val)) != 0) {
+		FAIL("clienthello ALPN differs:\n");
+		compare_data(data, dlen, tlsext_alpn_single_proto_val,
+		    sizeof(tlsext_alpn_single_proto_val));
+		goto err;
+	}
+
+	/* Make sure we can build the clienthello with multiple entries. */
+
+	if (SSL_set_alpn_protos(ssl, tlsext_alpn_multiple_protos_val,
+	    sizeof(tlsext_alpn_multiple_protos_val)) != 0) {
+		FAIL("should be able to set ALPN to http/1.1");
+		goto err;
+	}
+	if (!tlsext_alpn_clienthello_needs(ssl)) {
+		FAIL("clienthello should need ALPN by now");
+		goto err;
+	}
+
+	if (!tlsext_alpn_clienthello_build(ssl, &cbb)) {
+		FAIL("clienthello failed to build ALPN\n");
+		goto err;
+	}
+	if (!CBB_finish(&cbb, &data, &dlen))
+		errx(1, "failed to finish CBB");
+
+	if (dlen != sizeof(tlsext_alpn_multiple_protos)) {
+		FAIL("got clienthello ALPN with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_alpn_multiple_protos));
+		compare_data(data, dlen, tlsext_alpn_multiple_protos,
+		    sizeof(tlsext_alpn_multiple_protos));
+		goto err;
+	}
+	if (memcmp(data, tlsext_alpn_multiple_protos, dlen) != 0) {
+		FAIL("clienthello ALPN differs:\n");
+		compare_data(data, dlen, tlsext_alpn_multiple_protos,
+		    sizeof(tlsext_alpn_multiple_protos));
+		goto err;
+	}
+
+	/* Make sure we can parse multiple protos */
+
+	CBS_init(&cbs, tlsext_alpn_multiple_protos,
+	    sizeof(tlsext_alpn_multiple_protos));
+	if (!tlsext_alpn_clienthello_parse(ssl, &cbs, &alert)) {
+		FAIL("failed to parse ALPN");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	if (ssl->internal->alpn_client_proto_list_len !=
+	    sizeof(tlsext_alpn_multiple_protos_val)) {
+		FAIL("got clienthello ALPN with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_alpn_multiple_protos_val));
+		compare_data(ssl->internal->alpn_client_proto_list,
+		    ssl->internal->alpn_client_proto_list_len,
+		    tlsext_alpn_multiple_protos_val,
+		    sizeof(tlsext_alpn_multiple_protos_val));
+		goto err;
+	}
+	if (memcmp(ssl->internal->alpn_client_proto_list,
+	    tlsext_alpn_multiple_protos_val,
+	    sizeof(tlsext_alpn_multiple_protos_val)) != 0) {
+		FAIL("clienthello ALPN differs:\n");
+		compare_data(data, dlen, tlsext_alpn_multiple_protos_val,
+		    sizeof(tlsext_alpn_multiple_protos_val));
+		goto err;
+	}
+
+	/* Make sure we can remove the list and avoid ALPN */
+
+	free(ssl->internal->alpn_client_proto_list);
+	ssl->internal->alpn_client_proto_list = NULL;
+	ssl->internal->alpn_client_proto_list_len = 0;
+
+	if (tlsext_alpn_clienthello_needs(ssl)) {
+		FAIL("clienthello should need ALPN by default");
+		goto err;
+	}
+
+	failure = 0;
+
+ err:
+	CBB_cleanup(&cbb);
+	SSL_CTX_free(ssl_ctx);
+	SSL_free(ssl);
+	free(data);
+
+	return (failure);
+}
+
+static int
+test_tlsext_alpn_serverhello(void)
+{
+	SSL_CTX *ssl_ctx = NULL;
+	SSL *ssl = NULL;
+	uint8_t *data = NULL;
+	CBB cbb;
+	CBS cbs;
+	int failure, alert;
+	size_t dlen;
+
+	CBB_init(&cbb, 0);
+
+	failure = 1;
+
+	if ((ssl_ctx = SSL_CTX_new(TLS_server_method())) == NULL)
+		errx(1, "failed to create SSL_CTX");
+	if ((ssl = SSL_new(ssl_ctx)) == NULL)
+		errx(1, "failed to create SSL");
+
+	/* By default, ALPN isn't needed. */
+	if (tlsext_alpn_serverhello_needs(ssl)) {
+		FAIL("serverhello should not need ALPN by default\n");
+		goto err;
+	}
+
+	/*
+	 * The server has a single ALPN selection which is set by
+	 * SSL_CTX_set_alpn_select_cb() and calls SSL_select_next_proto().
+	 *
+	 * This will be a plain name and separate length.
+	 */
+	if ((S3I(ssl)->alpn_selected = malloc(sizeof(tlsext_alpn_single_proto_name))) == NULL) {
+		errx(1, "failed to malloc");
+	}
+	memcpy(S3I(ssl)->alpn_selected, tlsext_alpn_single_proto_name,
+	    sizeof(tlsext_alpn_single_proto_name));
+	S3I(ssl)->alpn_selected_len = sizeof(tlsext_alpn_single_proto_name);
+
+	if (!tlsext_alpn_serverhello_needs(ssl)) {
+		FAIL("serverhello should need ALPN after a protocol is selected\n");
+		goto err;
+	}
+
+	/* Make sure we can build a serverhello with one protocol */
+
+	if (!tlsext_alpn_serverhello_build(ssl, &cbb)) {
+		FAIL("serverhello should be able to build a response");
+		goto err;
+	}
+	if (!CBB_finish(&cbb, &data, &dlen))
+		errx(1, "failed to finish CBB");
+
+	if (dlen != sizeof(tlsext_alpn_single_proto)) {
+		FAIL("got clienthello ALPN with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_alpn_single_proto));
+		compare_data(data, dlen, tlsext_alpn_single_proto,
+		    sizeof(tlsext_alpn_single_proto));
+		goto err;
+	}
+	if (memcmp(data, tlsext_alpn_single_proto, dlen) != 0) {
+		FAIL("clienthello ALPN differs:\n");
+		compare_data(data, dlen, tlsext_alpn_single_proto,
+		    sizeof(tlsext_alpn_single_proto));
+		goto err;
+	}
+
+	CBB_cleanup(&cbb);
+	CBB_init(&cbb, 0);
+	free(data);
+	data = NULL;
+
+	/* Make sure we can parse the single proto. */
+
+	CBS_init(&cbs, tlsext_alpn_single_proto,
+	    sizeof(tlsext_alpn_single_proto));
+
+	/* Shouldn't be able to parse without requesting */
+	if (tlsext_alpn_serverhello_parse(ssl, &cbs, &alert)) {
+		FAIL("Should only parse serverhello if we requested it");
+		goto err;
+	}
+
+	/* Should be able to parse once requested. */
+	if (SSL_set_alpn_protos(ssl, tlsext_alpn_single_proto_val,
+	    sizeof(tlsext_alpn_single_proto_val)) != 0) {
+		FAIL("should be able to set ALPN to http/1.1");
+		goto err;
+	}
+	if (!tlsext_alpn_serverhello_parse(ssl, &cbs, &alert)) {
+		FAIL("Should be able to parse serverhello when we request it");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	if (S3I(ssl)->alpn_selected_len !=
+	    sizeof(tlsext_alpn_single_proto_name)) {
+		FAIL("got serverhello ALPN with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_alpn_single_proto_name));
+		compare_data(S3I(ssl)->alpn_selected,
+		    S3I(ssl)->alpn_selected_len,
+		    tlsext_alpn_single_proto_name,
+		    sizeof(tlsext_alpn_single_proto_name));
+		goto err;
+	}
+	if (memcmp(S3I(ssl)->alpn_selected,
+	    tlsext_alpn_single_proto_name,
+	    sizeof(tlsext_alpn_single_proto_name)) != 0) {
+		FAIL("serverhello ALPN differs:\n");
+		compare_data(S3I(ssl)->alpn_selected,
+		    S3I(ssl)->alpn_selected_len,
+		    tlsext_alpn_single_proto_name,
+		    sizeof(tlsext_alpn_single_proto_name));
+		goto err;
+	}
+
+	/*
+	 * We should NOT be able to build a serverhello with multiple
+	 * protocol names.  However, the existing code did not check for this
+	 * case because it is passed in as an encoded value.
+	 */
+
+	/* Make sure we can remove the list and avoid ALPN */
+
+	free(S3I(ssl)->alpn_selected);
+	S3I(ssl)->alpn_selected = NULL;
+	S3I(ssl)->alpn_selected_len = 0;
+
+	if (tlsext_alpn_serverhello_needs(ssl)) {
+		FAIL("serverhello should need ALPN by default");
+		goto err;
+	}
+
+	failure = 0;
+
+ err:
+	CBB_cleanup(&cbb);
+	SSL_CTX_free(ssl_ctx);
+	SSL_free(ssl);
+	free(data);
+
+	return (failure);
+
+}
+
+/*
  * Supported Elliptic Curves - RFC 4492 section 5.1.1.
  *
  * This extension is only used by the client.
@@ -118,7 +507,8 @@ test_tlsext_ec_clienthello(void)
 
 	failure = 1;
 
-	CBB_init(&cbb, 0);
+	if (!CBB_init(&cbb, 0))
+		errx(1, "failed to create CBB");
 
 	if ((ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL)
 		errx(1, "failed to create SSL_CTX");
@@ -219,6 +609,10 @@ test_tlsext_ec_clienthello(void)
 		FAIL("failed to parse clienthello Ellipticcurves\n");
 		goto err;
 	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
 
 	if (SSI(ssl)->tlsext_supportedgroups_length !=
 	    sizeof(tlsext_ec_clienthello_secp384r1_val) / sizeof(uint16_t)) {
@@ -313,6 +707,10 @@ test_tlsext_ec_clienthello(void)
 	    sizeof(tlsext_ec_clienthello_nistp192and224));
 	if (!tlsext_ec_clienthello_parse(ssl, &cbs, &alert)) {
 		FAIL("failed to parse clienthello Ellipticcurves\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
 		goto err;
 	}
 
@@ -517,6 +915,10 @@ test_tlsext_ecpf_clienthello(void)
 		FAIL("failed to parse clienthello ECPointFormats\n");
 		goto err;
 	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
 
 	if (SSI(ssl)->tlsext_ecpointformatlist_length !=
 	    sizeof(tlsext_ecpf_hello_uncompressed_val)) {
@@ -604,6 +1006,10 @@ test_tlsext_ecpf_clienthello(void)
 	    sizeof(tlsext_ecpf_hello_prefer_order));
 	if (!tlsext_ecpf_clienthello_parse(ssl, &cbs, &alert)) {
 		FAIL("failed to parse clienthello ECPointFormats\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
 		goto err;
 	}
 
@@ -722,6 +1128,10 @@ test_tlsext_ecpf_serverhello(void)
 		FAIL("must include uncompressed in serverhello ECPointFormats\n");
 		goto err;
 	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
 
 	/*
 	 * Test with a custom order that replaces the default uncompressed.
@@ -804,6 +1214,10 @@ test_tlsext_ecpf_serverhello(void)
 	    sizeof(tlsext_ecpf_hello_prefer_order));
 	if (!tlsext_ecpf_serverhello_parse(ssl, &cbs, &alert)) {
 		FAIL("failed to parse serverhello ECPointFormats\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
 		goto err;
 	}
 
@@ -930,6 +1344,10 @@ test_tlsext_ri_clienthello(void)
 		FAIL("failed to parse clienthello RI\n");
 		goto err;
 	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
 
 	if (S3I(ssl)->renegotiate_seen != 1) {
 		FAIL("renegotiate seen not set\n");
@@ -1037,6 +1455,10 @@ test_tlsext_ri_serverhello(void)
 	CBS_init(&cbs, tlsext_ri_serverhello, sizeof(tlsext_ri_serverhello));
 	if (!tlsext_ri_serverhello_parse(ssl, &cbs, &alert)) {
 		FAIL("failed to parse serverhello RI\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
 		goto err;
 	}
 
@@ -1156,6 +1578,10 @@ test_tlsext_sigalgs_clienthello(void)
 		failure = 1;
 		goto done;
 	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto done;
+	}
 
 	if (ssl->cert->pkeys[SSL_PKEY_RSA_SIGN].digest != EVP_sha512()) {
 		fprintf(stderr, "FAIL: RSA sign digest mismatch\n");
@@ -1223,7 +1649,7 @@ test_tlsext_sigalgs_serverhello(void)
 
 	CBS_init(&cbs, tlsext_sigalgs_clienthello, sizeof(tlsext_sigalgs_clienthello));
 	if (tlsext_sigalgs_serverhello_parse(ssl, &cbs, &alert)) {
-		fprintf(stderr, "FAIL: failed to parse serverhello sigalgs\n");
+		fprintf(stderr, "FAIL: serverhello should not parse sigalgs\n");
 		failure = 1;
 		goto done;
 	}
@@ -1319,6 +1745,10 @@ test_tlsext_sni_clienthello(void)
 	CBS_init(&cbs, tlsext_sni_clienthello, sizeof(tlsext_sni_clienthello));
 	if (!tlsext_sni_clienthello_parse(ssl, &cbs, &alert)) {
 		FAIL("failed to parse clienthello SNI\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
 		goto err;
 	}
 
@@ -1432,6 +1862,10 @@ test_tlsext_sni_serverhello(void)
 		FAIL("failed to parse serverhello SNI\n");
 		goto err;
 	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
 
 	if (ssl->session->tlsext_hostname == NULL) {
 		FAIL("no tlsext_hostname after serverhello SNI\n");
@@ -1518,6 +1952,10 @@ test_tlsext_ocsp_clienthello(void)
 	    sizeof(tls_ocsp_clienthello_default));
 	if (!tlsext_ocsp_clienthello_parse(ssl, &cbs, &alert)) {
 		FAIL("failed to parse ocsp clienthello\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
 		goto err;
 	}
 
@@ -1879,12 +2317,429 @@ test_tlsext_sessionticket_serverhello(void)
 	return (failure);
 }
 
+#ifndef OPENSSL_NO_SRTP
+/*
+ * Supported Secure Real-time Transport Protocol (RFC 5764 section 4.1.1)
+ */
+
+/* Colon separated string values */
+const char *tlsext_srtp_single_profile = "SRTP_AES128_CM_SHA1_80";
+const char *tlsext_srtp_multiple_profiles = "SRTP_AES128_CM_SHA1_80:SRTP_AES128_CM_SHA1_32";
+
+const char *tlsext_srtp_aes128cmsha80 = "SRTP_AES128_CM_SHA1_80";
+const char *tlsext_srtp_aes128cmsha32 = "SRTP_AES128_CM_SHA1_32";
+
+const uint8_t tlsext_srtp_single[] = {
+	/* SRTPProtectionProfile SRTPProtectionProfiles<2..2^16-1> */
+	0x00, 0x02, /* len */
+	0x00, 0x01, /* SRTP_AES128_CM_SHA1_80 */
+	0x00        /* opaque srtp_mki<0..255> */
+};
+
+const uint8_t tlsext_srtp_multiple[] = {
+	/* SRTPProtectionProfile SRTPProtectionProfiles<2..2^16-1> */
+	0x00, 0x04, /* len */
+	0x00, 0x01, /* SRTP_AES128_CM_SHA1_80 */
+	0x00, 0x02, /* SRTP_AES128_CM_SHA1_32 */
+	0x00	/* opaque srtp_mki<0..255> */
+};
+
+const uint8_t tlsext_srtp_multiple_invalid[] = {
+	/* SRTPProtectionProfile SRTPProtectionProfiles<2..2^16-1> */
+	0x00, 0x04, /* len */
+	0x00, 0x08, /* arbitrary value not found in known profiles */
+	0x00, 0x09, /* arbitrary value not found in known profiles */
+	0x00	/* opaque srtp_mki<0..255> */
+};
+
+const uint8_t tlsext_srtp_single_invalid[] = {
+	/* SRTPProtectionProfile SRTPProtectionProfiles<2..2^16-1> */
+	0x00, 0x02, /* len */
+	0x00, 0x08, /* arbitrary value not found in known profiles */
+	0x00	/* opaque srtp_mki<0..255> */
+};
+
+const uint8_t tlsext_srtp_multiple_one_valid[] = {
+	/* SRTPProtectionProfile SRTPProtectionProfiles<2..2^16-1> */
+	0x00, 0x04, /* len */
+	0x00, 0x08, /* arbitrary value not found in known profiles */
+	0x00, 0x02, /* SRTP_AES128_CM_SHA1_32 */
+	0x00	    /* opaque srtp_mki<0..255> */
+};
+
+static int
+test_tlsext_srtp_clienthello(void)
+{
+	SRTP_PROTECTION_PROFILE *prof;
+	SSL_CTX *ssl_ctx = NULL;
+	SSL *ssl = NULL;
+	uint8_t *data = NULL;
+	CBB cbb;
+	CBS cbs;
+	int failure, alert;
+	size_t dlen;
+
+	CBB_init(&cbb, 0);
+
+	failure = 1;
+
+	/* SRTP is for DTLS */
+	if ((ssl_ctx = SSL_CTX_new(DTLSv1_client_method())) == NULL)
+		errx(1, "failed to create SSL_CTX");
+	if ((ssl = SSL_new(ssl_ctx)) == NULL)
+		errx(1, "failed to create SSL");
+
+	/* By default, we don't need this */
+	if (tlsext_srtp_clienthello_needs(ssl)) {
+		FAIL("clienthello should not need SRTP by default\n");
+		goto err;
+	}
+
+	if (SSL_set_tlsext_use_srtp(ssl, tlsext_srtp_single_profile) != 0) {
+		FAIL("should be able to set a single SRTP\n");
+		goto err;
+	}
+	if (!tlsext_srtp_clienthello_needs(ssl)) {
+		FAIL("clienthello should need SRTP\n");
+		goto err;
+	}
+
+	/* Make sure we can build the clienthello with a single profile. */
+
+	if (!tlsext_srtp_clienthello_build(ssl, &cbb)) {
+		FAIL("clienthello failed to build SRTP\n");
+		goto err;
+	}
+	if (!CBB_finish(&cbb, &data, &dlen))
+		errx(1, "failed to finish CBB");
+
+	if (dlen != sizeof(tlsext_srtp_single)) {
+		FAIL("got clienthello SRTP with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_srtp_single));
+		compare_data(data, dlen, tlsext_srtp_single,
+		    sizeof(tlsext_srtp_single));
+		goto err;
+	}
+	if (memcmp(data, tlsext_srtp_single, dlen) != 0) {
+		FAIL("clienthello SRTP differs:\n");
+		compare_data(data, dlen, tlsext_srtp_single,
+		    sizeof(tlsext_srtp_single));
+		goto err;
+	}
+
+	CBB_cleanup(&cbb);
+	CBB_init(&cbb, 0);
+	free(data);
+	data = NULL;
+
+	/* Make sure we can parse the single profile. */
+
+	if (SSL_get_selected_srtp_profile(ssl) != NULL) {
+		FAIL("SRTP profile should not be set yet\n");
+		goto err;
+	}
+
+	CBS_init(&cbs, tlsext_srtp_single, sizeof(tlsext_srtp_single));
+	if (!tlsext_srtp_clienthello_parse(ssl, &cbs, &alert)) {
+		FAIL("failed to parse SRTP\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	if ((prof = SSL_get_selected_srtp_profile(ssl)) == NULL) {
+		FAIL("SRTP profile should be set now\n");
+		goto err;
+	}
+	if (strcmp(prof->name, tlsext_srtp_aes128cmsha80) != 0) {
+		FAIL("SRTP profile was not set properly\n");
+		goto err;
+	}
+
+	if (!tlsext_srtp_serverhello_needs(ssl)) {
+		FAIL("should send server extension when profile selected\n");
+		goto err;
+	}
+
+	/* Make sure we can build the clienthello with multiple entries. */
+
+	if (SSL_set_tlsext_use_srtp(ssl, tlsext_srtp_multiple_profiles) != 0) {
+		FAIL("should be able to set SRTP to multiple profiles\n");
+		goto err;
+	}
+	if (!tlsext_srtp_clienthello_needs(ssl)) {
+		FAIL("clienthello should need SRTP by now\n");
+		goto err;
+	}
+
+	if (!tlsext_srtp_clienthello_build(ssl, &cbb)) {
+		FAIL("clienthello failed to build SRTP\n");
+		goto err;
+	}
+	if (!CBB_finish(&cbb, &data, &dlen))
+		errx(1, "failed to finish CBB");
+
+	if (dlen != sizeof(tlsext_srtp_multiple)) {
+		FAIL("got clienthello SRTP with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_srtp_multiple));
+		compare_data(data, dlen, tlsext_srtp_multiple,
+		    sizeof(tlsext_srtp_multiple));
+		goto err;
+	}
+	if (memcmp(data, tlsext_srtp_multiple, dlen) != 0) {
+		FAIL("clienthello SRTP differs:\n");
+		compare_data(data, dlen, tlsext_srtp_multiple,
+		    sizeof(tlsext_srtp_multiple));
+		goto err;
+	}
+
+	CBB_cleanup(&cbb);
+	CBB_init(&cbb, 0);
+	free(data);
+	data = NULL;
+
+	/* Make sure we can parse multiple profiles (selects server preferred) */
+
+	ssl->internal->srtp_profile = NULL;
+
+	CBS_init(&cbs, tlsext_srtp_multiple,
+	    sizeof(tlsext_srtp_multiple));
+	if (!tlsext_srtp_clienthello_parse(ssl, &cbs, &alert)) {
+		FAIL("failed to parse SRTP\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	if ((prof = SSL_get_selected_srtp_profile(ssl)) == NULL) {
+		FAIL("SRTP profile should be set now\n");
+		goto err;
+	}
+	if (strcmp(prof->name, tlsext_srtp_aes128cmsha80) != 0) {
+		FAIL("SRTP profile was not set properly\n");
+		goto err;
+	}
+
+	if (!tlsext_srtp_serverhello_needs(ssl)) {
+		FAIL("should send server extension when profile selected\n");
+		goto err;
+	}
+
+	/*
+	 * Make sure we can parse the clienthello with multiple entries
+	 * where one is unknown.
+	 */
+	ssl->internal->srtp_profile = NULL;
+
+	CBS_init(&cbs, tlsext_srtp_multiple_one_valid,
+	    sizeof(tlsext_srtp_multiple_one_valid));
+	if (!tlsext_srtp_clienthello_parse(ssl, &cbs, &alert)) {
+		FAIL("failed to parse SRTP\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	if ((prof = SSL_get_selected_srtp_profile(ssl)) == NULL) {
+		FAIL("SRTP profile should be set now\n");
+		goto err;
+	}
+	if (strcmp(prof->name, tlsext_srtp_aes128cmsha32) != 0) {
+		FAIL("SRTP profile was not set properly\n");
+		goto err;
+	}
+
+	if (!tlsext_srtp_serverhello_needs(ssl)) {
+		FAIL("should send server extension when profile selected\n");
+		goto err;
+	}
+
+	/* Make sure we fall back to negotiated when none work. */
+
+	ssl->internal->srtp_profile = NULL;
+
+	CBS_init(&cbs, tlsext_srtp_multiple_invalid,
+	    sizeof(tlsext_srtp_multiple_invalid));
+	if (!tlsext_srtp_clienthello_parse(ssl, &cbs, &alert)) {
+		FAIL("should be able to fall back to negotiated\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	/* If we fallback, the server should NOT send the extension. */
+	if (SSL_get_selected_srtp_profile(ssl) != NULL) {
+		FAIL("should not have selected a profile when none found\n");
+		goto err;
+	}
+	if (tlsext_srtp_serverhello_needs(ssl)) {
+		FAIL("should not send server tlsext when no profile found\n");
+		goto err;
+	}
+
+	failure = 0;
+
+ err:
+	CBB_cleanup(&cbb);
+	SSL_CTX_free(ssl_ctx);
+	SSL_free(ssl);
+	free(data);
+
+	return (failure);
+}
+
+static int
+test_tlsext_srtp_serverhello(void)
+{
+	SRTP_PROTECTION_PROFILE *prof;
+	SSL_CTX *ssl_ctx = NULL;
+	SSL *ssl = NULL;
+	uint8_t *data = NULL;
+	CBB cbb;
+	CBS cbs;
+	int failure, alert;
+	size_t dlen;
+
+	CBB_init(&cbb, 0);
+
+	failure = 1;
+
+	/* SRTP is for DTLS */
+	if ((ssl_ctx = SSL_CTX_new(DTLSv1_client_method())) == NULL)
+		errx(1, "failed to create SSL_CTX");
+	if ((ssl = SSL_new(ssl_ctx)) == NULL)
+		errx(1, "failed to create SSL");
+
+	/* By default, we don't need this */
+	if (tlsext_srtp_serverhello_needs(ssl)) {
+		FAIL("serverhello should not need SRTP by default\n");
+		goto err;
+	}
+
+	if (srtp_find_profile_by_name((char *)tlsext_srtp_aes128cmsha80, &prof,
+	    strlen(tlsext_srtp_aes128cmsha80))) {
+		FAIL("should be able to find the given profile\n");
+		goto err;
+	}
+	ssl->internal->srtp_profile = prof;
+	if (!tlsext_srtp_serverhello_needs(ssl)) {
+		FAIL("serverhello should need SRTP by now\n");
+		goto err;
+	}
+
+	/* Make sure we can build the serverhello with a single profile. */
+
+	if (!tlsext_srtp_serverhello_build(ssl, &cbb)) {
+		FAIL("serverhello failed to build SRTP\n");
+		goto err;
+	}
+	if (!CBB_finish(&cbb, &data, &dlen))
+		errx(1, "failed to finish CBB");
+
+	if (dlen != sizeof(tlsext_srtp_single)) {
+		FAIL("got serverhello SRTP with length %zu, "
+		    "want length %zu\n", dlen,
+		    sizeof(tlsext_srtp_single));
+		compare_data(data, dlen, tlsext_srtp_single,
+		    sizeof(tlsext_srtp_single));
+		goto err;
+	}
+	if (memcmp(data, tlsext_srtp_single, dlen) != 0) {
+		FAIL("serverhello SRTP differs:\n");
+		compare_data(data, dlen, tlsext_srtp_single,
+		    sizeof(tlsext_srtp_single));
+		goto err;
+	}
+
+	CBB_cleanup(&cbb);
+	CBB_init(&cbb, 0);
+	free(data);
+	data = NULL;
+
+	/* Make sure we can parse the single profile. */
+	ssl->internal->srtp_profile = NULL;
+
+	if (SSL_get_selected_srtp_profile(ssl) != NULL) {
+		FAIL("SRTP profile should not be set yet\n");
+		goto err;
+	}
+
+	/* Setup the environment as if a client sent a list of profiles. */
+	if (SSL_set_tlsext_use_srtp(ssl, tlsext_srtp_multiple_profiles) != 0) {
+		FAIL("should be able to set multiple profiles in SRTP\n");
+		goto err;
+	}
+
+	CBS_init(&cbs, tlsext_srtp_single, sizeof(tlsext_srtp_single));
+	if (!tlsext_srtp_serverhello_parse(ssl, &cbs, &alert)) {
+		FAIL("failed to parse SRTP\n");
+		goto err;
+	}
+	if (CBS_len(&cbs) != 0) {
+		FAIL("extension data remaining");
+		goto err;
+	}
+
+	if ((prof = SSL_get_selected_srtp_profile(ssl)) == NULL) {
+		FAIL("SRTP profile should be set now\n");
+		goto err;
+	}
+	if (strcmp(prof->name, tlsext_srtp_aes128cmsha80) != 0) {
+		FAIL("SRTP profile was not set properly\n");
+		goto err;
+	}
+
+	/* Make sure we cannot parse multiple profiles */
+	ssl->internal->srtp_profile = NULL;
+
+	CBS_init(&cbs, tlsext_srtp_multiple,
+	    sizeof(tlsext_srtp_multiple));
+	if (tlsext_srtp_serverhello_parse(ssl, &cbs, &alert)) {
+		FAIL("should not find multiple entries from the server\n");
+		goto err;
+	}
+
+	/* Make sure we cannot parse a serverhello with unknown profile */
+	ssl->internal->srtp_profile = NULL;
+
+	CBS_init(&cbs, tlsext_srtp_single_invalid,
+	    sizeof(tlsext_srtp_single_invalid));
+	if (tlsext_srtp_serverhello_parse(ssl, &cbs, &alert)) {
+		FAIL("should not be able to parse this\n");
+		goto err;
+	}
+
+	failure = 0;
+
+ err:
+	CBB_cleanup(&cbb);
+	SSL_CTX_free(ssl_ctx);
+	SSL_free(ssl);
+	free(data);
+
+	return (failure);
+}
+#endif /* OPENSSL_NO_SRTP */
+
 int
 main(int argc, char **argv)
 {
 	int failed = 0;
 
 	SSL_library_init();
+
+	failed |= test_tlsext_alpn_clienthello();
+	failed |= test_tlsext_alpn_serverhello();
 
 	failed |= test_tlsext_ec_clienthello();
 	failed |= test_tlsext_ec_serverhello();
@@ -1906,6 +2761,13 @@ main(int argc, char **argv)
 
 	failed |= test_tlsext_sessionticket_clienthello();
 	failed |= test_tlsext_sessionticket_serverhello();
+
+#ifndef OPENSSL_NO_SRTP
+	failed |= test_tlsext_srtp_clienthello();
+	failed |= test_tlsext_srtp_serverhello();
+#else
+	fprintf(stderr, "Skipping SRTP tests due to OPENSSL_NO_SRTP\n");
+#endif
 
 	return (failed);
 }

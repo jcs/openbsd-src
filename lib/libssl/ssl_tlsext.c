@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_tlsext.c,v 1.9 2017/08/12 23:38:12 beck Exp $ */
+/* $OpenBSD: ssl_tlsext.c,v 1.15 2017/08/30 16:44:37 jsing Exp $ */
 /*
  * Copyright (c) 2016, 2017 Joel Sing <jsing@openbsd.org>
  * Copyright (c) 2017 Doug Hogan <doug@openbsd.org>
@@ -23,6 +23,144 @@
 #include "bytestring.h"
 #include "ssl_tlsext.h"
 
+/*
+ * Supported Application-Layer Protocol Negotiation - RFC 7301
+ */
+
+int
+tlsext_alpn_clienthello_needs(SSL *s)
+{
+	/* ALPN protos have been specified and this is the initial handshake */
+	return s->internal->alpn_client_proto_list != NULL &&
+	    S3I(s)->tmp.finish_md_len == 0;
+}
+
+int
+tlsext_alpn_clienthello_build(SSL *s, CBB *cbb)
+{
+	CBB protolist;
+
+	if (!CBB_add_u16_length_prefixed(cbb, &protolist))
+		return 0;
+
+	if (!CBB_add_bytes(&protolist, s->internal->alpn_client_proto_list,
+	    s->internal->alpn_client_proto_list_len))
+		return 0;
+
+	if (!CBB_flush(cbb))
+		return 0;
+
+	return 1;
+}
+
+int
+tlsext_alpn_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+{
+	CBS proto_name_list, alpn;
+	const unsigned char *selected;
+	unsigned char selected_len;
+	int r;
+
+	if (!CBS_get_u16_length_prefixed(cbs, &alpn))
+		goto err;
+	if (CBS_len(&alpn) < 2)
+		goto err;
+	if (CBS_len(cbs) != 0)
+		goto err;
+
+	CBS_dup(&alpn, &proto_name_list);
+	while (CBS_len(&proto_name_list) > 0) {
+		CBS proto_name;
+
+		if (!CBS_get_u8_length_prefixed(&proto_name_list, &proto_name))
+			goto err;
+		if (CBS_len(&proto_name) == 0)
+			goto err;
+	}
+
+	if (s->ctx->internal->alpn_select_cb == NULL)
+		return 1;
+
+	r = s->ctx->internal->alpn_select_cb(s, &selected, &selected_len,
+	    CBS_data(&alpn), CBS_len(&alpn),
+	    s->ctx->internal->alpn_select_cb_arg);
+	if (r == SSL_TLSEXT_ERR_OK) {
+		free(S3I(s)->alpn_selected);
+		if ((S3I(s)->alpn_selected = malloc(selected_len)) == NULL) {
+			*alert = SSL_AD_INTERNAL_ERROR;
+			return 0;
+		}
+		memcpy(S3I(s)->alpn_selected, selected, selected_len);
+		S3I(s)->alpn_selected_len = selected_len;
+	}
+
+	return 1;
+
+ err:
+	*alert = SSL_AD_DECODE_ERROR;
+	return 0;
+}
+
+int
+tlsext_alpn_serverhello_needs(SSL *s)
+{
+	return S3I(s)->alpn_selected != NULL;
+}
+
+int
+tlsext_alpn_serverhello_build(SSL *s, CBB *cbb)
+{
+	CBB list, selected;
+
+	if (!CBB_add_u16_length_prefixed(cbb, &list))
+		return 0;
+
+	if (!CBB_add_u8_length_prefixed(&list, &selected))
+		return 0;
+
+	if (!CBB_add_bytes(&selected, S3I(s)->alpn_selected,
+	    S3I(s)->alpn_selected_len))
+		return 0;
+
+	if (!CBB_flush(cbb))
+		return 0;
+
+	return 1;
+}
+
+int
+tlsext_alpn_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+{
+	CBS list, proto;
+
+	if (s->internal->alpn_client_proto_list == NULL) {
+		*alert = TLS1_AD_UNSUPPORTED_EXTENSION;
+		return 0;
+	}
+
+	if (!CBS_get_u16_length_prefixed(cbs, &list))
+		goto err;
+	if (CBS_len(cbs) != 0)
+		goto err;
+
+	if (!CBS_get_u8_length_prefixed(&list, &proto))
+		goto err;
+
+	if (CBS_len(&list) != 0)
+		goto err;
+	if (CBS_len(&proto) == 0)
+		goto err;
+
+	if (!CBS_stow(&proto, &(S3I(s)->alpn_selected),
+	    &(S3I(s)->alpn_selected_len)))
+		goto err;
+
+	return 1;
+
+ err:
+	*alert = TLS1_AD_DECODE_ERROR;
+	return 0;
+}
 
 /*
  * Supported Elliptic Curves - RFC 4492 section 5.1.1
@@ -130,7 +268,21 @@ tlsext_ec_serverhello_build(SSL *s, CBB *cbb)
 int
 tlsext_ec_serverhello_parse(SSL *s, CBS *cbs, int *alert)
 {
-	return 0;
+	/*
+	 * Servers should not send this extension per the RFC.
+	 *
+	 * However, F5 sends it by mistake (case ID 492780) so we need to skip
+	 * over it.  This bug is from at least 2014 but as of 2017, there
+	 * are still large sites with this bug in production.
+	 *
+	 * https://devcentral.f5.com/questions/disable-supported-elliptic-curves-extension-from-server
+	 */
+	if (!CBS_skip(cbs, CBS_len(cbs))) {
+		*alert = TLS1_AD_INTERNAL_ERROR;
+		return 0;
+	}
+
+	return 1;
 }
 
 /*
@@ -552,6 +704,7 @@ tlsext_sni_serverhello_parse(SSL *s, CBS *cbs, int *alert)
 	return 1;
 }
 
+
 /*
  *Certificate Status Request - RFC 6066 section 8.
  */
@@ -623,6 +776,11 @@ tlsext_ocsp_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 	if (status_type != TLSEXT_STATUSTYPE_ocsp) {
 		/* ignore unknown status types */
 		s->tlsext_status_type = -1;
+
+		if (!CBS_skip(cbs, CBS_len(cbs))) {
+			*alert = TLS1_AD_INTERNAL_ERROR;
+			return 0;
+		}
 		return 1;
 	}
 	s->tlsext_status_type = status_type;
@@ -831,6 +989,216 @@ tlsext_sessionticket_serverhello_parse(SSL *s, CBS *cbs, int *alert)
 	return 1;
 }
 
+/*
+ * DTLS extension for SRTP key establishment - RFC 5764
+ */
+
+#ifndef OPENSSL_NO_SRTP
+
+int
+tlsext_srtp_clienthello_needs(SSL *s)
+{
+	return SSL_IS_DTLS(s) && SSL_get_srtp_profiles(s) != NULL;
+}
+
+int
+tlsext_srtp_clienthello_build(SSL *s, CBB *cbb)
+{
+	CBB profiles, mki;
+	int ct, i;
+	STACK_OF(SRTP_PROTECTION_PROFILE) *clnt = NULL;
+	SRTP_PROTECTION_PROFILE *prof;
+
+	if ((clnt = SSL_get_srtp_profiles(s)) == NULL) {
+		SSLerror(s, SSL_R_EMPTY_SRTP_PROTECTION_PROFILE_LIST);
+		return 0;
+	}
+
+	if ((ct = sk_SRTP_PROTECTION_PROFILE_num(clnt)) < 1) {
+		SSLerror(s, SSL_R_EMPTY_SRTP_PROTECTION_PROFILE_LIST);
+		return 0;
+	}
+
+	if (!CBB_add_u16_length_prefixed(cbb, &profiles))
+		return 0;
+
+	for (i = 0; i < ct; i++) {
+		if ((prof = sk_SRTP_PROTECTION_PROFILE_value(clnt, i)) == NULL)
+			return 0;
+		if (!CBB_add_u16(&profiles, prof->id))
+			return 0;
+	}
+
+	if (!CBB_add_u8_length_prefixed(cbb, &mki))
+		return 0;
+
+	if (!CBB_flush(cbb))
+		return 0;
+
+	return 1;
+}
+
+int
+tlsext_srtp_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+{
+	SRTP_PROTECTION_PROFILE *cprof, *sprof;
+	STACK_OF(SRTP_PROTECTION_PROFILE) *clnt = NULL, *srvr;
+	int i, j;
+	int ret;
+	uint16_t id;
+	CBS profiles, mki;
+
+	ret = 0;
+
+	if (!CBS_get_u16_length_prefixed(cbs, &profiles))
+		goto err;
+	if (CBS_len(&profiles) == 0 || CBS_len(&profiles) % 2 != 0)
+		goto err;
+
+	if ((clnt = sk_SRTP_PROTECTION_PROFILE_new_null()) == NULL)
+		goto err;
+
+	while (CBS_len(&profiles) > 0) {
+		if (!CBS_get_u16(&profiles, &id))
+			goto err;
+
+		if (!srtp_find_profile_by_num(id, &cprof)) {
+			if (!sk_SRTP_PROTECTION_PROFILE_push(clnt, cprof))
+				goto err;
+		}
+	}
+
+	if (!CBS_get_u8_length_prefixed(cbs, &mki) || CBS_len(&mki) != 0) {
+		SSLerror(s, SSL_R_BAD_SRTP_MKI_VALUE);
+		*alert = SSL_AD_DECODE_ERROR;
+		goto done;
+	}
+	if (CBS_len(cbs) != 0)
+		goto err;
+
+	/*
+	 * Per RFC 5764 section 4.1.1
+	 *
+	 * Find the server preferred profile using the client's list.
+	 *
+	 * The server MUST send a profile if it sends the use_srtp
+	 * extension.  If one is not found, it should fall back to the
+	 * negotiated DTLS cipher suite or return a DTLS alert.
+	 */
+	if ((srvr = SSL_get_srtp_profiles(s)) == NULL)
+		goto err;
+	for (i = 0; i < sk_SRTP_PROTECTION_PROFILE_num(srvr); i++) {
+		if ((sprof = sk_SRTP_PROTECTION_PROFILE_value(srvr, i))
+		    == NULL)
+			goto err;
+
+		for (j = 0; j < sk_SRTP_PROTECTION_PROFILE_num(clnt); j++) {
+			if ((cprof = sk_SRTP_PROTECTION_PROFILE_value(clnt, j))
+			    == NULL)
+				goto err;
+
+			if (cprof->id == sprof->id) {
+				s->internal->srtp_profile = sprof;
+				ret = 1;
+				goto done;
+			}
+		}
+	}
+
+	/* If we didn't find anything, fall back to the negotiated */
+	ret = 1;
+	goto done;
+
+ err:
+	SSLerror(s, SSL_R_BAD_SRTP_PROTECTION_PROFILE_LIST);
+	*alert = SSL_AD_DECODE_ERROR;
+
+ done:
+	sk_SRTP_PROTECTION_PROFILE_free(clnt);
+	return ret;
+}
+
+int
+tlsext_srtp_serverhello_needs(SSL *s)
+{
+	return SSL_IS_DTLS(s) && SSL_get_selected_srtp_profile(s) != NULL;
+}
+
+int
+tlsext_srtp_serverhello_build(SSL *s, CBB *cbb)
+{
+	SRTP_PROTECTION_PROFILE *profile;
+	CBB srtp, mki;
+
+	if (!CBB_add_u16_length_prefixed(cbb, &srtp))
+		return 0;
+
+	if ((profile = SSL_get_selected_srtp_profile(s)) == NULL)
+		return 0;
+
+	if (!CBB_add_u16(&srtp, profile->id))
+		return 0;
+
+	if (!CBB_add_u8_length_prefixed(cbb, &mki))
+		return 0;
+
+	if (!CBB_flush(cbb))
+		return 0;
+
+	return 1;
+}
+
+int
+tlsext_srtp_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+{
+	STACK_OF(SRTP_PROTECTION_PROFILE) *clnt;
+	SRTP_PROTECTION_PROFILE *prof;
+	int i;
+	uint16_t id;
+	CBS profile_ids, mki;
+
+	if (!CBS_get_u16_length_prefixed(cbs, &profile_ids)) {
+		SSLerror(s, SSL_R_BAD_SRTP_PROTECTION_PROFILE_LIST);
+		goto err;
+	}
+
+	if (!CBS_get_u16(&profile_ids, &id) || CBS_len(&profile_ids) != 0) {
+		SSLerror(s, SSL_R_BAD_SRTP_PROTECTION_PROFILE_LIST);
+		goto err;
+	}
+
+	if (!CBS_get_u8_length_prefixed(cbs, &mki) || CBS_len(&mki) != 0) {
+		SSLerror(s, SSL_R_BAD_SRTP_MKI_VALUE);
+		*alert = SSL_AD_ILLEGAL_PARAMETER;
+		return 0;
+	}
+
+	if ((clnt = SSL_get_srtp_profiles(s)) == NULL) {
+		SSLerror(s, SSL_R_NO_SRTP_PROFILES);
+		goto err;
+	}
+
+	for (i = 0; i < sk_SRTP_PROTECTION_PROFILE_num(clnt); i++) {
+		if ((prof = sk_SRTP_PROTECTION_PROFILE_value(clnt, i))
+		    == NULL) {
+			SSLerror(s, SSL_R_NO_SRTP_PROFILES);
+			goto err;
+		}
+
+		if (prof->id == id) {
+			s->internal->srtp_profile = prof;
+			return 1;
+		}
+	}
+
+	SSLerror(s, SSL_R_BAD_SRTP_PROTECTION_PROFILE_LIST);
+ err:
+	*alert = SSL_AD_DECODE_ERROR;
+	return 0;
+}
+
+#endif /* OPENSSL_NO_SRTP */
+
 struct tls_extension {
 	uint16_t type;
 	int (*clienthello_needs)(SSL *s);
@@ -905,6 +1273,26 @@ static struct tls_extension tls_extensions[] = {
 		.serverhello_build = tlsext_sigalgs_serverhello_build,
 		.serverhello_parse = tlsext_sigalgs_serverhello_parse,
 	},
+	{
+		.type = TLSEXT_TYPE_application_layer_protocol_negotiation,
+		.clienthello_needs = tlsext_alpn_clienthello_needs,
+		.clienthello_build = tlsext_alpn_clienthello_build,
+		.clienthello_parse = tlsext_alpn_clienthello_parse,
+		.serverhello_needs = tlsext_alpn_serverhello_needs,
+		.serverhello_build = tlsext_alpn_serverhello_build,
+		.serverhello_parse = tlsext_alpn_serverhello_parse,
+	},
+#ifndef OPENSSL_NO_SRTP
+	{
+		.type = TLSEXT_TYPE_use_srtp,
+		.clienthello_needs = tlsext_srtp_clienthello_needs,
+		.clienthello_build = tlsext_srtp_clienthello_build,
+		.clienthello_parse = tlsext_srtp_clienthello_parse,
+		.serverhello_needs = tlsext_srtp_serverhello_needs,
+		.serverhello_build = tlsext_srtp_serverhello_build,
+		.serverhello_parse = tlsext_srtp_serverhello_parse,
+	}
+#endif /* OPENSSL_NO_SRTP */
 };
 
 #define N_TLS_EXTENSIONS (sizeof(tls_extensions) / sizeof(*tls_extensions))
@@ -912,11 +1300,12 @@ static struct tls_extension tls_extensions[] = {
 int
 tlsext_clienthello_build(SSL *s, CBB *cbb)
 {
+	CBB extensions, extension_data;
 	struct tls_extension *tlsext;
-	CBB extension_data;
 	size_t i;
 
-	memset(&extension_data, 0, sizeof(extension_data));
+	if (!CBB_add_u16_length_prefixed(cbb, &extensions))
+		return 0;
 
 	for (i = 0; i < N_TLS_EXTENSIONS; i++) {
 		tlsext = &tls_extensions[i];
@@ -924,15 +1313,16 @@ tlsext_clienthello_build(SSL *s, CBB *cbb)
 		if (!tlsext->clienthello_needs(s))
 			continue;
 
-		if (!CBB_add_u16(cbb, tlsext->type))
+		if (!CBB_add_u16(&extensions, tlsext->type))
 			return 0;
-		if (!CBB_add_u16_length_prefixed(cbb, &extension_data))
+		if (!CBB_add_u16_length_prefixed(&extensions, &extension_data))
 			return 0;
 		if (!tls_extensions[i].clienthello_build(s, &extension_data))
 			return 0;
-		if (!CBB_flush(cbb))
-			return 0;
 	}
+
+	if (!CBB_flush(cbb))
+		return 0;
 
 	return 1;
 }
@@ -965,11 +1355,12 @@ tlsext_clienthello_parse_one(SSL *s, CBS *cbs, uint16_t type, int *alert)
 int
 tlsext_serverhello_build(SSL *s, CBB *cbb)
 {
+	CBB extensions, extension_data;
 	struct tls_extension *tlsext;
-	CBB extension_data;
 	size_t i;
 
-	memset(&extension_data, 0, sizeof(extension_data));
+	if (!CBB_add_u16_length_prefixed(cbb, &extensions))
+		return 0;
 
 	for (i = 0; i < N_TLS_EXTENSIONS; i++) {
 		tlsext = &tls_extensions[i];
@@ -977,15 +1368,16 @@ tlsext_serverhello_build(SSL *s, CBB *cbb)
 		if (!tlsext->serverhello_needs(s))
 			continue;
 
-		if (!CBB_add_u16(cbb, tlsext->type))
+		if (!CBB_add_u16(&extensions, tlsext->type))
 			return 0;
-		if (!CBB_add_u16_length_prefixed(cbb, &extension_data))
+		if (!CBB_add_u16_length_prefixed(&extensions, &extension_data))
 			return 0;
 		if (!tlsext->serverhello_build(s, &extension_data))
 			return 0;
-		if (!CBB_flush(cbb))
-			return 0;
 	}
+
+	if (!CBB_flush(cbb))
+		return 0;
 
 	return 1;
 }

@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.292 2017/07/21 22:55:45 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.295 2017/08/24 08:48:37 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -159,8 +159,9 @@ tty_read_callback(__unused int fd, __unused short events, void *data)
 	int		 nread;
 
 	nread = evbuffer_read(tty->in, tty->fd, -1);
-	if (nread == -1) {
+	if (nread == 0 || nread == -1) {
 		event_del(&tty->event_in);
+		server_client_lost(tty->client);
 		return;
 	}
 	log_debug("%s: read %d bytes (already %zu)", c->name, nread, size);
@@ -1609,7 +1610,8 @@ tty_cursor(struct tty *tty, u_int cx, u_int cy)
 	}
 
 	/* Zero on the next line. */
-	if (cx == 0 && cy == thisy + 1 && thisy != tty->rlower) {
+	if (cx == 0 && cy == thisy + 1 && thisy != tty->rlower &&
+	    (!tty_use_margin(tty) || tty->rleft == 0)) {
 		tty_putc(tty, '\r');
 		tty_putc(tty, '\n');
 		goto out;
@@ -1622,7 +1624,7 @@ tty_cursor(struct tty *tty, u_int cx, u_int cy)
 		 */
 
 		/* To left edge. */
-		if (cx == 0) {
+		if (cx == 0 && (!tty_use_margin(tty) || tty->rleft == 0)) {
 			tty_putc(tty, '\r');
 			goto out;
 		}

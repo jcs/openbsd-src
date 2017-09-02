@@ -1,4 +1,4 @@
-/* $OpenBSD: machdep.c,v 1.19 2017/08/09 03:44:33 jsg Exp $ */
+/* $OpenBSD: machdep.c,v 1.21 2017/08/27 12:42:22 kettenis Exp $ */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>
  *
@@ -197,8 +197,10 @@ fdt_find_cons(const char *name)
 
 extern void	com_fdt_init_cons(void);
 extern void	pluart_init_cons(void);
+extern void	simplefb_init_cons(bus_space_tag_t);
+
 void
-consinit()
+consinit(void)
 {
 	static int consinit_called = 0;
 
@@ -209,6 +211,7 @@ consinit()
 
 	com_fdt_init_cons();
 	pluart_init_cons();
+	simplefb_init_cons(&arm64_bs_tag);
 }
 
 void
@@ -398,6 +401,8 @@ setregs(struct proc *p, struct exec_package *pack, u_long stack,
 	tf->tf_lr = pack->ep_entry;
 	tf->tf_elr = pack->ep_entry; /* ??? */
 	tf->tf_spsr = PSR_M_EL0t;
+
+	retval[1] = 0;
 }
 
 void

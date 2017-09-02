@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmctl.c,v 1.38 2017/08/18 07:01:29 mlarkin Exp $	*/
+/*	$OpenBSD: vmctl.c,v 1.42 2017/08/31 09:15:31 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
@@ -16,7 +16,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/uio.h>
 #include <sys/stat.h>
@@ -205,6 +204,11 @@ vm_start_complete(struct imsg *imsg, int *ret, int autoconnect)
 				warnx("could not find specified disk image(s)");
 				*ret = ENOENT;
 				break;
+			case VMD_DISK_INVALID:
+				warnx("specified disk image(s) are "
+                                        "not regular files");
+				*ret = ENOENT;
+				break;
 			default:
 				errno = res;
 				warn("start vm command failed");
@@ -231,7 +235,13 @@ send_vm(uint32_t id, const char *name)
 {
 	struct vmop_id vid;
 	int fds[2], readn, writen;
-	char buf[PAGE_SIZE];
+	long pagesz;
+	char *buf;
+
+	pagesz = getpagesize();
+	buf = malloc(pagesz);
+	if (buf == NULL)
+		errx(1, "%s: memory allocation failure", __func__);
 
 	memset(&vid, 0, sizeof(vid));
 	vid.vid_id = id;
@@ -244,7 +254,7 @@ send_vm(uint32_t id, const char *name)
 				&vid, sizeof(vid));
 		imsg_flush(ibuf);
 		while (1) {
-			readn = atomicio(read, fds[1], buf, sizeof(buf));
+			readn = atomicio(read, fds[1], buf, pagesz);
 			if (!readn)
 				break;
 			writen = atomicio(vwrite, STDOUT_FILENO, buf,
@@ -257,6 +267,8 @@ send_vm(uint32_t id, const char *name)
 		else
 			warnx("sent vm %s successfully", vid.vid_name);
 	}
+
+	free(buf);
 }
 
 void
@@ -264,7 +276,13 @@ vm_receive(uint32_t id, const char *name)
 {
 	struct vmop_id vid;
 	int fds[2], readn, writen;
-	char buf[PAGE_SIZE];
+	long pagesz;
+	char *buf;
+
+	pagesz = getpagesize();
+	buf = malloc(pagesz);
+	if (buf == NULL)
+		errx(1, "%s: memory allocation failure", __func__);
 
 	memset(&vid, 0, sizeof(vid));
 	if (name != NULL)
@@ -276,7 +294,7 @@ vm_receive(uint32_t id, const char *name)
 		    &vid, sizeof(vid));
 		imsg_flush(ibuf);
 		while (1) {
-			readn = atomicio(read, STDIN_FILENO, buf, sizeof(buf));
+			readn = atomicio(read, STDIN_FILENO, buf, pagesz);
 			if (!readn) {
 				close(fds[1]);
 				break;
@@ -286,6 +304,8 @@ vm_receive(uint32_t id, const char *name)
 				break;
 		}
 	}
+
+	free(buf);
 }
 
 void
@@ -426,7 +446,7 @@ terminate_vm_complete(struct imsg *imsg, int *ret)
 				warn("terminate vm command failed");
 			*ret = EIO;
 		} else {
-			warnx("terminated vm %d successfully", vmr->vmr_id);
+			warnx("sent request to terminate vm %d", vmr->vmr_id);
 			*ret = 0;
 		}
 	} else {

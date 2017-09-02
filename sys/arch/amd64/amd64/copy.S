@@ -1,4 +1,4 @@
-/*	$OpenBSD: copy.S,v 1.8 2017/05/12 19:25:19 kettenis Exp $	*/
+/*	$OpenBSD: copy.S,v 1.10 2017/08/25 19:28:48 guenther Exp $	*/
 /*	$NetBSD: copy.S,v 1.1 2003/04/26 18:39:26 fvdl Exp $	*/
 
 /*
@@ -43,23 +43,6 @@
 
 #include <machine/asm.h>
 #include <machine/codepatch.h>
-
-/*
- * As stac/clac SMAP instructions are 3 bytes, we want the fastest
- * 3 byte nop sequence possible here.  This will be replaced by
- * stac/clac instructions if SMAP is detected after booting.
- *
- * This would be 'nop (%rax)' if binutils could cope.
- * Intel documents multi-byte NOP sequences as being available
- * on all family 0x6 and 0xf processors (ie 686+)
- */
-#define SMAP_NOP	.byte 0x0f, 0x1f, 0x00
-#define SMAP_STAC	CODEPATCH_START			;\
-			SMAP_NOP			;\
-			CODEPATCH_END(CPTAG_STAC)
-#define SMAP_CLAC	CODEPATCH_START			;\
-			SMAP_NOP			;\
-			CODEPATCH_END(CPTAG_CLAC)
 
 /*
  * Copy routines from and to userland, plus a few more. See the
@@ -325,10 +308,11 @@ ENTRY(copystr)
 
 7:	ret
 
-.globl _C_LABEL(_stac)
+	.section .rodata
+	.globl _C_LABEL(_stac)
 _C_LABEL(_stac):
 	stac
 
-.globl _C_LABEL(_clac)
+	.globl _C_LABEL(_clac)
 _C_LABEL(_clac):
 	clac

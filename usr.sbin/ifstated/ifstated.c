@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifstated.c,v 1.59 2017/08/14 03:15:28 rob Exp $	*/
+/*	$OpenBSD: ifstated.c,v 1.61 2017/08/30 16:14:52 rob Exp $	*/
 
 /*
  * Copyright (c) 2004 Marco Pfatschbacher <mpf@openbsd.org>
@@ -60,9 +60,10 @@ void		rt_msg_handler(int, short, void *);
 void		external_handler(int, short, void *);
 void		external_exec(struct ifsd_external *, int);
 void		check_external_status(struct ifsd_state *);
+void		check_ifdeparture(void);
 void		external_evtimer_setup(struct ifsd_state *, int);
-void		scan_ifstate(int, int, int);
-int		scan_ifstate_single(int, int, struct ifsd_state *);
+void		scan_ifstate(const char *, int, int);
+int		scan_ifstate_single(const char *, int, struct ifsd_state *);
 void		fetch_ifstate(int);
 __dead void	usage(void);
 void		adjust_expressions(struct ifsd_expression_list *, int);
@@ -149,7 +150,7 @@ main(int argc, char *argv[])
 	if ((rt_fd = socket(PF_ROUTE, SOCK_RAW, 0)) < 0)
 		fatal("no routing socket");
 
-	rtfilter = ROUTE_FILTER(RTM_IFINFO);
+	rtfilter = ROUTE_FILTER(RTM_IFINFO) | ROUTE_FILTER(RTM_IFANNOUNCE);
 	if (setsockopt(rt_fd, PF_ROUTE, ROUTE_MSGFILTER,
 	    &rtfilter, sizeof(rtfilter)) == -1)	/* not fatal */
 		log_warn("%s: setsockopt msgfilter", __func__);
@@ -233,6 +234,9 @@ rt_msg_handler(int fd, short event, void *arg)
 	char msg[2048];
 	struct rt_msghdr *rtm = (struct rt_msghdr *)&msg;
 	struct if_msghdr ifm;
+	struct if_announcemsghdr ifan;
+	char ifnamebuf[IFNAMSIZ];
+	char *ifname;
 	ssize_t len;
 
 	if ((len = read(fd, msg, sizeof(msg))) == -1) {
@@ -250,12 +254,28 @@ rt_msg_handler(int fd, short event, void *arg)
 	switch (rtm->rtm_type) {
 	case RTM_IFINFO:
 		memcpy(&ifm, rtm, sizeof(ifm));
-		scan_ifstate(ifm.ifm_index, ifm.ifm_data.ifi_link_state, 1);
+		ifname = if_indextoname(ifm.ifm_index, ifnamebuf);
+		/* ifname is NULL on interface departure */
+		if (ifname != NULL)
+			scan_ifstate(ifname, ifm.ifm_data.ifi_link_state, 1);
+		break;
+	case RTM_IFANNOUNCE:
+		memcpy(&ifan, rtm, sizeof(ifan));
+		switch (ifan.ifan_what) {
+		case IFAN_DEPARTURE:
+			log_warnx("interface %s departed", ifan.ifan_name);
+			check_ifdeparture();
+			break;
+		case IFAN_ARRIVAL:
+			log_warnx("interface %s arrived", ifan.ifan_name);
+			fetch_ifstate(1);
+			break;
+		}
 		break;
 	case RTM_DESYNC:
+		/* we lost some routing messages so rescan interfaces */
+		check_ifdeparture();
 		fetch_ifstate(1);
-		break;
-	default:
 		break;
 	}
 	return;
@@ -431,7 +451,7 @@ external_evtimer_setup(struct ifsd_state *state, int action)
 #define	LINK_STATE_IS_DOWN(_s)		(!LINK_STATE_IS_UP((_s)))
 
 int
-scan_ifstate_single(int ifindex, int s, struct ifsd_state *state)
+scan_ifstate_single(const char *ifname, int s, struct ifsd_state *state)
 {
 	struct ifsd_ifstate *ifstate;
 	struct ifsd_expression_list expressions;
@@ -440,7 +460,7 @@ scan_ifstate_single(int ifindex, int s, struct ifsd_state *state)
 	TAILQ_INIT(&expressions);
 
 	TAILQ_FOREACH(ifstate, &state->interface_states, entries) {
-		if (ifstate->ifindex == ifindex) {
+		if (strcmp(ifstate->ifname, ifname) == 0) {
 			if (ifstate->prevstate != s &&
 			    (ifstate->prevstate != -1 || !opt_inhibit)) {
 				struct ifsd_expression *expression;
@@ -472,15 +492,15 @@ scan_ifstate_single(int ifindex, int s, struct ifsd_state *state)
 }
 
 void
-scan_ifstate(int ifindex, int s, int do_eval)
+scan_ifstate(const char *ifname, int s, int do_eval)
 {
 	struct ifsd_state *state;
 	int cur_eval = 0;
 
-	if (scan_ifstate_single(ifindex, s, &conf->initstate) && do_eval)
+	if (scan_ifstate_single(ifname, s, &conf->initstate) && do_eval)
 		eval_state(&conf->initstate);
 	TAILQ_FOREACH(state, &conf->states, entries) {
-		if (scan_ifstate_single(ifindex, s, state) &&
+		if (scan_ifstate_single(ifname, s, state) &&
 		    (do_eval && state == conf->curstate))
 			cur_eval = 1;
 	}
@@ -619,12 +639,27 @@ fetch_ifstate(int do_eval)
 	for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
 		if (ifa->ifa_addr->sa_family == AF_LINK) {
 			struct if_data *ifdata = ifa->ifa_data;
-			scan_ifstate(if_nametoindex(ifa->ifa_name),
-			    ifdata->ifi_link_state, do_eval);
+			scan_ifstate(ifa->ifa_name, ifdata->ifi_link_state,
+			    do_eval);
 		}
 	}
 
 	freeifaddrs(ifap);
+}
+
+void
+check_ifdeparture(void)
+{
+	struct ifsd_state *state;
+	struct ifsd_ifstate *ifstate;
+
+	TAILQ_FOREACH(state, &conf->states, entries) {
+		TAILQ_FOREACH(ifstate, &state->interface_states, entries) {
+			if (if_nametoindex(ifstate->ifname) == 0)
+				scan_ifstate(ifstate->ifname,
+				    LINK_STATE_DOWN, 1);
+		}
+	}
 }
 
 void

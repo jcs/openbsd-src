@@ -1,4 +1,4 @@
-# $OpenBSD: RAMDISK,v 1.32 2017/08/11 22:07:09 kettenis Exp $
+# $OpenBSD: RAMDISK,v 1.35 2017/08/28 11:16:04 kettenis Exp $
 #
 # GENERIC machine description file
 #
@@ -85,6 +85,9 @@ viomb*		at virtio?
 viornd*		at virtio?
 vioscsi*	at virtio?
 
+simplefb*	at fdt?
+wsdisplay*	at simplefb?
+
 # Raspberry Pi 3
 bcmaux*		at fdt?
 bcmintc*	at fdt?
@@ -97,6 +100,8 @@ rkclock*	at fdt? early 1
 rkgrf*		at fdt? early 1
 rkpinctrl*	at fdt? early 1
 rkgpio*		at fdt?
+rkiic*		at fdt?
+iic*		at rkiic?
 rkdwusb*	at fdt?
 dwmmc*		at fdt?
 sdmmc*		at dwmmc?
@@ -186,6 +191,9 @@ cd*		at scsibus?
 st*		at scsibus?
 ch*		at scsibus?
 uk*		at scsibus?
+
+# I2C devices
+rkpmic*		at iic?			# RK808 PMIC
 
 pseudo-device	loop 1
 pseudo-device	bpfilter 1

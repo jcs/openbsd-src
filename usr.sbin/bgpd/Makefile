@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.30 2016/09/02 14:00:29 benno Exp $
+#	$OpenBSD: Makefile,v 1.32 2017/08/21 14:43:33 phessler Exp $
 
 PROG=	bgpd
 SRCS=	bgpd.c session.c log.c logmsg.c parse.y config.c \

@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.88 2017/08/14 21:46:02 ians Exp $
+#	$OpenBSD: GENERIC,v 1.94 2017/08/28 19:32:53 jasper Exp $
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -111,6 +111,9 @@ pluart*		at fdt?
 plrtc*		at fdt?
 virtio*		at fdt?
 
+sdhc*		at fdt?
+sdmmc*		at sdhc?
+
 psci*		at fdt?
 syscon*		at fdt?
 
@@ -152,6 +155,12 @@ mvmbus*		at fdt?
 mvxhci*		at fdt?
 usb*		at mvxhci?
 mvahci*		at fdt?
+mvpinctrl*	at fdt?
+mvmdio*		at fdt?
+mvneta*		at fdt?
+mvmpic*		at fdt?
+mvpxa*		at fdt?
+sdmmc*		at mvpxa?
 
 # Rockchip SoCs
 rkclock*	at fdt? early 1
@@ -180,7 +189,7 @@ usb*		at ehci?	flags 0x1
 # USB devices
 uhub*	at usb?			# USB Hubs
 uhub*	at uhub?		# USB Hubs
-ualea*	at uhub?		# Araneus Alea II TRNG
+urng*	at uhub?		# USB Random Number Generator
 uonerng* at uhub?		# Moonbase Otago OneRNG
 umodem*	at uhub?		# USB Modems/Serial
 ucom*	at umodem?
