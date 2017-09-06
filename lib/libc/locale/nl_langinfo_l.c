@@ -1,6 +1,6 @@
-/* $OpenBSD: _atomic_lock.c,v 1.7 2013/06/01 20:47:40 tedu Exp $ */
+/*	$OpenBSD: nl_langinfo_l.c,v 1.1 2017/09/05 03:16:13 schwarze Exp $ */
 /*
- * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
+ * Copyright (c) 2017 Ingo Schwarze <schwarze@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,27 +15,29 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <machine/spinlock.h>
-#ifdef DIAGNOSTIC
-#include <stdio.h>
-#include <stdlib.h>
-#endif
+#include <langinfo.h>
+#include <locale.h>
 
-int
-_atomic_lock(volatile _atomic_lock_t *lock)
+#include "rune.h"
+
+char *
+nl_langinfo_l(nl_item item, locale_t locale)
 {
-	volatile _atomic_lock_t old;
+	_RuneLocale	*rl;
+	const char	*s;
 
-#ifdef DIAGNOSTIC
-	if ((unsigned long)lock & 0xf) {
-		printf("lock not 16 byte aligned\n");
-		abort();
-	}
-#endif
+	if (item != CODESET)
+		return nl_langinfo(item);
 
-	asm volatile ("ldcws 0(%2),%0"
-		     : "=&r" (old), "+m" (lock)
-		     : "r" (lock));
+	rl = NULL;
+	if (locale == _LOCALE_UTF8)
+		rl = _Utf8RuneLocale;
+	if (rl == NULL)
+		rl = &_DefaultRuneLocale;
 
-	return (old == _ATOMIC_LOCK_LOCKED);
+	s = rl->rl_codeset;
+	if (s == NULL)
+		s = "";
+
+	return (char *)s;
 }

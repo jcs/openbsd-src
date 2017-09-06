@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtable.c,v 1.61 2017/07/30 18:18:08 florian Exp $ */
+/*	$OpenBSD: rtable.c,v 1.63 2017/09/05 11:15:39 mpi Exp $ */
 
 /*
  * Copyright (c) 2014-2016 Martin Pieuchot
@@ -751,6 +751,7 @@ rtable_mpath_reprio(unsigned int rtableid, struct sockaddr *dst,
 		rt->rt_priority = prio;
 		rtable_mpath_insert(an, rt);
 		rtfree(rt);
+		error = EAGAIN;
 	}
 	rw_exit_write(&ar->ar_lock);
 
@@ -763,32 +764,21 @@ rtable_mpath_insert(struct art_node *an, struct rtentry *rt)
 	struct rtentry			*mrt, *prt = NULL;
 	uint8_t				 prio = rt->rt_priority;
 
-	if ((mrt = SRPL_FIRST_LOCKED(&an->an_rtlist)) != NULL) {
-		/*
-		 * Select the order of the MPATH routes.
-		 */
-		while (SRPL_NEXT_LOCKED(mrt, rt_next) != NULL) {
-			if (mrt->rt_priority > prio)
-				break;
-			prt = mrt;
-			mrt = SRPL_NEXT_LOCKED(mrt, rt_next);
-		}
+	if ((mrt = SRPL_FIRST_LOCKED(&an->an_rtlist)) == NULL) {
+		SRPL_INSERT_HEAD_LOCKED(&rt_rc, &an->an_rtlist, rt, rt_next);
+		return;
+	}
 
-		if (mrt->rt_priority > prio) {
-			/*
-			 * ``rt'' has a higher (smaller) priority than
-			 * ``mrt'' so put it before in the list.
-			 */
-			if (prt != NULL) {
-				SRPL_INSERT_AFTER_LOCKED(&rt_rc, prt, rt,
-				    rt_next);
-			} else {
-				SRPL_INSERT_HEAD_LOCKED(&rt_rc, &an->an_rtlist,
-				    rt, rt_next);
-			}
-		} else {
-			SRPL_INSERT_AFTER_LOCKED(&rt_rc, mrt, rt, rt_next);
-		}
+	/* Iterate until we find the route to be placed after ``rt''. */
+	while (mrt->rt_priority <= prio && SRPL_NEXT_LOCKED(mrt, rt_next)) {
+		prt = mrt;
+		mrt = SRPL_NEXT_LOCKED(mrt, rt_next);
+	}
+
+	if (mrt->rt_priority <= prio) {
+		SRPL_INSERT_AFTER_LOCKED(&rt_rc, mrt, rt, rt_next);
+	} else if (prt != NULL) {
+		SRPL_INSERT_AFTER_LOCKED(&rt_rc, prt, rt, rt_next);
 	} else {
 		SRPL_INSERT_HEAD_LOCKED(&rt_rc, &an->an_rtlist, rt, rt_next);
 	}
