@@ -41,6 +41,8 @@
 #define	THINKPAD_HKEY_VERSION1		0x0100
 #define	THINKPAD_HKEY_VERSION2		0x0200
 
+#define	THINKPAD_KEYLIGHT_MASK		0x20000
+
 #define	THINKPAD_CMOS_VOLUME_DOWN	0x00
 #define	THINKPAD_CMOS_VOLUME_UP		0x01
 #define	THINKPAD_CMOS_VOLUME_MUTE	0x02
@@ -323,6 +325,9 @@ thinkpad_enable_events(struct acpithinkpad_softc *sc)
 		printf("%s: no MHKA\n", DEVNAME(sc));
 		return (1);
 	}
+
+	/* Make sure keyboard backlight events are enabled */
+	mask |= THINKPAD_KEYLIGHT_MASK;
 
 	/* Update hotkey mask */
 	bzero(args, sizeof(args));
