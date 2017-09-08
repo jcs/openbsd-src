@@ -16,6 +16,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/device.h>
 #include <dev/pci/drm/drmP.h>
 #include <dev/pci/ppbreg.h>
 
@@ -729,4 +732,24 @@ void
 backlight_schedule_update_status(struct backlight_device *bd)
 {
 	task_add(systq, &bd->task);
+}
+
+int
+request_firmware_nowait(struct module *module, bool uevent,
+    const char *name, struct device *device, gfp_t gfp, void *context,
+    void (*cont)(const struct firmware *fw, void *context))
+{
+	struct firmware firm;
+	size_t ulen;
+	uint8_t *ucode;
+	int ret;
+
+	ret = loadfirmware(name, &ucode, &ulen);
+	if (ret != 0)
+		return ret;
+
+	firm.data = ucode;
+	cont(&firm, context);
+
+	return 0;
 }

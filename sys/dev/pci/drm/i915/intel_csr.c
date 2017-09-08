@@ -24,6 +24,7 @@
 #ifdef __linux__
 #include <linux/firmware.h>
 #endif
+#include <dev/pci/drm/drm_linux.h>
 #include "i915_drv.h"
 #include "i915_reg.h"
 
@@ -176,7 +177,6 @@ struct intel_dmc_header {
 	uint32_t reserved1[2];
 } __packed;
 
-#ifdef __linux__
 struct stepping_info {
 	char stepping;
 	char substepping;
@@ -187,7 +187,9 @@ struct stepping_info {
  * is the right firmware for KBL A0 (revid 0).
  */
 static const struct stepping_info kbl_stepping_info[] = {
-	{'H', '0'}, {'I', '0'}
+	{'A', '0'}, {'B', '0'}, {'C', '0'},
+	{'D', '0'}, {'E', '0'}, {'F', '0'},
+	{'G', '0'}, {'H', '0'}, {'I', '0'},
 };
 
 static const struct stepping_info skl_stepping_info[] = {
@@ -220,7 +222,7 @@ static char intel_get_stepping(struct drm_device *dev)
 static char intel_get_substepping(struct drm_device *dev)
 {
 	if (IS_KABYLAKE(dev) && (dev->pdev->revision <
-			ARRAY_SIZE(klb_stepping_info)))
+			ARRAY_SIZE(kbl_stepping_info)))
 		return kbl_stepping_info[dev->pdev->revision].substepping;
 	else if (IS_SKYLAKE(dev) && (dev->pdev->revision <
 			ARRAY_SIZE(skl_stepping_info)))
@@ -231,7 +233,6 @@ static char intel_get_substepping(struct drm_device *dev)
 	else
 		return -ENODATA;
 }
-#endif
 
 /**
  * intel_csr_load_status_get() - to get firmware loading status.
@@ -309,7 +310,6 @@ void intel_csr_load_program(struct drm_device *dev)
 	mutex_unlock(&dev_priv->csr_lock);
 }
 
-#ifdef __linux__
 static void finish_csr_load(const struct firmware *fw, void *context)
 {
 	struct drm_i915_private *dev_priv = context;
@@ -433,7 +433,11 @@ out:
 
 	release_firmware(fw);
 }
-#endif
+
+void intel_csr_ucode_init_mountroot(struct device *dev)
+{
+	intel_csr_ucode_init((struct drm_device *)dev);
+}
 
 /**
  * intel_csr_ucode_init() - initialize the firmware loading.
@@ -473,7 +477,11 @@ void intel_csr_ucode_init(struct drm_device *dev)
 
 	/* CSR supported for platform, load firmware */
 	ret = request_firmware_nowait(THIS_MODULE, true, csr->fw_path,
+#ifdef __OpenBSD__
+				NULL,
+#else
 				&dev_priv->dev->pdev->dev,
+#endif
 				GFP_KERNEL, dev_priv,
 				finish_csr_load);
 	if (ret) {
