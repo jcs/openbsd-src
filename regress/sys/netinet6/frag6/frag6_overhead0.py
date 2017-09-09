@@ -1,10 +1,9 @@
 #!/usr/local/bin/python2.7
 
-print "ping6 fragment that overlaps the first fragment with the head"
+print "ping6 fragment that overlaps the first fragment with its head"
 
-# |--------|
-#      |XXXXXXXX|
-#          |----|
+# |---------|
+#      |XXXX-----|
 
 import os
 from addr import *
@@ -13,14 +12,12 @@ from scapy.all import *
 pid=os.getpid()
 eid=pid & 0xffff
 payload="ABCDEFGHIJKLMNOP"
-dummy="0123456701234567"
 packet=IPv6(src=LOCAL_ADDR6, dst=REMOTE_ADDR6)/ \
     ICMPv6EchoRequest(id=eid, data=payload)
 frag=[]
 fid=pid & 0xffffffff
 frag.append(IPv6ExtHdrFragment(nh=58, id=fid, m=1)/str(packet)[40:56])
-frag.append(IPv6ExtHdrFragment(nh=58, id=fid, offset=1)/dummy)
-frag.append(IPv6ExtHdrFragment(nh=58, id=fid, offset=2)/str(packet)[56:64])
+frag.append(IPv6ExtHdrFragment(nh=58, id=fid, offset=1)/str(packet)[48:64])
 eth=[]
 for f in frag:
 	pkt=IPv6(src=LOCAL_ADDR6, dst=REMOTE_ADDR6)/f

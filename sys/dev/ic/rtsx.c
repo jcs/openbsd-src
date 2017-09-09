@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtsx.c,v 1.17 2016/05/06 08:17:13 kettenis Exp $	*/
+/*	$OpenBSD: rtsx.c,v 1.19 2017/09/07 17:00:28 jcs Exp $	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -462,6 +462,14 @@ int
 rtsx_bus_power_on(struct rtsx_softc *sc)
 {
 	u_int8_t enable3;
+	int err;
+
+	if (sc->flags & RTSX_F_525A) {
+		err = rtsx_write(sc, RTSX_LDO_VCC_CFG1, RTSX_LDO_VCC_TUNE_MASK,
+		    RTSX_LDO_VCC_3V3);
+		if (err)
+			return (err);
+	}
 
 	if (sc->flags & RTSX_F_525A)
 		rtsx_write(sc, RTSX_LDO_VCC_CFG1, RTSX_LDO_VCC_TUNE_MASK,

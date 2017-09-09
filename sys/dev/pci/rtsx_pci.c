@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtsx_pci.c,v 1.13 2016/04/26 00:21:27 jsg Exp $	*/
+/*	$OpenBSD: rtsx_pci.c,v 1.14 2017/09/06 13:07:38 jcs Exp $	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
