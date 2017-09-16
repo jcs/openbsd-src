@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.75 2017/09/08 07:08:49 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.77 2017/09/15 02:36:29 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -334,7 +334,7 @@ vmm_sighdlr(int sig, short event, void *arg)
 	struct vmd_vm *vm;
 	struct vm_terminate_params vtp;
 
-	log_debug("%s: handling signal", __func__);
+	log_debug("%s: handling signal %d", __func__, sig);
 	switch (sig) {
 	case SIGCHLD:
 		do {
@@ -490,7 +490,7 @@ vmm_dispatch_vm(int fd, short event, void *arg)
 		case IMSG_VMDOP_SEND_VM_RESPONSE:
 			IMSG_SIZE_CHECK(&imsg, &vmr);
 			memcpy(&vmr, imsg.data, sizeof(vmr));
-			if(!vmr.vmr_result) {
+			if (!vmr.vmr_result) {
 				log_debug("%s: calling vm_remove", __func__);
 				vm_remove(vm);
 			}
@@ -499,8 +499,7 @@ vmm_dispatch_vm(int fd, short event, void *arg)
 			for (i = 0; i < sizeof(procs); i++) {
 				if (procs[i].p_id == PROC_PARENT) {
 					proc_forward_imsg(procs[i].p_ps,
-							&imsg, PROC_PARENT,
-							-1);
+					    &imsg, PROC_PARENT, -1);
 					break;
 				}
 			}

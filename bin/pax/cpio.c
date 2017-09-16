@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpio.c,v 1.31 2017/09/06 17:24:22 otto Exp $	*/
+/*	$OpenBSD: cpio.c,v 1.33 2017/09/16 07:42:34 otto Exp $	*/
 /*	$NetBSD: cpio.c,v 1.5 1995/03/21 09:07:13 cgd Exp $	*/
 
 /*-
@@ -178,7 +178,7 @@ rd_nm(ARCHD *arcn, int nsz)
 	/*
 	 * do not even try bogus values
 	 */
-	if ((nsz == 0) || (nsz > sizeof(arcn->name))) {
+	if ((nsz == 0) || ((size_t)nsz > sizeof(arcn->name))) {
 		paxwarn(1, "Cpio file name length %d is out of range", nsz);
 		return(-1);
 	}
@@ -208,9 +208,9 @@ rd_ln_nm(ARCHD *arcn)
 	/*
 	 * check the length specified for bogus values
 	 */
-	if ((arcn->sb.st_size == 0) ||
-	    (arcn->sb.st_size >= sizeof(arcn->ln_name))) {
-		paxwarn(1, "Cpio link name length is invalid: %llu",
+	if ((arcn->sb.st_size <= 0) ||
+	    (arcn->sb.st_size >= (off_t)sizeof(arcn->ln_name))) {
+		paxwarn(1, "Cpio link name length is invalid: %lld",
 		    arcn->sb.st_size);
 		return(-1);
 	}
@@ -293,7 +293,7 @@ cpio_rd(ARCHD *arcn, char *buf)
 	    OCT);
 	arcn->sb.st_rdev = (dev_t)asc_ul(hd->c_rdev, sizeof(hd->c_rdev), OCT);
 	val = asc_ull(hd->c_mtime, sizeof(hd->c_mtime), OCT);
-	if ((time_t)val < 0 || (time_t)val != val)
+	if (val > MAX_TIME_T)
 		arcn->sb.st_mtime = INT_MAX;			/* XXX 2038 */
 	else
 		arcn->sb.st_mtime = val;

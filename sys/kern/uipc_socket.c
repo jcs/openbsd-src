@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_socket.c,v 1.203 2017/09/01 15:05:31 mpi Exp $	*/
+/*	$OpenBSD: uipc_socket.c,v 1.205 2017/09/15 19:29:28 bluhm Exp $	*/
 /*	$NetBSD: uipc_socket.c,v 1.21 1996/02/04 02:17:52 christos Exp $	*/
 
 /*
@@ -540,7 +540,7 @@ m_getuio(struct mbuf **mp, int atomic, long space, struct uio *uio)
 			 * For datagram protocols, leave room
 			 * for protocol headers in first mbuf.
 			 */
-			if (atomic && top == NULL && len < mlen - max_hdr)
+			if (atomic && m == top && len < mlen - max_hdr)
 				m->m_data += max_hdr;
 		} else {
 nopages:
@@ -549,7 +549,7 @@ nopages:
 			 * For datagram protocols, leave room
 			 * for protocol headers in first mbuf.
 			 */
-			if (atomic && top == NULL && len < mlen - max_hdr)
+			if (atomic && m == top && len < mlen - max_hdr)
 				MH_ALIGN(m, len);
 		}
 
@@ -1041,9 +1041,12 @@ sorflush(struct socket *so)
 	struct sockbuf *sb = &so->so_rcv;
 	struct protosw *pr = so->so_proto;
 	struct socket aso;
+	int error;
 
 	sb->sb_flags |= SB_NOINTR;
-	sblock(so, sb, M_WAITOK);
+	error = sblock(so, sb, M_WAITOK);
+	/* with SB_NOINTR and M_WAITOK sblock() must not fail */
+	KASSERT(error == 0);
 	socantrcvmore(so);
 	sbunlock(sb);
 	aso.so_proto = pr;

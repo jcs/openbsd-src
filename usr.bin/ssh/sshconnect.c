@@ -1,4 +1,4 @@
-/* $OpenBSD: sshconnect.c,v 1.285 2017/09/03 23:33:13 djm Exp $ */
+/* $OpenBSD: sshconnect.c,v 1.287 2017/09/14 04:32:21 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -71,7 +71,6 @@ extern uid_t original_effective_uid;
 
 static int show_other_keys(struct hostkeys *, struct sshkey *);
 static void warn_changed_key(struct sshkey *);
-static void warn_missing_key(struct sshkey *);
 
 /* Expand a proxy command */
 static char *
@@ -93,7 +92,7 @@ expand_proxy_command(const char *proxy_command, const char *user,
  * a connected fd back to us.
  */
 static int
-ssh_proxy_fdpass_connect(const char *host, u_short port,
+ssh_proxy_fdpass_connect(struct ssh *ssh, const char *host, u_short port,
     const char *proxy_command)
 {
 	char *command_string;
@@ -164,7 +163,8 @@ ssh_proxy_fdpass_connect(const char *host, u_short port,
 			fatal("Couldn't wait for child: %s", strerror(errno));
 
 	/* Set the connection file descriptors. */
-	packet_set_connection(sock, sock);
+	if (ssh_packet_set_connection(ssh, sock, sock) == NULL)
+		return -1; /* ssh_packet_set_connection logs error */
 
 	return 0;
 }
@@ -173,7 +173,8 @@ ssh_proxy_fdpass_connect(const char *host, u_short port,
  * Connect to the given ssh server using a proxy command.
  */
 static int
-ssh_proxy_connect(const char *host, u_short port, const char *proxy_command)
+ssh_proxy_connect(struct ssh *ssh, const char *host, u_short port,
+    const char *proxy_command)
 {
 	char *command_string;
 	int pin[2], pout[2];
@@ -240,9 +241,9 @@ ssh_proxy_connect(const char *host, u_short port, const char *proxy_command)
 	free(command_string);
 
 	/* Set the connection file descriptors. */
-	packet_set_connection(pout[0], pin[1]);
+	if (ssh_packet_set_connection(ssh, pout[0], pin[1]) == NULL)
+		return -1; /* ssh_packet_set_connection logs error */
 
-	/* Indicate OK return */
 	return 0;
 }
 
@@ -398,7 +399,7 @@ timeout_connect(int sockfd, const struct sockaddr *serv_addr,
  * the daemon.
  */
 static int
-ssh_connect_direct(const char *host, struct addrinfo *aitop,
+ssh_connect_direct(struct ssh *ssh, const char *host, struct addrinfo *aitop,
     struct sockaddr_storage *hostaddr, u_short port, int family,
     int connection_attempts, int *timeout_ms, int want_keepalive, int needpriv)
 {
@@ -472,27 +473,31 @@ ssh_connect_direct(const char *host, struct addrinfo *aitop,
 		error("setsockopt SO_KEEPALIVE: %.100s", strerror(errno));
 
 	/* Set the connection. */
-	packet_set_connection(sock, sock);
+	if (ssh_packet_set_connection(ssh, sock, sock) == NULL)
+		return -1; /* ssh_packet_set_connection logs error */
 
-	return 0;
+        return 0;
 }
 
 int
-ssh_connect(const char *host, struct addrinfo *addrs,
+ssh_connect(struct ssh *ssh, const char *host, struct addrinfo *addrs,
     struct sockaddr_storage *hostaddr, u_short port, int family,
     int connection_attempts, int *timeout_ms, int want_keepalive, int needpriv)
 {
 	if (options.proxy_command == NULL) {
-		return ssh_connect_direct(host, addrs, hostaddr, port, family,
-		    connection_attempts, timeout_ms, want_keepalive, needpriv);
+		return ssh_connect_direct(ssh, host, addrs, hostaddr, port,
+		    family, connection_attempts, timeout_ms, want_keepalive,
+		    needpriv);
 	} else if (strcmp(options.proxy_command, "-") == 0) {
-		packet_set_connection(STDIN_FILENO, STDOUT_FILENO);
-		return 0; /* Always succeeds */
+		if ((ssh_packet_set_connection(ssh,
+		    STDIN_FILENO, STDOUT_FILENO)) == NULL)
+			return -1; /* ssh_packet_set_connection logs error */
+		return 0;
 	} else if (options.proxy_use_fdpass) {
-		return ssh_proxy_fdpass_connect(host, port,
+		return ssh_proxy_fdpass_connect(ssh, host, port,
 		    options.proxy_command);
 	}
-	return ssh_proxy_connect(host, port, options.proxy_command);
+	return ssh_proxy_connect(ssh, host, port, options.proxy_command);
 }
 
 static void
@@ -836,16 +841,6 @@ check_host_key(char *hostname, struct sockaddr *hostaddr, u_short port,
 			logit("Host key fingerprint is %s\n%s", fp, ra);
 			free(ra);
 			free(fp);
-		}
-		if (options.verify_host_key_dns &&
-		    options.strict_host_key_checking &&
-		    !matching_host_key_dns) {
-			snprintf(msg, sizeof(msg),
-			    "Are you sure you want to continue connecting "
-			    "(yes/no)? ");
-			if (!confirm(msg))
-				goto fail;
-			msg[0] = '\0';
 		}
 		hostkey_trusted = 1;
 		break;
@@ -1248,17 +1243,10 @@ verify_host_key(char *host, struct sockaddr *hostaddr, struct sshkey *host_key)
 				if (flags & DNS_VERIFY_MATCH) {
 					matching_host_key_dns = 1;
 				} else {
-					if (flags & DNS_VERIFY_MISSING) {
-						warn_missing_key(plain);
-						error("Add this host key to "
-						    "the SSHFP RR in DNS to get rid "
-						    "of this message.");
-					} else {
-						warn_changed_key(plain);
-						error("Update the SSHFP RR in DNS "
-						    "with the new host key to get rid "
-						    "of this message.");
-					}
+					warn_changed_key(plain);
+					error("Update the SSHFP RR in DNS "
+					    "with the new host key to get rid "
+					    "of this message.");
 				}
 			}
 		}
@@ -1390,31 +1378,12 @@ warn_changed_key(struct sshkey *host_key)
 	error("Someone could be eavesdropping on you right now (man-in-the-middle attack)!");
 	error("It is also possible that a host key has just been changed.");
 	error("The fingerprint for the %s key sent by the remote host is\n%s.",
-	    sshkey_type(host_key), fp);
+	    key_type(host_key), fp);
 	error("Please contact your system administrator.");
 
 	free(fp);
 }
 
-static void
-warn_missing_key(struct sshkey *host_key)
-{
-	char *fp;
-
-	fp = sshkey_fingerprint(host_key, options.fingerprint_hash,
-	    SSH_FP_DEFAULT);
-	if (fp == NULL)
-		fatal("%s: sshkey_fingerprint fail", __func__);
-
-	error("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
-	error("@    WARNING: REMOTE HOST IDENTIFICATION IS MISSING       @");
-	error("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
-	error("The fingerprint for the %s key sent by the remote host is\n%s.",
-	    sshkey_type(host_key), fp);
-	error("Please contact your system administrator.");
-
-	free(fp);
-}
 /*
  * Execute a local command
  */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: options.c,v 1.104 2017/09/01 19:23:50 krw Exp $	*/
+/*	$OpenBSD: options.c,v 1.106 2017/09/14 00:10:17 krw Exp $	*/
 
 /* DHCP options parsing and reassembly. */
 
@@ -458,8 +458,7 @@ parse_option_buffer(struct option_data *options, unsigned char *buffer,
 		if (options[code].data == NULL) {
 			t = calloc(1, len + 1);
 			if (t == NULL)
-				fatalx("Can't allocate storage for option %s.",
-				    name);
+				fatal("option %s", name);
 			/*
 			 * Copy and NUL-terminate the option (in case
 			 * it's an ASCII string).
@@ -475,8 +474,7 @@ parse_option_buffer(struct option_data *options, unsigned char *buffer,
 			 */
 			t = calloc(1, len + options[code].len + 1);
 			if (t == NULL)
-				fatalx("Can't expand storage for option %s.",
-				    name);
+				fatal("option %s concat", name);
 			memcpy(t, options[code].data, options[code].len);
 			memcpy(t + options[code].len, &s[2], len);
 			options[code].len += len;
@@ -589,14 +587,14 @@ pretty_print_classless_routes(unsigned char *src, size_t srclen,
 {
 	char		 bitsbuf[5];	/* to hold "/nn " */
 	struct in_addr	 dest, netmask, gateway;
-	unsigned int	 i;
-	int		 len, rslt;
+	unsigned int	 i, len;
+	int		 rslt;
 
 	i = 0;
 	while (i < srclen) {
 		len = extract_classless_route(&src[i], srclen - i,
 		    &dest.s_addr, &netmask.s_addr, &gateway.s_addr);
-		if (len <= 0)
+		if (len == 0)
 			goto bad;
 		i += len;
 
