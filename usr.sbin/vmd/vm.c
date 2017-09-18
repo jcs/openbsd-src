@@ -1,4 +1,4 @@
-/*	$OpenBSD: vm.c,v 1.25 2017/09/11 23:32:34 dlg Exp $	*/
+/*	$OpenBSD: vm.c,v 1.27 2017/09/17 23:07:56 pd Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -354,6 +354,7 @@ start_vm(struct vmd_vm *vm, int fd)
 	if (vm->vm_received) {
 		restore_emulated_hw(vcp, vm->vm_receive_fd, nicfds,
 		    vm->vm_disks);
+		mc146818_start();
 		restore_mem(vm->vm_receive_fd, vcp);
 	}
 
@@ -542,6 +543,8 @@ send_vm(int fd, struct vm_create_params *vcp)
 	if ((ret = ns8250_dump(fd)))
 		goto err;
 	if ((ret = mc146818_dump(fd)))
+		goto err;
+	if ((ret = pci_dump(fd)))
 		goto err;
 	if ((ret = virtio_dump(fd)))
 		goto err;
@@ -986,7 +989,7 @@ restore_emulated_hw(struct vm_create_params *vcp, int fd,
 	ioports_map[PCI_MODE1_DATA_REG + 1] = vcpu_exit_pci;
 	ioports_map[PCI_MODE1_DATA_REG + 2] = vcpu_exit_pci;
 	ioports_map[PCI_MODE1_DATA_REG + 3] = vcpu_exit_pci;
-	pci_init();
+	pci_restore(fd);
 	virtio_restore(fd, current_vm, child_disks, child_taps);
 }
 
