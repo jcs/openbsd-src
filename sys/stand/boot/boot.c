@@ -69,31 +69,21 @@ boot(dev_t bootdev)
 	snprintf(prog_ident, sizeof(prog_ident),
 	    ">> OpenBSD/" MACHINE " %s %s", progname, version);
 
-	colorchar('>', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
-	colorchar('>', COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
-	colorchar(' ', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
+	printf(">> ");
+	colorchar('O', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('p', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('e', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('n', COLOR_DEFAULT_BG, COLOR_BRIGHT_YELLOW);
+	colorchar('B', COLOR_DEFAULT_BG, COLOR_RED);
+	colorchar('S', COLOR_DEFAULT_BG, COLOR_RED);
+	colorchar('D', COLOR_DEFAULT_BG, COLOR_RED);
 
-	colorchar('O', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
-	colorchar('p', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
-	colorchar('e', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
-	colorchar('n', COLOR_DEFAULT_BG, COLOR_BRIGHT_BLUE);
-	colorchar('B', COLOR_DEFAULT_BG, COLOR_BLUE);
-	colorchar('S', COLOR_DEFAULT_BG, COLOR_BLUE);
-	colorchar('D', COLOR_DEFAULT_BG, COLOR_BLUE);
-	colorchar('/', COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
+	colorchar('/', COLOR_DEFAULT_BG, COLOR_DEFAULT_FG);
 
 	for (i = 0; i < strlen(MACHINE); i++)
 		colorchar(MACHINE[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
 
-	colorchar(' ', 0, 7);
-	for (i = 0; i < strlen(progname); i++)
-		colorchar(progname[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
-
-	colorchar(' ', 0, 7);
-	for (i = 0; i < strlen(version); i++)
-		colorchar(version[i], COLOR_DEFAULT_BG, COLOR_BRIGHT_WHITE);
-
-	printf("\n");
+	printf(" %s %s\n", progname, version);
 
 	devboot(bootdev, cmd.bootdev);
 	strlcpy(cmd.image, kernelfile, sizeof(cmd.image));
