@@ -19,6 +19,7 @@ COPTS+=		-fshort-wchar -fPIC -mno-red-zone
 COPTS+=		-DSOFTRAID
 .endif
 COPTS+=		-D_STANDALONE -nostdinc -fno-builtin
+COPTS+=		-DHAVE_COLORCHAR
 
 AFLAGS+=	-pipe -fPIC
 
