@@ -214,8 +214,7 @@ int
 pckbd_set_xtscancode(pckbc_tag_t kbctag, pckbc_slot_t kbcslot,
     struct pckbd_internal *id)
 {
-	/* default to have the 8042 translate the keyboard with table 3. */
-	int table = 3;
+	int table;
 
 	if (pckbc_xt_translation(kbctag)) {
 #ifdef DEBUG
@@ -234,12 +233,21 @@ pckbd_set_xtscancode(pckbc_tag_t kbctag, pckbc_slot_t kbcslot,
 		if (id != NULL)
 			id->t_translating = 0;
 	} else {
-		if (id != NULL)
+		if (id != NULL) {
 			id->t_translating = 1;
+			if (id->t_table == 0) {
+				/*
+				 * Don't bother explicitly setting into set 2,
+				 * it's the default.
+				 */
+				id->t_table = 2;
+				return (0);
+			}
+		}
 	}
 
 	/* keep falling back until we hit a table that looks usable. */
-	for (; table >= 1; table--) {
+	for (table = 3; table >= 1; table--) {
 		u_char cmd[2];
 #ifdef DEBUG
 		printf("pckbd: trying table %d\n", table);
