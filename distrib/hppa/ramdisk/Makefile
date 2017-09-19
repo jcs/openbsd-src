@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.33 2017/08/12 19:41:16 jasper Exp $
+#	$OpenBSD: Makefile,v 1.35 2017/09/18 20:13:52 jasper Exp $
 
 CBIN=		instbin
 ARCHDIR=	${.CURDIR}/..
@@ -24,9 +24,7 @@ MKBOOT?=	/usr/mdec/mkboot
 BOOT?=		${DESTDIR}/usr/mdec/boot
 CDBOOT?=	${DESTDIR}/usr/mdec/cdboot
 
-STRIP?=		strip
 STRIPOPTS?=	-R .SUNW_ctf
-GZIPCMD?=	gzip
 GZIPFLAGS?=	-9n
 
 DISKTYPE=	rdroot
@@ -57,10 +55,10 @@ obsd:
 bsd.rd:	obsd ${IMAGE} rdsetroot
 	cp obsd bsd.rd
 	${.OBJDIR}/rdsetroot bsd.rd ${IMAGE}
-	${STRIP} ${STRIPOPTS} bsd.rd
+	strip ${STRIPOPTS} bsd.rd
 
 bsd:	bsd.rd
-	(cat bsd.rd ; dd if=/dev/zero count=1) | ${GZIPCMD} ${GZIPFLAGS} > bsd
+	(cat bsd.rd ; dd if=/dev/zero count=1) | gzip ${GZIPFLAGS} > bsd
 
 rdsetroot: ${.CURDIR}/../../common/elfrdsetroot.c \
 	   ${.CURDIR}/../../common/elf32.c ${.CURDIR}/../../common/elf64.c
