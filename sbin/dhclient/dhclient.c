@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.504 2017/09/19 13:09:15 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.512 2017/09/21 15:23:25 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -346,7 +346,7 @@ routehandler(struct interface_info *ifi, int routefd)
 		}
 		break;
 	case RTM_DESYNC:
-		log_warnx("%s: route socket buffer overflow", log_procname);
+		log_warnx("%s: RTM_DESYNC", log_procname);
 		break;
 	case RTM_IFINFO:
 		ifm = (struct if_msghdr *)rtm;
@@ -369,7 +369,7 @@ routehandler(struct interface_info *ifi, int routefd)
 		linkstat = interface_status(ifi->name);
 		if (linkstat != ifi->linkstat) {
 #ifdef DEBUG
-			log_debug("%s: link state %s -> %s", log_procname,
+			log_debug("%s: link %s -> %s", log_procname,
 			    (ifi->linkstat != 0) ? "up" : "down",
 			    (linkstat != 0) ? "up" : "down");
 #endif	/* DEBUG */
@@ -1110,7 +1110,7 @@ addressinuse(char *name, struct in_addr address, char *ifname)
 	int			 used = 0;
 
 	if (getifaddrs(&ifap) != 0) {
-		log_warn("%s: addressinuse: getifaddrs", log_procname);
+		log_warn("%s: getifaddrs", log_procname);
 		return 0;
 	}
 
@@ -1150,8 +1150,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 
 	lease = calloc(1, sizeof(*lease));
 	if (lease == NULL) {
-		log_warnx("%s: lease declined - no memory for lease",
-		    log_procname);
+		log_warn("%s: lease", log_procname);
 		return NULL;
 	}
 
@@ -1160,9 +1159,9 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 		if (options[i].len == 0)
 			continue;
 		name = code_to_name(i);
-		if (unknown_ok == 0 && strncmp("option-", name, 7) != 0) {
-			log_warnx("%s: lease declined - unknown option %d",
-			    log_procname, i);
+		if (unknown_ok == 0 && strncmp("option-", name, 7) == 0) {
+			log_warnx("%s: unknown option %s",
+			    log_procname, name);
 			goto decline;
 		}
 		pretty = pretty_print_option(i, &options[i], 0);
@@ -1174,8 +1173,8 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 			buf = pretty_print_domain_search(options[i].data,
 			    options[i].len);
 			if (buf == NULL || res_hnok_list(buf) == 0) {
-				log_warnx("%s: ignoring %s in offer - invalid "
-				    "host name(s)", log_procname, name);
+				log_warnx("%s: invalid host name in %s",
+				    log_procname, name);
 				continue;
 			}
 			break;
@@ -1187,16 +1186,16 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 			 * entries in the resolv.conf 'search' statement.
 			 */
 			if (res_hnok_list(pretty) == 0) {
-				log_warnx("%s: ignoring %s in offer - invalid "
-				    "host name(s)", log_procname, name);
+				log_warnx("%s: invalid host name in %s",
+				    log_procname, name);
 				continue;
 			}
 			break;
 		case DHO_HOST_NAME:
 		case DHO_NIS_DOMAIN:
 			if (res_hnok(pretty) == 0) {
-				log_warnx("%s: ignoring %s in offer - invalid "
-				    "host name", log_procname, name);
+				log_warnx("%s: invalid host name in %s",
+				    log_procname, name);
 				continue;
 			}
 			break;
@@ -1214,8 +1213,8 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 	for (i = 0; i < config->required_option_count; i++) {
 		if (lease->options[config->required_options[i]].len == 0) {
 			name = code_to_name(i);
-			log_warnx("%s: lease declined - %s required but "
-			    "missing", log_procname, name);
+			log_warnx("%s: %s required but missing", log_procname,
+			    name);
 			goto decline;
 		}
 	}
@@ -1228,8 +1227,8 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 	memset(ifname, 0, sizeof(ifname));
 	if (addressinuse(ifi->name, lease->address, ifname) != 0 &&
 	    strncmp(ifname, ifi->name, IF_NAMESIZE) != 0) {
-		log_warnx("%s: lease declined - %s already configured on %s",
-		    log_procname, inet_ntoa(lease->address), ifname);
+		log_warnx("%s: %s already configured on %s", log_procname,
+		    inet_ntoa(lease->address), ifname);
 		goto decline;
 	}
 
@@ -1242,15 +1241,14 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 	    packet->sname[0]) {
 		lease->server_name = malloc(DHCP_SNAME_LEN + 1);
 		if (lease->server_name == NULL) {
-			log_warnx("%s: lease declined - no memory for SNAME",
-			    log_procname);
+			log_warn("%s: SNAME", log_procname);
 			goto decline;
 		}
 		memcpy(lease->server_name, packet->sname, DHCP_SNAME_LEN);
 		lease->server_name[DHCP_SNAME_LEN] = '\0';
 		if (res_hnok(lease->server_name) == 0) {
-			log_warnx("%s: lease declined - invalid host name in "
-			    "SNAME", log_procname);
+			log_warnx("%s: invalid host name in SNAME",
+			    log_procname);
 			goto decline;
 		}
 	}
@@ -1262,8 +1260,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 		/* Don't count on the NUL terminator. */
 		lease->filename = malloc(DHCP_FILE_LEN + 1);
 		if (lease->filename == NULL) {
-			log_warnx("%s: lease declined - no memory for filename",
-			    log_procname);
+			log_warn("%s: filename", log_procname);
 			goto decline;
 		}
 		memcpy(lease->filename, packet->file, DHCP_FILE_LEN);
@@ -1335,7 +1332,7 @@ send_discover(struct interface_info *ifi)
 	ifi->secs = packet->secs;
 
 
-	rslt = send_packet(ifi, inaddr_any, inaddr_broadcast);
+	rslt = send_packet(ifi, inaddr_any, inaddr_broadcast, "DHCPDISCOVER");
 	if (rslt != -1)
 		log_info("%s: DHCPDISCOVER - interval %lld", log_procname,
 		    (long long)ifi->interval);
@@ -1466,7 +1463,7 @@ send_request(struct interface_info *ifi)
 	}
 
 
-	rslt = send_packet(ifi, from, destination.sin_addr);
+	rslt = send_packet(ifi, from, destination.sin_addr, "DHCPREQUEST");
 	if (rslt != -1)
 		log_info("%s: DHCPREQUEST to %s", log_procname,
 		    inet_ntoa(destination.sin_addr));
@@ -1479,7 +1476,7 @@ send_decline(struct interface_info *ifi)
 {
 	ssize_t		rslt;
 
-	rslt = send_packet(ifi, inaddr_any, inaddr_broadcast);
+	rslt = send_packet(ifi, inaddr_any, inaddr_broadcast, "DHCPDECLINE");
 	if (rslt != -1)
 		log_info("%s: DHCPDECLINE", log_procname);
 }
@@ -1536,7 +1533,7 @@ make_discover(struct interface_info *ifi, struct client_lease *lease)
 		ifi->sent_packet_length = BOOTP_MIN_LEN;
 
 	packet->op = BOOTREQUEST;
-	packet->htype = HTYPE_ETHER ;
+	packet->htype = HTYPE_ETHER;
 	packet->hlen = ETHER_ADDR_LEN;
 	packet->hops = 0;
 	packet->xid = ifi->xid;
@@ -1613,7 +1610,7 @@ make_request(struct interface_info *ifi, struct client_lease * lease)
 		ifi->sent_packet_length = BOOTP_MIN_LEN;
 
 	packet->op = BOOTREQUEST;
-	packet->htype = HTYPE_ETHER ;
+	packet->htype = HTYPE_ETHER;
 	packet->hlen = ETHER_ADDR_LEN;
 	packet->hops = 0;
 	packet->xid = ifi->xid;
@@ -1686,7 +1683,7 @@ make_decline(struct interface_info *ifi, struct client_lease *lease)
 		ifi->sent_packet_length = BOOTP_MIN_LEN;
 
 	packet->op = BOOTREQUEST;
-	packet->htype = HTYPE_ETHER ;
+	packet->htype = HTYPE_ETHER;
 	packet->hlen = ETHER_ADDR_LEN;
 	packet->hops = 0;
 	packet->xid = ifi->xid;
@@ -1977,7 +1974,7 @@ lease_as_string(char *ifname, char *type, struct client_lease *lease)
 	if (rslt >= sizeof(string))
 		return NULL;
 
-	return  string;
+	return string;
 }
 
 void
@@ -2152,7 +2149,7 @@ fork_privchld(struct interface_info *ifi, int fd, int fd2)
 		if (nfds == -1) {
 			if (errno == EINTR)
 				continue;
-			log_warn("%s: priv_ibuf poll", log_procname);
+			log_warn("%s: poll(priv_ibuf)", log_procname);
 			quit = INTERNALSIG;
 			continue;
 		}
@@ -2215,7 +2212,8 @@ get_ifname(struct interface_info *ifi, int ioctlfd, char *arg)
 			fatal("SIOCGIFGMEMB");
 
 		arg = NULL;
-		for (ifg = ifgr.ifgr_groups; ifg && len >= sizeof(*ifg); ifg++) {
+		for (ifg = ifgr.ifgr_groups; ifg && len >= sizeof(*ifg);
+		    ifg++) {
 			len -= sizeof(*ifg);
 			if (arg != NULL)
 				fatalx("too many interfaces in group egress");
@@ -2565,7 +2563,7 @@ take_charge(struct interface_info *ifi, int routefd)
 			fatal("poll(routefd)");
 		}
 		if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-			fatal("routefd revents");
+			fatal("routefd: ERR|HUP|NVAL");
 		if (nfds == 0 || (fds[0].revents & POLLIN) == 0)
 			continue;
 		routehandler(ifi, routefd);

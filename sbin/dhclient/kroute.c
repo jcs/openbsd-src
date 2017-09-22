@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.149 2017/09/17 21:20:23 krw Exp $	*/
+/*	$OpenBSD: kroute.c,v 1.153 2017/09/20 19:21:00 krw Exp $	*/
 
 /*
  * Copyright 2012 Kenneth R Westerback <krw@openbsd.org>
@@ -130,7 +130,7 @@ flush_routes(uint8_t *rtstatic, unsigned int rtstatic_len)
 	rslt = imsg_compose(unpriv_ibuf, IMSG_FLUSH_ROUTES, 0, 0, -1, &imsg,
 	    sizeof(imsg));
 	if (rslt == -1)
-		log_warn("%s: flush_routes: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_FLUSH_ROUTES)", log_procname);
 }
 
 void
@@ -163,7 +163,8 @@ priv_flush_routes(int index, int routefd, int rdomain,
 			continue;
 
 		/* Don't bother deleting a route we're going to add. */
-		pos = route_in_rtstatic(rtm, imsg->rtstatic, imsg->rtstatic_len);
+		pos = route_in_rtstatic(rtm, imsg->rtstatic,
+		    imsg->rtstatic_len);
 		if (pos < imsg->rtstatic_len)
 			continue;
 
@@ -173,10 +174,10 @@ priv_flush_routes(int index, int routefd, int rdomain,
 		rlen = write(routefd, (char *)rtm, rtm->rtm_msglen);
 		if (rlen == -1) {
 			if (errno != ESRCH)
-				log_warn("%s: RTM_DELETE write", log_procname);
+				log_warn("%s: write(RTM_DELETE)", log_procname);
 		} else if (rlen < (int)rtm->rtm_msglen)
-			log_warnx("%s: short RTM_DELETE write (%zd)",
-			    log_procname, rlen);
+			log_warnx("%s: write(RTM_DELETE): %zd of %u bytes",
+			    log_procname, rlen, rtm->rtm_msglen);
 	}
 
 	free(buf);
@@ -309,7 +310,7 @@ add_route(struct in_addr dest, struct in_addr netmask, struct in_addr gateway,
 	rslt = imsg_compose(unpriv_ibuf, IMSG_ADD_ROUTE, 0, 0, -1,
 	    &imsg, sizeof(imsg));
 	if (rslt == -1)
-		log_warn("%s: add_route: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_ADD_ROUTE)", log_procname);
 }
 
 void
@@ -379,9 +380,8 @@ priv_add_route(char *name, int rdomain, int routefd,
 			    sizeof(destbuf));
 			strlcpy(maskbuf, inet_ntoa(imsg->netmask),
 			    sizeof(maskbuf));
-			log_warn("%s: failed to add route (%s/%s via %s)",
-			    log_procname, destbuf, maskbuf,
-			    inet_ntoa(imsg->gateway));
+			log_warn("%s: add route %s/%s via %s", log_procname,
+			    destbuf, maskbuf, inet_ntoa(imsg->gateway));
 		}
 	}
 }
@@ -444,7 +444,7 @@ delete_address(struct in_addr addr)
 	rslt = imsg_compose(unpriv_ibuf, IMSG_DELETE_ADDRESS, 0, 0 , -1, &imsg,
 	    sizeof(imsg));
 	if (rslt == -1)
-		log_warn("%s: delete_address: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_DELETE_ADDRESS)", log_procname);
 }
 
 void
@@ -468,7 +468,7 @@ priv_delete_address(char *name, int ioctlfd, struct imsg_delete_address *imsg)
 	/* SIOCDIFADDR will result in a RTM_DELADDR message we must catch! */
 	if (ioctl(ioctlfd, SIOCDIFADDR, &ifaliasreq) == -1) {
 		if (errno != EADDRNOTAVAIL)
-			log_warn("%s: SIOCDIFADDR failed (%s)", log_procname,
+			log_warn("%s: SIOCDIFADDR %s", log_procname,
 			    inet_ntoa(imsg->addr));
 	}
 }
@@ -496,7 +496,7 @@ set_mtu(int inits, uint16_t mtu)
 	rslt = imsg_compose(unpriv_ibuf, IMSG_SET_MTU, 0, 0, -1,
 	    &imsg, sizeof(imsg));
 	if (rslt == -1)
-		log_warn("%s: set_mtu: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_SET_MTU)", log_procname);
 }
 
 void
@@ -510,7 +510,7 @@ priv_set_mtu(char *name, int ioctlfd, struct imsg_set_mtu *imsg)
 	ifr.ifr_mtu = imsg->mtu;
 
 	if (ioctl(ioctlfd, SIOCSIFMTU, &ifr) == -1)
-		log_warn("%s: SIOCSIFMTU failed (%d)", log_procname, imsg->mtu);
+		log_warn("%s: SIOCSIFMTU %d", log_procname, imsg->mtu);
 }
 
 /*
@@ -534,7 +534,7 @@ set_address(char *name, struct in_addr addr, struct in_addr netmask)
 	rslt = imsg_compose(unpriv_ibuf, IMSG_SET_ADDRESS, 0, 0, -1, &imsg,
 	    sizeof(imsg));
 	if (rslt == -1)
-		log_warn("%s: set_address: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_SET_ADDRESS)", log_procname);
 }
 
 void
@@ -561,7 +561,7 @@ priv_set_address(char *name, int ioctlfd, struct imsg_set_address *imsg)
 	/* No need to set broadcast address. Kernel can figure it out. */
 
 	if (ioctl(ioctlfd, SIOCAIFADDR, &ifaliasreq) == -1)
-		log_warn("%s: SIOCAIFADDR failed (%s)", log_procname,
+		log_warn("%s: SIOCAIFADDR %s", log_procname,
 		    inet_ntoa(imsg->addr));
 }
 
@@ -576,7 +576,8 @@ write_resolv_conf(void)
 	rslt = imsg_compose(unpriv_ibuf, IMSG_WRITE_RESOLV_CONF,
 	    0, 0, -1, NULL, 0);
 	if (rslt == -1)
-		log_warn("%s: write_resolv_conf: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_WRITE_RESOLV_CONF)",
+		    log_procname);
 }
 
 void
@@ -594,18 +595,17 @@ priv_write_resolv_conf(char *contents)
 	    S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
 	if (fd == -1) {
-		log_warn("%s: couldn't open '%s'", log_procname, path);
+		log_warn("%s: open(%s)", log_procname, path);
 		return;
 	}
 
 	sz = strlen(contents);
 	n = write(fd, contents, sz);
 	if (n == -1)
-		log_warn("%s: couldn't write contents to '%s'", log_procname,
-		    path);
+		log_warn("%s: write(%s)", log_procname, path);
 	else if ((size_t)n < sz)
-		log_warnx("%s: short contents write to '%s' (%zd vs %zu)",
-		    log_procname, path, n, sz);
+		log_warnx("%s: write(%s): %zd of %zu bytes", log_procname,
+		    path, n, sz);
 
 	close(fd);
 }
@@ -655,7 +655,7 @@ default_route_index(int rdomain, int routefd)
 		fatal("start time");
 
 	if (writev(routefd, iov, 3) == -1) {
-		log_warn("%s: RTM_GET of default route", log_procname);
+		log_warn("%s: writev(RTM_GET)", log_procname);
 		return 0;
 	}
 
@@ -668,11 +668,11 @@ default_route_index(int rdomain, int routefd)
 		if (nfds == -1) {
 			if (errno == EINTR)
 				continue;
-			log_warn("%s: default route poll", log_procname);
+			log_warn("%s: poll(routefd)", log_procname);
 			break;
 		}
 		if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-			log_warnx("%s: default route revents", log_procname);
+			log_warnx("%s: routefd: ERR|HUP|NVAL", log_procname);
 			break;
 		}
 		if (nfds == 0 || (fds[0].revents & POLLIN) == 0)
@@ -680,11 +680,10 @@ default_route_index(int rdomain, int routefd)
 
 		len = read(routefd, &m_rtmsg, sizeof(m_rtmsg));
 		if (len == -1) {
-			log_warn("%s: get default route read", log_procname);
+			log_warn("%s: read(RTM_GET)", log_procname);
 			break;
 		} else if (len == 0) {
-			log_warnx("%s: no data from default route read",
-			    log_procname);
+			log_warnx("%s: read(RTM_GET): 0 bytes", log_procname);
 			break;
 		}
 
@@ -693,8 +692,7 @@ default_route_index(int rdomain, int routefd)
 		    m_rtmsg.m_rtm.rtm_pid == pid &&
 		    m_rtmsg.m_rtm.rtm_seq == seq) {
 			if (m_rtmsg.m_rtm.rtm_errno != 0) {
-				log_warnx("%s: route read rtm: %s",
-				    log_procname, 
+				log_warnx("%s: read(RTM_GET): %s", log_procname,
 				    strerror(m_rtmsg.m_rtm.rtm_errno));
 				break;
 			}
@@ -793,7 +791,8 @@ done:
 	rslt = imsg_compose(unpriv_ibuf, IMSG_SET_RESOLV_CONF,
 	    0, 0, -1, contents, len);
 	if (rslt == -1)
-		log_warn("%s: resolv_conf: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_SET_RESOLV_CONF)",
+		    log_procname);
 }
 
 /*

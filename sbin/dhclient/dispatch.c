@@ -1,4 +1,4 @@
-/*	$OpenBSD: dispatch.c,v 1.143 2017/09/19 12:33:52 krw Exp $	*/
+/*	$OpenBSD: dispatch.c,v 1.146 2017/09/20 22:05:10 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -106,8 +106,8 @@ dispatch(struct interface_info *ifi, int routefd)
 			 */
 			howlong = ifi->timeout - cur_time;
 			if (howlong > INT_MAX / 1000)
-					howlong = INT_MAX / 1000;
-				to_msec = howlong * 1000;
+				howlong = INT_MAX / 1000;
+			to_msec = howlong * 1000;
 		} else
 			to_msec = -1;
 
@@ -130,23 +130,24 @@ dispatch(struct interface_info *ifi, int routefd)
 		if (nfds == -1) {
 			if (errno == EINTR)
 				continue;
-			log_warn("%s: dispatch poll", log_procname);
+			log_warn("%s: poll(bfdesc, routefd, unpriv_ibuf)",
+			    log_procname);
 			quit = INTERNALSIG;
 			continue;
 		}
 
 		if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-			log_warnx("%s: bfdesc poll error", log_procname);
+			log_warnx("%s: bfdesc: ERR|HUP|NVAL", log_procname);
 			quit = INTERNALSIG;
 			continue;
 		}
 		if ((fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-			log_warnx("%s: routefd poll error", log_procname);
+			log_warnx("%s: routefd: ERR|HUP|NVAL", log_procname);
 			quit = INTERNALSIG;
 			continue;
 		}
 		if ((fds[2].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-			log_warnx("%s: unpriv_ibuf poll error", log_procname);
+			log_warnx("%s: unpriv_ibuf: ERR|HUP|NVAL", log_procname);
 			quit = INTERNALSIG;
 			continue;
 		}
@@ -186,13 +187,11 @@ packethandler(struct interface_info *ifi)
 	    struct option_data *, char *);
 	int			 i, rslt;
 
-	if ((result = receive_packet(ifi, &from, &hfrom)) == -1) {
+	result = receive_packet(ifi, &from, &hfrom);
+	if (result == -1) {
 		ifi->errors++;
 		if (ifi->errors > 20)
-			fatalx("%s too many receive_packet failures",
-			    ifi->name);
-		else
-			log_warn("%s receive_packet failed", log_procname);
+			fatalx("too many receive_packet failures");
 		return;
 	}
 	ifi->errors = 0;
@@ -347,5 +346,5 @@ sendhup(void)
 
 	rslt = imsg_compose(unpriv_ibuf, IMSG_HUP, 0, 0, -1, NULL, 0);
 	if (rslt == -1)
-		log_warn("%s: sendhup: imsg_compose", log_procname);
+		log_warn("%s: imsg_compose(IMSG_HUP)", log_procname);
 }

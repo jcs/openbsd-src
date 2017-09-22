@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpf.c,v 1.66 2017/09/19 13:09:15 krw Exp $	*/
+/*	$OpenBSD: bpf.c,v 1.69 2017/09/20 18:28:14 krw Exp $	*/
 
 /* BPF socket interface code, originally contributed by Archie Cobbs. */
 
@@ -239,7 +239,8 @@ configure_bpf_sock(int bfdesc)
 }
 
 ssize_t
-send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
+send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to,
+    const char *desc)
 {
 	struct iovec		 iov[4];
 	struct sockaddr_in	 dest;
@@ -304,11 +305,11 @@ send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
 	if (to.s_addr == INADDR_BROADCAST) {
 		result = writev(ifi->bfdesc, iov, iovcnt);
 		if (result == -1)
-			log_warn("%s: writev(bfdesc)", log_procname);
+			log_warn("%s: writev(%s)", log_procname, desc);
 		else if (result < total) {
 			result = -1;
-			log_warnx("%s, writev(bfdesc): %zd of %u bytes",
-			    log_procname, result, total);
+			log_warnx("%s, writev(%s): %zd of %u bytes",
+			    log_procname, desc, result, total);
 		}
 	} else {
 		memset(&msg, 0, sizeof(msg));
@@ -318,11 +319,11 @@ send_packet(struct interface_info *ifi, struct in_addr from, struct in_addr to)
 		msg.msg_iovlen = iovcnt;
 		result = sendmsg(ifi->ufdesc, &msg, 0);
 		if (result == -1)
-			log_warn("%s: sendmsg(ufdesc)", log_procname);
+			log_warn("%s: sendmsg(%s)", log_procname, desc);
 		else if (result < total) {
 			result = -1;
-			log_warnx("%s, sendmsg(ufdesc): %zd of %u bytes",
-			    log_procname, result, total);
+			log_warnx("%s, sendmsg(%s): %zd of %u bytes",
+			    log_procname, desc, result, total);
 		}
 	}
 
@@ -335,7 +336,8 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 {
 	struct bpf_hdr		 hdr;
 	struct dhcp_packet	*packet = &ifi->recv_packet;
-	int			 length = 0, offset = 0;
+	ssize_t			 length = 0;
+	int			 offset = 0;
 
 	/*
 	 * All this complexity is because BPF doesn't guarantee that
@@ -351,8 +353,11 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 		/* If the buffer is empty, fill it. */
 		if (ifi->rbuf_offset >= ifi->rbuf_len) {
 			length = read(ifi->bfdesc, ifi->rbuf, ifi->rbuf_max);
-			if (length <= 0)
-				return  length ;
+			if (length == -1) {
+				log_warn("%s: read(bfdesc)", log_procname);
+				return length;
+			} else if (length == 0)
+				return length;
 			ifi->rbuf_offset = 0;
 			ifi->rbuf_len = length;
 		}
@@ -441,7 +446,7 @@ receive_packet(struct interface_info *ifi, struct sockaddr_in *from,
 		memcpy(packet, ifi->rbuf + ifi->rbuf_offset, hdr.bh_caplen);
 		ifi->rbuf_offset = BPF_WORDALIGN(ifi->rbuf_offset +
 		    hdr.bh_caplen);
-		return  hdr.bh_caplen ;
+		return hdr.bh_caplen;
 	} while (length == 0);
 	return  0 ;
 }
