@@ -3052,8 +3052,8 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 	struct acpi_bat *bat;
 	struct acpi_sbs *sbs;
 	struct apm_power_info *pi = (struct apm_power_info *)data;
-	int bats;
-	unsigned int remaining, rem, minutes, rate;
+	int bats = 0;
+	unsigned int cap = 0, remaining = 0, rem = 0, minutes = 0, rate = 0;
 	int s;
 
 	if (!acpi_cd.cd_ndevs || APMUNIT(dev) != 0 ||
@@ -3103,20 +3103,27 @@ acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 		pi->battery_state = APM_BATT_UNKNOWN;
 		pi->battery_life = 0;
 		pi->minutes_left = 0;
-		bats = 0;
-		remaining = rem = 0;
-		minutes = 0;
-		rate = 0;
 		SLIST_FOREACH(bat, &sc->sc_bat, aba_link) {
 			if (bat->aba_softc->sc_bat_present == 0)
 				continue;
 
-			if (bat->aba_softc->sc_bix.bix_last_capacity == 0)
+			/*
+			 * If last capacity is higher than the design capacity,
+			 * just compare to the design capacity to avoid
+			 * reporting 99% on a more-than-full battery.
+			 */
+
+			cap = bat->aba_softc->sc_bix.bix_last_capacity;
+			if (bat->aba_softc->sc_bix.bix_capacity > 0 &&
+			    (bat->aba_softc->sc_bix.bix_last_capacity >
+			    bat->aba_softc->sc_bix.bix_capacity))
+				cap = bat->aba_softc->sc_bix.bix_capacity;
+
+			if (cap == 0)
 				continue;
 
 			bats++;
-			rem = (bat->aba_softc->sc_bst.bst_capacity * 100) /
-			    bat->aba_softc->sc_bix.bix_last_capacity;
+			rem = bat->aba_softc->sc_bst.bst_capacity * 100 / cap;
 			if (rem > 100)
 				rem = 100;
 			remaining += rem;
