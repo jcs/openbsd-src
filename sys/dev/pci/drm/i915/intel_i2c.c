@@ -1,4 +1,4 @@
-/*	$OpenBSD: intel_i2c.c,v 1.11 2017/07/03 13:26:04 naddy Exp $	*/
+/*	$OpenBSD: intel_i2c.c,v 1.12 2017/09/30 07:36:56 robert Exp $	*/
 /*
  * Copyright (c) 2012, 2013 Mark Kettenis <kettenis@openbsd.org>
  *
