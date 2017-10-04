@@ -231,7 +231,7 @@ intel_gmbus_exec(void *cookie, i2c_op_t op, i2c_addr_t addr,
 				st = I915_READ(GMBUS2);
 				if (st & (GMBUS_SATOER | GMBUS_HW_RDY))
 					break;
-				DELAY(1000);
+				DELAY(100);
 			}
 			if (st & GMBUS_SATOER) {
 				bus_err = 1;
@@ -254,7 +254,7 @@ intel_gmbus_exec(void *cookie, i2c_op_t op, i2c_addr_t addr,
 				st = I915_READ(GMBUS2);
 				if (st & (GMBUS_SATOER | GMBUS_HW_RDY))
 					break;
-				DELAY(1000);
+				DELAY(100);
 			}
 			if (st & GMBUS_SATOER) {
 				bus_err = 1;
@@ -279,7 +279,7 @@ out:
 				bus_err = 1;
 			if ((st & GMBUS_ACTIVE) == 0)
 				break;
-			DELAY(1000);
+			DELAY(100);
 		}
 		if (st & GMBUS_ACTIVE)
 			return (ETIMEDOUT);
