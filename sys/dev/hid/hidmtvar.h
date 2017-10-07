@@ -65,7 +65,7 @@ struct hidmt {
 	int		sc_button;
 };
 
-int	hidmt_set_input_mode(struct hidmt *, int);
+int	hidmt_set_input_mode(struct hidmt *, uint16_t);
 #define HIDMT_INPUT_MODE_MT	0x3
 
 void	hidmt_attach(struct hidmt *, const struct wsmouse_accessops *);
