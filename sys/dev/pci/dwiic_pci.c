@@ -42,7 +42,7 @@
 
 int		dwiic_pci_match(struct device *, void *, void *);
 void		dwiic_pci_attach(struct device *, struct device *, void *);
-
+int		dwiic_pci_activate(struct device *, int);
 void		dwiic_pci_bus_scan(struct device *,
 		    struct i2cbus_attach_args *, void *);
 
@@ -56,7 +56,7 @@ struct cfattach dwiic_pci_ca = {
 	dwiic_pci_match,
 	dwiic_pci_attach,
 	NULL,
-	dwiic_activate
+	dwiic_pci_activate,
 };
 
 const struct pci_matchid dwiic_pci_ids[] = {
@@ -154,6 +154,26 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 	config_found((struct device *)sc, &sc->sc_iba, iicbus_print);
 
 	return;
+}
+
+int
+dwiic_pci_activate(struct device *self, int act)
+{
+	struct dwiic_softc *sc = (struct dwiic_softc *)self;
+
+	switch (act) {
+	case DVACT_WAKEUP:
+		bus_space_write_4(sc->sc_iot, sc->sc_ioh, LPSS_RESETS,
+		    (LPSS_RESETS_I2C | LPSS_RESETS_IDMA));
+
+		dwiic_init(sc);
+
+		break;
+	}
+
+	dwiic_activate(self, act);
+
+	return 0;
 }
 
 void
