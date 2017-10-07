@@ -29,37 +29,16 @@
 
 #include <dev/ic/dwiicvar.h>
 
-#define LPSS_DEV_OFFSET			0x000
-#define LPSS_DEV_SIZE			0x200
-#define LPSS_PRIV_OFFSET		0x200
-#define LPSS_PRIV_SIZE			0x100
-#define LPSS_PRIV_REG_COUNT		(LPSS_PRIV_SIZE / 4)
-#define LPSS_IDMA64_OFFSET		0x800
-#define LPSS_IDMA64_SIZE		0x800
-
-/* Offsets from lpss->priv */
-#define LPSS_PRIV_RESETS		0x04
-#define LPSS_PRIV_RESETS_FUNC		(1 << 2)
-#define LPSS_PRIV_RESETS_IDMA		0x3
-
-#define LPSS_PRIV_ACTIVELTR		0x10
-#define LPSS_PRIV_IDLELTR		0x14
-
-#define LPSS_PRIV_LTR_REQ		(1 << 15)
-#define LPSS_PRIV_LTR_SCALE_MASK	0xc00
-#define LPSS_PRIV_LTR_SCALE_1US		0x800
-#define LPSS_PRIV_LTR_SCALE_32US	0xc00
-#define LPSS_PRIV_LTR_VALUE_MASK	0x3ff
-
-#define LPSS_PRIV_SSP_REG		0x20
-#define LPSS_PRIV_SSP_REG_DIS_DMA_FIN	1
-
-#define LPSS_PRIV_REMAP_ADDR		0x40
-
-#define LPSS_PRIV_CAPS			0xfc
-#define LPSS_PRIV_CAPS_NO_IDMA		(1 << 8)
-#define LPSS_PRIV_CAPS_TYPE_SHIFT	4
-#define LPSS_PRIV_CAPS_TYPE_MASK	(0xf << LPSS_PRIV_CAPS_TYPE_SHIFT)
+/* 13.3: I2C Additional Registers Summary */
+#define LPSS_RESETS		0x204
+#define  LPSS_RESETS_I2C	(1 << 0) | (1 << 1)
+#define  LPSS_RESETS_IDMA	(1 << 2)
+#define LPSS_ACTIVELTR		0x210
+#define LPSS_IDLELTR		0x214
+#define LPSS_CAPS		0x2fc
+#define  LPSS_CAPS_NO_IDMA	(1 << 8)
+#define  LPSS_CAPS_TYPE_SHIFT	4
+#define  LPSS_CAPS_TYPE_MASK	(0xf << LPSS_CAPS_TYPE_SHIFT)
 
 int		dwiic_pci_match(struct device *, void *, void *);
 void		dwiic_pci_attach(struct device *, struct device *, void *);
@@ -111,24 +90,17 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
-	sc->sc_caps = bus_space_read_4(sc->sc_iot, sc->sc_ioh,
-	    LPSS_PRIV_OFFSET + LPSS_PRIV_CAPS);
-	type = sc->sc_caps & LPSS_PRIV_CAPS_TYPE_MASK;
-	type >>= LPSS_PRIV_CAPS_TYPE_SHIFT;
+	sc->sc_caps = bus_space_read_4(sc->sc_iot, sc->sc_ioh, LPSS_CAPS);
+	type = sc->sc_caps & LPSS_CAPS_TYPE_MASK;
+	type >>= LPSS_CAPS_TYPE_SHIFT;
 	if (type != 0) {
 		printf(": type %d not supported\n", type);
 		return;
 	}
 
-	/* un-reset */
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, LPSS_PRIV_OFFSET +
-	    LPSS_PRIV_RESETS, (LPSS_PRIV_RESETS_FUNC | LPSS_PRIV_RESETS_IDMA));
-
-	/* expose */
-	bus_space_read_4(sc->sc_iot, sc->sc_ioh, LPSS_PRIV_OFFSET +
-	    LPSS_PRIV_ACTIVELTR);
-	bus_space_read_4(sc->sc_iot, sc->sc_ioh, LPSS_PRIV_OFFSET +
-	    LPSS_PRIV_IDLELTR);
+	/* un-reset - page 958 */
+	bus_space_write_4(sc->sc_iot, sc->sc_ioh, LPSS_RESETS,
+	    (LPSS_RESETS_I2C | LPSS_RESETS_IDMA));
 
 	/* fetch timing parameters */
 	sc->ss_hcnt = dwiic_read(sc, DW_IC_SS_SCL_HCNT);
@@ -149,9 +121,9 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 
 	/* install interrupt handler */
 	sc->sc_poll = 1;
-	if (pci_intr_map(pa, &ih) == 0) {
-		intrstr = pci_intr_string(pa->pa_pc, ih);
-		sc->sc_ih = pci_intr_establish(pa->pa_pc, ih, IPL_BIO,
+	if (pci_intr_map(&sc->sc_paa, &ih) == 0) {
+		intrstr = pci_intr_string(sc->sc_paa.pa_pc, ih);
+		sc->sc_ih = pci_intr_establish(sc->sc_paa.pa_pc, ih, IPL_BIO,
 		    dwiic_intr, sc, sc->sc_dev.dv_xname);
 		if (sc->sc_ih != NULL) {
 			printf(": %s", intrstr);
