@@ -61,6 +61,7 @@ struct hidmt {
 	int		sc_resx, sc_resy;
 
 	struct hidmt_contact sc_contacts[HIDMT_MAX_CONTACTS];
+	int		sc_cur_contactcount;
 	int		sc_button;
 };
 
