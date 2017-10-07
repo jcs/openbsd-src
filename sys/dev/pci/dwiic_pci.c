@@ -199,6 +199,13 @@ dwiic_pci_bus_scan(struct device *iic, struct i2cbus_attach_args *iba,
 		if (n == NULL)
 			return;
 
+		/*
+		 * XXX: until we can figure out why interrupts don't arrive for
+		 * i2c slave devices on intel 100 series and newer, force
+		 * polling for ihidev.
+		 */
+		sc->sc_poll_ihidev = 1;
+
 		aml_find_node(n, "_HID", dwiic_acpi_found_hid, sc);
 	}
 #endif

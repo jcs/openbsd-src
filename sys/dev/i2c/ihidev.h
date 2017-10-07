@@ -17,6 +17,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/timeout.h>
+
 /* from usbdi.h: Match codes. */
 /* First five codes is for a whole device. */
 #define IMATCH_VENDOR_PRODUCT_REV			14
@@ -85,6 +87,10 @@ struct ihidev_softc {
 	u_char		*sc_ibuf;
 
 	int		sc_refcnt;
+
+	int		sc_poll;
+	int		sc_fastpoll;
+	struct timeout	sc_timer;
 };
 
 struct ihidev {

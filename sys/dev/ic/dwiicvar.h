@@ -60,6 +60,7 @@ struct dwiic_softc {
 
 	u_int32_t		sc_caps;
 	int			sc_poll;
+	int			sc_poll_ihidev;
 	int			sc_busy;
 	int			sc_readwait;
 	int			sc_writewait;

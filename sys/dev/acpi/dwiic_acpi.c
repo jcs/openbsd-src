@@ -454,12 +454,9 @@ dwiic_acpi_found_ihidev(struct dwiic_softc *sc, struct aml_node *node,
 
 	aml_freevalue(&res);
 
-	if (crs.irq_int <= 0 && crs.gpio_int_node == NULL) {
-		printf("%s: couldn't find irq for %s\n", sc->sc_dev.dv_xname,
-		    aml_nodename(node->parent));
-		return 0;
-	}
-	ia.ia_intr = &crs;
+	if (!sc->sc_poll_ihidev &&
+	    !(crs.irq_int == 0 && crs.gpio_int_node == NULL))
+		ia.ia_intr = &crs;
 
 	if (config_found(sc->sc_iic, &ia, dwiic_i2c_print)) {
 		node->parent->attached = 1;
