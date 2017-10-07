@@ -1,4 +1,4 @@
-/* $OpenBSD: monitor_wrap.c,v 1.93 2017/09/12 06:32:07 djm Exp $ */
+/* $OpenBSD: monitor_wrap.c,v 1.95 2017/10/05 15:52:03 djm Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
  * Copyright 2002 Markus Friedl <markus@openbsd.org>
@@ -272,6 +272,8 @@ out:
 			newopts->x = buffer_get_string(&m, NULL); \
 	} while (0)
 #define M_CP_STRARRAYOPT(x, nx) do { \
+		newopts->x = newopts->nx == 0 ? \
+		    NULL : xcalloc(newopts->nx, sizeof(*newopts->x)); \
 		for (i = 0; i < newopts->nx; i++) \
 			newopts->x[i] = buffer_get_string(&m, NULL); \
 	} while (0)

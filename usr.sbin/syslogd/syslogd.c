@@ -1,4 +1,20 @@
-/*	$OpenBSD: syslogd.c,v 1.249 2017/09/27 15:09:48 bluhm Exp $	*/
+/*	$OpenBSD: syslogd.c,v 1.252 2017/10/05 16:34:59 bluhm Exp $	*/
+
+/*
+ * Copyright (c) 2014-2017 Alexander Bluhm <bluhm@genua.de>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 
 /*
  * Copyright (c) 1983, 1988, 1993, 1994
@@ -226,6 +242,7 @@ const char *ClientCertfile = NULL;
 const char *ClientKeyfile = NULL;
 const char *ServerCAfile = NULL;
 int	tcpbuf_dropped = 0;	/* count messages dropped from TCP or TLS */
+int	init_dropped = 0;	/* messages dropped during initialization */
 
 #define CTL_READING_CMD		1
 #define CTL_WRITING_REPLY	2
@@ -320,6 +337,7 @@ void	cvthname(struct sockaddr *, char *, size_t);
 int	decode(const char *, const CODE *);
 void	markit(void);
 void	fprintlog(struct filed *, int, char *);
+void	dropped_warn(int *, const char *);
 void	init(void);
 void	logevent(int, const char *);
 void	logline(int, int, char *, char *);
@@ -1362,6 +1380,7 @@ void
 tcp_writecb(struct bufferevent *bufev, void *arg)
 {
 	struct filed	*f = arg;
+	char		 ebuf[ERRBUFSIZE];
 
 	/*
 	 * Successful write, connection to server is good, reset wait time.
@@ -1371,11 +1390,9 @@ tcp_writecb(struct bufferevent *bufev, void *arg)
 
 	if (f->f_un.f_forw.f_dropped > 0 &&
 	    EVBUFFER_LENGTH(f->f_un.f_forw.f_bufev->output) < MAX_TCPBUF) {
-		log_info(LOG_WARNING, "dropped %d message%s to loghost \"%s\"",
-		    f->f_un.f_forw.f_dropped,
-		    f->f_un.f_forw.f_dropped == 1 ? "" : "s",
+		snprintf(ebuf, sizeof(ebuf), "to loghost \"%s\"",
 		    f->f_un.f_forw.f_loghost);
-		f->f_un.f_forw.f_dropped = 0;
+		dropped_warn(&f->f_un.f_forw.f_dropped, ebuf);
 	}
 }
 
@@ -1650,6 +1667,7 @@ vlogmsg(int pri, const char *proc, const char *fmt, va_list ap)
 		vsnprintf(msg + l, sizeof(msg) - l, fmt, ap);
 	if (!Started) {
 		fprintf(stderr, "%s\n", msg);
+		init_dropped++;
 		return;
 	}
 	logline(pri, ADDDATE, LocalHostName, msg);
@@ -1794,6 +1812,7 @@ logline(int pri, int flags, char *from, char *msg)
 			/* May be set to F_UNUSED, try again next time. */
 			f->f_type = F_CONSOLE;
 		}
+		init_dropped++;
 		return;
 	}
 	SIMPLEQ_FOREACH(f, &Files, f_next) {
@@ -1957,6 +1976,7 @@ fprintlog(struct filed *f, int flags, char *msg)
 		    (struct sockaddr *)&f->f_un.f_forw.f_addr,
 		    f->f_un.f_forw.f_addr.ss_len) != l) {
 			switch (errno) {
+			case EADDRNOTAVAIL:
 			case EHOSTDOWN:
 			case EHOSTUNREACH:
 			case ENETDOWN:
@@ -2206,11 +2226,7 @@ init_signalcb(int signum, short event, void *arg)
 	init();
 	log_info(LOG_INFO, "restart");
 
-	if (tcpbuf_dropped > 0) {
-		log_info(LOG_WARNING, "dropped %d message%s to remote loghost",
-		    tcpbuf_dropped, tcpbuf_dropped == 1 ? "" : "s");
-		tcpbuf_dropped = 0;
-	}
+	dropped_warn(&tcpbuf_dropped, "to remote loghost");
 	log_debug("syslogd: restarted");
 }
 
@@ -2218,6 +2234,20 @@ void
 logevent(int severity, const char *msg)
 {
 	log_debug("libevent: [%d] %s", severity, msg);
+}
+
+void
+dropped_warn(int *count, const char *what)
+{
+	int dropped;
+
+	if (*count == 0)
+		return;
+
+	dropped = *count;
+	*count = 0;
+	log_info(LOG_WARNING, "dropped %d message%s %s",
+	    dropped, dropped == 1 ? "" : "s", what);
 }
 
 __dead void
@@ -2238,12 +2268,8 @@ die(int signo)
 		}
 	}
 	Initialized = was_initialized;
-
-	if (tcpbuf_dropped > 0) {
-		log_info(LOG_WARNING, "dropped %d message%s to remote loghost",
-		    tcpbuf_dropped, tcpbuf_dropped == 1 ? "" : "s");
-		tcpbuf_dropped = 0;
-	}
+	dropped_warn(&init_dropped, "during initialization");
+	dropped_warn(&tcpbuf_dropped, "to remote loghost");
 
 	if (signo)
 		log_info(LOG_ERR, "exiting on signal %d", signo);
@@ -2324,6 +2350,7 @@ init(void)
 		SIMPLEQ_INSERT_TAIL(&Files,
 		    cfline("*.PANIC\t*", "*", "*"), f_next);
 		Initialized = 1;
+		dropped_warn(&init_dropped, "during initialization");
 		return;
 	}
 
@@ -2424,6 +2451,7 @@ init(void)
 	(void)fclose(cf);
 
 	Initialized = 1;
+	dropped_warn(&init_dropped, "during initialization");
 
 	if (Debug) {
 		SIMPLEQ_FOREACH(f, &Files, f_next) {

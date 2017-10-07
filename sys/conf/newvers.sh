@@ -1,6 +1,6 @@
 #!/bin/sh -
 #
-#	$OpenBSD: newvers.sh,v 1.155 2017/09/25 06:45:54 deraadt Exp $
+#	$OpenBSD: newvers.sh,v 1.157 2017/10/04 17:59:41 benno Exp $
 #	$NetBSD: newvers.sh,v 1.17.2.1 1995/10/12 05:17:11 jtc Exp $
 #
 # Copyright (c) 1984, 1986, 1990, 1993
@@ -55,6 +55,9 @@ id=`basename "${d}"`
 #	usr.bin/signify/signify.1
 #		change the version in the EXAMPLES section
 #
+# When adding -beta, create a new www/<version>.html so devs can
+# start adding to it. When removing -beta, roll errata pages.
+#
 # -current and -beta tagging:
 #	For release, select STATUS ""
 #	Right after release unlock, select STATUS "-current"
@@ -66,9 +69,9 @@ ost="OpenBSD"
 osr="6.2"
 
 cat >vers.c <<eof
-#define STATUS ""			/* release */
-#if 0
 #define STATUS "-current"		/* just after a release */
+#if 0
+#define STATUS ""			/* release */
 #define STATUS "-beta"			/* just before a release */
 #endif
 

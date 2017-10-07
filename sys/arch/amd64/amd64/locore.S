@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.S,v 1.87 2017/07/06 06:17:04 deraadt Exp $	*/
+/*	$OpenBSD: locore.S,v 1.90 2017/10/05 06:18:10 mlarkin Exp $	*/
 /*	$NetBSD: locore.S,v 1.13 2004/03/25 18:33:17 drochner Exp $	*/
 
 /*
@@ -115,7 +115,6 @@
 #include <machine/param.h>
 #include <machine/segments.h>
 #include <machine/specialreg.h>
-#include <machine/trap.h>
 #include <machine/frameasm.h>
 
 #if NLAPIC > 0
@@ -690,6 +689,19 @@ _C_LABEL(doreti_iret):
 	addq	$TF_RIP,%rsp
 	iretq
 #endif /* !defined(GPROF) && defined(DDBPROF) */
+
+ENTRY(xrstor_user)
+	movq	%rsi, %rdx
+	movl	%esi, %eax
+	shrq	$32, %rdx
+	.globl	xrstor_fault
+xrstor_fault:
+	xrstor	(%rdi)
+	xorl	%eax, %eax
+	ret
+ENTRY(xrstor_resume)
+	movl	$1, %eax
+	ret
 
 ENTRY(pagezero)
 	movq    $-PAGE_SIZE,%rdx

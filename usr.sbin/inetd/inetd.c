@@ -1,4 +1,4 @@
-/*	$OpenBSD: inetd.c,v 1.154 2016/08/25 05:23:19 tedu Exp $	*/
+/*	$OpenBSD: inetd.c,v 1.158 2017/10/04 23:56:48 jca Exp $	*/
 
 /*
  * Copyright (c) 1983,1991 The Regents of the University of California.
@@ -55,7 +55,7 @@
  * a space or tab.  All fields must be present in each entry.
  *
  *	service name			must be in /etc/services
- *	socket type			stream/dgram/raw/rdm/seqpacket
+ *	socket type			stream/dgram
  *	protocol			must be in /etc/protocols
  *	wait/nowait[.max]		single-threaded/multi-threaded, max #
  *	user[.group] or user[:group]	user/group to run daemon as
@@ -64,7 +64,7 @@
  *
  * For RPC services
  *      service name/version            must be in /etc/rpc
- *	socket type			stream/dgram/raw/rdm/seqpacket
+ *	socket type			stream/dgram
  *	protocol			must be in /etc/protocols
  *	wait/nowait[.max]		single-threaded/multi-threaded
  *	user[.group] or user[:group]	user to run daemon as
@@ -444,7 +444,6 @@ dg_badinput(struct sockaddr *sa)
 	case AF_INET:
 		in.s_addr = ntohl(((struct sockaddr_in *)sa)->sin_addr.s_addr);
 		port = ntohs(((struct sockaddr_in *)sa)->sin_port);
-	v4chk:
 		if (IN_MULTICAST(in.s_addr))
 			goto bad;
 		switch ((in.s_addr & 0xff000000) >> 24) {
@@ -460,16 +459,12 @@ dg_badinput(struct sockaddr *sa)
 		if (IN6_IS_ADDR_MULTICAST(in6) || IN6_IS_ADDR_UNSPECIFIED(in6))
 			goto bad;
 		/*
-		 * OpenBSD does not support IPv4 mapped address (RFC2553
-		 * inbound behavior) at all.  We should drop it.
+		 * OpenBSD does not support IPv4-mapped and
+		 * IPv4-compatible IPv6 addresses (RFC2553). We should
+		 * drop the packet.
 		 */
-		if (IN6_IS_ADDR_V4MAPPED(in6))
+		if (IN6_IS_ADDR_V4MAPPED(in6) || IN6_IS_ADDR_V4COMPAT(in6))
 			goto bad;
-		if (IN6_IS_ADDR_V4COMPAT(in6)) {
-			memcpy(&in, &in6->s6_addr[12], sizeof(in));
-			in.s_addr = ntohl(in.s_addr);
-			goto v4chk;
-		}
 		break;
 	default:
 		/* Unsupported AF */
@@ -1103,12 +1098,6 @@ more:
 		sep->se_socktype = SOCK_STREAM;
 	else if (strcmp(arg, "dgram") == 0)
 		sep->se_socktype = SOCK_DGRAM;
-	else if (strcmp(arg, "rdm") == 0)
-		sep->se_socktype = SOCK_RDM;
-	else if (strcmp(arg, "seqpacket") == 0)
-		sep->se_socktype = SOCK_SEQPACKET;
-	else if (strcmp(arg, "raw") == 0)
-		sep->se_socktype = SOCK_RAW;
 	else
 		sep->se_socktype = -1;
 
@@ -1763,17 +1752,16 @@ spawn(int ctrl, short events, void *xsep)
 		return;
 	}
 
-	if (pledge("stdio rpath getpw inet proc exec id", NULL) == -1)
-		err(1, "pledge");
-
 	if (pid && sep->se_wait) {
 		sep->se_wait = pid;
 		event_del(&sep->se_event);
 	}
 	if (pid == 0) {
-		if (sep->se_bi)
+		if (sep->se_bi) {
+			if (dofork && pledge("stdio inet", NULL) == -1)
+				err(1, "pledge");
 			(*sep->se_bi->bi_fn)(ctrl, sep);
-		else {
+		} else {
 			if ((pwd = getpwnam(sep->se_user)) == NULL) {
 				syslog(LOG_ERR,
 				    "getpwnam: %s: No such user",
