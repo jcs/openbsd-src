@@ -1,4 +1,4 @@
-/* $OpenBSD: hidmt.c,v 1.2 2016/03/30 23:34:12 bru Exp $ */
+/* $OpenBSD: hidmt.c,v 1.3 2017/10/08 10:13:42 bru Exp $ */
 /*
  * HID multitouch driver for devices conforming to Windows Precision Touchpad
  * standard
@@ -92,11 +92,11 @@ hidmt_get_resolution(struct hid_item *h)
 		return (0);
 
 	if (h->unit == HID_UNIT_INCH) {			/* Map inches to mm. */
-		if ((phy_extent > INT_MAX / 254)
-		    || (log_extent > INT_MAX / 10))
+		if ((phy_extent > INT_MAX / 127)
+		    || (log_extent > INT_MAX / 5))
 			return (0);
-		log_extent *= 10;
-		phy_extent *= 254;
+		log_extent *= 5;
+		phy_extent *= 127;
 	} else {					/* Map cm to mm. */
 		if (phy_extent > INT_MAX / 10)
 			return (0);
@@ -434,12 +434,15 @@ hidmt_input(struct hidmt *mt, uint8_t *data, u_int len)
 		    mt->sc_contacts[i].height,
 		    mt->sc_button));
 
-		/* Report width as pressure. TODO: confidence!? */
-		z = (mt->sc_contacts[i].tip ?
-		    imax(mt->sc_contacts[i].width, 50) : 0);
+		if (mt->sc_contacts[i].tip && !mt->sc_contacts[i].confidence)
+			continue;
 
-		wsmouse_mtstate(mt->sc_wsmousedev, i, mt->sc_contacts[i].x,
-		    mt->sc_contacts[i].y, z);
+		/* Report width as pressure. */
+		z = (mt->sc_contacts[i].tip
+		    ? imax(mt->sc_contacts[i].width, 50) : 0);
+
+		wsmouse_mtstate(mt->sc_wsmousedev,
+		    i, mt->sc_contacts[i].x, mt->sc_contacts[i].y, z);
 	}
 	wsmouse_input_sync(mt->sc_wsmousedev);
 
