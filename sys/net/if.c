@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.513 2017/10/09 08:35:38 mpi Exp $	*/
+/*	$OpenBSD: if.c,v 1.516 2017/10/12 09:14:16 mpi Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -82,7 +82,6 @@
 #include <sys/kernel.h>
 #include <sys/ioctl.h>
 #include <sys/domain.h>
-#include <sys/sysctl.h>
 #include <sys/task.h>
 #include <sys/atomic.h>
 #include <sys/proc.h>
@@ -1816,25 +1815,19 @@ int
 ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 {
 	struct ifnet *ifp;
-	struct ifreq *ifr;
-	struct sockaddr_dl *sdl;
+	struct ifreq *ifr = (struct ifreq *)data;
 	struct ifgroupreq *ifgr;
-	struct if_afreq *ifar;
+	struct if_afreq *ifar = (struct if_afreq *)data;
 	char ifdescrbuf[IFDESCRSIZE];
 	char ifrtlabelbuf[RTLABEL_LEN];
 	int s, error = 0, oif_xflags;
 	size_t bytesdone;
-	short oif_flags;
+	unsigned short oif_flags;
 	const char *label;
 
 	switch (cmd) {
-
 	case SIOCGIFCONF:
 		return (ifconf(cmd, data));
-	}
-	ifr = (struct ifreq *)data;
-
-	switch (cmd) {
 	case SIOCIFCREATE:
 	case SIOCIFDESTROY:
 		if ((error = suser(p, 0)) != 0)
@@ -1852,15 +1845,19 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		if ((error = suser(p, 0)) != 0)
 			return (error);
 		return (if_setgroupattribs(data));
+	}
+
+	ifp = ifunit(ifr->ifr_name);
+	if (ifp == NULL)
+		return (ENXIO);
+	oif_flags = ifp->if_flags;
+	oif_xflags = ifp->if_xflags;
+
+	switch (cmd) {
 	case SIOCIFAFATTACH:
 	case SIOCIFAFDETACH:
 		if ((error = suser(p, 0)) != 0)
 			return (error);
-		ifar = (struct if_afreq *)data;
-		if ((ifp = ifunit(ifar->ifar_name)) == NULL)
-			return (ENXIO);
-		oif_flags = ifp->if_flags;
-		oif_xflags = ifp->if_xflags;
 		switch (ifar->ifar_af) {
 		case AF_INET:
 			/* attach is a noop for AF_INET */
@@ -1878,16 +1875,7 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		default:
 			return (EAFNOSUPPORT);
 		}
-		if (oif_flags != ifp->if_flags || oif_xflags != ifp->if_xflags)
-			rtm_ifchg(ifp);
-		return (error);
-	}
-
-	ifp = ifunit(ifr->ifr_name);
-	if (ifp == 0)
-		return (ENXIO);
-	oif_flags = ifp->if_flags;
-	switch (cmd) {
+		break;
 
 	case SIOCGIFFLAGS:
 		ifr->ifr_flags = ifp->if_flags;
@@ -2002,7 +1990,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 
 		ifp->if_xflags = (ifp->if_xflags & IFXF_CANTCHANGE) |
 			(ifr->ifr_flags & ~IFXF_CANTCHANGE);
-		rtm_ifchg(ifp);
 		break;
 
 	case SIOCSIFMETRIC:
@@ -2140,8 +2127,7 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	case SIOCSIFLLADDR:
 		if ((error = suser(p, 0)))
 			return (error);
-		sdl = ifp->if_sadl;
-		if (sdl == NULL)
+		if (ifp->if_sadl == NULL)
 			return (EINVAL);
 		if (ifr->ifr_addr.sa_len != ETHER_ADDR_LEN)
 			return (EINVAL);
@@ -2182,6 +2168,9 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			(struct mbuf *) ifp, p));
 		break;
 	}
+
+	if (oif_flags != ifp->if_flags || oif_xflags != ifp->if_xflags)
+		rtm_ifchg(ifp);
 
 	if (((oif_flags ^ ifp->if_flags) & IFF_UP) != 0)
 		getmicrotime(&ifp->if_lastchange);
@@ -2664,38 +2653,6 @@ ifpromisc(struct ifnet *ifp, int pswitch)
 	}
 	ifr.ifr_flags = ifp->if_flags;
 	return ((*ifp->if_ioctl)(ifp, SIOCSIFFLAGS, (caddr_t)&ifr));
-}
-
-/* XXX move to kern/uipc_mbuf.c */
-int
-sysctl_mq(int *name, u_int namelen, void *oldp, size_t *oldlenp,
-    void *newp, size_t newlen, struct mbuf_queue *mq)
-{
-	unsigned int maxlen;
-	int error;
-
-	/* All sysctl names at this level are terminal. */
-	if (namelen != 1)
-		return (ENOTDIR);
-
-	switch (name[0]) {
-	case IFQCTL_LEN:
-		return (sysctl_rdint(oldp, oldlenp, newp, mq_len(mq)));
-	case IFQCTL_MAXLEN:
-		maxlen = mq->mq_maxlen;
-		error = sysctl_int(oldp, oldlenp, newp, newlen, &maxlen);
-		if (!error && maxlen != mq->mq_maxlen) {
-			mtx_enter(&mq->mq_mtx);
-			mq->mq_maxlen = maxlen;
-			mtx_leave(&mq->mq_mtx);
-		}
-		return (error);
-	case IFQCTL_DROPS:
-		return (sysctl_rdint(oldp, oldlenp, newp, mq_drops(mq)));
-	default:
-		return (EOPNOTSUPP);
-	}
-	/* NOTREACHED */
 }
 
 void

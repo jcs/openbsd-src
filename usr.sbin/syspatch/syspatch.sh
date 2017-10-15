@@ -1,6 +1,6 @@
 #!/bin/ksh
 #
-# $OpenBSD: syspatch.sh,v 1.127 2017/08/29 10:21:23 ajacoutot Exp $
+# $OpenBSD: syspatch.sh,v 1.132 2017/10/13 06:16:27 ajacoutot Exp $
 #
 # Copyright (c) 2016, 2017 Antoine Jacoutot <ajacoutot@openbsd.org>
 #
@@ -155,16 +155,11 @@ ls_installed()
 
 ls_missing()
 {
-	local _c _f _cmd _l="$(ls_installed)" _p _r _sha=${_TMP}/SHA256
+	local _c _d _f _cmd _l="$(ls_installed)" _p _r _sha=${_TMP}/SHA256
 
-	# return inmediately if we cannot reach the mirror server
-	[[ -d ${_MIRROR#file://*} ]] ||
-		unpriv ftp -MVo /dev/null ${_MIRROR%syspatch/*} >/dev/null
-
-	# don't output anything on stdout to prevent corrupting the patch list;
-	# redirect stderr as well in case there's no patch available
+	# don't output anything on stdout to prevent corrupting the patch list
 	unpriv -f "${_sha}.sig" ftp -MVo "${_sha}.sig" "${_MIRROR}/SHA256.sig" \
-		>/dev/null 2>&1 || return 0 # empty directory
+		>/dev/null 2>&1 # hide stderr (nonexistent = no patch available)
 	unpriv -f "${_sha}" signify -Veq -x ${_sha}.sig -m ${_sha} -p \
 		/etc/signify/openbsd-${_OSrev}-syspatch.pub >/dev/null
 
@@ -267,7 +262,7 @@ _OSrev=${_KERNV[0]%.*}${_KERNV[0]#*.}
 
 _MIRROR=$(while read _line; do _line=${_line%%#*}; [[ -n ${_line} ]] &&
 	print -r -- "${_line}"; done </etc/installurl | tail -1) 2>/dev/null
-[[ ${_MIRROR} == @(file|http|https)://*/*[!/] ]] ||
+[[ ${_MIRROR} == @(file|http|https)://* ]] ||
 	sp_err "${0##*/}: invalid URL configured in /etc/installurl"
 _MIRROR="${_MIRROR}/syspatch/${_KERNV[0]}/$(machine)"
 

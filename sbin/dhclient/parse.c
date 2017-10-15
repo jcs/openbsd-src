@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.c,v 1.67 2017/10/10 13:37:00 krw Exp $	*/
+/*	$OpenBSD: parse.c,v 1.73 2017/10/14 15:31:46 krw Exp $	*/
 
 /* Common parser code for dhcpd and dhclient. */
 
@@ -128,34 +128,33 @@ parse_semi(FILE *cfile)
 	return 1;
 }
 
-char *
-parse_string(FILE *cfile, unsigned int *len)
+int
+parse_string(FILE *cfile, unsigned int *len, char **string)
 {
 	static char	 unvisbuf[1500];
-	char		*val, *s;
+	char		*val;
 	int		 i, token;
 
 	token = next_token(&val, cfile);
-	if (token != TOK_STRING) {
-		parse_warn("expecting string.");
-		if (token != ';')
-			skip_to_semi(cfile);
-		return NULL;
+	if (token == TOK_STRING) {
+		i = strnunvis(unvisbuf, val, sizeof(unvisbuf));
+		if (i >= 0) {
+			*string = malloc(i+1);
+			if (*string == NULL)
+				fatal("unvis string %s", val);
+			memcpy(*string, unvisbuf, i+1);	/* Copy the NUL. */
+			if (len != NULL)
+				*len = i;
+			return 1;
+		}
 	}
 
-	i = strnunvis(unvisbuf, val, sizeof(unvisbuf));
-	if (i == -1) {
-		parse_warn("could not unvis string");
-		return NULL;
-	}
-	s = malloc(i+1);
-	if (s == NULL)
-		fatal("unvis string %s", val);
-	memcpy(s, unvisbuf, i+1);	/* Copy the terminating NUL. */
-	if (len != NULL)
-		*len = i;
+	parse_warn("expecting string.");
 
-	return s;
+	if (token != ';')
+		skip_to_semi(cfile);
+
+	return 0;
 }
 
 /*
@@ -280,6 +279,10 @@ parse_boolean(FILE *cfile, unsigned char *buf)
 		}
 	}
 
+	parse_warn("expecting boolean.");
+	if (token != ';')
+		skip_to_semi(cfile);
+
 	return 0;
 }
 
@@ -287,8 +290,8 @@ int
 parse_decimal(FILE *cfile, unsigned char *buf, char fmt)
 {
 	const char	*errstr;
-	char		*val;
-	int		 bytes, token;
+	char		*val, *msg;
+	int		 bytes, rslt, token;
 	long long	 numval, low, high;
 
 	token = next_token(&val, cfile);
@@ -319,34 +322,23 @@ parse_decimal(FILE *cfile, unsigned char *buf, char fmt)
 	}
 
 	numval = strtonum(val, low, high, &errstr);
-	if (errstr != NULL)
-		return 0;
+	if (errstr == NULL) {
+		numval = htobe64(numval);
+		memcpy(buf, (char *)&numval + (sizeof(numval) - bytes), bytes);
+		return 1;
+	}
 
-	numval = htobe64(numval);
-	memcpy(buf, (char *)&numval + (sizeof(numval) - bytes), bytes);
+	rslt = asprintf(&msg, "expecting integer between %lld and %lld", low,
+	    high);
+	if (rslt != -1) {
+		parse_warn(msg);
+		free(msg);
+	}
 
-	return 1;
-}
+	if (token != ';')
+		skip_to_semi(cfile);
 
-int
-parse_hex(FILE *cfile, unsigned char *buf)
-{
-	char		*val, *ep;
-	unsigned long	 ulval;
-	int		 token;
-
-	token = next_token(&val, cfile);
-
-	errno = 0;
-	ulval = strtoul(val, &ep, 16);
-	if ((val[0] == '\0' || *ep != '\0') ||
-	    (errno == ERANGE && ulval == ULONG_MAX) ||
-	    (ulval > UINT8_MAX))
-		return 0;
-
-	buf[0] = ulval;
-
-	return 1;
+	return 0;
 }
 
 /*
@@ -359,10 +351,10 @@ parse_hex(FILE *cfile, unsigned char *buf)
  *
  * XXX Will break after year 9999!
  */
-time_t
-parse_date(FILE *cfile)
+int
+parse_date(FILE *cfile, time_t *date)
 {
-	char		 timestr[23]; /* "wyyyy/mm/dd hh:mm:ssUTC" */
+	char		 timestr[23]; /* "wyyyy/mm/ddhh:mm:ssUTC" */
 	struct tm	 tm;
 	char		*val, *p;
 	size_t		 n;
@@ -371,36 +363,41 @@ parse_date(FILE *cfile)
 
 	memset(timestr, 0, sizeof(timestr));
 
-	guess = -1;
 	n = 0;
 	do {
-		token = next_token(&val, cfile);
+		token = peek_token(&val, cfile);
 
 		switch (token) {
 		case EOF:
 			n = sizeof(timestr);
 			break;
 		case';':
-			memset(&tm, 0, sizeof(tm));	/* 'cuz strptime ignores tm_isdt. */
+			/* strptime() ignores tm_isdt so ensure it is 0. */
+			memset(&tm, 0, sizeof(tm));
 			p = strptime(timestr, DB_TIMEFMT, &tm);
-			if (p != NULL && *p == '\0')
+			if (p != NULL && *p == '\0') {
 				guess = timegm(&tm);
+				if (guess != -1) {
+					*date = guess;
+					return 1;
+				}
+			}
+			token = next_token(NULL, cfile);
 			break;
 		default:
 			n = strlcat(timestr, val, sizeof(timestr));
+			token = next_token(NULL, cfile);
 			break;
 
 		}
 	} while (n < sizeof(timestr) && token != ';');
 
-	if (guess == -1) {
-		guess = 0;
-		parse_warn("expecting UTC time.");
-		if (token != ';')
-			skip_to_semi(cfile);
-	}
+	parse_warn("expecting UTC time.");
 
-	return guess;
+	if (token != ';')
+		skip_to_semi(cfile);
+
+	return 0;
 }
 
 void
