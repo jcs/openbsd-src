@@ -1,4 +1,4 @@
-/*	$OpenBSD: route.c,v 1.203 2017/09/06 20:21:22 benno Exp $	*/
+/*	$OpenBSD: route.c,v 1.206 2017/10/18 07:31:31 mpi Exp $	*/
 /*	$NetBSD: route.c,v 1.16 1996/04/15 18:27:05 cgd Exp $	*/
 
 /*
@@ -674,13 +674,8 @@ newroute(int argc, char **argv)
 		} else
 			break;
 	}
-	if (*cmd == 'g') {
-		if (ret != 0 && qflag == 0)
-			warn("writing to routing socket");
-		exit(0);
-	}
 	oerrno = errno;
-	if (!qflag) {
+	if (!qflag && (*cmd != 'g' || ret != 0)) {
 		printf("%s %s %s", cmd, ishost ? "host" : "net", dest);
 		if (*gateway) {
 			printf(": gateway %s", gateway);

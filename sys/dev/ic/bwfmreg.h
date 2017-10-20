@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfmreg.h,v 1.1 2017/10/11 17:19:50 patrick Exp $ */
+/* $OpenBSD: bwfmreg.h,v 1.8 2017/10/18 19:18:07 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -135,6 +135,34 @@
 #define  BWFM_DMP_SLAVE_SIZE_16K		2
 #define  BWFM_DMP_SLAVE_SIZE_DESC		3
 
+/* Security Parameters */
+#define BWFM_AUTH_OPEN				0
+#define BWFM_AUTH_SHARED_KEY			1
+#define BWFM_AUTH_AUTO				2
+#define BWFM_MFP_NONE				0
+#define BWFM_MFP_CAPABLE			1
+#define BWFM_MFP_REQUIRED			2
+#define BWFM_WPA_AUTH_DISABLED			(0 << 0)
+#define BWFM_WPA_AUTH_NONE			(1 << 0)
+#define BWFM_WPA_AUTH_WPA_UNSPECIFIED		(1 << 1)
+#define BWFM_WPA_AUTH_WPA_PSK			(1 << 2)
+#define BWFM_WPA_AUTH_WPA2_UNSPECIFIED		(1 << 6)
+#define BWFM_WPA_AUTH_WPA2_PSK			(1 << 7)
+#define BWFM_WPA_AUTH_WPA2_1X_SHA256		(1 << 12)
+#define BWFM_WPA_AUTH_WPA2_PSK_SHA256		(1 << 15)
+#define BWFM_WSEC_NONE				(0 << 0)
+#define BWFM_WSEC_WEP				(1 << 0)
+#define BWFM_WSEC_TKIP				(1 << 1)
+#define BWFM_WSEC_AES				(1 << 2)
+
+/* Channel Parameters */
+#define BWFM_CHANSPEC_CHAN_MASK			0xff
+#define BWFM_CHANSPEC_CHAN_SHIFT		0
+#define BWFM_BAND_AUTO				0
+#define BWFM_BAND_5G				1
+#define BWFM_BAND_2G				2
+#define BWFM_BAND_ALL				3
+
 /* DCMD commands */
 #define BWFM_C_GET_VERSION			1
 #define BWFM_C_UP				2
@@ -218,7 +246,7 @@ struct bwfm_proto_bcdc_dcmd {
 		uint32_t status;
 	} hdr;
 	char buf[8192];
-} __packed;
+};
 
 struct bwfm_proto_bcdc_hdr {
 	uint8_t flags;
@@ -231,7 +259,7 @@ struct bwfm_proto_bcdc_hdr {
 	uint8_t flags2;
 #define BWFM_BCDC_FLAG2_IF_MASK		0xf
 	uint8_t data_offset;
-} __packed;
+};
 
 #define BWFM_MCSSET_LEN				16
 #define BWFM_MAX_SSID_LEN			32
@@ -243,29 +271,34 @@ struct bwfm_bss_info {
 	uint16_t capability;
 	uint8_t ssid_len;
 	uint8_t ssid[BWFM_MAX_SSID_LEN];
+	uint8_t pad0;
 	uint32_t nrates;
 	uint8_t rates[16];
 	uint16_t chanspec;
 	uint16_t atim_window;
 	uint8_t dtim_period;
+	uint8_t pad1;
 	uint16_t rssi;
 	uint8_t phy_noise;
 	uint8_t n_cap;
+	uint16_t pad2;
 	uint32_t nbss_cap;
 	uint8_t ctl_ch;
+	uint8_t pad3[3];
 	uint32_t reserved32[1];
 	uint8_t flags;
 	uint8_t reserved[3];
 	uint8_t basic_mcs[BWFM_MCSSET_LEN];
 	uint16_t ie_offset;
+	uint16_t pad4;
 	uint32_t ie_length;
 	uint16_t snr;
-} __packed;
+};
 
 struct bwfm_ssid {
 	uint32_t len;
 	uint8_t ssid[BWFM_MAX_SSID_LEN];
-} __packed;
+};
 
 struct bwfm_scan_params {
 	struct bwfm_ssid ssid;
@@ -279,14 +312,14 @@ struct bwfm_scan_params {
 	uint32_t home_time;
 	uint32_t channel_num;
 	uint16_t channel_list[];
-} __packed;
+};
 
 struct bwfm_scan_results {
 	uint32_t buflen;
 	uint32_t version;
 	uint32_t count;
 	struct bwfm_bss_info bss_info[];
-} __packed;
+};
 
 struct bwfm_escan_params {
 	uint32_t version;
@@ -297,7 +330,7 @@ struct bwfm_escan_params {
 #define WL_ESCAN_ACTION_ABORT		3
 	uint16_t sync_id;
 	struct bwfm_scan_params scan_params;
-} __packed;
+};
 
 struct bwfm_escan_results {
 	uint32_t buflen;
@@ -305,32 +338,50 @@ struct bwfm_escan_results {
 	uint16_t sync_id;
 	uint16_t bss_count;
 	struct bwfm_bss_info bss_info[];
-} __packed;
+};
 
 struct bwfm_assoc_params {
 	uint8_t bssid[ETHER_ADDR_LEN];
+	uint16_t pad;
 	uint32_t chanspec_num;
 	uint16_t chanspec_list[];
-} __packed;
+};
+
+struct bwfm_join_pref_params {
+	uint8_t type;
+#define BWFM_JOIN_PREF_RSSI		1
+#define BWFM_JOIN_PREF_WPA		2
+#define BWFM_JOIN_PREF_BAND		3
+#define BWFM_JOIN_PREF_RSSI_DELTA	4
+	uint8_t len;
+	uint8_t rssi_gain;
+#define BWFM_JOIN_PREF_RSSI_BOOST	8
+	uint8_t band;
+#define BWFM_JOIN_PREF_BAND_AUTO	0
+#define BWFM_JOIN_PREF_BAND_5G		1
+#define BWFM_JOIN_PREF_BAND_2G		2
+#define BWFM_JOIN_PREF_BAND_ALL		3
+};
 
 struct bwfm_join_params {
 	struct bwfm_ssid ssid;
 	struct bwfm_assoc_params assoc;
-} __packed;
+};
 
 struct bwfm_join_scan_params {
 	uint8_t scan_type;
+	uint8_t pad[3];
 	uint32_t nprobes;
 	uint32_t active_time;
 	uint32_t passive_time;
 	uint32_t home_time;
-} __packed;
+};
 
 struct bwfm_ext_join_params {
 	struct bwfm_ssid ssid;
 	struct bwfm_join_scan_params scan;
 	struct bwfm_assoc_params assoc;
-} __packed;
+};
 
 struct bwfm_wsec_pmk {
 	uint16_t key_len;
@@ -338,7 +389,7 @@ struct bwfm_wsec_pmk {
 	uint16_t flags;
 #define BWFM_WSEC_PASSPHRASE		(1 << 0)
 	uint8_t key[2 * BWFM_WSEC_MAX_PSK_LEN + 1];
-} __packed;
+};
 
 /* Event handling */
 enum bwfm_fweh_event_code {
