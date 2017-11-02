@@ -1,4 +1,4 @@
-/*	$OpenBSD: rthread.c,v 1.96 2017/09/05 02:40:54 guenther Exp $ */
+/*	$OpenBSD: rthread.c,v 1.98 2017/10/29 08:45:53 mpi Exp $ */
 /*
  * Copyright (c) 2004,2005 Ted Unangst <tedu@openbsd.org>
  * All Rights Reserved.
@@ -22,7 +22,7 @@
 
 #include <sys/types.h>
 #ifndef NO_PIC
-#include <sys/exec_elf.h>
+#include <elf.h>
 #pragma weak _DYNAMIC
 #endif
 
@@ -492,36 +492,6 @@ pthread_setcanceltype(int type, int *oldtypep)
 		*oldtypep = oldtype;
 
 	return (0);
-}
-
-void
-pthread_cleanup_push(void (*fn)(void *), void *arg)
-{
-	struct rthread_cleanup_fn *clfn;
-	pthread_t self = pthread_self();
-
-	clfn = calloc(1, sizeof(*clfn));
-	if (!clfn)
-		return;
-	clfn->fn = fn;
-	clfn->arg = arg;
-	clfn->next = self->cleanup_fns;
-	self->cleanup_fns = clfn;
-}
-
-void
-pthread_cleanup_pop(int execute)
-{
-	struct rthread_cleanup_fn *clfn;
-	pthread_t self = pthread_self();
-
-	clfn = self->cleanup_fns;
-	if (clfn) {
-		self->cleanup_fns = clfn->next;
-		if (execute)
-			clfn->fn(clfn->arg);
-		free(clfn);
-	}
 }
 
 int

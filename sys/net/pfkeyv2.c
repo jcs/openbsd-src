@@ -1,4 +1,4 @@
-/* $OpenBSD: pfkeyv2.c,v 1.168 2017/10/16 08:22:25 mpi Exp $ */
+/* $OpenBSD: pfkeyv2.c,v 1.170 2017/11/02 14:01:18 florian Exp $ */
 
 /*
  *	@(#)COPYRIGHT	1.1 (NRL) 17 January 1995
@@ -159,12 +159,13 @@ static int npromisc = 0;
 void pfkey_init(void);
 
 int pfkeyv2_attach(struct socket *, int);
-int pfkeyv2_detach(struct socket *, struct proc *);
+int pfkeyv2_detach(struct socket *);
 int pfkeyv2_usrreq(struct socket *, int, struct mbuf *, struct mbuf *,
     struct mbuf *, struct proc *);
 int pfkeyv2_output(struct mbuf *, struct socket *, struct sockaddr *,
     struct mbuf *);
 int pfkey_sendup(struct keycb *, struct mbuf *, int);
+int pfkeyv2_sysctl_policydumper(struct ipsec_policy *, void *, unsigned int);
 
 /*
  * Wrapper around m_devget(); copy data from contiguous buffer to mbuf
@@ -191,6 +192,7 @@ static struct protosw pfkeysw[] = {
   .pr_output    = pfkeyv2_output,
   .pr_usrreq    = pfkeyv2_usrreq,
   .pr_attach    = pfkeyv2_attach,
+  .pr_detach    = pfkeyv2_detach,
   .pr_sysctl    = pfkeyv2_sysctl,
 }
 };
@@ -254,7 +256,7 @@ pfkeyv2_attach(struct socket *so, int proto)
  * Close a PF_KEYv2 socket.
  */
 int
-pfkeyv2_detach(struct socket *so, struct proc *p)
+pfkeyv2_detach(struct socket *so)
 {
 	struct keycb *kp;
 
@@ -275,7 +277,7 @@ pfkeyv2_detach(struct socket *so, struct proc *p)
 		mtx_leave(&pfkeyv2_mtx);
 	}
 
-	raw_detach(&kp->rcb);
+	raw_do_detach(&kp->rcb);
 	return (0);
 }
 
@@ -283,12 +285,7 @@ int
 pfkeyv2_usrreq(struct socket *so, int req, struct mbuf *mbuf,
     struct mbuf *nam, struct mbuf *control, struct proc *p)
 {
-	switch (req) {
-	case PRU_DETACH:
-		return (pfkeyv2_detach(so, p));
-	default:
-		return (raw_usrreq(so, req, mbuf, nam, control, p));
-	}
+	return (raw_usrreq(so, req, mbuf, nam, control, p));
 }
 
 int
@@ -2324,24 +2321,8 @@ ret:
 }
 
 int
-pfkeyv2_ipo_walk(u_int rdomain, int (*walker)(struct ipsec_policy *, void *),
-    void *arg)
-{
-	int rval = 0;
-	struct ipsec_policy *ipo;
-
-	NET_ASSERT_LOCKED();
-
-	TAILQ_FOREACH(ipo, &ipsec_policy_head, ipo_list) {
-		if (ipo->ipo_rdomain != rdomain)
-			continue;
-		rval = walker(ipo, (void *)arg);
-	}
-	return (rval);
-}
-
-int
-pfkeyv2_sysctl_policydumper(struct ipsec_policy *ipo, void *arg)
+pfkeyv2_sysctl_policydumper(struct ipsec_policy *ipo, void *arg,
+    unsigned int tableid)
 {
 	struct pfkeyv2_sysctl_walk *w = (struct pfkeyv2_sysctl_walk *)arg;
 	void *buffer = 0;
@@ -2433,7 +2414,7 @@ pfkeyv2_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 
 	case NET_KEY_SPD_DUMP:
 		NET_LOCK();
-		error = pfkeyv2_ipo_walk(rdomain,
+		error = spd_table_walk(rdomain,
 		    pfkeyv2_sysctl_policydumper, &w);
 		NET_UNLOCK();
 		if (oldp)

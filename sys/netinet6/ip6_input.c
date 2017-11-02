@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_input.c,v 1.204 2017/10/18 13:16:35 bluhm Exp $	*/
+/*	$OpenBSD: ip6_input.c,v 1.207 2017/11/01 06:35:38 mpi Exp $	*/
 /*	$KAME: ip6_input.c,v 1.188 2001/03/29 05:34:31 itojun Exp $	*/
 
 /*
@@ -521,7 +521,6 @@ ip6_input_if(struct mbuf **mp, int *offp, int nxt, int af, struct ifnet *ifp)
 	if (ipsec_in_use) {
 		int rv;
 
-		KERNEL_ASSERT_LOCKED();
 		rv = ipsec_forward_check(m, *offp, AF_INET6);
 		if (rv != 0) {
 			ip6stat_inc(ip6s_cantforward);
@@ -1455,31 +1454,12 @@ ip6_send_dispatch(void *xmq)
 	struct mbuf_queue *mq = xmq;
 	struct mbuf *m;
 	struct mbuf_list ml;
-#ifdef IPSEC
-	int locked = 0;
-#endif /* IPSEC */
 
 	mq_delist(mq, &ml);
 	if (ml_empty(&ml))
 		return;
 
 	NET_LOCK();
-
-#ifdef IPSEC
-	/*
-	 * IPsec is not ready to run without KERNEL_LOCK().  So all
-	 * the traffic on your machine is punished if you have IPsec
-	 * enabled.
-	 */
-	extern int ipsec_in_use;
-	if (ipsec_in_use) {
-		NET_UNLOCK();
-		KERNEL_LOCK();
-		NET_LOCK();
-		locked = 1;
-	}
-#endif /* IPSEC */
-
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		/*
 		 * To avoid a "too big" situation at an intermediate router and
@@ -1491,16 +1471,11 @@ ip6_send_dispatch(void *xmq)
 		ip6_output(m, NULL, NULL, IPV6_MINMTU, NULL, NULL);
 	}
 	NET_UNLOCK();
-
-#ifdef IPSEC
-	if (locked)
-		KERNEL_UNLOCK();
-#endif /* IPSEC */
 }
 
 void
 ip6_send(struct mbuf *m)
 {
 	mq_enqueue(&ip6send_mq, m);
-	task_add(softnettq, &ip6send_task);
+	task_add(net_tq(0), &ip6send_task);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: elf.c,v 1.4 2017/10/05 02:59:39 jsg Exp $ */
+/*	$OpenBSD: elf.c,v 1.6 2017/11/01 15:45:28 mpi Exp $ */
 
 /*
  * Copyright (c) 2016 Martin Pieuchot <mpi@openbsd.org>
@@ -17,11 +17,11 @@
  */
 
 #include <sys/types.h>
-#include <sys/exec_elf.h>
 
 #include <machine/reloc.h>
 
 #include <assert.h>
+#include <elf.h>
 #include <err.h>
 #include <string.h>
 
@@ -172,8 +172,10 @@ elf_getsection(char *p, size_t filesize, const char *sname, const char *shstab,
 			sidx = i;
 			sdata = p + sh->sh_offset;
 			ssz = sh->sh_size;
+#ifdef needreloc
 			elf_reloc_apply(p, filesize, shstab, shstabsz, sidx,
 			    sdata, ssz);
+#endif
 			break;
 		}
 	}

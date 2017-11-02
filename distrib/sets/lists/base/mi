@@ -619,8 +619,8 @@
 ./usr/games
 ./usr/include
 ./usr/lib
-./usr/lib/libc.so.90.0
-./usr/lib/libc.so.90.0.a
+./usr/lib/libc.so.91.1
+./usr/lib/libc.so.91.1.a
 ./usr/lib/libcrypto.so.42.0
 ./usr/lib/libcrypto.so.42.0.a
 ./usr/lib/libcurses.so.14.0
@@ -642,7 +642,7 @@
 ./usr/lib/libpanelw.so.6.0
 ./usr/lib/libpcap.so.8.3
 ./usr/lib/libperl.so.18.1
-./usr/lib/libpthread.so.24.0
+./usr/lib/libpthread.so.25.0
 ./usr/lib/libradius.so.1.0
 ./usr/lib/libreadline.so.4.0
 ./usr/lib/librpcsvc.so.2.0
@@ -1473,9 +1473,11 @@
 ./usr/libdata/perl5/pod/perl5221delta.pod
 ./usr/libdata/perl5/pod/perl5222delta.pod
 ./usr/libdata/perl5/pod/perl5223delta.pod
+./usr/libdata/perl5/pod/perl5224delta.pod
 ./usr/libdata/perl5/pod/perl5240delta.pod
 ./usr/libdata/perl5/pod/perl5241delta.pod
 ./usr/libdata/perl5/pod/perl5242delta.pod
+./usr/libdata/perl5/pod/perl5243delta.pod
 ./usr/libdata/perl5/pod/perl561delta.pod
 ./usr/libdata/perl5/pod/perl56delta.pod
 ./usr/libdata/perl5/pod/perl581delta.pod
@@ -5869,7 +5871,6 @@
 ./usr/share/zoneinfo/Canada
 ./usr/share/zoneinfo/Canada/Atlantic
 ./usr/share/zoneinfo/Canada/Central
-./usr/share/zoneinfo/Canada/East-Saskatchewan
 ./usr/share/zoneinfo/Canada/Eastern
 ./usr/share/zoneinfo/Canada/Mountain
 ./usr/share/zoneinfo/Canada/Newfoundland
@@ -6484,7 +6485,6 @@
 ./usr/share/zoneinfo/posix/Canada
 ./usr/share/zoneinfo/posix/Canada/Atlantic
 ./usr/share/zoneinfo/posix/Canada/Central
-./usr/share/zoneinfo/posix/Canada/East-Saskatchewan
 ./usr/share/zoneinfo/posix/Canada/Eastern
 ./usr/share/zoneinfo/posix/Canada/Mountain
 ./usr/share/zoneinfo/posix/Canada/Newfoundland
@@ -7100,7 +7100,6 @@
 ./usr/share/zoneinfo/right/Canada
 ./usr/share/zoneinfo/right/Canada/Atlantic
 ./usr/share/zoneinfo/right/Canada/Central
-./usr/share/zoneinfo/right/Canada/East-Saskatchewan
 ./usr/share/zoneinfo/right/Canada/Eastern
 ./usr/share/zoneinfo/right/Canada/Mountain
 ./usr/share/zoneinfo/right/Canada/Newfoundland

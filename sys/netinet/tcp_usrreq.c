@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_usrreq.c,v 1.156 2017/10/09 08:35:38 mpi Exp $	*/
+/*	$OpenBSD: tcp_usrreq.c,v 1.159 2017/11/02 14:01:18 florian Exp $	*/
 /*	$NetBSD: tcp_usrreq.c,v 1.20 1996/02/13 23:44:16 christos Exp $	*/
 
 /*
@@ -182,17 +182,6 @@ tcp_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 	switch (req) {
 
 	/*
-	 * PRU_DETACH detaches the TCP protocol from the socket.
-	 * If the protocol state is non-embryonic, then can't
-	 * do this directly: have to initiate a PRU_DISCONNECT,
-	 * which may finish later; embryonic TCB's can just
-	 * be discarded here.
-	 */
-	case PRU_DETACH:
-		tp = tcp_disconnect(tp);
-		break;
-
-	/*
 	 * Give the socket an address.
 	 */
 	case PRU_BIND:
@@ -268,14 +257,7 @@ tcp_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 		TCP_TIMER_ARM(tp, TCPT_KEEP, tcptv_keep_init);
 		tcp_set_iss_tsm(tp);
 		tcp_sendseqinit(tp);
-#if defined(TCP_SACK)
 		tp->snd_last = tp->snd_una;
-#endif
-#if defined(TCP_SACK) && defined(TCP_FACK)
-		tp->snd_fack = tp->snd_una;
-		tp->retran_data = 0;
-		tp->snd_awnd = 0;
-#endif
 		error = tcp_output(tp);
 		break;
 
@@ -496,7 +478,6 @@ tcp_ctloutput(int op, struct socket *so, int level, int optname,
 				error = EINVAL;
 			break;
 
-#ifdef TCP_SACK
 		case TCP_SACK_ENABLE:
 			if (m == NULL || m->m_len < sizeof (int)) {
 				error = EINVAL;
@@ -518,7 +499,6 @@ tcp_ctloutput(int op, struct socket *so, int level, int optname,
 			else
 				tp->sack_enable = 0;
 			break;
-#endif
 #ifdef TCP_SIGNATURE
 		case TCP_MD5SIG:
 			if (m == NULL || m->m_len < sizeof (int)) {
@@ -533,9 +513,7 @@ tcp_ctloutput(int op, struct socket *so, int level, int optname,
 
 			if (*mtod(m, int *)) {
 				tp->t_flags |= TF_SIGNATURE;
-#ifdef TCP_SACK
 				tp->sack_enable = 0;
-#endif /* TCP_SACK */
 			} else
 				tp->t_flags &= ~TF_SIGNATURE;
 			break;
@@ -559,11 +537,9 @@ tcp_ctloutput(int op, struct socket *so, int level, int optname,
 		case TCP_MAXSEG:
 			*mtod(m, int *) = tp->t_maxseg;
 			break;
-#ifdef TCP_SACK
 		case TCP_SACK_ENABLE:
 			*mtod(m, int *) = tp->sack_enable;
 			break;
-#endif
 #ifdef TCP_SIGNATURE
 		case TCP_MD5SIG:
 			*mtod(m, int *) = tp->t_flags & TF_SIGNATURE;
@@ -629,6 +605,54 @@ tcp_attach(struct socket *so, int proto)
 	if (tp && (so->so_options & SO_DEBUG))
 		tcp_trace(TA_USER, 0, tp, (caddr_t)0, 0 /* XXX */, 0);
 	return (0);
+}
+
+int
+tcp_detach(struct socket *so)
+{
+	struct inpcb *inp;
+	struct tcpcb *tp = NULL;
+	int error = 0;
+	short ostate;
+
+	soassertlocked(so);
+
+	inp = sotoinpcb(so);
+	/*
+	 * When a TCP is attached to a socket, then there will be
+	 * a (struct inpcb) pointed at by the socket, and this
+	 * structure will point at a subsidiary (struct tcpcb).
+	 */
+	if (inp == NULL) {
+		error = so->so_error;
+		if (error == 0)
+			error = EINVAL;
+
+		return (error);
+	}
+	if (inp) {
+		tp = intotcpcb(inp);
+		/* tp might get 0 when using socket splicing */
+		if (tp == NULL) {
+			return (0);
+		}
+#ifdef KPROF
+		tcp_acounts[tp->t_state][req]++;
+#endif
+		ostate = tp->t_state;
+	} else
+		ostate = 0;
+
+	/*
+	 * Detache the TCP protocol from the socket.
+	 * If the protocol state is non-embryonic, then can't
+	 * do this directly: have to initiate a PRU_DISCONNECT,
+	 * which may finish later; embryonic TCB's can just
+	 * be discarded here.
+	 */
+	tcp_disconnect(tp);
+
+	return (error);
 }
 
 /*
@@ -960,14 +984,13 @@ tcp_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return (ENOTDIR);
 
 	switch (name[0]) {
-#ifdef TCP_SACK
 	case TCPCTL_SACK:
 		NET_LOCK();
 		error = sysctl_int(oldp, oldlenp, newp, newlen,
 		    &tcp_do_sack);
 		NET_UNLOCK();
 		return (error);
-#endif
+
 	case TCPCTL_SLOWHZ:
 		return (sysctl_rdint(oldp, oldlenp, newp, PR_SLOWHZ));
 
@@ -1025,7 +1048,7 @@ tcp_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		}
 		NET_UNLOCK();
 		return (error);
-#ifdef TCP_SACK
+
 	case TCPCTL_SACKHOLE_LIMIT:
 		NET_LOCK();
 		nval = tcp_sackhole_limit;
@@ -1037,7 +1060,6 @@ tcp_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		}
 		NET_UNLOCK();
 		return (error);
-#endif
 
 	case TCPCTL_STATS:
 		return (tcp_sysctl_tcpstat(oldp, oldlenp, newp));

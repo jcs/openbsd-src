@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.807 2017/10/16 19:30:53 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.809 2017/11/02 18:27:35 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -2226,7 +2226,7 @@ u_int		 layout_set_previous(struct window *);
 u_int	 mode_tree_count_tagged(struct mode_tree_data *);
 void	*mode_tree_get_current(struct mode_tree_data *);
 void	 mode_tree_each_tagged(struct mode_tree_data *, void (*)(void *, void *,
-	     key_code), key_code, int);
+	     struct client *, key_code), struct client *, key_code, int);
 void	 mode_tree_up(struct mode_tree_data *, int);
 void	 mode_tree_down(struct mode_tree_data *, int);
 struct mode_tree_data *mode_tree_start(struct window_pane *, struct args *,
@@ -2335,6 +2335,7 @@ struct session_group *session_group_new(const char *);
 void		 session_group_add(struct session_group *, struct session *);
 void		 session_group_synchronize_to(struct session *);
 void		 session_group_synchronize_from(struct session *);
+u_int		 session_group_count(struct session_group *);
 void		 session_renumber_windows(struct session *);
 
 /* utf8.c */

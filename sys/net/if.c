@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.519 2017/10/16 13:40:58 mpi Exp $	*/
+/*	$OpenBSD: if.c,v 1.521 2017/10/31 22:05:12 sashan Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -224,7 +224,9 @@ int	net_livelocked(void);
 int	ifq_congestion;
 
 int		 netisr;
-struct taskq	*softnettq;
+
+#define	SOFTNET_TASKS	1
+struct taskq	*softnettq[SOFTNET_TASKS];
 
 struct task if_input_task_locked = TASK_INITIALIZER(if_netisr, NULL);
 
@@ -240,6 +242,8 @@ struct rwlock netlock = RWLOCK_INITIALIZER("netlock");
 void
 ifinit(void)
 {
+	unsigned int	i;
+
 	/*
 	 * most machines boot with 4 or 5 interfaces, so size the initial map
 	 * to accomodate this
@@ -248,9 +252,11 @@ ifinit(void)
 
 	timeout_set(&net_tick_to, net_tick, &net_tick_to);
 
-	softnettq = taskq_create("softnet", 1, IPL_NET, TASKQ_MPSAFE);
-	if (softnettq == NULL)
-		panic("unable to create softnet taskq");
+	for (i = 0; i < SOFTNET_TASKS; i++) {
+		softnettq[i] = taskq_create("softnet", 1, IPL_NET, TASKQ_MPSAFE);
+		if (softnettq[i] == NULL)
+			panic("unable to create softnet taskq");
+	}
 
 	net_tick(&net_tick_to);
 }
@@ -725,7 +731,7 @@ if_input(struct ifnet *ifp, struct mbuf_list *ml)
 #endif
 
 	if (mq_enlist(&ifp->if_inputqueue, ml) == 0)
-		task_add(softnettq, ifp->if_inputtask);
+		task_add(net_tq(ifp->if_index), ifp->if_inputtask);
 }
 
 int
@@ -873,9 +879,6 @@ if_input_process(void *xifidx)
 	struct ifih *ifih;
 	struct srp_ref sr;
 	int s;
-#ifdef IPSEC
-	int locked = 0;
-#endif /* IPSEC */
 
 	ifp = if_get(ifidx);
 	if (ifp == NULL)
@@ -902,22 +905,6 @@ if_input_process(void *xifidx)
 	 */
 	NET_LOCK();
 	s = splnet();
-
-#ifdef IPSEC
-	/*
-	 * IPsec is not ready to run without KERNEL_LOCK().  So all
-	 * the traffic on your machine is punished if you have IPsec
-	 * enabled.
-	 */
-	extern int ipsec_in_use;
-	if (ipsec_in_use) {
-		NET_UNLOCK();
-		KERNEL_LOCK();
-		NET_LOCK();
-		locked = 1;
-	}
-#endif /* IPSEC */
-
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		/*
 		 * Pass this mbuf to all input handlers of its
@@ -934,11 +921,6 @@ if_input_process(void *xifidx)
 	}
 	splx(s);
 	NET_UNLOCK();
-
-#ifdef IPSEC
-	if (locked)
-		KERNEL_UNLOCK();
-#endif /* IPSEC */
 out:
 	if_put(ifp);
 }
@@ -1049,15 +1031,15 @@ if_detach(struct ifnet *ifp)
 	ifp->if_watchdog = NULL;
 
 	/* Remove the input task */
-	task_del(softnettq, ifp->if_inputtask);
+	task_del(net_tq(ifp->if_index), ifp->if_inputtask);
 	mq_purge(&ifp->if_inputqueue);
 
 	/* Remove the watchdog timeout & task */
 	timeout_del(ifp->if_slowtimo);
-	task_del(softnettq, ifp->if_watchdogtask);
+	task_del(net_tq(ifp->if_index), ifp->if_watchdogtask);
 
 	/* Remove the link state task */
-	task_del(softnettq, ifp->if_linkstatetask);
+	task_del(net_tq(ifp->if_index), ifp->if_linkstatetask);
 
 #if NBPFILTER > 0
 	bpfdetach(ifp);
@@ -1607,7 +1589,7 @@ if_linkstate(struct ifnet *ifp)
 void
 if_link_state_change(struct ifnet *ifp)
 {
-	task_add(softnettq, ifp->if_linkstatetask);
+	task_add(net_tq(ifp->if_index), ifp->if_linkstatetask);
 }
 
 /*
@@ -1623,7 +1605,7 @@ if_slowtimo(void *arg)
 
 	if (ifp->if_watchdog) {
 		if (ifp->if_timer > 0 && --ifp->if_timer == 0)
-			task_add(softnettq, ifp->if_watchdogtask);
+			task_add(net_tq(ifp->if_index), ifp->if_watchdogtask);
 		timeout_add(ifp->if_slowtimo, hz / IFNET_SLOWHZ);
 	}
 	splx(s);
@@ -2904,4 +2886,14 @@ __dead void
 unhandled_af(int af)
 {
 	panic("unhandled af %d", af);
+}
+
+struct taskq *
+net_tq(unsigned int ifindex)
+{
+	struct taskq *t = NULL;
+
+	t = softnettq[ifindex % SOFTNET_TASKS];
+
+	return (t);
 }
