@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtsock.c,v 1.252 2017/11/02 14:01:18 florian Exp $	*/
+/*	$OpenBSD: rtsock.c,v 1.254 2017/11/03 14:10:33 florian Exp $	*/
 /*	$NetBSD: rtsock.c,v 1.18 1996/03/29 00:32:10 cgd Exp $	*/
 
 /*
@@ -224,12 +224,16 @@ route_attach(struct socket *so, int proto)
 
 	if (curproc == NULL)
 		error = EACCES;
-	else
-		error = raw_attach(so, proto);
+	else 
+		error = soreserve(so, RAWSNDQ, RAWRCVQ);
 	if (error) {
 		free(rop, M_PCB, sizeof(struct routecb));
 		return (error);
 	}
+	rp->rcb_socket = so;
+	rp->rcb_proto.sp_family = so->so_proto->pr_domain->dom_family;
+	rp->rcb_proto.sp_protocol = proto;
+
 	rop->rtableid = curproc->p_p->ps_rtableid;
 	switch (rp->rcb_proto.sp_protocol) {
 	case AF_INET:
@@ -279,7 +283,12 @@ route_detach(struct socket *so)
 #endif
 	route_cb.any_count--;
 	LIST_REMOVE(rop, rcb_list);
-	return (raw_detach(so));
+
+	so->so_pcb = NULL;
+	sofree(so);
+	free(&rop->rcb, M_PCB, 0);
+
+	return (0);
 }
 
 int

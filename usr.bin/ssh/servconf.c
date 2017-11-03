@@ -1,5 +1,5 @@
 
-/* $OpenBSD: servconf.c,v 1.318 2017/10/25 02:10:39 djm Exp $ */
+/* $OpenBSD: servconf.c,v 1.320 2017/11/03 05:18:44 djm Exp $ */
 /*
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
  *                    All rights reserved
@@ -870,6 +870,13 @@ out:
 	return result;
 }
 
+static void
+match_test_missing_fatal(const char *criteria, const char *attrib)
+{
+	fatal("'Match %s' in configuration but '%s' not in connection "
+	    "test specification.", criteria, attrib);
+}
+
 /*
  * All of the attributes on a single Match line are ANDed together, so we need
  * to check every attribute and set the result to zero if any attribute does
@@ -907,20 +914,24 @@ match_cfg_line(char **condition, int line, struct connection_info *ci)
 			return -1;
 		}
 		if (strcasecmp(attrib, "user") == 0) {
-			if (ci == NULL || ci->user == NULL) {
+			if (ci == NULL) {
 				result = 0;
 				continue;
 			}
+			if (ci->user == NULL)
+				match_test_missing_fatal("User", "user");
 			if (match_pattern_list(ci->user, arg, 0) != 1)
 				result = 0;
 			else
 				debug("user %.100s matched 'User %.100s' at "
 				    "line %d", ci->user, arg, line);
 		} else if (strcasecmp(attrib, "group") == 0) {
-			if (ci == NULL || ci->user == NULL) {
+			if (ci == NULL) {
 				result = 0;
 				continue;
 			}
+			if (ci->user == NULL)
+				match_test_missing_fatal("Group", "user");
 			switch (match_cfg_line_group(arg, line, ci->user)) {
 			case -1:
 				return -1;
@@ -928,20 +939,24 @@ match_cfg_line(char **condition, int line, struct connection_info *ci)
 				result = 0;
 			}
 		} else if (strcasecmp(attrib, "host") == 0) {
-			if (ci == NULL || ci->host == NULL) {
+			if (ci == NULL) {
 				result = 0;
 				continue;
 			}
+			if (ci->host == NULL)
+				match_test_missing_fatal("Host", "host");
 			if (match_hostname(ci->host, arg) != 1)
 				result = 0;
 			else
 				debug("connection from %.100s matched 'Host "
 				    "%.100s' at line %d", ci->host, arg, line);
 		} else if (strcasecmp(attrib, "address") == 0) {
-			if (ci == NULL || ci->address == NULL) {
+			if (ci == NULL) {
 				result = 0;
 				continue;
 			}
+			if (ci->address == NULL)
+				match_test_missing_fatal("Address", "addr");
 			switch (addr_match_list(ci->address, arg)) {
 			case 1:
 				debug("connection from %.100s matched 'Address "
@@ -955,10 +970,13 @@ match_cfg_line(char **condition, int line, struct connection_info *ci)
 				return -1;
 			}
 		} else if (strcasecmp(attrib, "localaddress") == 0){
-			if (ci == NULL || ci->laddress == NULL) {
+			if (ci == NULL) {
 				result = 0;
 				continue;
 			}
+			if (ci->laddress == NULL)
+				match_test_missing_fatal("LocalAddress",
+				    "laddr");
 			switch (addr_match_list(ci->laddress, arg)) {
 			case 1:
 				debug("connection from %.100s matched "
@@ -978,10 +996,12 @@ match_cfg_line(char **condition, int line, struct connection_info *ci)
 				    arg);
 				return -1;
 			}
-			if (ci == NULL || ci->lport == 0) {
+			if (ci == NULL) {
 				result = 0;
 				continue;
 			}
+			if (ci->lport == 0)
+				match_test_missing_fatal("LocalPort", "lport");
 			/* TODO support port lists */
 			if (port == ci->lport)
 				debug("connection from %.100s matched "
@@ -1020,6 +1040,11 @@ match_cfg_line(char **condition, int line, struct connection_info *ci)
 struct multistate {
 	char *key;
 	int value;
+};
+static const struct multistate multistate_flag[] = {
+	{ "yes",			1 },
+	{ "no",				0 },
+	{ NULL, -1 }
 };
 static const struct multistate multistate_addressfamily[] = {
 	{ "inet",			AF_INET },
@@ -1255,21 +1280,8 @@ process_server_config_line(ServerOptions *options, char *line,
 	case sIgnoreRhosts:
 		intptr = &options->ignore_rhosts;
  parse_flag:
-		arg = strdelim(&cp);
-		if (!arg || *arg == '\0')
-			fatal("%s line %d: missing yes/no argument.",
-			    filename, linenum);
-		value = 0;	/* silence compiler */
-		if (strcmp(arg, "yes") == 0)
-			value = 1;
-		else if (strcmp(arg, "no") == 0)
-			value = 0;
-		else
-			fatal("%s line %d: Bad yes/no argument: %s",
-				filename, linenum, arg);
-		if (*activep && *intptr == -1)
-			*intptr = value;
-		break;
+		multistate_ptr = multistate_flag;
+		goto parse_multistate;
 
 	case sIgnoreUserKnownHosts:
 		intptr = &options->ignore_user_known_hosts;
@@ -2051,19 +2063,6 @@ int parse_server_match_testspec(struct connection_info *ci, char *spec)
 		}
 	}
 	return 0;
-}
-
-/*
- * returns 1 for a complete spec, 0 for partial spec and -1 for an
- * empty spec.
- */
-int server_match_spec_complete(struct connection_info *ci)
-{
-	if (ci->user && ci->host && ci->address)
-		return 1;	/* complete */
-	if (!ci->user && !ci->host && !ci->address)
-		return -1;	/* empty */
-	return 0;	/* partial */
 }
 
 /*
