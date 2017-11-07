@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.521 2017/10/31 22:05:12 sashan Exp $	*/
+/*	$OpenBSD: if.c,v 1.523 2017/11/04 16:58:46 tb Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -137,6 +137,8 @@ void	if_slowtimo(void *);
 
 void	if_detached_qstart(struct ifqueue *);
 int	if_detached_ioctl(struct ifnet *, u_long, caddr_t);
+
+int	ifioctl_get(u_long, caddr_t);
 
 int	if_getgroup(caddr_t, struct ifnet *);
 int	if_getgroupmembers(caddr_t);
@@ -1804,11 +1806,8 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	int s, error = 0, oif_xflags;
 	size_t bytesdone;
 	unsigned short oif_flags;
-	const char *label;
 
 	switch (cmd) {
-	case SIOCGIFCONF:
-		return (ifconf(cmd, data));
 	case SIOCIFCREATE:
 	case SIOCIFDESTROY:
 		if ((error = suser(p, 0)) != 0)
@@ -1816,16 +1815,27 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		return ((cmd == SIOCIFCREATE) ?
 		    if_clone_create(ifr->ifr_name, 0) :
 		    if_clone_destroy(ifr->ifr_name));
-	case SIOCIFGCLONERS:
-		return (if_clone_list((struct if_clonereq *)data));
-	case SIOCGIFGMEMB:
-		return (if_getgroupmembers(data));
-	case SIOCGIFGATTR:
-		return (if_getgroupattribs(data));
 	case SIOCSIFGATTR:
 		if ((error = suser(p, 0)) != 0)
 			return (error);
 		return (if_setgroupattribs(data));
+	case SIOCGIFCONF:
+	case SIOCIFGCLONERS:
+	case SIOCGIFGMEMB:
+	case SIOCGIFGATTR:
+	case SIOCGIFFLAGS:
+	case SIOCGIFXFLAGS:
+	case SIOCGIFMETRIC:
+	case SIOCGIFMTU:
+	case SIOCGIFHARDMTU:
+	case SIOCGIFDATA:
+	case SIOCGIFDESCR:
+	case SIOCGIFRTLABEL:
+	case SIOCGIFPRIORITY:
+	case SIOCGIFRDOMAIN:
+	case SIOCGIFGROUP:
+	case SIOCGIFLLPRIO:
+		return (ifioctl_get(cmd, data));
 	}
 
 	ifp = ifunit(ifr->ifr_name);
@@ -1857,35 +1867,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			error = EAFNOSUPPORT;
 		}
 		break;
-
-	case SIOCGIFFLAGS:
-		ifr->ifr_flags = ifp->if_flags;
-		if (ifq_is_oactive(&ifp->if_snd))
-			ifr->ifr_flags |= IFF_OACTIVE;
-		break;
-
-	case SIOCGIFXFLAGS:
-		ifr->ifr_flags = ifp->if_xflags & ~(IFXF_MPSAFE|IFXF_CLONED);
-		break;
-
-	case SIOCGIFMETRIC:
-		ifr->ifr_metric = ifp->if_metric;
-		break;
-
-	case SIOCGIFMTU:
-		ifr->ifr_mtu = ifp->if_mtu;
-		break;
-
-	case SIOCGIFHARDMTU:
-		ifr->ifr_hardmtu = ifp->if_hardmtu;
-		break;
-
-	case SIOCGIFDATA: {
-		struct if_data ifdata;
-		if_getdata(ifp, &ifdata);
-		error = copyout(&ifdata, ifr->ifr_data, sizeof(ifdata));
-		break;
-	}
 
 	case SIOCSIFFLAGS:
 		if ((error = suser(p, 0)) != 0)
@@ -1985,36 +1966,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			rtm_ifchg(ifp);
 		break;
 
-	case SIOCDIFPHYADDR:
-	case SIOCSLIFPHYADDR:
-	case SIOCSLIFPHYRTABLE:
-	case SIOCSLIFPHYTTL:
-	case SIOCADDMULTI:
-	case SIOCDELMULTI:
-	case SIOCSIFMEDIA:
-	case SIOCSVNETID:
-	case SIOCSIFPAIR:
-	case SIOCSIFPARENT:
-	case SIOCDIFPARENT:
-		if ((error = suser(p, 0)) != 0)
-			break;
-		/* FALLTHROUGH */
-	case SIOCGLIFPHYADDR:
-	case SIOCGLIFPHYRTABLE:
-	case SIOCGLIFPHYTTL:
-	case SIOCGIFMEDIA:
-	case SIOCGVNETID:
-	case SIOCGIFPAIR:
-	case SIOCGIFPARENT:
-		error = (*ifp->if_ioctl)(ifp, cmd, data);
-		break;
-
-	case SIOCGIFDESCR:
-		strlcpy(ifdescrbuf, ifp->if_description, IFDESCRSIZE);
-		error = copyoutstr(ifdescrbuf, ifr->ifr_data, IFDESCRSIZE,
-		    &bytesdone);
-		break;
-
 	case SIOCSIFDESCR:
 		if ((error = suser(p, 0)) != 0)
 			break;
@@ -2024,16 +1975,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			(void)memset(ifp->if_description, 0, IFDESCRSIZE);
 			strlcpy(ifp->if_description, ifdescrbuf, IFDESCRSIZE);
 		}
-		break;
-
-	case SIOCGIFRTLABEL:
-		if (ifp->if_rtlabelid &&
-		    (label = rtlabel_id2name(ifp->if_rtlabelid)) != NULL) {
-			strlcpy(ifrtlabelbuf, label, RTLABEL_LEN);
-			error = copyoutstr(ifrtlabelbuf, ifr->ifr_data,
-			    RTLABEL_LEN, &bytesdone);
-		} else
-			error = ENOENT;
 		break;
 
 	case SIOCSIFRTLABEL:
@@ -2047,10 +1988,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		}
 		break;
 
-	case SIOCGIFPRIORITY:
-		ifr->ifr_metric = ifp->if_priority;
-		break;
-
 	case SIOCSIFPRIORITY:
 		if ((error = suser(p, 0)) != 0)
 			break;
@@ -2059,10 +1996,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			break;
 		}
 		ifp->if_priority = ifr->ifr_metric;
-		break;
-
-	case SIOCGIFRDOMAIN:
-		ifr->ifr_rdomainid = ifp->if_rdomain;
 		break;
 
 	case SIOCSIFRDOMAIN:
@@ -2079,10 +2012,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		error = (*ifp->if_ioctl)(ifp, cmd, data);
 		if (error == ENOTTY)
 			error = 0;
-		break;
-
-	case SIOCGIFGROUP:
-		error = if_getgroup(data, ifp);
 		break;
 
 	case SIOCDIFGROUP:
@@ -2124,10 +2053,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			ifnewlladdr(ifp);
 		break;
 
-	case SIOCGIFLLPRIO:
-		ifr->ifr_llprio = ifp->if_llprio;
-		break;
-
 	case SIOCSIFLLPRIO:
 		if ((error = suser(p, 0)))
 			break;
@@ -2138,10 +2063,26 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		ifp->if_llprio = ifr->ifr_llprio;
 		break;
 
+	case SIOCDIFPHYADDR:
+	case SIOCSLIFPHYADDR:
+	case SIOCSLIFPHYRTABLE:
+	case SIOCSLIFPHYTTL:
+	case SIOCADDMULTI:
+	case SIOCDELMULTI:
+	case SIOCSIFMEDIA:
+	case SIOCSVNETID:
+	case SIOCSIFPAIR:
+	case SIOCSIFPARENT:
+	case SIOCDIFPARENT:
+		if ((error = suser(p, 0)) != 0)
+			break;
+		/* FALLTHROUGH */
 	default:
 		error = ((*so->so_proto->pr_usrreq)(so, PRU_CONTROL,
 			(struct mbuf *) cmd, (struct mbuf *) data,
 			(struct mbuf *) ifp, p));
+		if (error == EOPNOTSUPP)
+			error = ((*ifp->if_ioctl)(ifp, cmd, data));
 		break;
 	}
 
@@ -2150,6 +2091,101 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 
 	if (((oif_flags ^ ifp->if_flags) & IFF_UP) != 0)
 		getmicrotime(&ifp->if_lastchange);
+
+	return (error);
+}
+
+int
+ifioctl_get(u_long cmd, caddr_t data)
+{
+	struct ifnet *ifp;
+	struct ifreq *ifr = (struct ifreq *)data;
+	char ifdescrbuf[IFDESCRSIZE];
+	char ifrtlabelbuf[RTLABEL_LEN];
+	int error = 0;
+	size_t bytesdone;
+	const char *label;
+
+	switch(cmd) {
+	case SIOCGIFCONF:
+		return (ifconf(cmd, data));
+	case SIOCIFGCLONERS:
+		return (if_clone_list((struct if_clonereq *)data));
+	case SIOCGIFGMEMB:
+		return (if_getgroupmembers(data));
+	case SIOCGIFGATTR:
+		return (if_getgroupattribs(data));
+	}
+
+	ifp = ifunit(ifr->ifr_name);
+	if (ifp == NULL)
+		return (ENXIO);
+
+	switch(cmd) {
+	case SIOCGIFFLAGS:
+		ifr->ifr_flags = ifp->if_flags;
+		if (ifq_is_oactive(&ifp->if_snd))
+			ifr->ifr_flags |= IFF_OACTIVE;
+		break;
+
+	case SIOCGIFXFLAGS:
+		ifr->ifr_flags = ifp->if_xflags & ~(IFXF_MPSAFE|IFXF_CLONED);
+		break;
+
+	case SIOCGIFMETRIC:
+		ifr->ifr_metric = ifp->if_metric;
+		break;
+
+	case SIOCGIFMTU:
+		ifr->ifr_mtu = ifp->if_mtu;
+		break;
+
+	case SIOCGIFHARDMTU:
+		ifr->ifr_hardmtu = ifp->if_hardmtu;
+		break;
+
+	case SIOCGIFDATA: {
+		struct if_data ifdata;
+		if_getdata(ifp, &ifdata);
+		error = copyout(&ifdata, ifr->ifr_data, sizeof(ifdata));
+		break;
+	}
+
+	case SIOCGIFDESCR:
+		strlcpy(ifdescrbuf, ifp->if_description, IFDESCRSIZE);
+		error = copyoutstr(ifdescrbuf, ifr->ifr_data, IFDESCRSIZE,
+		    &bytesdone);
+		break;
+
+	case SIOCGIFRTLABEL:
+		if (ifp->if_rtlabelid &&
+		    (label = rtlabel_id2name(ifp->if_rtlabelid)) != NULL) {
+			strlcpy(ifrtlabelbuf, label, RTLABEL_LEN);
+			error = copyoutstr(ifrtlabelbuf, ifr->ifr_data,
+			    RTLABEL_LEN, &bytesdone);
+		} else
+			error = ENOENT;
+		break;
+
+	case SIOCGIFPRIORITY:
+		ifr->ifr_metric = ifp->if_priority;
+		break;
+
+	case SIOCGIFRDOMAIN:
+		ifr->ifr_rdomainid = ifp->if_rdomain;
+		break;
+
+	case SIOCGIFGROUP:
+		error = if_getgroup(data, ifp);
+		break;
+
+	case SIOCGIFLLPRIO:
+		ifr->ifr_llprio = ifp->if_llprio;
+		break;
+
+	default:
+		panic("invalid ioctl %lu", cmd);
+	}
 
 	return (error);
 }

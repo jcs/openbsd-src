@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.518 2017/10/30 16:44:18 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.520 2017/11/06 13:27:19 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -886,6 +886,9 @@ dhcpoffer(struct interface_info *ifi, struct option_data *options, char *info)
 		if (ifi->offer == NULL) {
 			ifi->offer = lease;
 		} else if (lease->address.s_addr ==
+		    ifi->offer->address.s_addr) {
+			/* Decline duplicate offers. */
+		} else if (lease->address.s_addr ==
 		    ifi->requested_address.s_addr) {
 			free_client_lease(ifi->offer);
 			ifi->offer = lease;
@@ -1268,6 +1271,8 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 		memcpy(lease->filename, packet->file, DHCP_FILE_LEN);
 		lease->filename[DHCP_FILE_LEN] = '\0';
 	}
+
+	time(&lease->epoch);
 	return lease;
 
 decline:
@@ -2244,6 +2249,8 @@ apply_defaults(struct client_lease *lease)
 	newlease = clone_lease(lease);
 	if (newlease == NULL)
 		fatalx("unable to clone lease");
+
+	newlease->epoch = lease->epoch;
 
 	if (config->filename != NULL) {
 		free(newlease->filename);
