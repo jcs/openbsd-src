@@ -1,4 +1,4 @@
-/* $OpenBSD: dwiic.c,v 1.22 2016/10/25 06:48:58 pirofti Exp $ */
+/* $OpenBSD: dwiic.c,v 1.1 2017/11/16 18:12:27 jcs Exp $ */
 /*
  * Synopsys DesignWare I2C controller
  *

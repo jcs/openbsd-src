@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gif.c,v 1.101 2017/10/25 09:24:09 mpi Exp $	*/
+/*	$OpenBSD: if_gif.c,v 1.104 2017/11/17 20:38:33 jca Exp $	*/
 /*	$KAME: if_gif.c,v 1.43 2001/02/20 08:51:07 itojun Exp $	*/
 
 /*
@@ -466,7 +466,6 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		break;
 
 	case SIOCSIFFLAGS:
-		/* if_ioctl() takes care of it */
 		break;
 
 	case SIOCSIFMTU:
@@ -571,7 +570,7 @@ in_gif_output(struct ifnet *ifp, int family, struct mbuf **m0)
 	case AF_INET6:
 		break;
 #endif
-#if MPLS
+#ifdef MPLS
 	case AF_MPLS:
 		break;
 #endif
@@ -588,7 +587,7 @@ in_gif_output(struct ifnet *ifp, int family, struct mbuf **m0)
 	*m0 = NULL;
 #ifdef MPLS
 	if (family == AF_MPLS)
-		error = etherip_output(m, &tdb, m0, IPPROTO_MPLS);
+		error = mplsip_output(m, &tdb, m0, IPPROTO_MPLS);
 	else
 #endif
 	error = ipip_output(m, &tdb, m0, 0, 0);
@@ -711,9 +710,9 @@ in6_gif_output(struct ifnet *ifp, int family, struct mbuf **m0)
 
 	/* encapsulate into IPv6 packet */
 	*m0 = NULL;
-#if MPLS
+#ifdef MPLS
 	if (family == AF_MPLS)
-		error = etherip_output(m, &tdb, m0, IPPROTO_MPLS);
+		error = mplsip_output(m, &tdb, m0, IPPROTO_MPLS);
 	else
 #endif
 	error = ipip_output(m, &tdb, m0, 0, 0);

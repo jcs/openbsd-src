@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.523 2017/11/04 16:58:46 tb Exp $	*/
+/*	$OpenBSD: if.c,v 1.529 2017/11/17 03:51:32 dlg Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -139,6 +139,7 @@ void	if_detached_qstart(struct ifqueue *);
 int	if_detached_ioctl(struct ifnet *, u_long, caddr_t);
 
 int	ifioctl_get(u_long, caddr_t);
+int	ifconf(caddr_t);
 
 int	if_getgroup(caddr_t, struct ifnet *);
 int	if_getgroupmembers(caddr_t);
@@ -227,8 +228,8 @@ int	ifq_congestion;
 
 int		 netisr;
 
-#define	SOFTNET_TASKS	1
-struct taskq	*softnettq[SOFTNET_TASKS];
+#define	NET_TASKQ	1
+struct taskq	*nettqmp[NET_TASKQ];
 
 struct task if_input_task_locked = TASK_INITIALIZER(if_netisr, NULL);
 
@@ -254,10 +255,10 @@ ifinit(void)
 
 	timeout_set(&net_tick_to, net_tick, &net_tick_to);
 
-	for (i = 0; i < SOFTNET_TASKS; i++) {
-		softnettq[i] = taskq_create("softnet", 1, IPL_NET, TASKQ_MPSAFE);
-		if (softnettq[i] == NULL)
-			panic("unable to create softnet taskq");
+	for (i = 0; i < NET_TASKQ; i++) {
+		nettqmp[i] = taskq_create("softnet", 1, IPL_NET, TASKQ_MPSAFE);
+		if (nettqmp[i] == NULL)
+			panic("unable to create network taskq %d", i);
 	}
 
 	net_tick(&net_tick_to);
@@ -905,7 +906,7 @@ if_input_process(void *xifidx)
 	 * to PF globals, pipex globals, unicast and multicast addresses
 	 * lists.
 	 */
-	NET_LOCK();
+	NET_RLOCK();
 	s = splnet();
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		/*
@@ -922,7 +923,7 @@ if_input_process(void *xifidx)
 			m_freem(m);
 	}
 	splx(s);
-	NET_UNLOCK();
+	NET_RUNLOCK();
 out:
 	if_put(ifp);
 }
@@ -1809,16 +1810,26 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 
 	switch (cmd) {
 	case SIOCIFCREATE:
+		if ((error = suser(p, 0)) != 0)
+			return (error);
+		NET_LOCK();
+		error = if_clone_create(ifr->ifr_name, 0);
+		NET_UNLOCK();
+		return (error);
 	case SIOCIFDESTROY:
 		if ((error = suser(p, 0)) != 0)
 			return (error);
-		return ((cmd == SIOCIFCREATE) ?
-		    if_clone_create(ifr->ifr_name, 0) :
-		    if_clone_destroy(ifr->ifr_name));
+		NET_LOCK();
+		error = if_clone_destroy(ifr->ifr_name);
+		NET_UNLOCK();
+		return (error);
 	case SIOCSIFGATTR:
 		if ((error = suser(p, 0)) != 0)
 			return (error);
-		return (if_setgroupattribs(data));
+		NET_LOCK();
+		error = if_setgroupattribs(data);
+		NET_UNLOCK();
+		return (error);
 	case SIOCGIFCONF:
 	case SIOCIFGCLONERS:
 	case SIOCGIFGMEMB:
@@ -1843,6 +1854,8 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		return (ENXIO);
 	oif_flags = ifp->if_flags;
 	oif_xflags = ifp->if_xflags;
+
+	NET_LOCK();
 
 	switch (cmd) {
 	case SIOCIFAFATTACH:
@@ -2092,6 +2105,8 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	if (((oif_flags ^ ifp->if_flags) & IFF_UP) != 0)
 		getmicrotime(&ifp->if_lastchange);
 
+	NET_UNLOCK();
+
 	return (error);
 }
 
@@ -2108,18 +2123,32 @@ ifioctl_get(u_long cmd, caddr_t data)
 
 	switch(cmd) {
 	case SIOCGIFCONF:
-		return (ifconf(cmd, data));
+		NET_RLOCK();
+		error = ifconf(data);
+		NET_RUNLOCK();
+		return (error);
 	case SIOCIFGCLONERS:
-		return (if_clone_list((struct if_clonereq *)data));
+		NET_RLOCK();
+		error = if_clone_list((struct if_clonereq *)data);
+		NET_RUNLOCK();
+		return (error);
 	case SIOCGIFGMEMB:
-		return (if_getgroupmembers(data));
+		NET_RLOCK();
+		error = if_getgroupmembers(data);
+		NET_RUNLOCK();
+		return (error);
 	case SIOCGIFGATTR:
-		return (if_getgroupattribs(data));
+		NET_RLOCK();
+		error = if_getgroupattribs(data);
+		NET_RUNLOCK();
+		return (error);
 	}
 
 	ifp = ifunit(ifr->ifr_name);
 	if (ifp == NULL)
 		return (ENXIO);
+
+	NET_RLOCK();
 
 	switch(cmd) {
 	case SIOCGIFFLAGS:
@@ -2187,6 +2216,8 @@ ifioctl_get(u_long cmd, caddr_t data)
 		panic("invalid ioctl %lu", cmd);
 	}
 
+	NET_RUNLOCK();
+
 	return (error);
 }
 
@@ -2197,7 +2228,7 @@ ifioctl_get(u_long cmd, caddr_t data)
  * other information.
  */
 int
-ifconf(u_long cmd, caddr_t data)
+ifconf(caddr_t data)
 {
 	struct ifconf *ifc = (struct ifconf *)data;
 	struct ifnet *ifp;
@@ -2276,30 +2307,14 @@ void
 if_getdata(struct ifnet *ifp, struct if_data *data)
 {
 	unsigned int i;
-	struct ifqueue *ifq;
-	uint64_t opackets = 0;
-	uint64_t obytes = 0;
-	uint64_t omcasts = 0;
-	uint64_t oqdrops = 0;
-
-	for (i = 0; i < ifp->if_nifqs; i++) {
-		ifq = ifp->if_ifqs[i];
-
-		mtx_enter(&ifq->ifq_mtx);
-		opackets += ifq->ifq_packets;
-		obytes += ifq->ifq_bytes;
-		oqdrops += ifq->ifq_qdrops;
-		omcasts += ifq->ifq_mcasts;
-		mtx_leave(&ifq->ifq_mtx);
-		/* ifq->ifq_errors */
-	}
 
 	*data = ifp->if_data;
-	data->ifi_opackets += opackets;
-	data->ifi_obytes += obytes;
-	data->ifi_oqdrops += oqdrops;
-	data->ifi_omcasts += omcasts;
-	/* ifp->if_data.ifi_oerrors */
+
+	for (i = 0; i < ifp->if_nifqs; i++) {
+		struct ifqueue *ifq = ifp->if_ifqs[i];
+
+		ifq_add_data(ifq, data);
+	}
 }
 
 /*
@@ -2819,6 +2834,19 @@ if_rxr_adjust_cwm(struct if_rxring *rxr)
 	rxr->rxr_adjusted = ticks;
 }
 
+void
+if_rxr_livelocked(struct if_rxring *rxr)
+{
+	extern int ticks;
+
+	if (ticks - rxr->rxr_adjusted >= 1) {
+		if (rxr->rxr_cwm > rxr->rxr_lwm)
+			rxr->rxr_cwm--;
+
+		rxr->rxr_adjusted = ticks;
+	}
+}
+
 u_int
 if_rxr_get(struct if_rxring *rxr, u_int max)
 {
@@ -2924,12 +2952,19 @@ unhandled_af(int af)
 	panic("unhandled af %d", af);
 }
 
+/*
+ * XXXSMP This tunable is here to work around the fact that IPsec
+ * globals aren't ready to be accessed by multiple threads in
+ * parallel.
+ */
+int		 nettaskqs = NET_TASKQ;
+
 struct taskq *
 net_tq(unsigned int ifindex)
 {
 	struct taskq *t = NULL;
 
-	t = softnettq[ifindex % SOFTNET_TASKS];
+	t = nettqmp[ifindex % nettaskqs];
 
 	return (t);
 }

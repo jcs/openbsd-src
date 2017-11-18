@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_etherip.c,v 1.21 2017/10/25 09:24:09 mpi Exp $	*/
+/*	$OpenBSD: if_etherip.c,v 1.27 2017/11/17 18:22:52 jca Exp $	*/
 /*
  * Copyright (c) 2015 Kazuya GODA <goda@openbsd.org>
  *
@@ -17,7 +17,6 @@
 
 #include "bpfilter.h"
 #include "pf.h"
-#include "gif.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -65,22 +64,13 @@ struct etherip_softc {
 
 LIST_HEAD(, etherip_softc) etherip_softc_list;
 
-#if 0
-/*
- * TODO:
- *   At this stage, etherip_allow and etheripstat are defined
- *   at netinet/ip_ether.c. When implementation of etherip is
- *   removed from gif(4), there are moved here.
- */
-
 /*
  * We can control the acceptance of EtherIP packets by altering the sysctl
  * net.inet.etherip.allow value. Zero means drop them, all else is acceptance.
  */
 int etherip_allow = 0;
 
-struct etheripstat etheripstat;
-#endif
+struct cpumem *etheripcounters;
 
 void etheripattach(int);
 int etherip_clone_create(struct if_clone *, int);
@@ -100,6 +90,7 @@ void
 etheripattach(int count)
 {
 	if_clone_attach(&etherip_cloner);
+	etheripcounters = counters_alloc(etherips_ncounters);
 }
 
 int
@@ -371,7 +362,7 @@ ip_etherip_output(struct ifnet *ifp, struct mbuf *m)
 
 	M_PREPEND(m, sizeof(struct etherip_header), M_DONTWAIT);
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return ENOBUFS;
 	}
 	eip = mtod(m, struct etherip_header *);
@@ -381,7 +372,7 @@ ip_etherip_output(struct ifnet *ifp, struct mbuf *m)
 
 	M_PREPEND(m, sizeof(struct ip), M_DONTWAIT);
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return ENOBUFS;
 	}
 	ip = mtod(m, struct ip *);
@@ -402,8 +393,7 @@ ip_etherip_output(struct ifnet *ifp, struct mbuf *m)
 #if NPF > 0
 	pf_pkt_addr_changed(m);
 #endif
-	etheripstat.etherips_opackets++;
-	etheripstat.etherips_obytes += (m->m_pkthdr.len -
+	etheripstat_pkt(etherips_opackets, etherips_obytes, m->m_pkthdr.len -
 	    (sizeof(struct ip) + sizeof(struct etherip_header)));
 
 	return ip_output(m, NULL, NULL, IP_RAWOUTPUT, NULL, NULL, 0);
@@ -430,7 +420,7 @@ ip_etherip_input(struct mbuf **mp, int *offp, int proto, int af)
 
 	if (!etherip_allow && (m->m_flags & (M_AUTH|M_CONF)) == 0) {
 		m_freem(m);
-		etheripstat.etherips_pdrops++;
+		etheripstat_inc(etherips_pdrops);
 		return IPPROTO_DONE;
 	}
 
@@ -452,42 +442,32 @@ ip_etherip_input(struct mbuf **mp, int *offp, int proto, int af)
 	}
 
 	if (ifp == NULL) {
-#if NGIF > 0
-		/*
-		 * This path is nessesary for gif(4) and etherip(4) coexistence.
-		 * This is tricky but the path will be removed soon when
-		 * implementation of etherip is removed from gif(4).
-		 */
-		return etherip_input(mp, offp, proto, af);
-#else
-		etheripstat.etherips_noifdrops++;
+		etheripstat_inc(etherips_noifdrops);
 		m_freem(m);
 		return IPPROTO_DONE;
-#endif /* NGIF */
 	}
 
 	m_adj(m, *offp);
 	m = *mp = m_pullup(m, sizeof(struct etherip_header));
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return IPPROTO_DONE;
 	}
 
 	eip = mtod(m, struct etherip_header *);
 	if (eip->eip_ver != ETHERIP_VERSION || eip->eip_pad) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		m_freem(m);
 		return IPPROTO_DONE;
 	}
 
-	etheripstat.etherips_ipackets++;
-	etheripstat.etherips_ibytes += (m->m_pkthdr.len -
+	etheripstat_pkt(etherips_ipackets, etherips_ibytes, m->m_pkthdr.len -
 	    sizeof(struct etherip_header));
 
 	m_adj(m, sizeof(struct etherip_header));
 	m = *mp = m_pullup(m, sizeof(struct ether_header));
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return IPPROTO_DONE;
 	}
 	m->m_flags &= ~(M_BCAST|M_MCAST);
@@ -532,7 +512,7 @@ ip6_etherip_output(struct ifnet *ifp, struct mbuf *m)
 
 	M_PREPEND(m, sizeof(struct etherip_header), M_DONTWAIT);
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return ENOBUFS;
 	}
 	eip = mtod(m, struct etherip_header *);
@@ -542,7 +522,7 @@ ip6_etherip_output(struct ifnet *ifp, struct mbuf *m)
 
 	M_PREPEND(m, sizeof(struct ip6_hdr), M_DONTWAIT);
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return ENOBUFS;
 	}
 	ip6 = mtod(m, struct ip6_hdr *);
@@ -564,8 +544,7 @@ ip6_etherip_output(struct ifnet *ifp, struct mbuf *m)
 #if NPF > 0
 	pf_pkt_addr_changed(m);
 #endif
-	etheripstat.etherips_opackets++;
-	etheripstat.etherips_obytes += (m->m_pkthdr.len -
+	etheripstat_pkt(etherips_opackets, etherips_obytes, m->m_pkthdr.len -
 	    (sizeof(struct ip6_hdr) + sizeof(struct etherip_header)));
 
 	return ip6_output(m, 0, NULL, IPV6_MINMTU, 0, NULL);
@@ -590,7 +569,7 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto, int af)
 
 	if (!etherip_allow && (m->m_flags & (M_AUTH|M_CONF)) == 0) {
 		m_freem(m);
-		etheripstat.etherips_pdrops++;
+		etheripstat_inc(etherips_pdrops);
 		return IPPROTO_NONE;
 	}
 
@@ -616,41 +595,31 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto, int af)
 	}
 
 	if (ifp == NULL) {
-#if NGIF > 0
-		/*
-		 * This path is nessesary for gif(4) and etherip(4) coexistence.
-		 * This is tricky but the path will be removed soon when
-		 * implementation of etherip is removed from gif(4).
-		 */
-		return etherip_input(mp, offp, proto, af);
-#else
-		etheripstat.etherips_noifdrops++;
+		etheripstat_inc(etherips_noifdrops);
 		m_freem(m);
 		return IPPROTO_DONE;
-#endif /* NGIF */
 	}
 
 	m_adj(m, *offp);
 	m = *mp = m_pullup(m, sizeof(struct etherip_header));
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return IPPROTO_DONE;
 	}
 
 	eip = mtod(m, struct etherip_header *);
 	if ((eip->eip_ver != ETHERIP_VERSION) || eip->eip_pad) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		m_freem(m);
 		return IPPROTO_DONE;
 	}
-	etheripstat.etherips_ipackets++;
-	etheripstat.etherips_ibytes += (m->m_pkthdr.len -
+	etheripstat_pkt(etherips_ipackets, etherips_ibytes, m->m_pkthdr.len -
 	    sizeof(struct etherip_header));
 
 	m_adj(m, sizeof(struct etherip_header));
 	m = *mp = m_pullup(m, sizeof(struct ether_header));
 	if (m == NULL) {
-		etheripstat.etherips_adrops++;
+		etheripstat_inc(etherips_adrops);
 		return IPPROTO_DONE;
 	}
 
@@ -667,7 +636,21 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto, int af)
 #endif /* INET6 */
 
 int
-ip_etherip_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
+etherip_sysctl_etheripstat(void *oldp, size_t *oldlenp, void *newp)
+{
+	struct etheripstat etheripstat;
+
+	CTASSERT(sizeof(etheripstat) == (etherips_ncounters *
+	    sizeof(uint64_t)));
+	memset(&etheripstat, 0, sizeof etheripstat);
+	counters_read(etheripcounters, (uint64_t *)&etheripstat,
+	    etherips_ncounters);
+	return (sysctl_rdstruct(oldp, oldlenp, newp, &etheripstat,
+	    sizeof(etheripstat)));
+}
+
+int
+etherip_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     void *newp, size_t newlen)
 {
 	int error;
@@ -683,13 +666,7 @@ ip_etherip_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 		NET_UNLOCK();
 		return (error);
 	case ETHERIPCTL_STATS:
-		if (newp != NULL)
-			return EPERM;
-		NET_LOCK();
-		error = sysctl_struct(oldp, oldlenp, newp, newlen,
-		    &etheripstat, sizeof(etheripstat));
-		NET_UNLOCK();
-		return (error);
+		return (etherip_sysctl_etheripstat(oldp, oldlenp, newp));
 	default:
 		break;
 	}

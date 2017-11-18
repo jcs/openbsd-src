@@ -1,4 +1,4 @@
-/*	$OpenBSD: in6_proto.c,v 1.97 2017/11/05 13:19:59 florian Exp $	*/
+/*	$OpenBSD: in6_proto.c,v 1.99 2017/11/17 14:51:13 jca Exp $	*/
 /*	$KAME: in6_proto.c,v 1.66 2000/10/10 15:35:47 itojun Exp $	*/
 
 /*
@@ -272,20 +272,6 @@ struct protosw inet6sw[] = {
   .pr_attach	= rip6_attach,
   .pr_detach	= rip6_detach,
 },
-#if NGIF > 0
-{
-  .pr_type	= SOCK_RAW,
-  .pr_domain	= &inet6domain,
-  .pr_protocol	= IPPROTO_ETHERIP,
-  .pr_flags	= PR_ATOMIC|PR_ADDR,
-  .pr_input	= etherip_input,
-  .pr_ctloutput	= rip6_ctloutput,
-  .pr_usrreq	= rip6_usrreq,
-  .pr_attach	= rip6_attach,
-  .pr_detach	= rip6_detach,
-  .pr_sysctl	= etherip_sysctl
-},
-#endif /* NGIF */
 #if NCARP > 0
 {
   .pr_type	= SOCK_RAW,
@@ -325,7 +311,6 @@ struct protosw inet6sw[] = {
   .pr_usrreq	= rip6_usrreq,
   .pr_attach	= rip6_attach,
   .pr_detach	= rip6_detach,
-  .pr_sysctl	= ip_etherip_sysctl
 },
 #endif /* NETHERIP */
 {

@@ -1,4 +1,4 @@
-.\"	$OpenBSD: pf.conf.5,v 1.569 2017/10/14 06:50:21 jmc Exp $
+.\"	$OpenBSD: pf.conf.5,v 1.571 2017/11/13 18:18:53 jmc Exp $
 .\"
 .\" Copyright (c) 2002, Daniel Hartmeier
 .\" Copyright (c) 2003 - 2013 Henning Brauer <henning@openbsd.org>
@@ -28,7 +28,7 @@
 .\" ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: October 14 2017 $
+.Dd $Mdocdate: November 13 2017 $
 .Dt PF.CONF 5
 .Os
 .Sh NAME
@@ -625,6 +625,21 @@ pass in inet proto tcp from any to 1.2.3.5 \e
 The macro expansion for the
 .Cm label
 directive occurs only at configuration file parse time, not during runtime.
+.Pp
+.It Cm max-pkt-rate Ar number Ns / Ns Ar seconds
+Measure the rate of packets matching the rule and states created by it.
+When the specified rate is exceeded, the rule stops matching.
+Only packets in the direction in which the state was created are considered,
+so that typically requests are counted and replies are not.
+For example,
+to pass up to 100 ICMP packets per 10 seconds:
+.Bd -literal -offset indent
+block in proto icmp
+pass in proto icmp max-pkt-rate 100/10
+.Ed
+.Pp
+When the rate is exceeded, all ICMP is blocked until the rate falls below
+100 per 10 seconds again.
 .Pp
 .It Cm once
 Creates a one shot rule that will remove itself from an active ruleset after
@@ -2692,6 +2707,7 @@ filteropt      = user | group | flags | icmp-type | icmp6-type |
                  "divert-packet" "port" port | "divert-reply" |
                  "divert-to" host "port" port |
                  "label" string | "tag" string | [ "!" ] "tagged" string |
+                 "max-pkt-rate" number "/" seconds |
                  "set prio" ( number | "(" number [ [ "," ] number ] ")" ) |
                  "set queue" ( string | "(" string [ [ "," ] string ] ")" ) |
                  "rtable" number | "probability" number"%" | "prio" number |

@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.520 2017/11/06 13:27:19 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.523 2017/11/14 17:48:48 mpi Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -143,8 +143,6 @@ void		 get_hw_address(struct interface_info *);
 struct client_lease *apply_defaults(struct client_lease *);
 struct client_lease *clone_lease(struct client_lease *);
 void		 apply_ignore_list(char *);
-
-void set_lease_times(struct client_lease *);
 
 void state_preboot(struct interface_info *);
 void state_reboot(struct interface_info *);
@@ -1244,17 +1242,17 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 	if ((lease->options[DHO_DHCP_OPTION_OVERLOAD].len == 0 ||
 	    (lease->options[DHO_DHCP_OPTION_OVERLOAD].data[0] & 2) == 0) &&
 	    packet->sname[0]) {
-		lease->server_name = malloc(DHCP_SNAME_LEN + 1);
+		lease->server_name = calloc(1, DHCP_SNAME_LEN + 1);
 		if (lease->server_name == NULL) {
 			log_warn("%s: SNAME", log_procname);
 			goto decline;
 		}
 		memcpy(lease->server_name, packet->sname, DHCP_SNAME_LEN);
-		lease->server_name[DHCP_SNAME_LEN] = '\0';
 		if (res_hnok(lease->server_name) == 0) {
-			log_warnx("%s: invalid host name in SNAME",
+			log_warnx("%s: invalid host name in SNAME ignored",
 			    log_procname);
-			goto decline;
+			free(lease->server_name);
+			lease->server_name = NULL;
 		}
 	}
 
@@ -1964,6 +1962,12 @@ lease_as_string(char *ifname, char *type, struct client_lease *lease)
 		append_statement(string, sizeof(string), " ", buf);
 	}
 
+	i = asprintf(&buf, "%lld", (long long)lease->epoch);
+	if (i == -1)
+		return NULL;
+	append_statement(string, sizeof(string), "  epoch ", buf);
+	free(buf);
+
 	rslt = strftime(timebuf, sizeof(timebuf), DB_TIMEFMT,
 	    gmtime(&lease->renewal));
 	if (rslt == 0)
@@ -2250,8 +2254,6 @@ apply_defaults(struct client_lease *lease)
 	if (newlease == NULL)
 		fatalx("unable to clone lease");
 
-	newlease->epoch = lease->epoch;
-
 	if (config->filename != NULL) {
 		free(newlease->filename);
 		newlease->filename = strdup(config->filename);
@@ -2382,6 +2384,7 @@ clone_lease(struct client_lease *oldlease)
 	if (newlease == NULL)
 		goto cleanup;
 
+	newlease->epoch = oldlease->epoch;
 	newlease->expiry = oldlease->expiry;
 	newlease->renewal = oldlease->renewal;
 	newlease->rebind = oldlease->rebind;
@@ -2475,6 +2478,9 @@ set_lease_times(struct client_lease *lease)
 	if (time_max > UINT32_MAX)
 		time_max = UINT32_MAX;
 
+	if (lease->epoch == 0)
+		lease->epoch = cur_time;
+
 	/*
 	 * Take the server-provided times if available.  Otherwise
 	 * figure them out according to the spec.
@@ -2521,9 +2527,9 @@ set_lease_times(struct client_lease *lease)
 		lease->rebind = lease->renewal;
 
 	/* Convert lease lengths to times. */
-	lease->expiry += cur_time;
-	lease->renewal += cur_time;
-	lease->rebind += cur_time;
+	lease->expiry += lease->epoch;
+	lease->renewal += lease->epoch;
+	lease->rebind += lease->epoch;
 }
 
 void
@@ -2612,8 +2618,10 @@ get_recorded_lease(struct interface_info *ifi)
 		if (lp->is_static == 0 && lp->expiry <= cur_time)
 			continue;
 
-		if (lp->is_static != 0)
+		if (lp->is_static != 0) {
+			time(&lp->epoch);
 			set_lease_times(lp);
+		}
 		break;
 	}
 

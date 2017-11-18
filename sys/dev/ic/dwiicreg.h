@@ -1,4 +1,4 @@
-/* $OpenBSD$ */
+/* $OpenBSD: dwiicreg.h,v 1.1 2017/11/16 18:12:27 jcs Exp $ */
 /*
  * Synopsys DesignWare I2C controller
  *

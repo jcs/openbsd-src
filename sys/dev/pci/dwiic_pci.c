@@ -1,4 +1,4 @@
-/* $OpenBSD$ */
+/* $OpenBSD: dwiic_pci.c,v 1.1 2017/11/16 18:12:27 jcs Exp $ */
 /*
  * Synopsys DesignWare I2C controller
  * PCI attachment
@@ -186,9 +186,8 @@ dwiic_pci_bus_scan(struct device *iic, struct i2cbus_attach_args *iba,
 
 #if NACPI > 0
 	{
-		struct aml_node *n = acpi_pci_match((struct device *)aux,
-		    &sc->sc_paa);
-		if (n == NULL)
+		struct aml_node *node = acpi_pci_match(aux, &sc->sc_paa);
+		if (node == NULL)
 			return;
 
 		/*
@@ -198,7 +197,7 @@ dwiic_pci_bus_scan(struct device *iic, struct i2cbus_attach_args *iba,
 		 */
 		sc->sc_poll_ihidev = 1;
 
-		aml_find_node(n, "_HID", dwiic_acpi_found_hid, sc);
+		aml_find_node(node, "_HID", dwiic_acpi_found_hid, sc);
 	}
 #endif
 }

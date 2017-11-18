@@ -1,4 +1,4 @@
-/*	$OpenBSD: in_proto.c,v 1.81 2017/11/05 13:19:59 florian Exp $	*/
+/*	$OpenBSD: in_proto.c,v 1.87 2017/11/17 18:22:52 jca Exp $	*/
 /*	$NetBSD: in_proto.c,v 1.14 1996/02/18 18:58:32 christos Exp $	*/
 
 /*
@@ -268,27 +268,13 @@ struct protosw inetsw[] = {
   .pr_detach	= rip_detach,
 },
 #endif
-#if NGIF > 0
-{
-  .pr_type	= SOCK_RAW,
-  .pr_domain	= &inetdomain,
-  .pr_protocol	= IPPROTO_ETHERIP,
-  .pr_flags	= PR_ATOMIC|PR_ADDR,
-  .pr_input	= etherip_input,
-  .pr_ctloutput	= rip_ctloutput,
-  .pr_usrreq	= rip_usrreq,
-  .pr_attach	= rip_attach,
-  .pr_detach	= rip_detach,
-  .pr_sysctl	= etherip_sysctl
-},
-#endif /* NGIF */
 #if defined(MPLS) && NGIF > 0
 {
   .pr_type	= SOCK_RAW,
   .pr_domain	= &inetdomain,
   .pr_protocol	= IPPROTO_MPLS,
   .pr_flags	= PR_ATOMIC|PR_ADDR,
-  .pr_input	= etherip_input,
+  .pr_input	= mplsip_input,
   .pr_usrreq	= rip_usrreq,
   .pr_attach	= rip_attach,
   .pr_detach	= rip_detach,
@@ -428,7 +414,7 @@ struct protosw inetsw[] = {
   .pr_usrreq	= rip_usrreq,
   .pr_attach	= rip_attach,
   .pr_detach	= rip_detach,
-  .pr_sysctl	= ip_etherip_sysctl
+  .pr_sysctl	= etherip_sysctl
 },
 #endif /* NETHERIP */
 {

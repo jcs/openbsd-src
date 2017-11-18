@@ -1,4 +1,4 @@
-#	$OpenBSD: files.acpi,v 1.37 2017/02/22 16:39:56 jcs Exp $
+#	$OpenBSD: files.acpi,v 1.38 2017/11/16 18:12:27 jcs Exp $
 #
 # Config file and device description for machine-independent ACPI code.
 # Included by ports that need it.
