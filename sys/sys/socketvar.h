@@ -1,4 +1,4 @@
-/*	$OpenBSD: socketvar.h,v 1.77 2017/11/04 14:13:53 mpi Exp $	*/
+/*	$OpenBSD: socketvar.h,v 1.79 2017/11/23 13:45:46 mpi Exp $	*/
 /*	$NetBSD: socketvar.h,v 1.18 1996/02/09 18:25:38 christos Exp $	*/
 
 /*-
@@ -56,7 +56,7 @@ struct socket {
 	short	so_linger;		/* time to linger while closing */
 	short	so_state;		/* internal state flags SS_*, below */
 	void	*so_pcb;		/* protocol control block */
-	struct	protosw *so_proto;	/* protocol handle */
+	const struct protosw *so_proto;	/* protocol handle */
 /*
  * Variables for connection queueing.
  * Socket where accepts occur is so_head in all subsidiary sockets.
@@ -244,7 +244,7 @@ soreadable(struct socket *so)
 int sblock(struct socket *, struct sockbuf *, int);
 
 /* release lock on sockbuf sb */
-void sbunlock(struct sockbuf *);
+void sbunlock(struct socket *, struct sockbuf *);
 
 #define	SB_EMPTY_FIXUP(sb) do {						\
 	if ((sb)->sb_mb == NULL) {					\

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_carp.c,v 1.317 2017/10/16 13:20:20 mpi Exp $	*/
+/*	$OpenBSD: ip_carp.c,v 1.320 2017/11/23 13:32:25 mpi Exp $	*/
 
 /*
  * Copyright (c) 2002 Michael Shalayeff. All rights reserved.
@@ -505,7 +505,9 @@ carp_proto_input_if(struct ifnet *ifp, struct mbuf **mp, int *offp, int proto)
 	}
 	m->m_data -= iplen;
 
+	KERNEL_LOCK();
 	carp_proto_input_c(ifp, m, ch, ismulti, AF_INET);
+	KERNEL_UNLOCK();
 	return IPPROTO_DONE;
 }
 
@@ -580,7 +582,9 @@ carp6_proto_input_if(struct ifnet *ifp, struct mbuf **mp, int *offp, int proto)
 	}
 	m->m_data -= *offp;
 
+	KERNEL_LOCK();
 	carp_proto_input_c(ifp, m, ch, 1, AF_INET6);
+	KERNEL_UNLOCK();
 	return IPPROTO_DONE;
 }
 #endif /* INET6 */
@@ -878,6 +882,8 @@ carp_clone_destroy(struct ifnet *ifp)
 
 	NET_LOCK();
 	carpdetach(sc);
+	if (sc->ah_cookie != NULL)
+		hook_disestablish(sc->sc_if.if_addrhooks, sc->ah_cookie);
 	NET_UNLOCK();
 
 	ether_ifdetach(ifp);
@@ -919,9 +925,6 @@ carpdetach(struct carp_softc *sc)
 	sc->sc_if.if_flags &= ~IFF_UP;
 	carp_setrun_all(sc, 0);
 	carp_multicast_cleanup(sc);
-
-	if (sc->ah_cookie != NULL)
-		hook_disestablish(sc->sc_if.if_addrhooks, sc->ah_cookie);
 
 	ifp0 = sc->sc_carpdev;
 	if (ifp0 == NULL)
@@ -1349,22 +1352,6 @@ carp_iamatch(struct ifnet *ifp)
 	return (match);
 }
 
-#ifdef INET6
-int
-carp_iamatch6(struct ifnet *ifp)
-{
-	struct carp_softc *sc = ifp->if_softc;
-	struct carp_vhost_entry *vhe = SRPL_FIRST_LOCKED(&sc->carp_vhosts);
-
-	KERNEL_ASSERT_LOCKED(); /* touching carp_vhosts */
-
-	if (vhe->state == MASTER)
-		return (1);
-
-	return (0);
-}
-#endif /* INET6 */
-
 struct ifnet *
 carp_ourether(void *v, u_int8_t *ena)
 {
@@ -1514,7 +1501,7 @@ carp_lsdrop(struct mbuf *m, sa_family_t af, u_int32_t *src, u_int32_t *dst,
 		m_tag_delete(m, mtag);
 		m->m_flags &= ~M_MCAST;
 	}
-	
+
 	/*
 	 * Return without making a drop decision. This allows to clear the
 	 * M_MCAST flag and do nothing else.

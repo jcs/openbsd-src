@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.523 2017/11/14 17:48:48 mpi Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.527 2017/11/24 01:39:29 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -166,6 +166,8 @@ void rewrite_option_db(char *, struct client_lease *, struct client_lease *);
 char *lease_as_string(char *, char *, struct client_lease *);
 struct proposal *lease_as_proposal(struct client_lease *);
 void append_statement(char *, size_t, char *, char *);
+time_t lease_expiry(struct client_lease *);
+time_t lease_renewal(struct client_lease *);
 
 struct client_lease *packet_to_lease(struct interface_info *,
     struct option_data *);
@@ -988,15 +990,16 @@ bind_lease(struct interface_info *ifi)
 	struct proposal		*active_proposal = NULL;
 	struct proposal		*offered_proposal = NULL;
 	struct proposal		*effective_proposal = NULL;
-	time_t			 cur_time;
+	time_t			 cur_time, renewal;
 	int			 seen;
 
+	time(&cur_time);
 	lease = apply_defaults(ifi->offer);
 
 	set_lease_times(lease);
 
 	ifi->offer->expiry = lease->expiry;
-	ifi->offer->renewal = lease->renewal;
+	renewal = lease_renewal(lease) - cur_time;
 	ifi->offer->rebind = lease->rebind;
 
 	/*
@@ -1036,8 +1039,7 @@ bind_lease(struct interface_info *ifi)
 newlease:
 	write_resolv_conf();
 	log_info("%s: bound to %s -- renewal in %lld seconds", log_procname,
-	    inet_ntoa(ifi->active->address),
-	    (long long)(ifi->active->renewal - time(NULL)));
+	    inet_ntoa(ifi->active->address), (long long)renewal);
 	go_daemon(ifi->name);
 	rewrite_option_db(ifi->name, ifi->active, lease);
 	free_client_lease(lease);
@@ -1050,7 +1052,6 @@ newlease:
 	 * dynamic leases.
 	 */
 	seen = 0;
-	time(&cur_time);
 	TAILQ_FOREACH_SAFE(lease, &ifi->leases, next, pl) {
 		if (lease->is_static != 0)
 			break;
@@ -1063,8 +1064,8 @@ newlease:
 			continue;
 		if (ifi->active == lease)
 			seen = 1;
-		else if (lease->expiry <= cur_time || lease->address.s_addr ==
-		    ifi->active->address.s_addr) {
+		else if (lease_expiry(lease) < cur_time ||
+		    lease->address.s_addr == ifi->active->address.s_addr) {
 			TAILQ_REMOVE(&ifi->leases, lease, next);
 			free_client_lease(lease);
 		}
@@ -1078,7 +1079,7 @@ newlease:
 	ifi->state = S_BOUND;
 
 	/* Set timeout to start the renewal process. */
-	set_timeout(ifi, ifi->active->renewal - cur_time, state_bound);
+	set_timeout(ifi, renewal, state_bound);
 }
 
 /*
@@ -1748,7 +1749,7 @@ rewrite_client_leases(struct interface_info *ifi)
 		/* Don't write out static leases from dhclient.conf. */
 		if (lp->is_static != 0)
 			continue;
-		if (lp->expiry <= cur_time)
+		if (lease_expiry(lp) < cur_time)
 			continue;
 		leasestr = lease_as_string(ifi->name, "lease", lp);
 		if (leasestr != NULL)
@@ -1907,6 +1908,7 @@ lease_as_string(char *ifname, char *type, struct client_lease *lease)
 	char			 timebuf[27];	/* 6 2017/04/08 05:47:50 UTC; */
 	struct option_data	*opt;
 	char			*buf, *name;
+	time_t			 renewal, rebind, expiry;
 	size_t			 rslt;
 	int			 i;
 
@@ -1968,8 +1970,18 @@ lease_as_string(char *ifname, char *type, struct client_lease *lease)
 	append_statement(string, sizeof(string), "  epoch ", buf);
 	free(buf);
 
+	/*
+	 * Save lease times, generate new ones based on lease info
+	 * rather than effective times, print out lease-based times,
+	 * restore effective times.
+	 */
+	rebind = lease->rebind;
+	expiry = lease->expiry;
+	set_lease_times(lease);
+
+	renewal = lease_renewal(lease);
 	rslt = strftime(timebuf, sizeof(timebuf), DB_TIMEFMT,
-	    gmtime(&lease->renewal));
+	    gmtime(&renewal));
 	if (rslt == 0)
 		return NULL;
 	append_statement(string, sizeof(string), "  renew ", timebuf);
@@ -1985,6 +1997,9 @@ lease_as_string(char *ifname, char *type, struct client_lease *lease)
 	if (rslt == 0)
 		return NULL;
 	append_statement(string, sizeof(string), "  expire ", timebuf);
+
+	lease->rebind = rebind;
+	lease->expiry = expiry;
 
 	rslt = strlcat(string, "}\n", sizeof(string));
 	if (rslt >= sizeof(string))
@@ -2386,7 +2401,6 @@ clone_lease(struct client_lease *oldlease)
 
 	newlease->epoch = oldlease->epoch;
 	newlease->expiry = oldlease->expiry;
-	newlease->renewal = oldlease->renewal;
 	newlease->rebind = oldlease->rebind;
 	newlease->is_static = oldlease->is_static;
 	newlease->address = oldlease->address;
@@ -2469,17 +2483,11 @@ apply_ignore_list(char *ignore_list)
 void
 set_lease_times(struct client_lease *lease)
 {
-	time_t		 cur_time, time_max;
+	time_t		 renewal;
 	uint32_t	 uint32val;
 
-	time(&cur_time);
-
-	time_max = LLONG_MAX - cur_time;
-	if (time_max > UINT32_MAX)
-		time_max = UINT32_MAX;
-
 	if (lease->epoch == 0)
-		lease->epoch = cur_time;
+		time(&lease->epoch);
 
 	/*
 	 * Take the server-provided times if available.  Otherwise
@@ -2489,30 +2497,11 @@ set_lease_times(struct client_lease *lease)
 	 * renewal == time to renew lease from server that provided it.
 	 * rebind  == time to renew lease from any server.
 	 *
-	 * 0 <= renewal <= rebind <= expiry <= time_max
+	 * 0 <= renewal <= rebind <= expiry
 	 * &&
 	 * expiry >= MIN(time_max, 60)
 	 */
-
-	lease->expiry = 43200;	/* Default to 12 hours */
-	if (lease->options[DHO_DHCP_LEASE_TIME].len == sizeof(uint32val)) {
-		memcpy(&uint32val, lease->options[DHO_DHCP_LEASE_TIME].data,
-		    sizeof(uint32val));
-		lease->expiry = ntohl(uint32val);
-		if (lease->expiry < 60)
-			lease->expiry = 60;
-	}
-	if (lease->expiry > time_max)
-		lease->expiry = time_max;
-
-	lease->renewal = lease->expiry / 2;
-	if (lease->options[DHO_DHCP_RENEWAL_TIME].len == sizeof(uint32val)) {
-		memcpy(&uint32val, lease->options[DHO_DHCP_RENEWAL_TIME].data,
-		    sizeof(uint32val));
-		lease->renewal = ntohl(uint32val);
-		if (lease->renewal > lease->expiry)
-			lease->renewal = lease->expiry;
-	}
+	lease->expiry = lease_expiry(lease) - lease->epoch;
 
 	lease->rebind = (lease->expiry * 7) / 8;
 	if (lease->options[DHO_DHCP_REBINDING_TIME].len == sizeof(uint32val)) {
@@ -2523,13 +2512,13 @@ set_lease_times(struct client_lease *lease)
 		if (lease->rebind > lease->expiry)
 			lease->rebind = lease->expiry;
 	}
-	if (lease->rebind < lease->renewal)
-		lease->rebind = lease->renewal;
-
 	/* Convert lease lengths to times. */
 	lease->expiry += lease->epoch;
-	lease->renewal += lease->epoch;
 	lease->rebind += lease->epoch;
+
+	renewal = lease_renewal(lease);
+	if (lease->rebind < renewal)
+		lease->rebind = renewal;
 }
 
 void
@@ -2615,7 +2604,7 @@ get_recorded_lease(struct interface_info *ifi)
 		if (addressinuse(ifi->name, lp->address, ifname) != 0 &&
 		    strncmp(ifname, ifi->name, IF_NAMESIZE) != 0)
 			continue;
-		if (lp->is_static == 0 && lp->expiry <= cur_time)
+		if (lease_expiry(lp) <= cur_time)
 			continue;
 
 		if (lp->is_static != 0) {
@@ -2651,4 +2640,45 @@ set_default_client_identifier(struct interface_info *ifi)
 		    ETHER_ADDR_LEN);
 		opt->len = ETHER_ADDR_LEN + 1;
 	}
+}
+
+time_t
+lease_expiry(struct client_lease *lease)
+{
+	uint32_t	expiry;
+
+	if (lease->is_static != 0)
+		return LLONG_MAX;
+
+	expiry = 43200;	/* Default to 12 hours */
+	if (lease->options[DHO_DHCP_LEASE_TIME].len == sizeof(expiry)) {
+		memcpy(&expiry, lease->options[DHO_DHCP_LEASE_TIME].data,
+		    sizeof(expiry));
+		expiry = ntohl(expiry);
+		if (expiry < 60)
+			expiry = 60;
+	}
+	if (expiry > LLONG_MAX - lease->epoch)
+		expiry = LLONG_MAX - lease->epoch;
+
+	return lease->epoch + expiry;
+}
+time_t
+lease_renewal(struct client_lease *lease)
+{
+	time_t		 expiry;
+	uint32_t	 renewal;
+
+	expiry = lease_expiry(lease) - lease->epoch;
+
+	renewal = expiry / 2;
+	if (lease->options[DHO_DHCP_RENEWAL_TIME].len == sizeof(renewal)) {
+		memcpy(&renewal, lease->options[DHO_DHCP_RENEWAL_TIME].data,
+		    sizeof(renewal));
+		renewal = ntohl(renewal);
+		if (renewal > expiry)
+			renewal = expiry;
+	}
+
+	return lease->epoch + renewal;
 }

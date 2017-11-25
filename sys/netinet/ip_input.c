@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_input.c,v 1.332 2017/11/14 09:30:17 mpi Exp $	*/
+/*	$OpenBSD: ip_input.c,v 1.334 2017/11/23 13:45:46 mpi Exp $	*/
 /*	$NetBSD: ip_input.c,v 1.30 1996/03/16 23:53:58 christos Exp $	*/
 
 /*
@@ -151,7 +151,7 @@ void save_rte(struct mbuf *, u_char *, struct in_addr);
 void
 ip_init(void)
 {
-	struct protosw *pr;
+	const struct protosw *pr;
 	int i;
 	const u_int16_t defbaddynamicports_tcp[] = DEFBADDYNAMICPORTS_TCP;
 	const u_int16_t defbaddynamicports_udp[] = DEFBADDYNAMICPORTS_UDP;
@@ -613,13 +613,11 @@ ip_local(struct mbuf **mp, int *offp, int nxt, int af)
 int
 ip_deliver(struct mbuf **mp, int *offp, int nxt, int af)
 {
-	struct protosw *psw;
+	const struct protosw *psw;
 	int naf = af;
 #ifdef INET6
 	int nest = 0;
 #endif /* INET6 */
-
-	KERNEL_ASSERT_LOCKED();
 
 	/* pf might have modified stuff, might have to chksum */
 	switch (af) {
@@ -1386,7 +1384,7 @@ ip_stripoptions(struct mbuf *m)
 	ip->ip_len = htons(ntohs(ip->ip_len) - olen);
 }
 
-int inetctlerrmap[PRC_NCMDS] = {
+const int inetctlerrmap[PRC_NCMDS] = {
 	0,		0,		0,		0,
 	0,		EMSGSIZE,	EHOSTDOWN,	EHOSTUNREACH,
 	EHOSTUNREACH,	EHOSTUNREACH,	ECONNREFUSED,	ECONNREFUSED,
