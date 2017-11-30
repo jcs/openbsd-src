@@ -1,4 +1,4 @@
-/*	$OpenBSD: bcode.c,v 1.51 2017/02/26 11:29:55 otto Exp $	*/
+/*	$OpenBSD: bcode.c,v 1.56 2017/11/29 19:13:31 otto Exp $	*/
 
 /*
  * Copyright (c) 2003, Otto Moerbeek <otto@drijf.net>
@@ -95,18 +95,14 @@ static void		bdiv(void);
 static void		bmod(void);
 static void		bdivmod(void);
 static void		bexp(void);
-static bool		bsqrt_stop(const BIGNUM *, const BIGNUM *, u_int *);
 static void		bsqrt(void);
 static void		not(void);
 static void		equal_numbers(void);
 static void		less_numbers(void);
 static void		lesseq_numbers(void);
 static void		equal(void);
-static void		not_equal(void);
 static void		less(void);
-static void		not_less(void);
 static void		greater(void);
-static void		not_greater(void);
 static void		not_compare(void);
 static bool		compare_numbers(enum bcode_compare, struct number *,
 			    struct number *);
@@ -137,7 +133,7 @@ struct jump_entry {
 	opcode_function	f;
 };
 
-static opcode_function jump_table[UCHAR_MAX];
+static opcode_function jump_table[UCHAR_MAX + 1];
 
 static const struct jump_entry jump_table_data[] = {
 	{ ' ',	nop		},
@@ -214,8 +210,9 @@ static const struct jump_entry jump_table_data[] = {
 	{ '~',	bdivmod		}
 };
 
-#define JUMP_TABLE_DATA_SIZE \
-	(sizeof(jump_table_data)/sizeof(jump_table_data[0]))
+#ifndef nitems
+#define nitems(a)	(sizeof((a)) / sizeof((a)[0]))
+#endif
 
 /* ARGSUSED */
 static void
@@ -238,10 +235,18 @@ init_bmachine(bool extended_registers)
 	if (bmachine.reg == NULL)
 		err(1, NULL);
 
-	for (i = 0; i < UCHAR_MAX; i++)
+	for (i = 0; i < nitems(jump_table); i++)
 		jump_table[i] = unknown;
-	for (i = 0; i < JUMP_TABLE_DATA_SIZE; i++)
+
+	for (i = 0; i < nitems(jump_table_data); i++) {
+		if ((unsigned int)jump_table_data[i].ch >= nitems(jump_table))
+			errx(1, "opcode '%c' overflows jump table",
+			    jump_table_data[i].ch);
+		if (jump_table[jump_table_data[i].ch] != unknown)
+			errx(1, "opcode '%c' already assigned",
+			    jump_table_data[i].ch);
 		jump_table[jump_table_data[i].ch] = jump_table_data[i].f;
+	}
 
 	stack_init(&bmachine.stack);
 
@@ -1195,7 +1200,7 @@ bexp(void)
 		negate(p);
 		rscale = bmachine.scale;
 	} else {
-		/* Posix bc says min(a.scale * b, max(a.scale, scale) */
+		/* Posix bc says min(a.scale * b, max(a.scale, scale)) */
 		u_long	b;
 		u_int	m;
 
@@ -1262,28 +1267,12 @@ bexp(void)
 	free_number(p);
 }
 
-static bool
-bsqrt_stop(const BIGNUM *x, const BIGNUM *y, u_int *onecount)
-{
-	BIGNUM *r;
-	bool ret;
-
-	r = BN_new();
-	bn_checkp(r);
-	bn_check(BN_sub(r, x, y));
-	if (BN_is_one(r))
-		(*onecount)++;
-	ret = BN_is_zero(r);
-	BN_free(r);
-	return ret || *onecount > 1;
-}
-
 static void
 bsqrt(void)
 {
 	struct number	*n;
 	struct number	*r;
-	BIGNUM		*x, *y;
+	BIGNUM		*x, *y, *t;
 	u_int		scale, onecount;
 	BN_CTX		*ctx;
 
@@ -1306,14 +1295,16 @@ bsqrt(void)
 		bn_checkp(y);
 		ctx = BN_CTX_new();
 		bn_checkp(ctx);
-		for (;;) {
-			bn_checkp(BN_copy(y, x));
-			bn_check(BN_div(x, NULL, n->number, x, ctx));
-			bn_check(BN_add(x, x, y));
-			bn_check(BN_rshift1(x, x));
-			if (bsqrt_stop(x, y, &onecount))
-				break;
-		}
+		do {
+			bn_check(BN_div(y, NULL, n->number, x, ctx));
+			bn_check(BN_add(y, x, y));
+			bn_check(BN_rshift1(y, y));
+			bn_check(BN_sub(x, y, x));
+			t = x;
+			x = y;
+			y = t;
+		} while (!BN_is_zero(y) && (onecount += BN_is_one(y)) < 2);
+		bn_check(BN_sub(y, x, y));
 		r = bmalloc(sizeof(*r));
 		r->scale = scale;
 		r->number = y;
@@ -1402,12 +1393,6 @@ lesseq_numbers(void)
 }
 
 static void
-not_equal(void)
-{
-	compare(BCODE_NOT_EQUAL);
-}
-
-static void
 less(void)
 {
 	compare(BCODE_LESS);
@@ -1418,37 +1403,25 @@ not_compare(void)
 {
 	switch (readch()) {
 	case '<':
-		not_less();
+		compare(BCODE_NOT_LESS);
 		break;
 	case '>':
-		not_greater();
+		compare(BCODE_NOT_GREATER);
 		break;
 	case '=':
-		not_equal();
+		compare(BCODE_NOT_EQUAL);
 		break;
 	default:
 		unreadch();
-		(void)fprintf(stderr, "! command is deprecated\n");
+		warnx("! command is deprecated");
 		break;
 	}
-}
-
-static void
-not_less(void)
-{
-	compare(BCODE_NOT_LESS);
 }
 
 static void
 greater(void)
 {
 	compare(BCODE_GREATER);
-}
-
-static void
-not_greater(void)
-{
-	compare(BCODE_NOT_GREATER);
 }
 
 static bool
@@ -1601,11 +1574,8 @@ skipN(void)
 static void
 skip_until_mark(void)
 {
-	int ch;
-
 	for (;;) {
-		ch = readch();
-		switch (ch) {
+		switch (readch()) {
 		case 'M':
 			return;
 		case EOF:
@@ -1630,7 +1600,7 @@ skip_until_mark(void)
 			free(read_string(&bmachine.readstack[bmachine.readsp]));
 			break;
 		case '!':
-			switch (ch = readch()) {
+			switch (readch()) {
 				case '<':
 				case '>':
 				case '=':
@@ -1746,10 +1716,10 @@ eval(void)
 		(void)fprintf(stderr, "%zd =>\n", bmachine.readsp);
 #endif
 
-		if (0 <= ch && ch < UCHAR_MAX)
+		if (0 <= ch && ch < nitems(jump_table))
 			(*jump_table[ch])();
 		else
-			warnx("internal error: opcode %d", ch);
+			unknown();
 
 #ifdef DEBUGGING
 		stack_print(stderr, &bmachine.stack, "* ",

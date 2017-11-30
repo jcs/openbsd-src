@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmmvar.h,v 1.48 2017/11/17 04:44:14 mlarkin Exp $	*/
+/*	$OpenBSD: vmmvar.h,v 1.50 2017/11/29 02:46:10 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -332,16 +332,24 @@ struct vm_exit_inout {
 	uint8_t			vei_string;	/* string variety? */
 	uint8_t			vei_encoding;	/* operand encoding */
 	uint16_t		vei_port;	/* port */
-	uint32_t		vei_data;	/* data (for IN insns) */
+	uint32_t		vei_data;	/* data */
 };
 
+/*
+ * union vm_exit
+ *
+ * Contains VM exit information communicated to vmd(8). This information is
+ * gathered by vmm(4) from the CPU on each exit that requires help from vmd.
+ */
 union vm_exit {
 	struct vm_exit_inout	vei;		/* IN/OUT exit */
 };
 
 /*
- * struct vcpu_segment_info describes a segment + selector set, used
- * in constructing the initial vcpu register content
+ * struct vcpu_segment_info
+ *
+ * Describes a segment + selector set, used in constructing the initial vcpu
+ * register content
  */
 struct vcpu_segment_info {
 	uint16_t vsi_sel;
@@ -376,7 +384,11 @@ struct vcpu_segment_info {
 #define VCPU_REGS_CR4	3
 #define VCPU_REGS_CR8	4
 #define VCPU_REGS_XCR0	5
-#define VCPU_REGS_NCRS	(VCPU_REGS_XCR0 + 1)
+#define VCPU_REGS_PDPTE0 6
+#define VCPU_REGS_PDPTE1 7
+#define VCPU_REGS_PDPTE2 8
+#define VCPU_REGS_PDPTE3 9
+#define VCPU_REGS_NCRS	(VCPU_REGS_PDPTE3 + 1)
 
 #define VCPU_REGS_CS		0
 #define VCPU_REGS_DS		1
@@ -491,6 +503,10 @@ struct vm_intr_params {
     VM_RWREGS_MSRS)
 
 struct vm_rwregs_params {
+	/*
+	 * Input/output parameters to VMM_IOC_READREGS /
+	 * VMM_IOC_WRITEREGS
+	 */
 	uint32_t		vrwp_vm_id;
 	uint32_t		vrwp_vcpu_id;
 	uint64_t		vrwp_mask;
@@ -504,8 +520,8 @@ struct vm_rwregs_params {
 #define VMM_IOC_TERM _IOW('V', 4, struct vm_terminate_params) /* Terminate VM */
 #define VMM_IOC_RESETCPU _IOW('V', 5, struct vm_resetcpu_params) /* Reset */
 #define VMM_IOC_INTR _IOW('V', 6, struct vm_intr_params) /* Intr pending */
-#define VMM_IOC_READREGS _IOWR('V', 7, struct vm_rwregs_params) /* Get registers */
-#define VMM_IOC_WRITEREGS _IOW('V', 8, struct vm_rwregs_params) /* Set registers */
+#define VMM_IOC_READREGS _IOWR('V', 7, struct vm_rwregs_params) /* Get regs */
+#define VMM_IOC_WRITEREGS _IOW('V', 8, struct vm_rwregs_params) /* Set regs */
 
 
 /* CPUID masks */

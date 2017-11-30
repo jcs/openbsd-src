@@ -1,4 +1,4 @@
-/*	$OpenBSD: ca.c,v 1.28 2017/08/09 21:31:16 claudio Exp $	*/
+/*	$OpenBSD: ca.c,v 1.31 2017/11/28 00:20:23 claudio Exp $	*/
 
 /*
  * Copyright (c) 2014 Reyk Floeter <reyk@openbsd.org>
@@ -109,30 +109,34 @@ void
 ca_launch(void)
 {
 	char		 hash[TLS_CERT_HASH_SIZE];
+	char		*buf;
 	BIO		*in = NULL;
 	EVP_PKEY	*pkey = NULL;
 	struct relay	*rlay;
 	X509		*cert = NULL;
+	off_t		 len;
 
 	TAILQ_FOREACH(rlay, env->sc_relays, rl_entry) {
 		if ((rlay->rl_conf.flags & (F_TLS|F_TLSCLIENT)) == 0)
 			continue;
 
-		if (rlay->rl_conf.tls_cert_len) {
-			if ((in = BIO_new_mem_buf(rlay->rl_tls_cert,
-			    rlay->rl_conf.tls_cert_len)) == NULL)
-				fatalx("ca_launch: cert");
+		if (rlay->rl_tls_cert_fd != -1) {
+			if ((buf = relay_load_fd(rlay->rl_tls_cert_fd,
+			    &len)) == NULL)
+				fatal("ca_launch: cert relay_load_fd");
+
+			if ((in = BIO_new_mem_buf(buf, len)) == NULL)
+				fatalx("ca_launch: cert BIO_new_mem_buf");
 
 			if ((cert = PEM_read_bio_X509(in, NULL,
 			    NULL, NULL)) == NULL)
-				fatalx("ca_launch: cert");
+				fatalx("ca_launch: cert PEM_read_bio_X509");
 
 			hash_x509(cert, hash, sizeof(hash));
 
 			BIO_free(in);
 			X509_free(cert);
-			purge_key(&rlay->rl_tls_cert,
-			    rlay->rl_conf.tls_cert_len);
+			purge_key(&buf, len);
 		}
 		if (rlay->rl_conf.tls_key_len) {
 			if ((in = BIO_new_mem_buf(rlay->rl_tls_key,
@@ -153,21 +157,23 @@ ca_launch(void)
 			    rlay->rl_conf.tls_key_len);
 		}
 
-		if (rlay->rl_conf.tls_cacert_len) {
-			if ((in = BIO_new_mem_buf(rlay->rl_tls_cacert,
-			    rlay->rl_conf.tls_cacert_len)) == NULL)
-				fatalx("ca_launch: cacert");
+		if (rlay->rl_tls_cacert_fd != -1) {
+			if ((buf = relay_load_fd(rlay->rl_tls_cacert_fd,
+			    &len)) == NULL)
+				fatal("ca_launch: cacert relay_load_fd");
+
+			if ((in = BIO_new_mem_buf(buf, len)) == NULL)
+				fatalx("ca_launch: cacert BIO_new_mem_buf");
 
 			if ((cert = PEM_read_bio_X509(in, NULL,
 			    NULL, NULL)) == NULL)
-				fatalx("ca_launch: cacert");
+				fatalx("ca_launch: cacert PEM_read_bio_X509");
 
 			hash_x509(cert, hash, sizeof(hash));
 
 			BIO_free(in);
 			X509_free(cert);
-			purge_key(&rlay->rl_tls_cacert,
-			    rlay->rl_conf.tls_cacert_len);
+			purge_key(&buf, len);
 		}
 		if (rlay->rl_conf.tls_cakey_len) {
 			if ((in = BIO_new_mem_buf(rlay->rl_tls_cakey,
@@ -187,6 +193,7 @@ ca_launch(void)
 			purge_key(&rlay->rl_tls_cakey,
 			    rlay->rl_conf.tls_cakey_len);
 		}
+		close(rlay->rl_tls_ca_fd);
 	}
 }
 
@@ -196,6 +203,9 @@ ca_dispatch_parent(int fd, struct privsep_proc *p, struct imsg *imsg)
 	switch (imsg->hdr.type) {
 	case IMSG_CFG_RELAY:
 		config_getrelay(env, imsg);
+		break;
+	case IMSG_CFG_RELAY_FD:
+		config_getrelayfd(env, imsg);
 		break;
 	case IMSG_CFG_DONE:
 		config_getcfg(env, imsg);

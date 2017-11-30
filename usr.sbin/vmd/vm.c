@@ -1,4 +1,4 @@
-/*	$OpenBSD: vm.c,v 1.28 2017/09/19 06:22:30 mlarkin Exp $	*/
+/*	$OpenBSD: vm.c,v 1.30 2017/11/29 02:46:10 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -31,6 +31,7 @@
 
 #include <machine/param.h>
 #include <machine/psl.h>
+#include <machine/pte.h>
 #include <machine/specialreg.h>
 #include <machine/vmmvar.h>
 
@@ -133,6 +134,11 @@ static const struct vcpu_reg_state vcpu_init_flat32 = {
 #endif
 	.vrs_crs[VCPU_REGS_CR0] = CR0_CD | CR0_NW | CR0_ET | CR0_PE | CR0_PG,
 	.vrs_crs[VCPU_REGS_CR3] = PML4_PAGE,
+	.vrs_crs[VCPU_REGS_CR4] = CR4_PAE | CR4_PSE,
+	.vrs_crs[VCPU_REGS_PDPTE0] = PML3_PAGE | PG_V,
+	.vrs_crs[VCPU_REGS_PDPTE1] = 0ULL,
+	.vrs_crs[VCPU_REGS_PDPTE2] = 0ULL,
+	.vrs_crs[VCPU_REGS_PDPTE3] = 0ULL,
 	.vrs_sregs[VCPU_REGS_CS] = { 0x8, 0xFFFFFFFF, 0xC09F, 0x0},
 	.vrs_sregs[VCPU_REGS_DS] = { 0x10, 0xFFFFFFFF, 0xC093, 0x0},
 	.vrs_sregs[VCPU_REGS_ES] = { 0x10, 0xFFFFFFFF, 0xC093, 0x0},
@@ -143,7 +149,7 @@ static const struct vcpu_reg_state vcpu_init_flat32 = {
 	.vrs_idtr = { 0x0, 0xFFFF, 0x0, 0x0},
 	.vrs_sregs[VCPU_REGS_LDTR] = { 0x0, 0xFFFF, 0x0082, 0x0},
 	.vrs_sregs[VCPU_REGS_TR] = { 0x0, 0xFFFF, 0x008B, 0x0},
-	.vrs_msrs[VCPU_REGS_EFER] = 0ULL,
+	.vrs_msrs[VCPU_REGS_EFER] = EFER_LME | EFER_LMA,
 #ifndef __i386__
 	.vrs_msrs[VCPU_REGS_STAR] = 0ULL,
 	.vrs_msrs[VCPU_REGS_LSTAR] = 0ULL,
@@ -1091,14 +1097,14 @@ run_vm(int *child_disks, int *child_taps, struct vmop_create_params *vmc,
 		if (vrp[i] == NULL) {
 			log_warn("%s: memory allocation error - "
 			    "exiting.", __progname);
-			/* caller will exit, so skip free'ing */
+			/* caller will exit, so skip freeing */
 			return (ENOMEM);
 		}
 		vrp[i]->vrp_exit = malloc(sizeof(union vm_exit));
 		if (vrp[i]->vrp_exit == NULL) {
 			log_warn("%s: memory allocation error - "
 			    "exiting.", __progname);
-			/* caller will exit, so skip free'ing */
+			/* caller will exit, so skip freeing */
 			return (ENOMEM);
 		}
 		vrp[i]->vrp_vm_id = vcp->vcp_id;
@@ -1110,7 +1116,7 @@ run_vm(int *child_disks, int *child_taps, struct vmop_create_params *vmc,
 			return (EIO);
 		}
 
-		/* once more becuase reset_cpu changes regs */
+		/* once more because reset_cpu changes regs */
 		if (current_vm->vm_received) {
 			vregsp.vrwp_vm_id = vcp->vcp_id;
 			vregsp.vrwp_vcpu_id = i;

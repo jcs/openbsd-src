@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.218 2017/11/16 14:24:34 bluhm Exp $	*/
+/*	$OpenBSD: parse.y,v 1.221 2017/11/29 15:24:50 benno Exp $	*/
 
 /*
  * Copyright (c) 2007 - 2014 Reyk Floeter <reyk@openbsd.org>
@@ -99,7 +99,6 @@ objid_t			 last_relay_id = 0;
 objid_t			 last_proto_id = 0;
 objid_t			 last_rt_id = 0;
 objid_t			 last_nr_id = 0;
-objid_t			 last_key_id = 0;
 
 static struct rdr	*rdr = NULL;
 static struct table	*table = NULL;
@@ -171,8 +170,8 @@ typedef struct {
 %token	RESPONSE RETRY QUICK RETURN ROUNDROBIN ROUTE SACK SCRIPT SEND SESSION
 %token	SNMP SOCKET SPLICE SSL STICKYADDR STYLE TABLE TAG TAGGED TCP TIMEOUT TLS
 %token	TO ROUTER RTLABEL TRANSPARENT TRAP UPDATES URL VIRTUAL WITH TTL RTABLE
-%token	MATCH PARAMS RANDOM LEASTSTATES SRCHASH KEY CERTIFICATE PASSWORD ECDH
-%token	EDH CURVE TICKETS
+%token	MATCH PARAMS RANDOM LEASTSTATES SRCHASH KEY CERTIFICATE PASSWORD ECDHE
+%token	EDH TICKETS
 %token	<v.string>	STRING
 %token  <v.number>	NUMBER
 %type	<v.string>	hostname interface table value optstring
@@ -418,6 +417,9 @@ main		: INTERVAL NUMBER	{
 				(void)strlcpy(conf->sc_conf.snmp_path,
 				    AGENTX_SOCKET,
 				    sizeof(conf->sc_conf.snmp_path));
+		}
+		| SOCKET STRING {
+			conf->sc_ps->ps_csock.cs_name = $2;
 		}
 		;
 
@@ -1006,8 +1008,8 @@ proto		: relay_proto PROTO STRING	{
 			TAILQ_INIT(&p->rules);
 			(void)strlcpy(p->tlsciphers, TLSCIPHERS_DEFAULT,
 			    sizeof(p->tlsciphers));
-			(void)strlcpy(p->tlsecdhcurve, TLSECDHCURVE_DEFAULT,
-			    sizeof(p->tlsecdhcurve));
+			(void)strlcpy(p->tlsecdhecurves, TLSECDHECURVES_DEFAULT,
+			    sizeof(p->tlsecdhecurves));
 			(void)strlcpy(p->tlsdhparams, TLSDHPARAM_DEFAULT,
 			    sizeof(p->tlsdhparams));
 			if (last_proto_id == INT_MAX) {
@@ -1161,37 +1163,29 @@ tlsflags	: SESSION TICKETS { proto->tickets = 1; }
 			}
 			free($3);
 		}
-		| NO ECDH			{
-			(void)strlcpy(proto->tlsecdhcurve, "none",
-			    sizeof(proto->tlsecdhcurve));
-		}
-		| ECDH			{
-			(void)strlcpy(proto->tlsecdhcurve, "auto",
-			    sizeof(proto->tlsecdhcurve));
-		}
-		| ECDH CURVE STRING			{
+		| ECDHE STRING			{
 			struct tls_config	*tls_cfg;
 			if ((tls_cfg = tls_config_new()) == NULL) {
 				yyerror("tls_config_new failed");
-				free($3);
+				free($2);
 				YYERROR;
 			}
-			if (tls_config_set_ecdhecurve(tls_cfg, $3) != 0) {
-				yyerror("tls ecdh curve %s: %s", $3,
+			if (tls_config_set_ecdhecurves(tls_cfg, $2) != 0) {
+				yyerror("tls ecdhe %s: %s", $2,
 				    tls_config_error(tls_cfg));
 				tls_config_free(tls_cfg);
-				free($3);
+				free($2);
 				YYERROR;
 			}
 			tls_config_free(tls_cfg);
-			if (strlcpy(proto->tlsecdhcurve, $3,
-			    sizeof(proto->tlsecdhcurve)) >=
-			    sizeof(proto->tlsecdhcurve)) {
-				yyerror("tls ecdh truncated");
-				free($3);
+			if (strlcpy(proto->tlsecdhecurves, $2,
+			    sizeof(proto->tlsecdhecurves)) >=
+			    sizeof(proto->tlsecdhecurves)) {
+				yyerror("tls ecdhe curves truncated");
+				free($2);
 				YYERROR;
 			}
-			free($3);
+			free($2);
 		}
 		| CA FILENAME STRING		{
 			if (strlcpy(proto->tlsca, $3,
@@ -1669,6 +1663,9 @@ relay		: RELAY STRING	{
 			r->rl_proto = NULL;
 			r->rl_conf.proto = EMPTY_ID;
 			r->rl_conf.dstretry = 0;
+			r->rl_tls_cert_fd = -1;
+			r->rl_tls_ca_fd = -1;
+			r->rl_tls_cacert_fd = -1;
 			TAILQ_INIT(&r->rl_tables);
 			if (last_relay_id == INT_MAX) {
 				yyerror("too many relays defined");
@@ -2223,12 +2220,11 @@ lookup(char *s)
 		{ "ciphers",		CIPHERS },
 		{ "code",		CODE },
 		{ "cookie",		COOKIE },
-		{ "curve",		CURVE },
 		{ "demote",		DEMOTE },
 		{ "destination",	DESTINATION },
 		{ "digest",		DIGEST },
 		{ "disable",		DISABLE },
-		{ "ecdh",		ECDH },
+		{ "ecdhe",		ECDHE },
 		{ "edh",		EDH },
 		{ "error",		ERROR },
 		{ "expect",		EXPECT },
@@ -3201,10 +3197,8 @@ int
 relay_id(struct relay *rl)
 {
 	rl->rl_conf.id = ++last_relay_id;
-	rl->rl_conf.tls_keyid = ++last_key_id;
-	rl->rl_conf.tls_cakeyid = ++last_key_id;
 
-	if (last_relay_id == INT_MAX || last_key_id == INT_MAX)
+	if (last_relay_id == INT_MAX)
 		return (-1);
 
 	return (0);
@@ -3224,8 +3218,9 @@ relay_inherit(struct relay *ra, struct relay *rb)
 	rb->rl_conf.flags =
 	    (ra->rl_conf.flags & ~F_TLS) | (rc.flags & F_TLS);
 	if (!(rb->rl_conf.flags & F_TLS)) {
-		rb->rl_tls_cert = NULL;
-		rb->rl_conf.tls_cert_len = 0;
+		rb->rl_tls_cert_fd = -1;
+		rb->rl_tls_cacert_fd = -1;
+		rb->rl_tls_ca_fd = -1;
 		rb->rl_tls_key = NULL;
 		rb->rl_conf.tls_key_len = 0;
 	}
