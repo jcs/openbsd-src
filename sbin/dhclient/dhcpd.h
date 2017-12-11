@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.237 2017/11/24 01:39:29 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.241 2017/12/09 15:48:04 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -58,14 +58,12 @@ struct client_lease {
 	TAILQ_ENTRY(client_lease) next;
 	char			*interface;
 	time_t			 epoch;
-	time_t			 expiry, rebind;
 	struct in_addr		 address;
 	struct in_addr		 next_server;
 	char			*server_name;
 	char			*filename;
 	char			 ssid[32];
 	uint8_t			 ssid_len;
-	unsigned int		 is_static;
 	struct option_data	 options[DHO_COUNT];
 };
 #define BOOTP_LEASE(l)	((l)->options[DHO_DHCP_MESSAGE_TYPE].len == 0)
@@ -90,7 +88,8 @@ struct client_config {
 		ACTION_DEFAULT,
 		ACTION_SUPERSEDE,
 		ACTION_PREPEND,
-		ACTION_APPEND
+		ACTION_APPEND,
+		ACTION_IGNORE
 	} default_actions[DHO_COUNT];
 
 	struct in_addr		 address;
@@ -98,10 +97,8 @@ struct client_config {
 	struct option_data	 send_options[DHO_COUNT];
 	uint8_t			 required_options[DHO_COUNT];
 	uint8_t			 requested_options[DHO_COUNT];
-	uint8_t			 ignored_options[DHO_COUNT];
 	int			 requested_option_count;
 	int			 required_option_count;
-	int			 ignored_option_count;
 	time_t			 timeout;
 	time_t			 initial_interval;
 	time_t			 link_timeout;
@@ -113,7 +110,6 @@ struct client_config {
 	char			*resolv_tail;
 	char			*filename;
 	char			*server_name;
-	struct client_lease_tq	 static_leases;
 };
 
 
@@ -140,6 +136,7 @@ struct interface_info {
 	int			 sent_packet_length;
 	uint32_t		 xid;
 	time_t			 timeout;
+	time_t			 expiry, rebind;
 	void			(*timeout_func)(struct interface_info *);
 	uint16_t		 secs;
 	time_t			 first_sending;
@@ -223,7 +220,6 @@ void		 dhcpack(struct interface_info *, struct option_data *,char *);
 void		 dhcpnak(struct interface_info *, struct option_data *,char *);
 void		 free_client_lease(struct client_lease *);
 void		 routehandler(struct interface_info *, int);
-void		 set_lease_times(struct client_lease *);
 
 /* packet.c */
 void		 assemble_eh_header(struct ether_addr, struct ether_header *);

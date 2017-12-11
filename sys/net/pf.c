@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1048 2017/11/28 16:05:46 bluhm Exp $ */
+/*	$OpenBSD: pf.c,v 1.1050 2017/12/04 15:13:12 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -3224,7 +3224,7 @@ pf_socket_lookup(struct pf_pdesc *pd)
 		inp = in_pcbhashlookup(tb, saddr->v4, sport, daddr->v4, dport,
 		    pd->rdomain);
 		if (inp == NULL) {
-			inp = in_pcblookup_listen(tb, daddr->v4, dport, 0,
+			inp = in_pcblookup_listen(tb, daddr->v4, dport,
 			    NULL, pd->rdomain);
 			if (inp == NULL)
 				return (-1);
@@ -3235,7 +3235,7 @@ pf_socket_lookup(struct pf_pdesc *pd)
 		inp = in6_pcbhashlookup(tb, &saddr->v6, sport, &daddr->v6,
 		    dport, pd->rdomain);
 		if (inp == NULL) {
-			inp = in6_pcblookup_listen(tb, &daddr->v6, dport, 0,
+			inp = in6_pcblookup_listen(tb, &daddr->v6, dport,
 			    NULL, pd->rdomain);
 			if (inp == NULL)
 				return (-1);
@@ -6602,6 +6602,14 @@ pf_setup_pdesc(struct pf_pdesc *pd, sa_family_t af, int dir,
 		case ND_NEIGHBOR_SOLICIT:
 		case ND_NEIGHBOR_ADVERT:
 			icmp_hlen = sizeof(struct nd_neighbor_solicit);
+			/* FALLTHROUGH */
+		case ND_ROUTER_SOLICIT:
+		case ND_ROUTER_ADVERT:
+		case ND_REDIRECT:
+			if (pd->ttl != 255) {
+				REASON_SET(reason, PFRES_NORM);
+				return (PF_DROP);
+			}
 			break;
 		}
 		if (icmp_hlen > sizeof(struct icmp6_hdr) &&
@@ -6971,7 +6979,7 @@ done:
 	/*
 	 * connections redirected to loopback should not match sockets
 	 * bound specifically to loopback due to security implications,
-	 * see tcp_input() and in_pcblookup_listen().
+	 * see in_pcblookup_listen().
 	 */
 	if (pd.destchg)
 		if ((pd.af == AF_INET && (ntohl(pd.dst->v4.s_addr) >>

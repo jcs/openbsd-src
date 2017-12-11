@@ -1,4 +1,4 @@
-/*	$OpenBSD: ikev2.c,v 1.159 2017/11/30 12:18:44 patrick Exp $	*/
+/*	$OpenBSD: ikev2.c,v 1.164 2017/12/05 09:06:53 patrick Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -115,7 +115,7 @@ int	 ikev2_valid_proposal(struct iked_proposal *,
 	    struct iked_transform **, struct iked_transform **, int *);
 
 ssize_t	 ikev2_add_proposals(struct iked *, struct iked_sa *, struct ibuf *,
-	    struct iked_proposals *, uint8_t, int, int);
+	    struct iked_proposals *, uint8_t, int, int, int);
 ssize_t	 ikev2_add_cp(struct iked *, struct iked_sa *, struct ibuf *);
 ssize_t	 ikev2_add_transform(struct ibuf *,
 	    uint8_t, uint8_t, uint16_t, uint16_t);
@@ -994,7 +994,7 @@ ikev2_init_ike_sa_peer(struct iked *env, struct iked_policy *pol,
 	if ((pld = ikev2_add_payload(buf)) == NULL)
 		goto done;
 	if ((len = ikev2_add_proposals(env, sa, buf, &pol->pol_proposals,
-	    IKEV2_SAPROTO_IKE, sa->sa_hdr.sh_initiator, 0)) == -1)
+	    IKEV2_SAPROTO_IKE, sa->sa_hdr.sh_initiator, 0, 0)) == -1)
 		goto done;
 
 	if (ikev2_next_payload(pld, len, IKEV2_PAYLOAD_KE) == -1)
@@ -1196,7 +1196,7 @@ ikev2_init_ike_auth(struct iked *env, struct iked_sa *sa)
 	if ((pld = ikev2_add_payload(e)) == NULL)
 		goto done;
 	if ((len = ikev2_add_proposals(env, sa, e, &pol->pol_proposals, 0,
-	    sa->sa_hdr.sh_initiator, 0)) == -1)
+	    sa->sa_hdr.sh_initiator, 0, 1)) == -1)
 		goto done;
 
 	if ((len = ikev2_add_ts(e, &pld, len, sa, 0)) == -1)
@@ -1963,16 +1963,16 @@ ikev2_add_cp(struct iked *env, struct iked_sa *sa, struct ibuf *buf)
 ssize_t
 ikev2_add_proposals(struct iked *env, struct iked_sa *sa, struct ibuf *buf,
     struct iked_proposals *proposals, uint8_t protoid, int initiator,
-    int sendikespi)
+    int sendikespi, int skipdh)
 {
-	struct ikev2_sa_proposal	*sap;
+	struct ikev2_sa_proposal	*sap = NULL;
 	struct iked_transform		*xform;
 	struct iked_proposal		*prop;
 	struct iked_childsa		 csa;
 	ssize_t				 length = 0, saplength, xflen;
 	uint64_t			 spi64;
-	uint32_t			 spi32, spi;
-	unsigned int			 i;
+	uint32_t			 spi32, spi = 0;
+	unsigned int			 i, xfi, nxforms;
 
 	TAILQ_FOREACH(prop, proposals, prop_entry) {
 		if ((protoid && prop->prop_protoid != protoid) ||
@@ -1980,14 +1980,16 @@ ikev2_add_proposals(struct iked *env, struct iked_sa *sa, struct ibuf *buf,
 			continue;
 
 		if (protoid != IKEV2_SAPROTO_IKE && initiator) {
-			bzero(&csa, sizeof(csa));
-			csa.csa_ikesa = sa;
-			csa.csa_saproto = prop->prop_protoid;
-			csa.csa_local = &sa->sa_peer;
-			csa.csa_peer = &sa->sa_local;
+			if (spi == 0) {
+				bzero(&csa, sizeof(csa));
+				csa.csa_ikesa = sa;
+				csa.csa_saproto = prop->prop_protoid;
+				csa.csa_local = &sa->sa_peer;
+				csa.csa_peer = &sa->sa_local;
 
-			if (pfkey_sa_init(env->sc_pfkey, &csa, &spi) == -1)
-				return (-1);
+				if (pfkey_sa_init(env->sc_pfkey, &csa, &spi) == -1)
+					return (-1);
+			}
 
 			prop->prop_localspi.spi = spi;
 			prop->prop_localspi.spi_size = 4;
@@ -2007,10 +2009,27 @@ ikev2_add_proposals(struct iked *env, struct iked_sa *sa, struct ibuf *buf,
 			prop->prop_localspi.spi_protoid = IKEV2_SAPROTO_IKE;
 		}
 
+		/*
+		 * RFC 7296: 1.2. The Initial Exchanges
+		 * IKE_AUTH messages do not contain KE/N payloads, thus
+		 * SA payloads cannot contain groups.
+		 */
+		if (skipdh) {
+			nxforms = 0;
+			for (i = 0; i < prop->prop_nxforms; i++) {
+				xform = prop->prop_xforms + i;
+				if (xform->xform_type == IKEV2_XFORMTYPE_DH)
+					continue;
+				nxforms++;
+			}
+		} else
+			nxforms = prop->prop_nxforms;
+
+		sap->sap_more = IKEV1_PAYLOAD_PROPOSAL;
 		sap->sap_proposalnr = prop->prop_id;
 		sap->sap_protoid = prop->prop_protoid;
 		sap->sap_spisize = prop->prop_localspi.spi_size;
-		sap->sap_transforms = prop->prop_nxforms;
+		sap->sap_transforms = nxforms;
 		saplength = sizeof(*sap);
 
 		switch (prop->prop_localspi.spi_size) {
@@ -2030,22 +2049,28 @@ ikev2_add_proposals(struct iked *env, struct iked_sa *sa, struct ibuf *buf,
 			break;
 		}
 
-		for (i = 0; i < prop->prop_nxforms; i++) {
+		for (i = 0, xfi = 0; i < prop->prop_nxforms; i++) {
 			xform = prop->prop_xforms + i;
 
+			if (skipdh && xform->xform_type == IKEV2_XFORMTYPE_DH)
+				continue;
+
 			if ((xflen = ikev2_add_transform(buf,
-			    i == prop->prop_nxforms - 1 ?
+			    xfi == nxforms - 1 ?
 			    IKEV2_XFORM_LAST : IKEV2_XFORM_MORE,
 			    xform->xform_type, xform->xform_id,
 			    xform->xform_length)) == -1)
 				return (-1);
 
+			xfi++;
 			saplength += xflen;
 		}
 
 		sap->sap_length = htobe16(saplength);
 		length += saplength;
 	}
+	if (sap != NULL)
+		sap->sap_more = IKEV1_PAYLOAD_NONE;
 
 	log_debug("%s: length %zd", __func__, length);
 
@@ -2340,7 +2365,7 @@ ikev2_resp_ike_sa_init(struct iked *env, struct iked_message *msg)
 	if ((pld = ikev2_add_payload(buf)) == NULL)
 		goto done;
 	if ((len = ikev2_add_proposals(env, sa, buf, &sa->sa_proposals,
-	    IKEV2_SAPROTO_IKE, sa->sa_hdr.sh_initiator, 0)) == -1)
+	    IKEV2_SAPROTO_IKE, sa->sa_hdr.sh_initiator, 0, 0)) == -1)
 		goto done;
 
 	if (ikev2_next_payload(pld, len, IKEV2_PAYLOAD_KE) == -1)
@@ -2713,7 +2738,7 @@ ikev2_resp_ike_auth(struct iked *env, struct iked_sa *sa)
 	if ((pld = ikev2_add_payload(e)) == NULL)
 		goto done;
 	if ((len = ikev2_add_proposals(env, sa, e, &sa->sa_proposals, 0,
-	    sa->sa_hdr.sh_initiator, 0)) == -1)
+	    sa->sa_hdr.sh_initiator, 0, 1)) == -1)
 		goto done;
 
 	if ((len = ikev2_add_ts(e, &pld, len, sa, 0)) == -1)
@@ -2974,7 +2999,7 @@ ikev2_send_create_child_sa(struct iked *env, struct iked_sa *sa,
 	}
 
 	if ((len = ikev2_add_proposals(env, sa, e, &sa->sa_proposals,
-	    protoid, 1, 0)) == -1)
+	    protoid, 1, 0, 0)) == -1)
 		goto done;
 
 	if (ikev2_next_payload(pld, len, IKEV2_PAYLOAD_NONCE) == -1)
@@ -3114,7 +3139,7 @@ ikev2_ike_sa_rekey(struct iked *env, void *arg)
 
 	/* just reuse the old IKE SA proposals */
 	if ((len = ikev2_add_proposals(env, nsa, e, &sa->sa_proposals,
-	    IKEV2_SAPROTO_IKE, 1, 1)) == -1)
+	    IKEV2_SAPROTO_IKE, 1, 1, 0)) == -1)
 		goto done;
 
 	if (ikev2_next_payload(pld, len, IKEV2_PAYLOAD_NONCE) == -1)
@@ -3754,7 +3779,7 @@ ikev2_resp_create_child_sa(struct iked *env, struct iked_message *msg)
 
 	if ((len = ikev2_add_proposals(env, nsa ? nsa : sa, e,
 		nsa ? &nsa->sa_proposals : &proposals,
-		protoid, 0, nsa ? 1 : 0)) == -1)
+		protoid, 0, nsa ? 1 : 0, 0)) == -1)
 		goto done;
 
 	if (ikev2_next_payload(pld, len, IKEV2_PAYLOAD_NONCE) == -1)
@@ -4059,9 +4084,22 @@ ikev2_match_proposals(struct iked_proposal *local, struct iked_proposal *peer,
 	struct iked_transform	*tpeer, *tlocal;
 	unsigned int		 i, j, type, score, requiredh = 0;
 	uint8_t			 protoid = peer->prop_protoid;
+	uint8_t			 peerxfs[IKEV2_XFORMTYPE_MAX];
+
+	bzero(peerxfs, sizeof(peerxfs));
 
 	for (i = 0; i < peer->prop_nxforms; i++) {
 		tpeer = peer->prop_xforms + i;
+		if (tpeer->xform_type > IKEV2_XFORMTYPE_MAX)
+			continue;
+
+		/*
+		 * Record all transform types from the peer's proposal,
+		 * because if we want this proposal we have to select
+		 * a transform for each proposed transform type.
+		 */
+		peerxfs[tpeer->xform_type] = 1;
+
 		for (j = 0; j < local->prop_nxforms; j++) {
 			tlocal = local->prop_xforms + j;
 
@@ -4078,8 +4116,6 @@ ikev2_match_proposals(struct iked_proposal *local, struct iked_proposal *peer,
 			if (tpeer->xform_type != tlocal->xform_type ||
 			    tpeer->xform_id != tlocal->xform_id ||
 			    tpeer->xform_length != tlocal->xform_length)
-				continue;
-			if (tpeer->xform_type > IKEV2_XFORMTYPE_MAX)
 				continue;
 			type = tpeer->xform_type;
 
@@ -4114,6 +4150,9 @@ ikev2_match_proposals(struct iked_proposal *local, struct iked_proposal *peer,
 		} else if (protoid == IKEV2_SAPROTO_ESP && xforms[i] == NULL &&
 		    (i == IKEV2_XFORMTYPE_ENCR || i == IKEV2_XFORMTYPE_ESN ||
 		    (requiredh && i == IKEV2_XFORMTYPE_DH))) {
+			score = 0;
+			break;
+		} else if (peerxfs[i] && xforms[i] == NULL) {
 			score = 0;
 			break;
 		} else if (xforms[i] == NULL)

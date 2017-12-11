@@ -1,4 +1,4 @@
-/* $OpenBSD: fuse_opt.c,v 1.19 2017/11/16 12:56:58 helg Exp $ */
+/* $OpenBSD: fuse_opt.c,v 1.22 2017/12/11 12:38:54 helg Exp $ */
 /*
  * Copyright (c) 2013 Sylvestre Gallon <ccna.syl@gmail.com>
  * Copyright (c) 2013 Stefan Sperling <stsp@openbsd.org>
@@ -67,71 +67,32 @@ alloc_argv(struct fuse_args *args)
 	return (0);
 }
 
-static int
+/*
+ * Returns the number of characters that matched for bounds checking later.
+ */
+static size_t
 match_opt(const char *templ, const char *opt)
 {
-	const char *o, *t;
-	char *arg;
+	size_t sep, len;
 
-	arg = strpbrk(templ, " =");
+	len = strlen(templ);
+	sep = strcspn(templ, "=");
 
-	/* verify template */
-	t = templ;
-	if (*t == '-') {
-		t++;
-		if (*t == '-')
-			t++;
-		if (*t == 'o' || *t == '\0')
+	if (sep == len)
+		sep = strcspn(templ, " ");
+
+	/* key=, key=%, "-k ", -k % */
+	if (sep < len && (templ[sep + 1] == '\0' || templ[sep + 1] == '%')) {
+		if (strncmp(opt, templ, sep) == 0)
+			return (sep);
+		else
 			return (0);
 	}
 
-	/* skip leading -, -o, and -- in option name */
-	o = opt;
-	if (*o == '-') {
-		o++;
-		if (*o == 'o' || *o == '-')
-			o++;
-	}
+	if (strcmp(opt, templ) == 0)
+		return (len);
 
-	/* empty option name is invalid */
-	if (*o == '\0')
-		return (0);
-
-	/* match option name */
-	while (*t && *o) {
-		if (*t++ != *o++)
-			return (0);
-		if (arg && t == arg) {
-			if (*o != ' ' && *o != '=')
-				return (0);
-			o++; /* o now points at argument */
-			if (*o == '\0')
-				return (0);
-			break;
-		}
-	}
-
-	/* match argument */
-	if (arg) {
-		if (t != arg)
-			return (0);
-		t++;
-		/* does template have an argument? */
-		if (*t != '%' && *t != '\0')
-			return (0);
-		if (*t == '%' && t[1] == '\0')
-			return (0);
-		/* yes it does, consume argument in opt */
-		while (*o && *o != ' ')
-			o++;
-	} else if (*t != '\0')
-		return (0);
-
-	/* we should have consumed entire opt string */
-	if (*o != '\0')
-		return (0);
-
-	return (1);
+	return (0);
 }
 
 static int
@@ -223,67 +184,74 @@ fuse_opt_add_arg(struct fuse_args *args, const char *name)
 }
 
 static int
-parse_opt(const struct fuse_opt *o, const char *val, void *data,
+parse_opt(const struct fuse_opt *o, const char *opt, void *data,
     fuse_opt_proc_t f, struct fuse_args *arg)
 {
-	int keyval;
-	size_t idx;
+	const char *val;
+	int keyval, ret, found;
+	size_t sep;
 
 	if (o == NULL)
-		return IFUSE_OPT_KEEP;
+		return (IFUSE_OPT_KEEP);
 
 	keyval = 0;
+	found = 0;
 
 	for(; o->templ; o++) {
+		sep = match_opt(o->templ, opt);
+		if (sep == 0)
+			continue;
+
+		found = 1;
+		val = opt;
+
 		/* check key=value or -p n */
-		idx = strcspn(o->templ, "= ");
-
-		if (strncmp(val, o->templ, idx) == 0) {
-			if (o->templ[idx] == '=') {
-				keyval = 1;
-				val = &val[idx + 1];
-			} else if (o->templ[idx] == ' ') {
-				keyval = 1;
-				if (idx == strlen(val)) {
-					/* ask for next arg to be included */
-					return IFUSE_OPT_NEED_ANOTHER_ARG;
-				} else if (strchr(o->templ, '%') != NULL) {
-					val = &val[idx];
-				}
+		if (o->templ[sep] == '=') {
+			keyval = 1;
+			val = &opt[sep + 1];
+		} else if (o->templ[sep] == ' ') {
+			keyval = 1;
+			if (sep == strlen(opt)) {
+				/* ask for next arg to be included */
+				return (IFUSE_OPT_NEED_ANOTHER_ARG);
+			} else if (strchr(o->templ, '%') != NULL) {
+				val = &opt[sep];
 			}
+		}
 
-			if (o->val == FUSE_OPT_KEY_DISCARD)
-				return (IFUSE_OPT_DISCARD);
-
-			if (o->val == FUSE_OPT_KEY_KEEP)
+		if (o->val == FUSE_OPT_KEY_DISCARD)
+			ret = IFUSE_OPT_DISCARD;
+		else if (o->val == FUSE_OPT_KEY_KEEP)
+			ret = IFUSE_OPT_KEEP;
+		else if (FUSE_OPT_IS_OPT_KEY(o)) {
+			if (f == NULL)
 				return (IFUSE_OPT_KEEP);
 
-			if (FUSE_OPT_IS_OPT_KEY(o)) {
-				if (f == NULL)
-					return IFUSE_OPT_KEEP;
-
-				return f(data, val, o->val, arg);
-			} else if (data == NULL) {
+			ret = f(data, val, o->val, arg);
+		} else if (data == NULL) {
+			return (-1);
+		} else if (strchr(o->templ, '%') == NULL) {
+			*((int *)(data + o->off)) = o->val;
+			ret = IFUSE_OPT_DISCARD;
+		} else if (strstr(o->templ, "%s") != NULL) {
+			*((char **)(data + o->off)) = strdup(val);
+			ret = IFUSE_OPT_DISCARD;
+		} else {
+			/* All other templates, let sscanf deal with them. */
+			if (sscanf(opt, o->templ, data + o->off) != 1) {
+				fprintf(stderr, "fuse: Invalid value %s for "
+				    "option %s\n", val, o->templ);
 				return (-1);
-			} else if (strchr(o->templ, '%') == NULL) {
-				*((int *)(data + o->off)) = o->val;
-			} else if (strstr(o->templ, "%u") != NULL) {
-				*((unsigned int*)(data + o->off)) = atoi(val);
-			} else if (strstr(o->templ, "%lu") != NULL) {
-				*((unsigned long*)(data + o->off)) =
-				    strtoul(val, NULL, 0);
-			} else if (strstr(o->templ, "%s") != NULL) {
-				*((char **)(data + o->off)) = strdup(val);
-			} else {
-				/* TODO other parameterised templates */
 			}
-
-			return (IFUSE_OPT_DISCARD);
+			ret = IFUSE_OPT_DISCARD;
 		}
 	}
 
+	if (found)
+		return (ret);
+
 	if (f != NULL)
-		return f(data, val, FUSE_OPT_KEY_OPT, arg);
+		return f(data, opt, FUSE_OPT_KEY_OPT, arg);
 
 	return (IFUSE_OPT_KEEP);
 }

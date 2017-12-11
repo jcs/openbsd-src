@@ -1,4 +1,4 @@
-/*	$OpenBSD: clparse.c,v 1.150 2017/11/09 12:34:25 krw Exp $	*/
+/*	$OpenBSD: clparse.c,v 1.154 2017/12/09 15:48:04 krw Exp $	*/
 
 /* Parser for dhclient config and lease files. */
 
@@ -121,12 +121,13 @@ add_lease(struct client_lease_tq *tq, struct client_lease *lease)
 void
 read_client_conf(char *name)
 {
-	FILE *cfile;
-	int token;
+	struct option_data	*option;
+	FILE			*cfile;
+	int			 token;
+	uint32_t		 expiry;
 
 	new_parse(path_dhclient_conf);
 
-	TAILQ_INIT(&config->static_leases);
 	TAILQ_INIT(&config->reject_list);
 
 	/* Set some defaults. */
@@ -137,6 +138,24 @@ read_client_conf(char *name)
 	config->retry_interval = 1;	/* secs before asking for OFFER */
 	config->backoff_cutoff = 10;	/* max secs between packet retries */
 	config->initial_interval = 1;	/* secs before 1st retry */
+
+	/*
+	 * Set default lease length, which will determine default renewal
+	 * and rebind times.
+	 *
+	 * XXX Thus applies to both BOOTP and DHCP leases.
+	 *
+	 * DHO_DHCP_LEASE_TIME (12 hours == 43200 seconds),
+	 */
+	option = &config->defaults[DHO_DHCP_LEASE_TIME];
+	option->data = malloc(4);
+	if (option->data == NULL)
+		fatal("default lease length");
+
+	config->default_actions[DHO_DHCP_LEASE_TIME] = ACTION_DEFAULT;
+	option->len = 4;
+	expiry = htonl(43200);
+	memcpy(option->data, &expiry, 4);
 
 	config->requested_options
 	    [config->requested_option_count++] = DHO_SUBNET_MASK;
@@ -237,9 +256,9 @@ read_client_leases(char *name, struct client_lease_tq *tq)
 void
 parse_client_statement(FILE *cfile, char *name, int nested)
 {
-	struct client_lease	*lp;
+	uint8_t			 list[DHO_COUNT];
 	char			*val;
-	int			 i, token;
+	int			 i, count, token;
 
 	token = next_token(NULL, cfile);
 
@@ -272,9 +291,11 @@ parse_client_statement(FILE *cfile, char *name, int nested)
 			parse_semi(cfile);
 		break;
 	case TOK_IGNORE:
-		if (parse_option_list(cfile, &config->ignored_option_count,
-		    config->ignored_options) == 1)
+		if (parse_option_list(cfile, &count, list) == 1) {
+			for (i = 0; i < count; i++)
+				config->default_actions[list[i]] = ACTION_IGNORE;
 			parse_semi(cfile);
+		}
 		break;
 	case TOK_INITIAL_INTERVAL:
 		if (parse_lease_time(cfile, &config->initial_interval) == 1)
@@ -288,11 +309,7 @@ parse_client_statement(FILE *cfile, char *name, int nested)
 			;
 		break;
 	case TOK_LEASE:
-		if (nested == 1) {
-			parse_warn("expecting statement.");
-			skip_to_semi(cfile);
-		} else if (parse_client_lease_statement(cfile, name, &lp) == 1)
-			add_lease(&config->static_leases, lp);
+		skip_to_semi(cfile);
 		break;
 	case TOK_LINK_TIMEOUT:
 		if (parse_lease_time(cfile, &config->link_timeout) == 1)
@@ -588,7 +605,6 @@ parse_client_lease_declaration(FILE *cfile, struct client_lease *lease,
 		    == 0)
 			return;
 		lease->epoch = betoh64(lease->epoch);
-		set_lease_times(lease);
 		break;
 	case TOK_EXPIRE:
 		/* 'expire' is just a comment. See 'epoch'. */
