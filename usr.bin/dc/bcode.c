@@ -1,4 +1,4 @@
-/*	$OpenBSD: bcode.c,v 1.59 2017/12/05 14:05:22 otto Exp $	*/
+/*	$OpenBSD: bcode.c,v 1.61 2017/12/12 19:07:10 otto Exp $	*/
 
 /*
  * Copyright (c) 2003, Otto Moerbeek <otto@drijf.net>
@@ -66,13 +66,13 @@ static __inline void	push(struct value *);
 static __inline struct value *tos(void);
 static __inline struct number	*pop_number(void);
 static __inline char	*pop_string(void);
-static __inline void	clear_stack(void);
-static __inline void	print_tos(void);
+static void		clear_stack(void);
+static void		print_tos(void);
 static void		print_err(void);
 static void		pop_print(void);
 static void		pop_printn(void);
-static __inline void	print_stack(void);
-static __inline void	dup(void);
+static void		print_stack(void);
+static void		dup(void);
 static void		swap(void);
 static void		drop(void);
 
@@ -477,27 +477,26 @@ pop_string(void)
 	return stack_popstring(&bmachine.stack);
 }
 
-static __inline void
+static void
 clear_stack(void)
 {
 	stack_clear(&bmachine.stack);
 }
 
-static __inline void
+static void
 print_stack(void)
 {
 	stack_print(stdout, &bmachine.stack, "", bmachine.obase);
 }
 
-static __inline void
+static void
 print_tos(void)
 {
 	struct value *value = tos();
 	if (value != NULL) {
 		print_value(stdout, value, "", bmachine.obase);
 		(void)putchar('\n');
-	}
-	else
+	} else
 		warnx("stack empty");
 }
 
@@ -508,8 +507,7 @@ print_err(void)
 	if (value != NULL) {
 		print_value(stderr, value, "", bmachine.obase);
 		(void)putc('\n', stderr);
-	}
-	else
+	} else
 		warnx("stack empty");
 }
 
@@ -548,7 +546,7 @@ pop_printn(void)
 	}
 }
 
-static __inline void
+static void
 dup(void)
 {
 	stack_dup(&bmachine.stack);
@@ -594,7 +592,7 @@ set_scale(void)
 				bmachine.scale = (u_int)scale;
 			else
 				warnx("scale too large");
-			}
+		}
 		free_number(n);
 	}
 }
@@ -672,7 +670,6 @@ push_scale(void)
 	struct value	*value;
 	u_int		scale = 0;
 	struct number	*n;
-
 
 	value = pop();
 	if (value != NULL) {
@@ -920,8 +917,7 @@ load_array(void)
 				n = new_number();
 				bn_check(BN_set_word(n->number, 0));
 				push_number(n);
-			}
-			else
+			} else
 				push(stack_dup_value(v, &copy));
 		}
 		free_number(inumber);
@@ -978,7 +974,6 @@ static void
 badd(void)
 {
 	struct number	*a, *b;
-	struct number	*r;
 
 	a = pop_number();
 	if (a == NULL)
@@ -989,23 +984,19 @@ badd(void)
 		return;
 	}
 
-	r = new_number();
-	r->scale = max(a->scale, b->scale);
-	if (r->scale > a->scale)
-		normalize(a, r->scale);
-	else if (r->scale > b->scale)
-		normalize(b, r->scale);
-	bn_check(BN_add(r->number, a->number, b->number));
-	push_number(r);
+	if (b->scale > a->scale)
+		normalize(a, b->scale);
+	else if (a->scale > b->scale)
+		normalize(b, a->scale);
+	bn_check(BN_add(b->number, a->number, b->number));
 	free_number(a);
-	free_number(b);
+	push_number(b);
 }
 
 static void
 bsub(void)
 {
 	struct number	*a, *b;
-	struct number	*r;
 
 	a = pop_number();
 	if (a == NULL)
@@ -1016,17 +1007,13 @@ bsub(void)
 		return;
 	}
 
-	r = new_number();
-
-	r->scale = max(a->scale, b->scale);
-	if (r->scale > a->scale)
-		normalize(a, r->scale);
-	else if (r->scale > b->scale)
-		normalize(b, r->scale);
-	bn_check(BN_sub(r->number, b->number, a->number));
-	push_number(r);
+	if (b->scale > a->scale)
+		normalize(a, b->scale);
+	else if (a->scale > b->scale)
+		normalize(b, a->scale);
+	bn_check(BN_sub(b->number, b->number, a->number));
 	free_number(a);
-	free_number(b);
+	push_number(b);
 }
 
 void
@@ -1048,7 +1035,6 @@ static void
 bmul(void)
 {
 	struct number	*a, *b;
-	struct number	*r;
 
 	a = pop_number();
 	if (a == NULL)
@@ -1059,12 +1045,9 @@ bmul(void)
 		return;
 	}
 
-	r = new_number();
-	bmul_number(r, a, b, bmachine.scale);
-
-	push_number(r);
+	bmul_number(b, a, b, bmachine.scale);
 	free_number(a);
-	free_number(b);
+	push_number(b);
 }
 
 static void
@@ -1198,13 +1181,12 @@ bexp(void)
 			warnx("Runtime warning: non-zero fractional part in exponent");
 		BN_free(i);
 		BN_free(f);
+
+		normalize(p, 0);
 	}
 
-	normalize(p, 0);
-
-	neg = false;
-	if (BN_is_negative(p->number)) {
-		neg = true;
+	neg = BN_is_negative(p->number);
+	if (neg) {
 		negate(p);
 		rscale = bmachine.scale;
 	} else {
@@ -1507,7 +1489,6 @@ compare(enum bcode_compare type)
 		}
 	}
 }
-
 
 static void
 nop(void)

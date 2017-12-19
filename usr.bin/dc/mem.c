@@ -1,4 +1,4 @@
-/*	$OpenBSD: mem.c,v 1.8 2017/12/07 06:34:05 otto Exp $	*/
+/*	$OpenBSD: mem.c,v 1.10 2017/12/17 08:21:10 otto Exp $	*/
 
 /*
  * Copyright (c) 2003, Otto Moerbeek <otto@drijf.net>
@@ -32,8 +32,7 @@ new_number(void)
 	n = bmalloc(sizeof(*n));
 	n->scale = 0;
 	n->number = BN_new();
-	if (n->number == NULL)
-		err(1, NULL);
+	bn_checkp(n->number);
 	return n;
 }
 
@@ -92,13 +91,19 @@ bstrdup(const char *p)
 void
 bn_check(int x)
 {
-	if (x == 0)
-		err(1, "big number failure %lx", ERR_get_error());
+	if (x == 0) {
+		ERR_load_BN_strings();
+		errx(1, "BN failure: %s",
+		    ERR_reason_error_string(ERR_get_error()));
+	}
 }
 
 void
 bn_checkp(const void *p)
 {
-	if (p == NULL)
-		err(1, "allocation failure %lx", ERR_get_error());
+	if (p == NULL) {
+		ERR_load_BN_strings();
+		errx(1, "BN failure: %s",
+		    ERR_reason_error_string(ERR_get_error()));
+	}
 }

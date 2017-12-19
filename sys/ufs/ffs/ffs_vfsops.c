@@ -1,4 +1,4 @@
-/*	$OpenBSD: ffs_vfsops.c,v 1.167 2017/12/11 05:27:40 deraadt Exp $	*/
+/*	$OpenBSD: ffs_vfsops.c,v 1.170 2017/12/14 20:20:38 deraadt Exp $	*/
 /*	$NetBSD: ffs_vfsops.c,v 1.19 1996/02/09 22:22:26 christos Exp $	*/
 
 /*
@@ -243,16 +243,14 @@ ffs_mount(struct mount *mp, const char *path, void *data,
 
 		if (ronly == 0 && (mp->mnt_flag & MNT_RDONLY)) {
 			/* Flush any dirty data */
-			mp->mnt_flag &= ~MNT_RDONLY;
 			VFS_SYNC(mp, MNT_WAIT, p->p_ucred, p);
-			mp->mnt_flag |= MNT_RDONLY;
 
 			/*
 			 * Get rid of files open for writing.
 			 */
 			flags = WRITECLOSE;
 			if (args == NULL)
-				flags |= WRITEDEMOTE;
+				flags |= IGNORECLEAN;
 			if (mp->mnt_flag & MNT_FORCE)
 				flags |= FORCECLOSE;
 			if (fs->fs_flags & FS_DOSOFTDEP) {
@@ -260,6 +258,7 @@ ffs_mount(struct mount *mp, const char *path, void *data,
 				mp->mnt_flag &= ~MNT_SOFTDEP;
 			} else
 				error = ffs_flushfiles(mp, flags, p);
+			mp->mnt_flag |= MNT_RDONLY;
 			ronly = 1;
 		}
 
@@ -457,6 +456,7 @@ success:
 				fs->fs_flags &= ~FS_DOSOFTDEP;
 		}
 		ffs_sbupdate(ump, MNT_WAIT);
+#if 0
 		if (ronly) {
 			int force = 0;
 
@@ -467,6 +467,7 @@ success:
 			VOP_IOCTL(ump->um_devvp, DIOCCACHESYNC, &force,
 			    FWRITE, FSCRED, p);
                }
+#endif
 	}
 	return (0);
 
@@ -1149,11 +1150,23 @@ ffs_sync_vnode(struct vnode *vp, void *arg) {
 	struct inode *ip;
 	int error;
 
+	if (vp->v_type == VNON)
+		return (0);
+
 	ip = VTOI(vp);
-	if (vp->v_type == VNON || 
-	    ((ip->i_flag &
+
+	/*
+	 * If unmounting or converting rw to ro, then stop deferring
+	 * timestamp writes.
+	 */
+	if (fsa->waitfor == MNT_WAIT && (ip->i_flag & IN_LAZYMOD)) {
+		ip->i_flag |= IN_MODIFIED;
+		UFS_UPDATE(ip, 1);
+	}
+
+	if ((ip->i_flag &
 		(IN_ACCESS | IN_CHANGE | IN_MODIFIED | IN_UPDATE)) == 0	&&
-		LIST_EMPTY(&vp->v_dirtyblkhd)) ) {
+		LIST_EMPTY(&vp->v_dirtyblkhd)) {
 		return (0);
 	}
 

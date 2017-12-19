@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.241 2017/12/09 15:48:04 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.243 2017/12/18 14:17:58 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -56,7 +56,6 @@ struct reject_elem {
 
 struct client_lease {
 	TAILQ_ENTRY(client_lease) next;
-	char			*interface;
 	time_t			 epoch;
 	struct in_addr		 address;
 	struct in_addr		 next_server;
@@ -147,11 +146,11 @@ struct interface_info {
 	struct in_addr		 requested_address;
 	struct client_lease	*active;
 	struct client_lease	*offer;
-	struct client_lease_tq	 leases;
+	struct client_lease_tq	 lease_db;
 };
 
 #define	_PATH_DHCLIENT_CONF	"/etc/dhclient.conf"
-#define	_PATH_DHCLIENT_DB	"/var/db/dhclient.leases"
+#define	_PATH_LEASE_DB		"/var/db/dhclient.leases"
 
 /* options.c */
 int			 pack_options(unsigned char *, int,
@@ -204,7 +203,7 @@ void		 sendhup(void);
 
 /* dhclient.c */
 extern char			*path_dhclient_conf;
-extern char			*path_dhclient_db;
+extern char			*path_lease_db;
 extern char			*log_procname;
 extern struct client_config	*config;
 extern struct imsgbuf		*unpriv_ibuf;
@@ -231,8 +230,8 @@ uint32_t	 checksum(unsigned char *, uint32_t, uint32_t);
 uint32_t	 wrapsum(uint32_t);
 
 /* clparse.c */
-void		 read_client_conf(char *);
-void		 read_client_leases(char *, struct client_lease_tq *);
+void		 read_conf(char *);
+void		 read_lease_db(char *, struct client_lease_tq *);
 
 /* kroute.c */
 unsigned int	 extract_classless_route(uint8_t *, unsigned int,

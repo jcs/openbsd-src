@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.14 2017/10/21 20:43:03 patrick Exp $ */
+/* $OpenBSD: bwfm.c,v 1.22 2017/12/18 18:40:50 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -74,9 +74,16 @@ void	 bwfm_chip_ai_reset(struct bwfm_softc *, struct bwfm_core *,
 void	 bwfm_chip_dmp_erom_scan(struct bwfm_softc *);
 int	 bwfm_chip_dmp_get_regaddr(struct bwfm_softc *, uint32_t *,
 	     uint32_t *, uint32_t *);
+int	 bwfm_chip_cr4_set_active(struct bwfm_softc *, uint32_t);
 void	 bwfm_chip_cr4_set_passive(struct bwfm_softc *);
+int	 bwfm_chip_ca7_set_active(struct bwfm_softc *, uint32_t);
 void	 bwfm_chip_ca7_set_passive(struct bwfm_softc *);
+int	 bwfm_chip_cm3_set_active(struct bwfm_softc *);
 void	 bwfm_chip_cm3_set_passive(struct bwfm_softc *);
+void	 bwfm_chip_socram_ramsize(struct bwfm_softc *, struct bwfm_core *);
+void	 bwfm_chip_sysmem_ramsize(struct bwfm_softc *, struct bwfm_core *);
+void	 bwfm_chip_tcm_ramsize(struct bwfm_softc *, struct bwfm_core *);
+void	 bwfm_chip_tcm_rambase(struct bwfm_softc *);
 
 int	 bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *, int,
 	     int, char *, size_t *);
@@ -562,24 +569,22 @@ bwfm_chip_attach(struct bwfm_softc *sc)
 		return 1;
 	}
 
-	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CR4) != NULL)
-		bwfm_chip_cr4_set_passive(sc);
-	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CA7) != NULL)
-		bwfm_chip_ca7_set_passive(sc);
-	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CM3) != NULL)
-		bwfm_chip_cm3_set_passive(sc);
+	bwfm_chip_set_passive(sc);
 
 	if (sc->sc_buscore_ops->bc_reset) {
 		sc->sc_buscore_ops->bc_reset(sc);
-		if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CR4) != NULL)
-			bwfm_chip_cr4_set_passive(sc);
-		if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CA7) != NULL)
-			bwfm_chip_ca7_set_passive(sc);
-		if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CM3) != NULL)
-			bwfm_chip_cm3_set_passive(sc);
+		bwfm_chip_set_passive(sc);
 	}
 
-	/* TODO: get raminfo */
+	if ((core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CR4)) != NULL) {
+		bwfm_chip_tcm_ramsize(sc, core);
+		bwfm_chip_tcm_rambase(sc);
+	} else if ((core = bwfm_chip_get_core(sc, BWFM_AGENT_SYS_MEM)) != NULL) {
+		bwfm_chip_sysmem_ramsize(sc, core);
+		bwfm_chip_tcm_rambase(sc);
+	} else if ((core = bwfm_chip_get_core(sc, BWFM_AGENT_INTERNAL_MEM)) != NULL) {
+		bwfm_chip_socram_ramsize(sc, core);
+	}
 
 	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_CHIPCOMMON);
 	sc->sc_chip.ch_cc_caps = sc->sc_buscore_ops->bc_read(sc,
@@ -831,16 +836,105 @@ bwfm_chip_dmp_get_regaddr(struct bwfm_softc *sc, uint32_t *erom,
 }
 
 /* Core configuration */
+int
+bwfm_chip_set_active(struct bwfm_softc *sc, uint32_t rstvec)
+{
+	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CR4) != NULL)
+		return bwfm_chip_cr4_set_active(sc, rstvec);
+	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CA7) != NULL)
+		return bwfm_chip_ca7_set_active(sc, rstvec);
+	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CM3) != NULL)
+		return bwfm_chip_cm3_set_active(sc);
+	return 1;
+}
+
+void
+bwfm_chip_set_passive(struct bwfm_softc *sc)
+{
+	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CR4) != NULL) {
+		bwfm_chip_cr4_set_passive(sc);
+		return;
+	}
+	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CA7) != NULL) {
+		bwfm_chip_ca7_set_passive(sc);
+		return;
+	}
+	if (bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CM3) != NULL) {
+		bwfm_chip_cm3_set_passive(sc);
+		return;
+	}
+}
+
+int
+bwfm_chip_cr4_set_active(struct bwfm_softc *sc, uint32_t rstvec)
+{
+	struct bwfm_core *core;
+
+	sc->sc_buscore_ops->bc_activate(sc, rstvec);
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CR4);
+	sc->sc_chip.ch_core_reset(sc, core,
+	    BWFM_AGENT_IOCTL_ARMCR4_CPUHALT, 0, 0);
+
+	return 0;
+}
+
 void
 bwfm_chip_cr4_set_passive(struct bwfm_softc *sc)
 {
-	panic("%s: CR4 not supported", DEVNAME(sc));
+	struct bwfm_core *core;
+	uint32_t val;
+
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CR4);
+	val = sc->sc_buscore_ops->bc_read(sc,
+	    core->co_wrapbase + BWFM_AGENT_IOCTL);
+	sc->sc_chip.ch_core_reset(sc, core,
+	    val & BWFM_AGENT_IOCTL_ARMCR4_CPUHALT,
+	    BWFM_AGENT_IOCTL_ARMCR4_CPUHALT,
+	    BWFM_AGENT_IOCTL_ARMCR4_CPUHALT);
+
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_80211);
+	sc->sc_chip.ch_core_reset(sc, core, BWFM_AGENT_D11_IOCTL_PHYRESET |
+	    BWFM_AGENT_D11_IOCTL_PHYCLOCKEN, BWFM_AGENT_D11_IOCTL_PHYCLOCKEN,
+	    BWFM_AGENT_D11_IOCTL_PHYCLOCKEN);
+}
+
+int
+bwfm_chip_ca7_set_active(struct bwfm_softc *sc, uint32_t rstvec)
+{
+	struct bwfm_core *core;
+
+	sc->sc_buscore_ops->bc_activate(sc, rstvec);
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CA7);
+	sc->sc_chip.ch_core_reset(sc, core,
+	    BWFM_AGENT_IOCTL_ARMCR4_CPUHALT, 0, 0);
+
+	return 0;
 }
 
 void
 bwfm_chip_ca7_set_passive(struct bwfm_softc *sc)
 {
-	panic("%s: CA7 not supported", DEVNAME(sc));
+	struct bwfm_core *core;
+	uint32_t val;
+
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CA7);
+	val = sc->sc_buscore_ops->bc_read(sc,
+	    core->co_wrapbase + BWFM_AGENT_IOCTL);
+	sc->sc_chip.ch_core_reset(sc, core,
+	    val & BWFM_AGENT_IOCTL_ARMCR4_CPUHALT,
+	    BWFM_AGENT_IOCTL_ARMCR4_CPUHALT,
+	    BWFM_AGENT_IOCTL_ARMCR4_CPUHALT);
+
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_80211);
+	sc->sc_chip.ch_core_reset(sc, core, BWFM_AGENT_D11_IOCTL_PHYRESET |
+	    BWFM_AGENT_D11_IOCTL_PHYCLOCKEN, BWFM_AGENT_D11_IOCTL_PHYCLOCKEN,
+	    BWFM_AGENT_D11_IOCTL_PHYCLOCKEN);
+}
+
+int
+bwfm_chip_cm3_set_active(struct bwfm_softc *sc)
+{
+	panic("%s: cm3 not supported", DEVNAME(sc));
 }
 
 void
@@ -862,6 +956,129 @@ bwfm_chip_cm3_set_passive(struct bwfm_softc *sc)
 		    core->co_base + BWFM_SOCRAM_BANKIDX, 3);
 		sc->sc_buscore_ops->bc_write(sc,
 		    core->co_base + BWFM_SOCRAM_BANKPDA, 0);
+	}
+}
+
+/* RAM size helpers */
+void
+bwfm_chip_socram_ramsize(struct bwfm_softc *sc, struct bwfm_core *core)
+{
+	uint32_t coreinfo, nb, lss, banksize, bankinfo;
+	uint32_t ramsize = 0, srsize = 0;
+	int i;
+
+	if (!sc->sc_chip.ch_core_isup(sc, core))
+		sc->sc_chip.ch_core_reset(sc, core, 0, 0, 0);
+
+	coreinfo = sc->sc_buscore_ops->bc_read(sc,
+	    core->co_base + BWFM_SOCRAM_COREINFO);
+	nb = (coreinfo & BWFM_SOCRAM_COREINFO_SRNB_MASK)
+	    >> BWFM_SOCRAM_COREINFO_SRNB_SHIFT;
+
+	if (core->co_rev <= 7 || core->co_rev == 12) {
+		banksize = coreinfo & BWFM_SOCRAM_COREINFO_SRBSZ_MASK;
+		lss = (coreinfo & BWFM_SOCRAM_COREINFO_LSS_MASK)
+		    >> BWFM_SOCRAM_COREINFO_LSS_SHIFT;
+		if (lss != 0)
+			nb--;
+		ramsize = nb * (1 << (banksize + BWFM_SOCRAM_COREINFO_SRBSZ_BASE));
+		if (lss != 0)
+			ramsize += (1 << ((lss - 1) + BWFM_SOCRAM_COREINFO_SRBSZ_BASE));
+	} else {
+		for (i = 0; i < nb; i++) {
+			sc->sc_buscore_ops->bc_write(sc,
+			    core->co_base + BWFM_SOCRAM_BANKIDX,
+			    (BWFM_SOCRAM_BANKIDX_MEMTYPE_RAM <<
+			    BWFM_SOCRAM_BANKIDX_MEMTYPE_SHIFT) | i);
+			bankinfo = sc->sc_buscore_ops->bc_read(sc,
+			    core->co_base + BWFM_SOCRAM_BANKINFO);
+			banksize = ((bankinfo & BWFM_SOCRAM_BANKINFO_SZMASK) + 1)
+			    * BWFM_SOCRAM_BANKINFO_SZBASE;
+			ramsize += banksize;
+			if (bankinfo & BWFM_SOCRAM_BANKINFO_RETNTRAM_MASK)
+				srsize += banksize;
+		}
+	}
+
+	switch (sc->sc_chip.ch_chip) {
+	case BRCM_CC_4334_CHIP_ID:
+		if (sc->sc_chip.ch_chiprev < 2)
+			srsize = 32 * 1024;
+		break;
+	case BRCM_CC_43430_CHIP_ID:
+		srsize = 64 * 1024;
+		break;
+	default:
+		break;
+	}
+
+	sc->sc_chip.ch_ramsize = ramsize;
+	sc->sc_chip.ch_srsize = srsize;
+}
+
+void
+bwfm_chip_sysmem_ramsize(struct bwfm_softc *sc, struct bwfm_core *core)
+{
+	panic("%s: sysmem ramsize not supported", DEVNAME(sc));
+}
+
+void
+bwfm_chip_tcm_ramsize(struct bwfm_softc *sc, struct bwfm_core *core)
+{
+	uint32_t cap, nab, nbb, totb, bxinfo, ramsize = 0;
+	int i;
+
+	cap = sc->sc_buscore_ops->bc_read(sc, core->co_base + BWFM_ARMCR4_CAP);
+	nab = (cap & BWFM_ARMCR4_CAP_TCBANB_MASK) >> BWFM_ARMCR4_CAP_TCBANB_SHIFT;
+	nbb = (cap & BWFM_ARMCR4_CAP_TCBBNB_MASK) >> BWFM_ARMCR4_CAP_TCBBNB_SHIFT;
+	totb = nab + nbb;
+
+	for (i = 0; i < totb; i++) {
+		sc->sc_buscore_ops->bc_write(sc,
+		    core->co_base + BWFM_ARMCR4_BANKIDX, i);
+		bxinfo = sc->sc_buscore_ops->bc_read(sc,
+		    core->co_base + BWFM_ARMCR4_BANKINFO);
+		ramsize += ((bxinfo & BWFM_ARMCR4_BANKINFO_BSZ_MASK) + 1) *
+		    BWFM_ARMCR4_BANKINFO_BSZ_MULT;
+	}
+
+	sc->sc_chip.ch_ramsize = ramsize;
+}
+
+void
+bwfm_chip_tcm_rambase(struct bwfm_softc *sc)
+{
+	switch (sc->sc_chip.ch_chip) {
+	case BRCM_CC_4345_CHIP_ID:
+		sc->sc_chip.ch_rambase = 0x198000;
+		break;
+	case BRCM_CC_4335_CHIP_ID:
+	case BRCM_CC_4339_CHIP_ID:
+	case BRCM_CC_4350_CHIP_ID:
+	case BRCM_CC_4354_CHIP_ID:
+	case BRCM_CC_4356_CHIP_ID:
+	case BRCM_CC_43567_CHIP_ID:
+	case BRCM_CC_43569_CHIP_ID:
+	case BRCM_CC_43570_CHIP_ID:
+	case BRCM_CC_4358_CHIP_ID:
+	case BRCM_CC_4359_CHIP_ID:
+	case BRCM_CC_43602_CHIP_ID:
+	case BRCM_CC_4371_CHIP_ID:
+		sc->sc_chip.ch_rambase = 0x180000;
+		break;
+	case BRCM_CC_43465_CHIP_ID:
+	case BRCM_CC_43525_CHIP_ID:
+	case BRCM_CC_4365_CHIP_ID:
+	case BRCM_CC_4366_CHIP_ID:
+		sc->sc_chip.ch_rambase = 0x200000;
+		break;
+	case CY_CC_4373_CHIP_ID:
+		sc->sc_chip.ch_rambase = 0x160000;
+		break;
+	default:
+		printf("%s: unknown chip: %d\n", DEVNAME(sc),
+		    sc->sc_chip.ch_chip);
+		break;
 	}
 }
 
@@ -1118,7 +1335,8 @@ bwfm_connect(struct bwfm_softc *sc)
 		params = malloc(sizeof(*params), M_TEMP, M_WAITOK | M_ZERO);
 		memcpy(params->ssid.ssid, ic->ic_des_essid, ic->ic_des_esslen);
 		params->ssid.len = htole32(ic->ic_des_esslen);
-		memset(params->assoc.bssid, 0xff, sizeof(params->assoc.bssid));
+		memcpy(params->assoc.bssid, ic->ic_bss->ni_bssid,
+		    sizeof(params->assoc.bssid));
 		params->scan.scan_type = -1;
 		params->scan.nprobes = htole32(-1);
 		params->scan.active_time = htole32(-1);
@@ -1127,9 +1345,11 @@ bwfm_connect(struct bwfm_softc *sc)
 		if (bwfm_fwvar_var_set_data(sc, "join", params, sizeof(*params))) {
 			struct bwfm_join_params join;
 			memset(&join, 0, sizeof(join));
-			memcpy(join.ssid.ssid, ic->ic_des_essid, ic->ic_des_esslen);
+			memcpy(join.ssid.ssid, ic->ic_des_essid,
+			    ic->ic_des_esslen);
 			join.ssid.len = htole32(ic->ic_des_esslen);
-			memset(join.assoc.bssid, 0xff, sizeof(join.assoc.bssid));
+			memcpy(join.assoc.bssid, ic->ic_bss->ni_bssid,
+			    sizeof(join.assoc.bssid));
 			bwfm_fwvar_cmd_set_data(sc, BWFM_C_SET_SSID, &join,
 			    sizeof(join));
 		}
@@ -1144,12 +1364,6 @@ bwfm_scan(struct bwfm_softc *sc)
 	uint32_t nssid = 0, nchannel = 0;
 	size_t params_size;
 
-#if 0
-	/* Active scan is used for scanning for an SSID */
-	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PASSIVE_SCAN, 0);
-#endif
-	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PASSIVE_SCAN, 1);
-
 	params_size = sizeof(*params);
 	params_size += sizeof(uint32_t) * ((nchannel + 1) / 2);
 	params_size += sizeof(struct bwfm_ssid) * nssid;
@@ -1158,6 +1372,7 @@ bwfm_scan(struct bwfm_softc *sc)
 	memset(params->scan_params.bssid, 0xff,
 	    sizeof(params->scan_params.bssid));
 	params->scan_params.bss_type = 2;
+	params->scan_params.scan_type = BWFM_SCANTYPE_PASSIVE;
 	params->scan_params.nprobes = htole32(-1);
 	params->scan_params.active_time = htole32(-1);
 	params->scan_params.passive_time = htole32(-1);

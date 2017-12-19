@@ -1,4 +1,4 @@
-/*	$OpenBSD: compile.c,v 1.44 2017/12/11 13:25:57 martijn Exp $	*/
+/*	$OpenBSD: compile.c,v 1.47 2017/12/13 16:07:54 millert Exp $	*/
 
 /*-
  * Copyright (c) 1992 Diomidis Spinellis.
@@ -458,7 +458,7 @@ compile_subst(char *p, struct s_subst *s)
 {
 	static char *lbuf;
 	static size_t bufsize;
-	int asize, ref, size;
+	size_t asize, ref, size;
 	char c, *text, *op, *sp;
 	int sawesc = 0;
 
@@ -603,7 +603,7 @@ static char *
 compile_tr(char *old, char **transtab)
 {
 	int i;
-	char delimiter, check[UCHAR_MAX];
+	char delimiter, check[UCHAR_MAX + 1];
 	char *new, *end;
 
 	memset(check, 0, sizeof(check));
@@ -639,7 +639,6 @@ compile_tr(char *old, char **transtab)
 			else if (*old != delimiter && *old != '\\')
 				error(COMPILE, "Unexpected character after "
 				    "backslash");
-			
 		}
 		if (*new == '\\') {
 			new++;
@@ -649,10 +648,10 @@ compile_tr(char *old, char **transtab)
 				error(COMPILE, "Unexpected character after "
 				    "backslash");
 		}
-		if (check[*old] == 1)
+		if (check[(u_char) *old] == 1)
 			error(COMPILE, "Repeated character in source string");
-		check[*old] = 1;
-		(*transtab)[*old++] = *new++;
+		check[(u_char) *old] = 1;
+		(*transtab)[(u_char) *old++] = *new++;
 	}
 	if (*old != '\0' || *new != '\0')
 		error(COMPILE, "transform strings are not the same length");
@@ -665,9 +664,9 @@ compile_tr(char *old, char **transtab)
 static char *
 compile_text(void)
 {
-	int asize, esc_nl, size;
+	size_t asize, size, bufsize;
 	char *lbuf, *text, *p, *op, *s;
-	size_t bufsize;
+	int esc_nl;
 
 	lbuf = text = NULL;
 	asize = size = 0;

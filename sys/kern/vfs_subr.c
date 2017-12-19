@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_subr.c,v 1.263 2017/12/11 14:11:22 bluhm Exp $	*/
+/*	$OpenBSD: vfs_subr.c,v 1.265 2017/12/14 20:23:15 deraadt Exp $	*/
 /*	$NetBSD: vfs_subr.c,v 1.53 1996/04/22 01:39:13 christos Exp $	*/
 
 /*
@@ -72,7 +72,7 @@
 
 #include "softraid.h"
 
-void sr_shutdown(void);
+void sr_shutdown(int);
 
 enum vtype iftovt_tab[16] = {
 	VNON, VFIFO, VCHR, VNON, VDIR, VNON, VBLK, VNON,
@@ -904,11 +904,15 @@ vflush_vnode(struct vnode *vp, void *arg)
 		return (0);
 	}
 
-	if (va->flags & WRITEDEMOTE) {
-		vp->v_op = &dead_vops;
-		vp->v_tag = VT_NON;
+	/*
+	 * If set, this is allowed to ignore vnodes which don't
+	 * have changes pending to disk.
+	 * XXX Might be nice to check per-fs "inode" flags, but
+	 * generally the filesystem is sync'd already, right?
+	 */
+	if ((va->flags & IGNORECLEAN) &&
+	    LIST_EMPTY(&vp->v_dirtyblkhd))
 		return (0);
-	}
 
 #ifdef DEBUG
 	if (busyprt)
@@ -1653,7 +1657,7 @@ vfs_shutdown(struct proc *p)
 		printf("done\n");
 
 #if NSOFTRAID > 0
-	sr_shutdown();
+	sr_shutdown(1);
 #endif
 }
 

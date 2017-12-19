@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.240 2017/08/29 02:51:27 deraadt Exp $	*/
+/*	$OpenBSD: proc.h,v 1.244 2017/12/19 10:04:59 stefan Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -203,7 +203,6 @@ struct process {
 	char	ps_comm[MAXCOMLEN+1];
 
 	vaddr_t	ps_strings;		/* User pointers to argv/env */
-	vaddr_t	ps_stackgap;		/* User pointer to the "stackgap" */
 	vaddr_t	ps_sigcode;		/* User pointer to the signal code */
 	vaddr_t ps_sigcoderet;		/* User pointer to sigreturn retPC */
 	u_long	ps_sigcookie;
@@ -220,6 +219,7 @@ struct process {
 	u_short	ps_acflag;		/* Accounting flags. */
 
 	uint64_t ps_pledge;
+	uint64_t ps_execpledge;
 
 	int64_t ps_kbind_cookie;
 	u_long  ps_kbind_addr;
@@ -262,13 +262,14 @@ struct process {
 #define	PS_NOBROADCASTKILL 0x00080000	/* Process excluded from kill -1. */
 #define	PS_PLEDGE	0x00100000	/* Has called pledge(2) */
 #define	PS_WXNEEDED	0x00200000	/* Process may violate W^X */
+#define	PS_EXECPLEDGE	0x00400000	/* Has exec pledges */
 
 #define	PS_BITS \
     ("\20" "\01CONTROLT" "\02EXEC" "\03INEXEC" "\04EXITING" "\05SUGID" \
      "\06SUGIDEXEC" "\07PPWAIT" "\010ISPWAIT" "\011PROFIL" "\012TRACED" \
      "\013WAITED" "\014COREDUMP" "\015SINGLEEXIT" "\016SINGLEUNWIND" \
      "\017NOZOMBIE" "\020STOPPED" "\021SYSTEM" "\022EMBRYO" "\023ZOMBIE" \
-     "\024NOBROADCASTKILL" "\025PLEDGE" "\026WXNEEDED")
+     "\024NOBROADCASTKILL" "\025PLEDGE" "\026WXNEEDED" "\027EXECPLEDGE" )
 
 
 struct lock_list_entry;
@@ -554,6 +555,12 @@ struct sleep_state {
 	int sls_do_sleep;
 	int sls_sig;
 };
+
+struct cond {
+	int	c_wait;
+};
+
+#define COND_INITIALIZER()		{ 1 }
 
 #if defined(MULTIPROCESSOR)
 void	proc_trampoline_mp(void);	/* XXX */

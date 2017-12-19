@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_exec.c,v 1.189 2017/08/29 02:51:27 deraadt Exp $	*/
+/*	$OpenBSD: kern_exec.c,v 1.191 2017/12/19 10:04:59 stefan Exp $	*/
 /*	$NetBSD: kern_exec.c,v 1.75 1996/02/09 18:59:28 christos Exp $	*/
 
 /*-
@@ -135,6 +135,13 @@ check_exec(struct proc *p, struct exec_package *epp)
 
 	/* Check mount point */
 	if (vp->v_mount->mnt_flag & MNT_NOEXEC) {
+		error = EACCES;
+		goto bad1;
+	}
+
+	/* SUID programs may not be started with execpromises */
+	if ((epp->ep_vap->va_mode & (VSUID | VSGID)) &&
+	    (p->p_p->ps_flags & PS_EXECPLEDGE)) {
 		error = EACCES;
 		goto bad1;
 	}
@@ -446,9 +453,6 @@ sys_execve(struct proc *p, void *v, register_t *retval)
 	if (error)
 		goto exec_abort;
 
-	/* old "stackgap" is gone now */
-	pr->ps_stackgap = 0;
-
 #ifdef MACHINE_STACK_GROWS_UP
 	pr->ps_strings = (vaddr_t)vm->vm_maxsaddr + sgap;
         if (uvm_map_protect(&vm->vm_map, (vaddr_t)vm->vm_maxsaddr,
@@ -520,7 +524,13 @@ sys_execve(struct proc *p, void *v, register_t *retval)
 	else
 		atomic_clearbits_int(&pr->ps_flags, PS_SUGIDEXEC);
 
-	atomic_clearbits_int(&pr->ps_flags, PS_PLEDGE);
+	if (pr->ps_flags & PS_EXECPLEDGE) {
+		pr->ps_pledge = pr->ps_execpledge;
+		atomic_setbits_int(&pr->ps_flags, PS_PLEDGE);
+	} else {
+		atomic_clearbits_int(&pr->ps_flags, PS_PLEDGE);
+		pr->ps_pledge = 0;
+	}
 
 	/*
 	 * deal with set[ug]id.

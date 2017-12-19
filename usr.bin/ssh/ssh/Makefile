@@ -1,19 +1,10 @@
-#	$OpenBSD: Makefile,v 1.68 2017/12/10 19:37:57 deraadt Exp $
+#	$OpenBSD: Makefile,v 1.70 2017/12/14 21:07:39 naddy Exp $
 
 .PATH:		${.CURDIR}/..
 
 SRCS=	ssh.c readconf.c clientloop.c sshtty.c sshconnect.c sshconnect2.c mux.c
 
-umac128.c: umac.c
-	sed \
-	    -e "s/^#define UMAC_OUTPUT_LEN     8/#define UMAC_OUTPUT_LEN 16/" \
-	    -e s/umac_new/umac128_new/g \
-	    -e s/umac_update/umac128_update/g \
-	    -e s/umac_final/umac128_final/g \
-	    -e s/umac_delete/umac128_delete/g \
-	    < ${.CURDIR}/../umac.c > ${.TARGET}
-
-SRCS+=	addrmatch.c atomicio.c authfd.c authfile.c bitmap.c blocks.c bufaux.c \
+SRCS+=	addrmatch.c atomicio.c authfd.c authfile.c bitmap.c bufaux.c \
 	bufbn.c bufec.c buffer.c canohost.c chacha.c channels.c \
 	cipher-chachapoly.c cipher.c compat.c crc32.c dh.c digest-openssl.c \
 	dispatch.c dns.c ed25519.c fatal.c fe25519.c ge25519.c hash.c hmac.c \

@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_socket.c,v 1.210 2017/12/10 11:31:54 mpi Exp $	*/
+/*	$OpenBSD: uipc_socket.c,v 1.212 2017/12/19 09:29:37 mpi Exp $	*/
 /*	$NetBSD: uipc_socket.c,v 1.21 1996/02/04 02:17:52 christos Exp $	*/
 
 /*
@@ -668,8 +668,8 @@ bad:
 	if (mp)
 		*mp = NULL;
 
-restart:
 	s = solock(so);
+restart:
 	if ((error = sblock(so, &so->so_rcv, SBLOCKWAIT(flags))) != 0) {
 		sounlock(s);
 		return (error);
@@ -738,9 +738,10 @@ restart:
 		SBLASTMBUFCHK(&so->so_rcv, "soreceive sbwait 1");
 		sbunlock(so, &so->so_rcv);
 		error = sbwait(so, &so->so_rcv);
-		sounlock(s);
-		if (error)
+		if (error) {
+			sounlock(s);
 			return (error);
+		}
 		goto restart;
 	}
 dontblock:
@@ -994,7 +995,6 @@ dontblock:
 	if (orig_resid == uio->uio_resid && orig_resid &&
 	    (flags & MSG_EOR) == 0 && (so->so_state & SS_CANTRCVMORE) == 0) {
 		sbunlock(so, &so->so_rcv);
-		sounlock(s);
 		goto restart;
 	}
 
@@ -1923,10 +1923,8 @@ int
 filt_soread(struct knote *kn, long hint)
 {
 	struct socket *so = kn->kn_fp->f_data;
-	int s, rv;
+	int rv;
 
-	if (!(hint & NOTE_SUBMIT))
-		s = solock(so);
 	kn->kn_data = so->so_rcv.sb_cc;
 #ifdef SOCKET_SPLICE
 	if (isspliced(so)) {
@@ -1944,8 +1942,6 @@ filt_soread(struct knote *kn, long hint)
 	} else {
 		rv = (kn->kn_data >= so->so_rcv.sb_lowat);
 	}
-	if (!(hint & NOTE_SUBMIT))
-		sounlock(s);
 
 	return rv;
 }
@@ -1966,10 +1962,8 @@ int
 filt_sowrite(struct knote *kn, long hint)
 {
 	struct socket *so = kn->kn_fp->f_data;
-	int s, rv;
+	int rv;
 
-	if (!(hint & NOTE_SUBMIT))
-		s = solock(so);
 	kn->kn_data = sbspace(so, &so->so_snd);
 	if (so->so_state & SS_CANTSENDMORE) {
 		kn->kn_flags |= EV_EOF;
@@ -1985,8 +1979,6 @@ filt_sowrite(struct knote *kn, long hint)
 	} else {
 		rv = (kn->kn_data >= so->so_snd.sb_lowat);
 	}
-	if (!(hint & NOTE_SUBMIT))
-		sounlock(s);
 
 	return (rv);
 }
@@ -1995,13 +1987,8 @@ int
 filt_solisten(struct knote *kn, long hint)
 {
 	struct socket *so = kn->kn_fp->f_data;
-	int s;
 
-	if (!(hint & NOTE_SUBMIT))
-		s = solock(so);
 	kn->kn_data = so->so_qlen;
-	if (!(hint & NOTE_SUBMIT))
-		sounlock(s);
 
 	return (kn->kn_data != 0);
 }

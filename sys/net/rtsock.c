@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtsock.c,v 1.256 2017/12/10 11:25:18 mpi Exp $	*/
+/*	$OpenBSD: rtsock.c,v 1.259 2017/12/18 09:40:17 mpi Exp $	*/
 /*	$NetBSD: rtsock.c,v 1.18 1996/03/29 00:32:10 cgd Exp $	*/
 
 /*
@@ -697,17 +697,18 @@ route_output(struct mbuf *m, struct socket *so, struct sockaddr *dstaddr,
 	 * Validate RTM_PROPOSAL and pass it along or error out.
 	 */
 	if (rtm->rtm_type == RTM_PROPOSAL) {
-	       if (rtm_validate_proposal(&info) == -1) {
+		if (rtm_validate_proposal(&info) == -1) {
 			error = EINVAL;
 			goto fail;
-	       }
+		}
 	} else {
 		error = rtm_output(rtm, &rt, &info, prio, tableid);
 		if (!error) {
 			type = rtm->rtm_type;
 			seq = rtm->rtm_seq;
-			free(rtm, M_RTABLE, 0);
+			free(rtm, M_RTABLE, len);
 			rtm = rtm_report(rt, type, seq, tableid);
+			len = rtm->rtm_msglen;
 		}
 	}
 
@@ -725,18 +726,18 @@ route_output(struct mbuf *m, struct socket *so, struct sockaddr *dstaddr,
 		if (route_cb.any_count <= 1) {
 			/* no other listener and no loopback of messages */
 fail:
-			free(rtm, M_RTABLE, 0);
+			free(rtm, M_RTABLE, len);
 			m_freem(m);
 			return (error);
 		}
 	}
 	if (rtm) {
-		if (m_copyback(m, 0, rtm->rtm_msglen, rtm, M_NOWAIT)) {
+		if (m_copyback(m, 0, len, rtm, M_NOWAIT)) {
 			m_freem(m);
 			m = NULL;
-		} else if (m->m_pkthdr.len > rtm->rtm_msglen)
-			m_adj(m, rtm->rtm_msglen - m->m_pkthdr.len);
-		free(rtm, M_RTABLE, 0);
+		} else if (m->m_pkthdr.len > len)
+			m_adj(m, len - m->m_pkthdr.len);
+		free(rtm, M_RTABLE, len);
 	}
 	if (m)
 		route_input(m, so, info.rti_info[RTAX_DST] ?
@@ -979,7 +980,8 @@ change:
 				/* if gateway changed remove MPLS information */
 				if (rt->rt_llinfo != NULL &&
 				    rt->rt_flags & RTF_MPLS) {
-					free(rt->rt_llinfo, M_TEMP, 0);
+					free(rt->rt_llinfo, M_TEMP,
+					    sizeof(struct rt_mpls));
 					rt->rt_llinfo = NULL;
 					rt->rt_flags &= ~RTF_MPLS;
 				}
@@ -1161,7 +1163,7 @@ route_cleargateway(struct rtentry *rt, void *arg, unsigned int rtableid)
 
 	if (ISSET(rt->rt_flags, RTF_GATEWAY) && rt->rt_gwroute == nhrt &&
 	    !ISSET(rt->rt_locks, RTV_MTU))
-                rt->rt_mtu = 0;
+		rt->rt_mtu = 0;
 
 	return (0);
 }
@@ -1362,22 +1364,20 @@ again:
 	/* align message length to the next natural boundary */
 	len = ALIGN(len);
 	if (cp == 0 && w != NULL && !second_time) {
-		struct walkarg *rw = w;
-
-		rw->w_needed += len;
-		if (rw->w_needed <= 0 && rw->w_where) {
-			if (rw->w_tmemsize < len) {
-				free(rw->w_tmem, M_RTABLE, 0);
-				rw->w_tmem = malloc(len, M_RTABLE, M_NOWAIT);
-				if (rw->w_tmem)
-					rw->w_tmemsize = len;
+		w->w_needed += len;
+		if (w->w_needed <= 0 && w->w_where) {
+			if (w->w_tmemsize < len) {
+				free(w->w_tmem, M_RTABLE, w->w_tmemsize);
+				w->w_tmem = malloc(len, M_RTABLE, M_NOWAIT);
+				if (w->w_tmem)
+					w->w_tmemsize = len;
 			}
-			if (rw->w_tmem) {
-				cp = rw->w_tmem;
+			if (w->w_tmem) {
+				cp = w->w_tmem;
 				second_time = 1;
 				goto again;
 			} else
-				rw->w_where = 0;
+				w->w_where = 0;
 		}
 	}
 	if (cp && w)		/* clear the message header */
@@ -1485,7 +1485,7 @@ void
 rtm_addr(struct rtentry *rt, int cmd, struct ifaddr *ifa)
 {
 	struct ifnet		*ifp = ifa->ifa_ifp;
-	struct mbuf		*m = NULL;
+	struct mbuf		*m;
 	struct rt_addrinfo	 info;
 	struct ifa_msghdr	*ifam;
 
@@ -1808,7 +1808,7 @@ sysctl_rtable(int *name, u_int namelen, void *where, size_t *given, void *new,
 		NET_UNLOCK();
 		break;
 	}
-	free(w.w_tmem, M_RTABLE, 0);
+	free(w.w_tmem, M_RTABLE, w.w_tmemsize);
 	w.w_needed += w.w_given;
 	if (where) {
 		*given = w.w_where - (caddr_t)where;

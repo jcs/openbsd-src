@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.42 2017/11/13 21:24:27 kettenis Exp $
+# $OpenBSD: GENERIC,v 1.44 2017/12/17 12:57:32 kettenis Exp $
 #
 # GENERIC machine description file
 #
@@ -75,6 +75,10 @@ viomb*		at virtio?
 viornd*		at virtio?
 vioscsi*	at virtio?
 
+option	WSDISPLAY_COMPAT_USL		# VT handling
+option	WSDISPLAY_COMPAT_RAWKBD		# provide raw scancodes; needed for X11
+option	WSDISPLAY_DEFAULTSCREENS=6	# initial number of text consoles
+
 simplefb*	at fdt?
 wsdisplay*	at simplefb?
 
@@ -101,6 +105,7 @@ sdmmc*		at dwmmc?
 sxipio*		at fdt? early 1	# GPIO pins for leds & PHYs
 gpio*		at sxipio?
 sxiccmu*	at fdt? early 1	# Clock Control Module/Unit
+sxirsb*		at fdt? early 1	# Reduced Serial Bus
 sxirtc*		at fdt?		# Real Time Clock
 sximmc*		at fdt?		# SD/MMC card controller
 sdmmc*		at sximmc?	# SD/MMC bus

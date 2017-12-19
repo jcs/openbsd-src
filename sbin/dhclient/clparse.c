@@ -1,4 +1,4 @@
-/*	$OpenBSD: clparse.c,v 1.154 2017/12/09 15:48:04 krw Exp $	*/
+/*	$OpenBSD: clparse.c,v 1.159 2017/12/18 14:17:58 krw Exp $	*/
 
 /* Parser for dhclient config and lease files. */
 
@@ -64,62 +64,25 @@
 #include "dhctoken.h"
 #include "log.h"
 
-void			 parse_client_statement(FILE *, char *, int);
+void			 parse_conf_declaration(FILE *, char *);
 int			 parse_hex_octets(FILE *, unsigned int *, uint8_t **);
 int			 parse_option_list(FILE *, int *, uint8_t *);
 int			 parse_interface_declaration(FILE *, char *);
-int			 parse_client_lease_statement(FILE *, char *,
+int			 parse_lease(FILE *, char *,
 	struct client_lease **);
-void			 parse_client_lease_declaration(FILE *,
+void			 parse_lease_declaration(FILE *,
     struct client_lease *, char *);
 int			 parse_option_decl(FILE *, int *, struct option_data *);
 int			 parse_reject_statement(FILE *);
-void			 add_lease(struct client_lease_tq *,
-    struct client_lease *);
-
-void
-add_lease(struct client_lease_tq *tq, struct client_lease *lease)
-{
-	struct client_lease	*lp, *nlp;
-
-	if (lease == NULL)
-		return;
-
-	/*
-	 * The new lease will supersede a lease with the same ssid
-	 * AND the same Client Identifier AND the same
-	 * IP address.
-	 */
-	TAILQ_FOREACH_SAFE(lp, tq, next, nlp) {
-		if (lp->ssid_len != lease->ssid_len)
-			continue;
-		if (memcmp(lp->ssid, lease->ssid, lp->ssid_len) != 0)
-			continue;
-		if ((lease->options[DHO_DHCP_CLIENT_IDENTIFIER].len != 0) &&
-		    ((lp->options[DHO_DHCP_CLIENT_IDENTIFIER].len !=
-		    lease->options[DHO_DHCP_CLIENT_IDENTIFIER].len) ||
-		    memcmp(lp->options[DHO_DHCP_CLIENT_IDENTIFIER].data,
-		    lease->options[DHO_DHCP_CLIENT_IDENTIFIER].data,
-		    lp->options[DHO_DHCP_CLIENT_IDENTIFIER].len)))
-			continue;
-		if (lp->address.s_addr != lease->address.s_addr)
-			continue;
-
-		TAILQ_REMOVE(tq, lp, next);
-		free_client_lease(lp);
-	}
-
-	TAILQ_INSERT_TAIL(tq, lease, next);
-}
 
 /*
- * client-conf-file :== client-declarations EOF
- * client-declarations :== <nil>
- *			 | client-declaration
- *			 | client-declarations client-declaration
+ * conf :== conf_declarations EOF
+ * conf-declarations :== <nil>
+ *			 | conf-declaration
+ *			 | conf-declarations conf-declaration
  */
 void
-read_client_conf(char *name)
+read_conf(char *name)
 {
 	struct option_data	*option;
 	FILE			*cfile;
@@ -186,48 +149,68 @@ read_client_conf(char *name)
 			token = peek_token(NULL, cfile);
 			if (token == EOF)
 				break;
-			parse_client_statement(cfile, name, 0);
+			parse_conf_declaration(cfile, name);
 		}
 		fclose(cfile);
 	}
 }
 
 /*
- * lease-file :== client-lease-statements EOF
- * client-lease-statements :== <nil>
- *		     | client-lease-statements LEASE client-lease-statement
+ * lease-db :== leases EOF
+ * leases :== <nil>
+ *	      | lease
+ *	      | leases lease
  */
 void
-read_client_leases(char *name, struct client_lease_tq *tq)
+read_lease_db(char *name, struct client_lease_tq *tq)
 {
-	struct client_lease	*lp;
+	struct client_lease	*lease, *lp, *nlp;
 	FILE			*cfile;
-	int			 token;
 
 	TAILQ_INIT(tq);
 
-	if ((cfile = fopen(path_dhclient_db, "r")) == NULL)
+	if ((cfile = fopen(path_lease_db, "r")) == NULL)
 		return;
 
-	new_parse(path_dhclient_db);
+	new_parse(path_lease_db);
 
 	for (;;) {
-		token = next_token(NULL, cfile);
-		if (token == EOF)
-			break;
-		if (token != TOK_LEASE) {
-			log_warnx("%s: expecting lease", log_procname);
-			break;
+		if (parse_lease(cfile, name, &lease) == 1) {
+			/*
+			 * The new lease will supersede a lease with the same ssid
+			 * AND the same Client Identifier AND the same
+			 * IP address.
+			 */
+			TAILQ_FOREACH_SAFE(lp, tq, next, nlp) {
+				if (lp->ssid_len != lease->ssid_len)
+					continue;
+				if (memcmp(lp->ssid, lease->ssid, lp->ssid_len) != 0)
+					continue;
+				if ((lease->options[DHO_DHCP_CLIENT_IDENTIFIER].len != 0) &&
+				    ((lp->options[DHO_DHCP_CLIENT_IDENTIFIER].len !=
+				    lease->options[DHO_DHCP_CLIENT_IDENTIFIER].len) ||
+				    memcmp(lp->options[DHO_DHCP_CLIENT_IDENTIFIER].data,
+				    lease->options[DHO_DHCP_CLIENT_IDENTIFIER].data,
+				    lp->options[DHO_DHCP_CLIENT_IDENTIFIER].len)))
+					continue;
+				if (lp->address.s_addr != lease->address.s_addr)
+					continue;
+
+				TAILQ_REMOVE(tq, lp, next);
+				free_client_lease(lp);
+			}
+
+			TAILQ_INSERT_TAIL(tq, lease, next);
 		}
-		if (parse_client_lease_statement(cfile, name, &lp) == 1)
-			add_lease(tq, lp);
+		if (feof(cfile) != 0)
+			break;
 	}
 
 	fclose(cfile);
 }
 
 /*
- * client-declaration :==
+ * conf-declaration :==
  *	TOK_APPEND option-decl			|
  *	TOK_BACKOFF_CUTOFF number		|
  *	TOK_DEFAULT option-decl			|
@@ -236,7 +219,6 @@ read_client_leases(char *name, struct client_lease_tq *tq)
  *	TOK_IGNORE option-list			|
  *	TOK_INITIAL_INTERVAL number		|
  *	TOK_INTERFACE interface-declaration	|
- *	TOK_LEASE client-lease-statement	|
  *	TOK_LINK_TIMEOUT number			|
  *	TOK_NEXT_SERVER string			|
  *	TOK_PREPEND option-decl			|
@@ -250,11 +232,9 @@ read_client_leases(char *name, struct client_lease_tq *tq)
  *	TOK_SERVER_NAME string			|
  *	TOK_SUPERSEDE option-decl		|
  *	TOK_TIMEOUT number
- *
- * If nested == 1 then TOK_INTERFACE and TOK_LEASE are not allowed.
  */
 void
-parse_client_statement(FILE *cfile, char *name, int nested)
+parse_conf_declaration(FILE *cfile, char *name)
 {
 	uint8_t			 list[DHO_COUNT];
 	char			*val;
@@ -302,10 +282,7 @@ parse_client_statement(FILE *cfile, char *name, int nested)
 			parse_semi(cfile);
 		break;
 	case TOK_INTERFACE:
-		if (nested == 1) {
-			parse_warn("expecting statement.");
-			skip_to_semi(cfile);
-		} else if (parse_interface_declaration(cfile, name) == 1)
+		if (parse_interface_declaration(cfile, name) == 1)
 			;
 		break;
 	case TOK_LEASE:
@@ -475,7 +452,7 @@ parse_option_list(FILE *cfile, int *count, uint8_t *optlist)
 
 /*
  * interface-declaration :==
- *	INTERFACE string LBRACE client-declarations RBRACE
+ *	INTERFACE string LBRACE conf-declarations RBRACE
  */
 int
 parse_interface_declaration(FILE *cfile, char *name)
@@ -514,27 +491,36 @@ parse_interface_declaration(FILE *cfile, char *name)
 			token = next_token(NULL, cfile);
 			return 1;
 		}
-		parse_client_statement(cfile, name, 1);
+		parse_conf_declaration(cfile, name);
 	}
 
 	return 0;
 }
 
 /*
- * client-lease-statement :==
- *	RBRACE client-lease-declarations LBRACE
+ * lease :== LEASE RBRACE lease-declarations LBRACE
  *
- *	client-lease-declarations :==
- *		<nil> |
- *		client-lease-declaration |
- *		client-lease-declarations client-lease-declaration
+ * lease-declarations :==
+ *		<nil>					|
+ *		lease-declaration			|
+ *		lease-declarations lease-declaration
  */
 int
-parse_client_lease_statement(FILE *cfile, char *name,
+parse_lease(FILE *cfile, char *name,
     struct client_lease **lp)
 {
 	struct client_lease	*lease;
 	int			 token;
+
+	token = next_token(NULL, cfile);
+	if (token == EOF)
+		return 0;
+	if (token != TOK_LEASE) {
+		parse_warn("expecting lease");
+		if (token != ';')
+			skip_to_semi(cfile);
+		return 0;
+	}
 
 	token = next_token(NULL, cfile);
 	if (token != '{') {
@@ -551,29 +537,23 @@ parse_client_lease_statement(FILE *cfile, char *name,
 	for (;;) {
 		token = peek_token(NULL, cfile);
 		if (token == EOF) {
-			parse_warn("unterminated lease declaration.");
+			parse_warn("unterminated lease.");
 			free_client_lease(lease);
 			break;
 		}
 		if (token == '}') {
 			token = next_token(NULL, cfile);
-			if (lease->interface != NULL &&
-			    strcmp(name, lease->interface) == 0)
-				*lp = lease;
-			else {
-				*lp = NULL;
-				free_client_lease(lease);
-			}
+			*lp = lease;
 			return 1;
 		}
-		parse_client_lease_declaration(cfile, lease, name);
+		parse_lease_declaration(cfile, lease, name);
 	}
 
 	return 0;
 }
 
 /*
- * client-lease-declaration :==
+ * lease-declaration :==
  *	BOOTP			|
  *	EXPIRE time-decl	|
  *	FILENAME string		|
@@ -587,7 +567,7 @@ parse_client_lease_statement(FILE *cfile, char *name,
  *	SSID string
  */
 void
-parse_client_lease_declaration(FILE *cfile, struct client_lease *lease,
+parse_lease_declaration(FILE *cfile, struct client_lease *lease,
     char *name)
 {
 	char		*val;
@@ -621,11 +601,9 @@ parse_client_lease_declaration(FILE *cfile, struct client_lease *lease,
 			return;
 		break;
 	case TOK_INTERFACE:
-		if (parse_string(cfile, NULL, &val) == 0)
-			return;
-		free(lease->interface);
-		lease->interface = val;
-		break;
+		/* 'interface' is just a comment. */
+		skip_to_semi(cfile);
+		return;
 	case TOK_NEXT_SERVER:
 		if (parse_ip_addr(cfile, &lease->next_server) == 0)
 			return;

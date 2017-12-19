@@ -1,4 +1,4 @@
-/*	$OpenBSD: jot.c,v 1.36 2016/09/02 14:23:09 tb Exp $	*/
+/*	$OpenBSD: jot.c,v 1.39 2017/12/15 14:20:52 tb Exp $	*/
 /*	$NetBSD: jot.c,v 1.3 1994/12/02 20:29:43 pk Exp $	*/
 
 /*-
@@ -379,10 +379,9 @@ getformat(void)
 			errx(1, "-w word too long");
 		intdata = true;
 	} else if (*(p+1) == '\0') {
-		if (sz <= 0)
-			errx(1, "-w word too long");
 		/* cannot end in single '%' */
-		strlcat(format, "%", sizeof format);
+		if (strlcat(format, "%", sizeof(format)) >= sizeof(format))
+			errx(1, "-w word too long");
 	} else {
 		/*
 		 * Allow conversion format specifiers of the form
@@ -420,20 +419,27 @@ getformat(void)
 			intdata = true;
 			break;
 		case 'D':
+			/* %lD is undefined */
 			if (!longdata) {
+				longdata = true; /* %D behaves as %ld */
 				intdata = true;
 				break;
 			}
+			goto fmt_broken;
 		case 'O': case 'U':
+			/* %lO and %lU are undefined */
 			if (!longdata) {
+				longdata = true; /* %O, %U behave as %lo, %lu */
 				intdata = nosign = true;
 				break;
 			}
+			goto fmt_broken;
 		case 'c':
 			if (!(intdata | longdata)) {
 				chardata = true;
 				break;
 			}
+			/* FALLTHROUGH */
 		case 'h': case 'n': case 'p': case 'q': case 's': case 'L':
 		case '$': case '*':
 			goto fmt_broken;
@@ -452,7 +458,10 @@ fmt_broken:
 			else if (*p == '%' && *(p+1) == '%')
 				p++;
 			else if (*p == '%' && *(p+1) == '\0') {
-				strlcat(format, "%", sizeof format);
+				/* cannot end in single '%' */
+				if (strlcat(format, "%", sizeof(format)) >=
+				    sizeof(format))
+					errx(1, "-w word too long");
 				break;
 			}
 	}
