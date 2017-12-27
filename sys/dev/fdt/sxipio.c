@@ -1,4 +1,4 @@
-/*	$OpenBSD: sxipio.c,v 1.5 2017/11/13 09:24:59 kettenis Exp $	*/
+/*	$OpenBSD: sxipio.c,v 1.7 2017/12/26 12:58:59 kettenis Exp $	*/
 /*
  * Copyright (c) 2010 Miodrag Vallat.
  * Copyright (c) 2013 Artturi Alm
@@ -134,6 +134,10 @@ struct sxipio_pins sxipio_pins[] = {
 		sun7i_a20_pins, nitems(sun7i_a20_pins)
 	},
 	{
+		"allwinner,sun8i-a33-pinctrl",
+		sun8i_a33_pins, nitems(sun8i_a33_pins)
+	},
+	{
 		"allwinner,sun8i-h3-pinctrl",
 		sun8i_h3_pins, nitems(sun8i_h3_pins)
 	},
@@ -152,6 +156,10 @@ struct sxipio_pins sxipio_pins[] = {
 	{
 		"allwinner,sun50i-a64-pinctrl",
 		sun50i_a64_pins, nitems(sun50i_a64_pins)
+	},
+	{
+		"allwinner,sun50i-a64-r-pinctrl",
+		sun50i_a64_r_pins, nitems(sun50i_a64_r_pins)
 	},
 	{
 		"allwinner,sun50i-h5-pinctrl",
@@ -292,6 +300,8 @@ sxipio_pinctrl(uint32_t phandle, void *cookie)
 
 		/* Lookup the function of the pin. */
 		for (j = 0; j < nitems(sc->sc_pins[i].funcs); j++) {
+			if (sc->sc_pins[i].funcs[j].name == NULL)
+				continue;
 			if (strcmp(func, sc->sc_pins[i].funcs[j].name) == 0)
 				break;
 		}

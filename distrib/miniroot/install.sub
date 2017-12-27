@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1049 2017/12/18 22:48:28 rpe Exp $
+#	$OpenBSD: install.sub,v 1.1052 2017/12/22 19:41:49 rpe Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -870,13 +870,11 @@ ask_password() {
 # Support functions for donetconfig()
 # ------------------------------------------------------------------------------
 
-# Issue a DHCP request to configure interface $1 and add the host-name option to
-# /etc/dhclient.conf using $2.
+# Issue a DHCP request to configure interface $1.
 dhcp_request() {
 	local _if=$1 _hn=$2
 
 	echo "lookup file bind" >/etc/resolv.conf.tail
-	echo "send host-name \"$_hn\";" >/etc/dhclient.conf
 
 	ifconfig $_if group dhcp >/dev/null 2>&1
 
@@ -885,13 +883,9 @@ initial-interval 1;
 backoff-cutoff 2;
 reboot 5;
 timeout 10;
-send host-name "$_hn";
 __EOT
 
-	# Move configuration files to where they will be copied to the
-	# installed system. Overwrites configuration information from
-	# last successful dhcp attempt.
-	mv /etc/dhclient.conf /tmp/i/dhclient.conf
+	# Move resolv.conf to where it will be copied to the installed system.
 	mv /etc/resolv.conf.tail /tmp/i/resolv.conf.tail
 }
 
@@ -1304,19 +1298,19 @@ configure_ifs() {
 
 # Set up IPv4 default route.
 v4_defroute() {
-	local _dr
+	local _dr _dr_if
 
 	# Only configure a default route if an IPv4 address was configured.
 	[[ -n $(ifconfig | sed -n '/[ 	]inet .* broadcast /p') ]] || return
 
 	# Check routing table to see if a default route ($1) already exists
-	# and if it is handled by dhclient ($2).
-	set -- $(route -nv show -inet |
-		{ set -- $(grep '^default '); print $2 $9; })
-	[[ -n $1 ]] && _dr=$1
+	# and what interface it is connected to ($2).
+	set -- $(route -n show -inet |
+		sed -En 's/^default +([0-9.]+) .* ([a-z0-9]+) *$/\1 \2/p')
+	[[ -n $1 ]] && _dr=$1 _dr_if=$2
 
 	# Don't ask if a default route exits and is handled by dhclient.
-	[[ -n $_dr && $2 == \"DHCLIENT && -f /tmp/i/dhclient.conf ]] && return
+	[[ -n $_dr ]] && isin "$_dr_if" $(get_ifs dhcp) && return
 
 	while :; do
 		ask_until "Default IPv4 route? (IPv4 address or none)" "$_dr"
@@ -2308,8 +2302,8 @@ ifstart() {
 enable_network() {
 	local _f _gw _hn _if _trunks _svlans _vlans
 
-	# Copy any network configuration files.
-	for _f in dhclient.conf resolv.conf resolv.conf.tail; do
+	# Use installed network configuration files during upgrade.
+	for _f in resolv.conf resolv.conf.tail; do
 		if [[ -f /mnt/etc/$_f ]]; then
 			cp /mnt/etc/$_f /etc/$_f
 		fi
@@ -3005,10 +2999,6 @@ do_install() {
 		done </tmp/i/hosts >>/mnt/etc/hosts
 		rm /tmp/i/hosts
 	fi
-
-	# Append dhclient.conf to installed dhclient.conf.
-	_f=dhclient.conf
-	[[ -f /tmp/i/$_f ]] && { cat /tmp/i/$_f >>/mnt/etc/$_f; rm /tmp/i/$_f; }
 
 	# Possible files to copy from /tmp/i/: fstab hostname.* kbdtype mygate
 	#     myname ttys boot.conf resolv.conf sysctl.conf resolv.conf.tail

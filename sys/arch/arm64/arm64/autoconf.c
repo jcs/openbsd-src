@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.4 2017/06/29 05:40:35 deraadt Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.6 2017/12/27 13:57:40 kettenis Exp $	*/
 /*
  * Copyright (c) 2009 Miodrag Vallat.
  *
