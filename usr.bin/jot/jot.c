@@ -1,4 +1,4 @@
-/*	$OpenBSD: jot.c,v 1.39 2017/12/15 14:20:52 tb Exp $	*/
+/*	$OpenBSD: jot.c,v 1.41 2017/12/30 07:21:10 tb Exp $	*/
 /*	$NetBSD: jot.c,v 1.3 1994/12/02 20:29:43 pk Exp $	*/
 
 /*-
@@ -406,8 +406,7 @@ getformat(void)
 		if (*p == 'l') {
 			longdata = true;
 			if (*++p == 'l') {
-				if (p[1] != '\0')
-					p++;
+				p++;
 				goto fmt_broken;
 			}
 		}
@@ -439,9 +438,6 @@ getformat(void)
 				chardata = true;
 				break;
 			}
-			/* FALLTHROUGH */
-		case 'h': case 'n': case 'p': case 'q': case 's': case 'L':
-		case '$': case '*':
 			goto fmt_broken;
 		case 'f': case 'e': case 'g': case 'E': case 'G':
 			if (!longdata)
@@ -449,7 +445,8 @@ getformat(void)
 			/* FALLTHROUGH */
 		default:
 fmt_broken:
-			*++p = '\0';
+			if (*p != '\0')
+				p[1] = '\0';
 			errx(1, "illegal or unsupported format '%s'", p2);
 		}
 		while (*++p != '\0')

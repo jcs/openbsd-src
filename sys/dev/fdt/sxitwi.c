@@ -1,4 +1,4 @@
-/* $OpenBSD: sxitwi.c,v 1.3 2017/11/13 21:24:27 kettenis Exp $ */
+/* $OpenBSD: sxitwi.c,v 1.5 2017/12/30 19:04:00 kettenis Exp $ */
 /*	$NetBSD: gttwsi_core.c,v 1.2 2014/11/23 13:37:27 jmcneill Exp $	*/
 /*
  * Copyright (c) 2008 Eiji Kawauchi.
@@ -70,10 +70,6 @@
 #include <sys/device.h>
 #include <sys/kernel.h>
 #include <sys/rwlock.h>
-
-#include <sys/param.h>
-#include <sys/device.h>
-#include <sys/systm.h>
 
 #define	_I2C_PRIVATE
 #include <dev/i2c/i2cvar.h>
@@ -213,7 +209,7 @@ sxitwi_attach(struct device *parent, struct device *self, void *aux)
 	 */
 	sc->sc_twsien_iflg = CONTROL_TWSIEN;
 	if (OF_is_compatible(sc->sc_node, "allwinner,sun6i-a31-i2c"))
-		sc->sc_twsien_iflg = CONTROL_IFLG;
+		sc->sc_twsien_iflg |= CONTROL_IFLG;
 
 	sc->sc_started = 0;
 	sc->sc_ic.ic_cookie = sc;
