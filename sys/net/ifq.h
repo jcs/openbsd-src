@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifq.h,v 1.18 2017/12/21 03:59:32 dlg Exp $ */
+/*	$OpenBSD: ifq.h,v 1.20 2018/01/04 11:02:57 tb Exp $ */
 
 /*
  * Copyright (c) 2015 David Gwynne <dlg@openbsd.org>

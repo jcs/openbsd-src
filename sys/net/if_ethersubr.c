@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ethersubr.c,v 1.246 2017/05/31 05:59:09 mpi Exp $	*/
+/*	$OpenBSD: if_ethersubr.c,v 1.248 2018/01/04 00:33:54 dlg Exp $	*/
 /*	$NetBSD: if_ethersubr.c,v 1.19 1996/05/07 02:40:30 thorpej Exp $	*/
 
 /*
@@ -248,6 +248,11 @@ ether_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 				memcpy(edst, LLADDR(satosdl(dst)),
 				    sizeof(edst));
 				break;
+			case AF_INET6:
+				error = nd6_resolve(ifp, rt, m, dst, edst);
+				if (error)
+					return (error == EAGAIN ? 0 : error);
+				break;
 			case AF_INET:
 			case AF_MPLS:
 				error = arpresolve(ifp, rt, m, dst, edst);
@@ -312,8 +317,6 @@ ether_input(struct ifnet *ifp, struct mbuf *m, void *cookie)
 	struct ether_header *eh;
 	struct niqueue *inq;
 	u_int16_t etype;
-	int llcfound = 0;
-	struct llc *l;
 	struct arpcom *ac;
 #if NPPPOE > 0
 	struct ether_header *eh_tmp;
@@ -371,7 +374,6 @@ ether_input(struct ifnet *ifp, struct mbuf *m, void *cookie)
 
 	etype = ntohs(eh->ether_type);
 
-decapsulate:
 	switch (etype) {
 	case ETHERTYPE_IP:
 		ipv4_input(ifp, m);
@@ -436,29 +438,7 @@ decapsulate:
 		return (1);
 #endif
 	default:
-		if (llcfound || etype > ETHERMTU ||
-		    m->m_len < sizeof(struct llc))
-			goto dropanyway;
-		llcfound = 1;
-		l = mtod(m, struct llc *);
-		switch (l->llc_dsap) {
-		case LLC_SNAP_LSAP:
-			if (l->llc_control == LLC_UI &&
-			    l->llc_dsap == LLC_SNAP_LSAP &&
-			    l->llc_ssap == LLC_SNAP_LSAP) {
-				/* SNAP */
-				if (m->m_pkthdr.len > etype)
-					m_adj(m, etype - m->m_pkthdr.len);
-				m_adj(m, 6);
-				M_PREPEND(m, sizeof(*eh), M_DONTWAIT);
-				if (m == NULL)
-					return (1);
-				*mtod(m, struct ether_header *) = *eh;
-				goto decapsulate;
-			}
-		default:
-			goto dropanyway;
-		}
+		goto dropanyway;
 	}
 
 	niq_enqueue(inq, m);

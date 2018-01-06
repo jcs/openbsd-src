@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1831 2017/12/26 23:47:17 kettenis Exp 
+ *	OpenBSD: pcidevs,v 1.1833 2018/01/06 20:14:01 kettenis Exp 
  */
 
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
@@ -23604,6 +23604,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "5U852 SD/MMC",
 	},
 	{
+	    PCI_VENDOR_ROCKCHIP, PCI_PRODUCT_ROCKCHIP_RK3399_RC,
+	    "RK3399 Root Complex",
+	},
+	{
 	    PCI_VENDOR_ROCKWELL, PCI_PRODUCT_ROCKWELL_RS56SP_PCI11P1,
 	    "RS56/SP-PCI11P1 Modem",
 	},
@@ -24418,6 +24422,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_SMI, PCI_PRODUCT_SMI_SM910,
 	    "910",
+	},
+	{
+	    PCI_VENDOR_SMI, PCI_PRODUCT_SMI_SM2260,
+	    "SM2260 NVMe",
 	},
 	{
 	    PCI_VENDOR_SMSC, PCI_PRODUCT_SMSC_VICTORY66_IDE_1,
@@ -28062,6 +28070,10 @@ static const struct pci_known_vendor pci_known_vendors[] = {
 	{
 	    PCI_VENDOR_SYMPHONY2,
 	    "Symphony Labs",
+	},
+	{
+	    PCI_VENDOR_ROCKCHIP,
+	    "Rockchip",
 	},
 	{
 	    PCI_VENDOR_TEKRAM2,

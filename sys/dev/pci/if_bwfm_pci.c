@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bwfm_pci.c,v 1.1 2017/12/24 19:50:56 patrick Exp $	*/
+/*	$OpenBSD: if_bwfm_pci.c,v 1.6 2018/01/05 23:30:16 patrick Exp $	*/
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2017 Patrick Wildt <patrick@blueri.se>
@@ -73,6 +73,13 @@ static int bwfm_debug = 2;
 
 #define DEVNAME(sc)	((sc)->sc_sc.sc_dev.dv_xname)
 
+enum ring_status {
+	RING_CLOSED,
+	RING_CLOSING,
+	RING_OPEN,
+	RING_OPENING,
+};
+
 struct bwfm_pci_msgring {
 	uint32_t		 w_idx_addr;
 	uint32_t		 r_idx_addr;
@@ -80,6 +87,7 @@ struct bwfm_pci_msgring {
 	uint32_t		 r_ptr;
 	int			 nitem;
 	int			 itemsz;
+	enum ring_status	 status;
 	struct bwfm_pci_dmamem	*ring;
 };
 
@@ -128,6 +136,7 @@ struct bwfm_pci_softc {
 	uint32_t		 sc_console_base_addr;
 	uint32_t		 sc_console_buf_addr;
 	uint32_t		 sc_console_buf_size;
+	uint32_t		 sc_console_readidx;
 
 	uint16_t		 sc_max_flowrings;
 	uint16_t		 sc_max_submissionrings;
@@ -197,6 +206,8 @@ void		 bwfm_pci_fill_rx_buf_ring(struct bwfm_pci_softc *);
 void		 bwfm_pci_fill_rx_rings(struct bwfm_pci_softc *);
 int		 bwfm_pci_setup_ring(struct bwfm_pci_softc *, struct bwfm_pci_msgring *,
 		    int, size_t, uint32_t, uint32_t, int, uint32_t, uint32_t *);
+int		 bwfm_pci_setup_flowring(struct bwfm_pci_softc *, struct bwfm_pci_msgring *,
+		    int, size_t);
 
 void		 bwfm_pci_ring_bell(struct bwfm_pci_softc *,
 		    struct bwfm_pci_msgring *);
@@ -232,7 +243,12 @@ int		 bwfm_pci_buscore_prepare(struct bwfm_softc *);
 int		 bwfm_pci_buscore_reset(struct bwfm_softc *);
 void		 bwfm_pci_buscore_activate(struct bwfm_softc *, uint32_t);
 
+void		 bwfm_pci_flowring_create(struct bwfm_pci_softc *, int,
+		     struct mbuf *);
+void		 bwfm_pci_flowring_create_cb(struct bwfm_softc *, void *);
+
 int		 bwfm_pci_txdata(struct bwfm_softc *, struct mbuf *);
+void		 bwfm_pci_debug_console(struct bwfm_pci_softc *);
 
 int		 bwfm_pci_msgbuf_query_dcmd(struct bwfm_softc *, int,
 		    int, char *, size_t *);
@@ -537,11 +553,14 @@ bwfm_pci_attachhook(struct device *self)
 	    &ring_mem_ptr))
 		goto cleanup;
 
-#if 0
 	/* Dynamic TX rings for actual data */
 	sc->sc_flowrings = malloc(sc->sc_max_flowrings *
 	    sizeof(struct bwfm_pci_msgring), M_DEVBUF, M_WAITOK | M_ZERO);
-#endif
+	for (i = 0; i < sc->sc_max_flowrings; i++) {
+		struct bwfm_pci_msgring *ring = &sc->sc_flowrings[i];
+		ring->w_idx_addr = h2d_w_idx_ptr + (i + 2) * idx_offset;
+		ring->r_idx_addr = h2d_r_idx_ptr + (i + 2) * idx_offset;
+	}
 
 	/* Scratch and ring update buffers for firmware */
 	if ((sc->sc_scratch_buf = bwfm_pci_dmamem_alloc(sc,
@@ -595,10 +614,21 @@ bwfm_pci_attachhook(struct device *self)
 		    BWFM_NUM_TX_DESCS, MSGBUF_MAX_PKT_SIZE, 0, BUS_DMA_WAITOK,
 		    &sc->sc_tx_pkts.pkts[i].bb_map);
 
+	/*
+	 * For whatever reason, could also be a bug somewhere in this
+	 * driver, the firmware needs a bunch of RX buffers otherwise
+	 * it won't send any RX complete messages.  64 buffers don't
+	 * suffice, but 128 buffers are enough.
+	 */
+	if_rxr_init(&sc->sc_rxbuf_ring, 128, sc->sc_max_rxbufpost);
 	if_rxr_init(&sc->sc_ioctl_ring, 8, 8);
 	if_rxr_init(&sc->sc_event_ring, 8, 8);
-	if_rxr_init(&sc->sc_rxbuf_ring, 2, sc->sc_max_rxbufpost);
 	bwfm_pci_fill_rx_rings(sc);
+
+#ifdef BWFM_DEBUG
+	sc->sc_console_readidx = 0;
+	bwfm_pci_debug_console(sc);
+#endif
 
 	sc->sc_ioctl_poll = 1;
 	sc->sc_sc.sc_bus_ops = &bwfm_pci_bus_ops;
@@ -739,7 +769,7 @@ free:
 destroy:
 	bus_dmamap_destroy(sc->sc_dmat, bdm->bdm_map);
 bdmfree:
-	free(bdm, M_DEVBUF, 0);
+	free(bdm, M_DEVBUF, sizeof(*bdm));
 
 	return (NULL);
 }
@@ -750,7 +780,7 @@ bwfm_pci_dmamem_free(struct bwfm_pci_softc *sc, struct bwfm_pci_dmamem *bdm)
 	bus_dmamem_unmap(sc->sc_dmat, bdm->bdm_kva, bdm->bdm_size);
 	bus_dmamem_free(sc->sc_dmat, &bdm->bdm_seg, 1);
 	bus_dmamap_destroy(sc->sc_dmat, bdm->bdm_map);
-	free(bdm, M_DEVBUF, 0);
+	free(bdm, M_DEVBUF, sizeof(*bdm));
 }
 
 /*
@@ -771,9 +801,11 @@ bwfm_pci_pktid_new(struct bwfm_pci_softc *sc, struct bwfm_pci_pkts *pkts,
 		if (pkts->pkts[idx].bb_m == NULL) {
 			if (bus_dmamap_load_mbuf(sc->sc_dmat,
 			    pkts->pkts[idx].bb_map, m, BUS_DMA_NOWAIT) != 0) {
-				printf("%s: could not load mbuf DMA map",
-				    DEVNAME(sc));
-				return 1;
+				if (m_defrag(m, M_DONTWAIT))
+					return EFBIG;
+				if (bus_dmamap_load_mbuf(sc->sc_dmat,
+				    pkts->pkts[idx].bb_map, m, BUS_DMA_NOWAIT) != 0)
+					return EFBIG;
 			}
 			pkts->last = idx;
 			pkts->pkts[idx].bb_m = m;
@@ -783,7 +815,7 @@ bwfm_pci_pktid_new(struct bwfm_pci_softc *sc, struct bwfm_pci_pkts *pkts,
 		}
 		idx++;
 	}
-	return 1;
+	return ENOBUFS;
 }
 
 struct mbuf *
@@ -803,11 +835,11 @@ bwfm_pci_pktid_free(struct bwfm_pci_softc *sc, struct bwfm_pci_pkts *pkts,
 void
 bwfm_pci_fill_rx_rings(struct bwfm_pci_softc *sc)
 {
+	bwfm_pci_fill_rx_buf_ring(sc);
 	bwfm_pci_fill_rx_ioctl_ring(sc, &sc->sc_ioctl_ring,
 	    MSGBUF_TYPE_IOCTLRESP_BUF_POST);
 	bwfm_pci_fill_rx_ioctl_ring(sc, &sc->sc_event_ring,
 	    MSGBUF_TYPE_EVENT_BUF_POST);
-	bwfm_pci_fill_rx_buf_ring(sc);
 }
 
 void
@@ -912,6 +944,23 @@ bwfm_pci_setup_ring(struct bwfm_pci_softc *sc, struct bwfm_pci_msgring *ring,
 	bus_space_write_2(sc->sc_tcm_iot, sc->sc_tcm_ioh,
 	    *ring_mem + BWFM_RING_LEN_ITEMS, itemsz);
 	*ring_mem = *ring_mem + BWFM_RING_MEM_SZ;
+	return 0;
+}
+
+int
+bwfm_pci_setup_flowring(struct bwfm_pci_softc *sc, struct bwfm_pci_msgring *ring,
+    int nitem, size_t itemsz)
+{
+	ring->w_ptr = 0;
+	ring->r_ptr = 0;
+	ring->nitem = nitem;
+	ring->itemsz = itemsz;
+	bwfm_pci_ring_write_rptr(sc, ring);
+	bwfm_pci_ring_write_wptr(sc, ring);
+
+	ring->ring = bwfm_pci_dmamem_alloc(sc, nitem * itemsz, 8);
+	if (ring->ring == NULL)
+		return ENOMEM;
 	return 0;
 }
 
@@ -1125,14 +1174,41 @@ again:
 void
 bwfm_pci_msg_rx(struct bwfm_pci_softc *sc, void *buf)
 {
+	struct ifnet *ifp = &sc->sc_sc.sc_ic.ic_if;
 	struct msgbuf_ioctl_resp_hdr *resp;
+	struct msgbuf_tx_status *tx;
+	struct msgbuf_rx_complete *rx;
 	struct msgbuf_rx_event *event;
 	struct msgbuf_common_hdr *msg;
+	struct msgbuf_flowring_create_resp *fcr;
+	struct bwfm_pci_msgring *ring;
 	struct mbuf *m;
+	int flowid;
 
 	msg = (struct msgbuf_common_hdr *)buf;
 	switch (msg->msgtype)
 	{
+	case MSGBUF_TYPE_FLOW_RING_CREATE_CMPLT:
+		fcr = (struct msgbuf_flowring_create_resp *)buf;
+		flowid = letoh16(fcr->compl_hdr.flow_ring_id);
+		if (flowid < 2)
+			break;
+		flowid -= 2;
+		if (flowid >= sc->sc_max_flowrings)
+			break;
+		ring = &sc->sc_flowrings[flowid];
+		if (ring->status != RING_OPENING)
+			break;
+		if (fcr->compl_hdr.status) {
+			printf("%s: failed to open flowring %d\n",
+			    DEVNAME(sc), flowid);
+			ring->status = RING_CLOSED;
+			ifq_restart(&ifp->if_snd);
+			break;
+		}
+		ring->status = RING_OPEN;
+		ifq_restart(&ifp->if_snd);
+		break;
 	case MSGBUF_TYPE_IOCTLPTR_REQ_ACK:
 		break;
 	case MSGBUF_TYPE_IOCTL_CMPLT:
@@ -1151,9 +1227,32 @@ bwfm_pci_msg_rx(struct bwfm_pci_softc *sc, void *buf)
 		if (m == NULL)
 			break;
 		m_adj(m, sc->sc_rx_dataoffset);
-		bwfm_rx(&sc->sc_sc, mtod(m, char *), letoh16(event->event_data_len));
-		m_freem(m);
+		m->m_len = m->m_pkthdr.len = letoh16(event->event_data_len);
+		bwfm_rx(&sc->sc_sc, m);
 		if_rxr_put(&sc->sc_event_ring, 1);
+		bwfm_pci_fill_rx_rings(sc);
+		break;
+	case MSGBUF_TYPE_TX_STATUS:
+		tx = (struct msgbuf_tx_status *)buf;
+		m = bwfm_pci_pktid_free(sc, &sc->sc_tx_pkts,
+		    letoh32(tx->msg.request_id));
+		if (m == NULL)
+			break;
+		m_freem(m);
+		break;
+	case MSGBUF_TYPE_RX_CMPLT:
+		rx = (struct msgbuf_rx_complete *)buf;
+		m = bwfm_pci_pktid_free(sc, &sc->sc_rx_pkts,
+		    letoh32(rx->msg.request_id));
+		if (m == NULL)
+			break;
+		if (letoh16(rx->data_offset))
+			m_adj(m, letoh16(rx->data_offset));
+		else if (sc->sc_rx_dataoffset)
+			m_adj(m, sc->sc_rx_dataoffset);
+		m->m_len = m->m_pkthdr.len = letoh16(rx->data_len);
+		bwfm_rx(&sc->sc_sc, m);
+		if_rxr_put(&sc->sc_rxbuf_ring, 1);
 		bwfm_pci_fill_rx_rings(sc);
 		break;
 	default:
@@ -1280,14 +1379,126 @@ bwfm_pci_buscore_activate(struct bwfm_softc *bwfm, uint32_t rstvec)
 	bus_space_write_4(sc->sc_tcm_iot, sc->sc_tcm_ioh, 0, rstvec);
 }
 
+void
+bwfm_pci_flowring_create(struct bwfm_pci_softc *sc, int flowid,
+    struct mbuf *m)
+{
+	struct bwfm_cmd_flowring_create cmd;
+	cmd.flowid = flowid;
+	memcpy(cmd.da, mtod(m, char *) + 0 * ETHER_ADDR_LEN, ETHER_ADDR_LEN);
+	memcpy(cmd.sa, mtod(m, char *) + 1 * ETHER_ADDR_LEN, ETHER_ADDR_LEN);
+	bwfm_do_async(&sc->sc_sc, bwfm_pci_flowring_create_cb, &cmd, sizeof(cmd));
+}
+
+void
+bwfm_pci_flowring_create_cb(struct bwfm_softc *bwfm, void *arg)
+{
+	struct bwfm_pci_softc *sc = (void *)bwfm;
+	struct bwfm_cmd_flowring_create *cmd = arg;
+	struct msgbuf_tx_flowring_create_req *req;
+	struct bwfm_pci_msgring *ring;
+	int flowid;
+
+	flowid = cmd->flowid;
+	ring = &sc->sc_flowrings[flowid];
+	if (ring->status != RING_CLOSED)
+		return;
+
+	if (bwfm_pci_setup_flowring(sc, ring, 512, 48))
+		return;
+
+	req = bwfm_pci_ring_write_reserve(sc, &sc->sc_ctrl_submit);
+	if (req == NULL)
+		return;
+
+	ring->status = RING_OPENING;
+	req->msg.msgtype = MSGBUF_TYPE_FLOW_RING_CREATE;
+	req->msg.ifidx = 0;
+	req->msg.request_id = 0;
+	req->tid = 0; /* XXX: prio/fifo */
+	req->flow_ring_id = letoh16(flowid + 2);
+	memcpy(req->da, cmd->da, ETHER_ADDR_LEN);
+	memcpy(req->sa, cmd->sa, ETHER_ADDR_LEN);
+	req->flow_ring_addr.high_addr =
+	    letoh32(BWFM_PCI_DMA_DVA(ring->ring) >> 32);
+	req->flow_ring_addr.low_addr =
+	    letoh32(BWFM_PCI_DMA_DVA(ring->ring) & 0xffffffff);
+	req->max_items = letoh16(512);
+	req->len_item = letoh16(48);
+
+	bwfm_pci_ring_write_commit(sc, &sc->sc_ctrl_submit);
+}
+
 int
 bwfm_pci_txdata(struct bwfm_softc *bwfm, struct mbuf *m)
 {
-#ifdef BWFM_DEBUG
 	struct bwfm_pci_softc *sc = (void *)bwfm;
-	DPRINTF(("%s: %s\n", DEVNAME(sc), __func__));
-#endif
-	return ENOBUFS;
+	struct bwfm_pci_msgring *ring;
+	struct msgbuf_tx_msghdr *tx;
+	uint32_t pktid;
+	paddr_t paddr;
+	int flowid, ret;
+
+	/* FIXME: We need individual flowrings. */
+	flowid = 0;
+
+	ring = &sc->sc_flowrings[flowid];
+	if (ring->status == RING_OPENING ||
+	    ring->status == RING_CLOSING)
+		return ENOBUFS;
+
+	if (ring->status == RING_CLOSED) {
+		bwfm_pci_flowring_create(sc, flowid, m);
+		return ENOBUFS;
+	}
+
+	tx = bwfm_pci_ring_write_reserve(sc, ring);
+	if (tx == NULL)
+		return ENOBUFS;
+
+	memset(tx, 0, sizeof(*tx));
+	tx->msg.msgtype = MSGBUF_TYPE_TX_POST;
+	tx->msg.ifidx = 0;
+	tx->flags = BWFM_MSGBUF_PKT_FLAGS_FRAME_802_3;
+	tx->flags |= ieee80211_classify(&sc->sc_sc.sc_ic, m) <<
+	    BWFM_MSGBUF_PKT_FLAGS_PRIO_SHIFT;
+	tx->seg_cnt = 1;
+	memcpy(tx->txhdr, mtod(m, char *), ETHER_HDR_LEN);
+
+	ret = bwfm_pci_pktid_new(sc, &sc->sc_tx_pkts, m, &pktid, &paddr);
+	if (ret) {
+		bwfm_pci_ring_write_cancel(sc, ring, 1);
+		return ret;
+	}
+	paddr += ETHER_HDR_LEN;
+
+	tx->msg.request_id = htole32(pktid);
+	tx->data_len = m->m_len;
+	tx->data_buf_addr.high_addr = htole32(paddr >> 32);
+	tx->data_buf_addr.low_addr = htole32(paddr & 0xffffffff);
+
+	bwfm_pci_ring_write_commit(sc, ring);
+	return 0;
+}
+
+void
+bwfm_pci_debug_console(struct bwfm_pci_softc *sc)
+{
+	uint32_t newidx = bus_space_read_4(sc->sc_tcm_iot, sc->sc_tcm_ioh,
+	    sc->sc_console_base_addr + BWFM_CONSOLE_WRITEIDX);
+
+	if (newidx != sc->sc_console_readidx)
+		printf("BWFM CONSOLE: ");
+	while (newidx != sc->sc_console_readidx) {
+		uint8_t ch = bus_space_read_1(sc->sc_tcm_iot, sc->sc_tcm_ioh,
+		    sc->sc_console_buf_addr + sc->sc_console_readidx);
+		sc->sc_console_readidx++;
+		if (sc->sc_console_readidx == sc->sc_console_buf_size)
+			sc->sc_console_readidx = 0;
+		if (ch == '\r')
+			continue;
+		printf("%c", ch);
+	}
 }
 
 int
@@ -1309,28 +1520,13 @@ bwfm_pci_intr(void *v)
 		printf("%s: handle MB data\n", __func__);
 
 	if (status & BWFM_PCI_PCIE2REG_MAILBOXMASK_INT_D2H_DB) {
-		bwfm_pci_ring_rx(sc, &sc->sc_rx_complete);
-		bwfm_pci_ring_rx(sc, &sc->sc_tx_complete);
 		bwfm_pci_ring_rx(sc, &sc->sc_ctrl_complete);
+		bwfm_pci_ring_rx(sc, &sc->sc_tx_complete);
+		bwfm_pci_ring_rx(sc, &sc->sc_rx_complete);
 	}
 
-#if 0
-	{
-		uint32_t newidx = bus_space_read_4(sc->sc_tcm_iot, sc->sc_tcm_ioh,
-		    sc->sc_console_base_addr + BWFM_CONSOLE_WRITEIDX);
-		uint32_t readidx = 0;
-
-		while (newidx != readidx) {
-			uint8_t ch = bus_space_read_1(sc->sc_tcm_iot, sc->sc_tcm_ioh,
-			    sc->sc_console_buf_addr + readidx);
-			readidx++;
-			if (readidx == sc->sc_console_buf_size)
-				readidx = 0;
-			if (ch == '\r')
-				continue;
-			printf("%c", ch);
-		}
-	}
+#ifdef BWFM_DEBUG
+	bwfm_pci_debug_console(sc);
 #endif
 
 	bwfm_pci_intr_enable(sc);

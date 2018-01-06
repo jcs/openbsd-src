@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.c,v 1.77 2017/11/09 12:34:25 krw Exp $	*/
+/*	$OpenBSD: parse.c,v 1.79 2018/01/04 03:02:05 krw Exp $	*/
 
 /* Common parser code for dhcpd and dhclient. */
 
@@ -225,31 +225,6 @@ parse_ip_addr(FILE *cfile, struct in_addr *addr)
 	return 0;
 }
 
-/*
- * lease-time :== NUMBER SEMI
- */
-int
-parse_lease_time(FILE *cfile, time_t *timep)
-{
-	const char	*errstr;
-	char		*val;
-	long long	 numval;
-	int		 token;
-
-	token = next_token(&val, cfile);
-	numval = strtonum(val, 0, UINT32_MAX, &errstr);
-	if (errstr == NULL) {
-		*timep = numval;
-		return 1;
-	}
-
-	parse_warn("expecting integer between 0 and 4294967295.");
-	if (token != ';')
-		skip_to_semi(cfile);
-
-	return 0;
-}
-
 int
 parse_boolean(FILE *cfile, unsigned char *buf)
 {
@@ -278,7 +253,7 @@ parse_boolean(FILE *cfile, unsigned char *buf)
 }
 
 int
-parse_decimal(FILE *cfile, unsigned char *buf, char fmt)
+parse_number(FILE *cfile, unsigned char *buf, char fmt)
 {
 	const char	*errstr;
 	char		*val, *msg;

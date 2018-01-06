@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.37 2017/11/04 07:57:14 mlarkin Exp $	*/
+/*	$OpenBSD: config.c,v 1.40 2018/01/05 13:34:52 jca Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -169,6 +169,7 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid, uid_t uid)
 	unsigned int		 i;
 	int			 fd = -1, vmboot = 0;
 	int			 kernfd = -1, *diskfds = NULL, *tapfds = NULL;
+	int			 cdromfd = -1;
 	int			 saved_errno = 0;
 	char			 ifname[IF_NAMESIZE], *s;
 	char			 path[PATH_MAX];
@@ -234,26 +235,50 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid, uid_t uid)
 		}
 	}
 
-	/* Open disk images for child */
-	for (i = 0 ; i < vcp->vcp_ndisks; i++) {
-                /* Stat disk[i] to ensure it is a regular file */
-		if (stat(vcp->vcp_disks[i], &stat_buf) == -1) {
-			log_warn("%s: can't open disk %s", __func__,
-			    vcp->vcp_disks[i]);
-			errno = VMD_DISK_MISSING;
+	/* Open CDROM image for child */
+	if (strlen(vcp->vcp_cdrom)) {
+		/* Stat cdrom to ensure it is a regular file */
+		if ((cdromfd =
+		    open(vcp->vcp_cdrom, O_RDONLY)) == -1) {
+			log_warn("%s: can't open cdrom %s", __func__,
+			    vcp->vcp_cdrom);
+			errno = VMD_CDROM_MISSING;
+			goto fail;
+		}
+		if (fstat(cdromfd, &stat_buf) == -1) {
+			log_warn("%s: can't open cdrom %s", __func__,
+			    vcp->vcp_cdrom);
+			errno = VMD_CDROM_MISSING;
 			goto fail;
 		}
 		if (S_ISREG(stat_buf.st_mode) == 0) {
-			log_warn("%s: disk %s is not a regular file", __func__,
-			    vcp->vcp_disks[i]);
-			errno = VMD_DISK_INVALID;
+			log_warnx("%s: cdrom %s is not a regular file", __func__,
+			    vcp->vcp_cdrom);
+			errno = VMD_CDROM_INVALID;
 			goto fail;
 		}
+	}
+
+	/* Open disk images for child */
+	for (i = 0 ; i < vcp->vcp_ndisks; i++) {
+                /* Stat disk[i] to ensure it is a regular file */
 		if ((diskfds[i] =
 		    open(vcp->vcp_disks[i], O_RDWR)) == -1) {
 			log_warn("%s: can't open disk %s", __func__,
 			    vcp->vcp_disks[i]);
 			errno = VMD_DISK_MISSING;
+			goto fail;
+		}
+		if (fstat(diskfds[i], &stat_buf) == -1) {
+			log_warn("%s: can't open disk %s", __func__,
+			    vcp->vcp_disks[i]);
+			errno = VMD_DISK_INVALID;
+			goto fail;
+		}
+		if (S_ISREG(stat_buf.st_mode) == 0) {
+			log_warnx("%s: disk %s is not a regular file", __func__,
+			    vcp->vcp_disks[i]);
+			errno = VMD_DISK_INVALID;
 			goto fail;
 		}
 	}
@@ -345,6 +370,12 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid, uid_t uid)
 		proc_compose_imsg(ps, PROC_VMM, -1,
 		    IMSG_VMDOP_START_VM_REQUEST, vm->vm_vmid, kernfd,
 		    vmc, sizeof(*vmc));
+
+	if (strlen(vcp->vcp_cdrom))
+		proc_compose_imsg(ps, PROC_VMM, -1,
+		    IMSG_VMDOP_START_VM_CDROM, vm->vm_vmid, cdromfd,
+		    NULL, 0);
+
 	for (i = 0; i < vcp->vcp_ndisks; i++) {
 		proc_compose_imsg(ps, PROC_VMM, -1,
 		    IMSG_VMDOP_START_VM_DISK, vm->vm_vmid, diskfds[i],
@@ -372,6 +403,8 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid, uid_t uid)
 
 	if (kernfd != -1)
 		close(kernfd);
+	if (cdromfd != -1)
+		close(cdromfd);
 	if (diskfds != NULL) {
 		for (i = 0; i < vcp->vcp_ndisks; i++)
 			close(diskfds[i]);
@@ -470,6 +503,31 @@ config_getif(struct privsep *ps, struct imsg *imsg)
 		goto fail;
 	}
 	vm->vm_ifs[n].vif_fd = imsg->fd;
+	return (0);
+ fail:
+	if (imsg->fd != -1)
+		close(imsg->fd);
+	errno = EINVAL;
+	return (-1);
+}
+
+int
+config_getcdrom(struct privsep *ps, struct imsg *imsg)
+{
+	struct vmd_vm	*vm;
+
+	errno = 0;
+	if ((vm = vm_getbyvmid(imsg->hdr.peerid)) == NULL) {
+		errno = ENOENT;
+		return (-1);
+	}
+
+	if (imsg->fd == -1) {
+		log_debug("invalid cdrom id");
+		goto fail;
+	}
+
+	vm->vm_cdrom = imsg->fd;
 	return (0);
  fail:
 	if (imsg->fd != -1)

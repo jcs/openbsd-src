@@ -1,4 +1,4 @@
-/* $OpenBSD: pckbd.c,v 1.43 2016/04/14 07:06:03 mlarkin Exp $ */
+/* $OpenBSD: pckbd.c,v 1.44 2018/01/06 18:51:20 jcs Exp $ */
 /* $NetBSD: pckbd.c,v 1.24 2000/06/05 22:20:57 sommerfeld Exp $ */
 
 /*-

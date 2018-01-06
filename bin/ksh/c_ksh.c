@@ -1,4 +1,4 @@
-/*	$OpenBSD: c_ksh.c,v 1.52 2017/12/27 13:02:57 millert Exp $	*/
+/*	$OpenBSD: c_ksh.c,v 1.56 2018/01/06 16:28:58 millert Exp $	*/
 
 /*
  * built-in Korn commands: c_*
@@ -1068,7 +1068,6 @@ c_jobs(char **wp)
 	return rv;
 }
 
-#ifdef JOBS
 int
 c_fgbg(char **wp)
 {
@@ -1092,7 +1091,6 @@ c_fgbg(char **wp)
 	 */
 	return (bg || Flag(FPOSIX)) ? 0 : rv;
 }
-#endif
 
 struct kill_info {
 	int num_width;
@@ -1194,7 +1192,8 @@ c_kill(char **wp)
 				ki.num_width++;
 
 			for (i = 0; i < NSIG; i++) {
-				w = sigtraps[i].name ? strlen(sigtraps[i].name) :
+				w = sigtraps[i].name ?
+				    (int)strlen(sigtraps[i].name) :
 				    ki.num_width;
 				if (w > ki.name_width)
 					ki.name_width = w;
@@ -1398,10 +1397,8 @@ const struct builtin kshbuiltins [] = {
 	{"=typeset", c_typeset},
 	{"+unalias", c_unalias},
 	{"whence", c_whence},
-#ifdef JOBS
 	{"+bg", c_fgbg},
 	{"+fg", c_fgbg},
-#endif
 #ifdef EMACS
 	{"bind", c_bind},
 #endif

@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.532 2017/12/29 17:05:25 bluhm Exp $	*/
+/*	$OpenBSD: if.c,v 1.534 2018/01/04 10:48:02 mpi Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -428,7 +428,7 @@ if_attachsetup(struct ifnet *ifp)
 	pfi_attach_ifnet(ifp);
 #endif
 
-	timeout_set(ifp->if_slowtimo, if_slowtimo, ifp);
+	timeout_set(&ifp->if_slowtimo, if_slowtimo, ifp);
 	if_slowtimo(ifp);
 
 	if_idxmap_insert(ifp);
@@ -436,8 +436,8 @@ if_attachsetup(struct ifnet *ifp)
 
 	ifidx = ifp->if_index;
 
-	task_set(ifp->if_watchdogtask, if_watchdog_task, (void *)ifidx);
-	task_set(ifp->if_linkstatetask, if_linkstate_task, (void *)ifidx);
+	task_set(&ifp->if_watchdogtask, if_watchdog_task, (void *)ifidx);
+	task_set(&ifp->if_linkstatetask, if_linkstate_task, (void *)ifidx);
 
 	/* Announce the interface. */
 	rtm_ifannounce(ifp, IFAN_ARRIVAL);
@@ -626,12 +626,6 @@ if_attach_common(struct ifnet *ifp)
 
 	if (ifp->if_rtrequest == NULL)
 		ifp->if_rtrequest = if_rtrequest_dummy;
-	ifp->if_slowtimo = malloc(sizeof(*ifp->if_slowtimo), M_TEMP,
-	    M_WAITOK|M_ZERO);
-	ifp->if_watchdogtask = malloc(sizeof(*ifp->if_watchdogtask),
-	    M_TEMP, M_WAITOK|M_ZERO);
-	ifp->if_linkstatetask = malloc(sizeof(*ifp->if_linkstatetask),
-	    M_TEMP, M_WAITOK|M_ZERO);
 	ifp->if_llprio = IFQ_DEFPRIO;
 
 	SRPL_INIT(&ifp->if_inputs);
@@ -1027,11 +1021,11 @@ if_detach(struct ifnet *ifp)
 	ifp->if_watchdog = NULL;
 
 	/* Remove the watchdog timeout & task */
-	timeout_del(ifp->if_slowtimo);
-	task_del(net_tq(ifp->if_index), ifp->if_watchdogtask);
+	timeout_del(&ifp->if_slowtimo);
+	task_del(net_tq(ifp->if_index), &ifp->if_watchdogtask);
 
 	/* Remove the link state task */
-	task_del(net_tq(ifp->if_index), ifp->if_linkstatetask);
+	task_del(net_tq(ifp->if_index), &ifp->if_linkstatetask);
 
 #if NBPFILTER > 0
 	bpfdetach(ifp);
@@ -1075,10 +1069,6 @@ if_detach(struct ifnet *ifp)
 	free(ifp->if_addrhooks, M_TEMP, 0);
 	free(ifp->if_linkstatehooks, M_TEMP, 0);
 	free(ifp->if_detachhooks, M_TEMP, 0);
-
-	free(ifp->if_slowtimo, M_TEMP, sizeof(*ifp->if_slowtimo));
-	free(ifp->if_watchdogtask, M_TEMP, sizeof(*ifp->if_watchdogtask));
-	free(ifp->if_linkstatetask, M_TEMP, sizeof(*ifp->if_linkstatetask));
 
 	for (i = 0; (dp = domains[i]) != NULL; i++) {
 		if (dp->dom_ifdetach && ifp->if_afdata[dp->dom_family])
@@ -1591,7 +1581,7 @@ if_linkstate(struct ifnet *ifp)
 void
 if_link_state_change(struct ifnet *ifp)
 {
-	task_add(net_tq(ifp->if_index), ifp->if_linkstatetask);
+	task_add(net_tq(ifp->if_index), &ifp->if_linkstatetask);
 }
 
 /*
@@ -1607,8 +1597,8 @@ if_slowtimo(void *arg)
 
 	if (ifp->if_watchdog) {
 		if (ifp->if_timer > 0 && --ifp->if_timer == 0)
-			task_add(net_tq(ifp->if_index), ifp->if_watchdogtask);
-		timeout_add(ifp->if_slowtimo, hz / IFNET_SLOWHZ);
+			task_add(net_tq(ifp->if_index), &ifp->if_watchdogtask);
+		timeout_add(&ifp->if_slowtimo, hz / IFNET_SLOWHZ);
 	}
 	splx(s);
 }
@@ -1854,13 +1844,12 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	oif_flags = ifp->if_flags;
 	oif_xflags = ifp->if_xflags;
 
-	NET_LOCK();
-
 	switch (cmd) {
 	case SIOCIFAFATTACH:
 	case SIOCIFAFDETACH:
 		if ((error = suser(p, 0)) != 0)
 			break;
+		NET_LOCK();
 		switch (ifar->ifar_af) {
 		case AF_INET:
 			/* attach is a noop for AF_INET */
@@ -1878,22 +1867,21 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		default:
 			error = EAFNOSUPPORT;
 		}
+		NET_UNLOCK();
 		break;
 
 	case SIOCSIFFLAGS:
 		if ((error = suser(p, 0)) != 0)
 			break;
 
+		NET_LOCK();
 		ifp->if_flags = (ifp->if_flags & IFF_CANTCHANGE) |
 			(ifr->ifr_flags & ~IFF_CANTCHANGE);
 
 		error = (*ifp->if_ioctl)(ifp, cmd, data);
 		if (error != 0) {
 			ifp->if_flags = oif_flags;
-			break;
-		}
-
-		if (ISSET(oif_flags ^ ifp->if_flags, IFF_UP)) {
+		} else if (ISSET(oif_flags ^ ifp->if_flags, IFF_UP)) {
 			s = splnet();
 			if (ISSET(ifp->if_flags, IFF_UP))
 				if_up(ifp);
@@ -1901,17 +1889,21 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 				if_down(ifp);
 			splx(s);
 		}
+		NET_UNLOCK();
 		break;
 
 	case SIOCSIFXFLAGS:
 		if ((error = suser(p, 0)) != 0)
 			break;
 
+		NET_LOCK();
 #ifdef INET6
 		if (ISSET(ifr->ifr_flags, IFXF_AUTOCONF6)) {
 			error = in6_ifattach(ifp);
-			if (error != 0)
+			if (error != 0) {
+				NET_UNLOCK();
 				break;
+			}
 		}
 #endif	/* INET6 */
 
@@ -1942,8 +1934,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 				ifp->if_xflags |= IFXF_WOL;
 				error = ifp->if_wol(ifp, 1);
 				splx(s);
-				if (error)
-					break;
 			}
 			if (ISSET(ifp->if_xflags, IFXF_WOL) &&
 			    !ISSET(ifr->ifr_flags, IFXF_WOL)) {
@@ -1951,8 +1941,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 				ifp->if_xflags &= ~IFXF_WOL;
 				error = ifp->if_wol(ifp, 0);
 				splx(s);
-				if (error)
-					break;
 			}
 		} else if (ISSET(ifr->ifr_flags, IFXF_WOL)) {
 			ifr->ifr_flags &= ~IFXF_WOL;
@@ -1960,20 +1948,26 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		}
 #endif
 
-		ifp->if_xflags = (ifp->if_xflags & IFXF_CANTCHANGE) |
-			(ifr->ifr_flags & ~IFXF_CANTCHANGE);
+		if (error == 0)
+			ifp->if_xflags = (ifp->if_xflags & IFXF_CANTCHANGE) |
+				(ifr->ifr_flags & ~IFXF_CANTCHANGE);
+		NET_UNLOCK();
 		break;
 
 	case SIOCSIFMETRIC:
 		if ((error = suser(p, 0)) != 0)
 			break;
+		NET_LOCK();
 		ifp->if_metric = ifr->ifr_metric;
+		NET_UNLOCK();
 		break;
 
 	case SIOCSIFMTU:
 		if ((error = suser(p, 0)) != 0)
 			break;
+		NET_LOCK();
 		error = (*ifp->if_ioctl)(ifp, cmd, data);
+		NET_UNLOCK();
 		if (!error)
 			rtm_ifchg(ifp);
 		break;
@@ -2013,27 +2007,34 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	case SIOCSIFRDOMAIN:
 		if ((error = suser(p, 0)) != 0)
 			break;
+		NET_LOCK();
 		error = if_setrdomain(ifp, ifr->ifr_rdomainid);
+		NET_UNLOCK();
 		break;
 
 	case SIOCAIFGROUP:
 		if ((error = suser(p, 0)))
 			break;
-		if ((error = if_addgroup(ifp, ifgr->ifgr_group)))
-			break;
-		error = (*ifp->if_ioctl)(ifp, cmd, data);
-		if (error == ENOTTY)
-			error = 0;
+		NET_LOCK();
+		error = if_addgroup(ifp, ifgr->ifgr_group);
+		if (error == 0) {
+			error = (*ifp->if_ioctl)(ifp, cmd, data);
+			if (error == ENOTTY)
+				error = 0;
+		}
+		NET_UNLOCK();
 		break;
 
 	case SIOCDIFGROUP:
 		if ((error = suser(p, 0)))
 			break;
+		NET_LOCK();
 		error = (*ifp->if_ioctl)(ifp, cmd, data);
 		if (error == ENOTTY)
 			error = 0;
 		if (error == 0)
 			error = if_delgroup(ifp, ifgr->ifgr_group);
+		NET_UNLOCK();
 		break;
 
 	case SIOCSIFLLADDR:
@@ -2045,6 +2046,7 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			error = EINVAL;
 			break;
 		}
+		NET_LOCK();
 		switch (ifp->if_type) {
 		case IFT_ETHER:
 		case IFT_CARP:
@@ -2063,6 +2065,7 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 
 		if (error == 0)
 			ifnewlladdr(ifp);
+		NET_UNLOCK();
 		break;
 
 	case SIOCSIFLLPRIO:
@@ -2072,7 +2075,9 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			error = EINVAL;
 			break;
 		}
+		NET_LOCK();
 		ifp->if_llprio = ifr->ifr_llprio;
+		NET_UNLOCK();
 		break;
 
 	case SIOCDIFPHYADDR:
@@ -2090,11 +2095,13 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			break;
 		/* FALLTHROUGH */
 	default:
+		NET_LOCK();
 		error = ((*so->so_proto->pr_usrreq)(so, PRU_CONTROL,
 			(struct mbuf *) cmd, (struct mbuf *) data,
 			(struct mbuf *) ifp, p));
 		if (error == EOPNOTSUPP)
 			error = ((*ifp->if_ioctl)(ifp, cmd, data));
+		NET_UNLOCK();
 		break;
 	}
 
@@ -2103,8 +2110,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 
 	if (((oif_flags ^ ifp->if_flags) & IFF_UP) != 0)
 		getmicrotime(&ifp->if_lastchange);
-
-	NET_UNLOCK();
 
 	return (error);
 }
