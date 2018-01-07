@@ -71,7 +71,8 @@ nvme_pci_match(struct device *parent, void *match, void *aux)
 		return (1);
 
 	if (PCI_VENDOR(pa->pa_id) == PCI_VENDOR_APPLE &&
-	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_APPLE_NVME)
+	    (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_APPLE_NVME1 ||
+	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_APPLE_NVME2))
 	    	return (1);
 
 	return (0);

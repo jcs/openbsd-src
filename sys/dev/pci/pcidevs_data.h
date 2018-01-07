@@ -2036,7 +2036,11 @@ static const struct pci_known_product pci_known_products[] = {
 	    "BCM5701",
 	},
 	{
-	    PCI_VENDOR_APPLE, PCI_PRODUCT_APPLE_NVME,
+	    PCI_VENDOR_APPLE, PCI_PRODUCT_APPLE_NVME1,
+	    "NVMe",
+	},
+	{
+	    PCI_VENDOR_APPLE, PCI_PRODUCT_APPLE_NVME2,
 	    "NVMe",
 	},
 	{

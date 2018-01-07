@@ -930,7 +930,8 @@ product APPLE INTREPID2_ATA	0x0069	Intrepid 2 ATA
 product APPLE INTREPID2_FW	0x006a	Intrepid 2 FireWire
 product APPLE INTREPID2_GMAC	0x006b	Intrepid 2 GMAC
 product APPLE BCM5701		0x1645	BCM5701
-product APPLE NVME		0x2001	NVMe
+product APPLE NVME1		0x2001	NVMe
+product APPLE NVME2		0x2003	NVMe
 
 /* Aralion products */
 product ARALION ARS106S		0x0301	ARS106S
