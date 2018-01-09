@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gif.c,v 1.105 2017/11/20 10:35:24 mpi Exp $	*/
+/*	$OpenBSD: if_gif.c,v 1.107 2018/01/09 15:24:24 bluhm Exp $	*/
 /*	$KAME: if_gif.c,v 1.43 2001/02/20 08:51:07 itojun Exp $	*/
 
 /*
@@ -107,10 +107,7 @@ gif_clone_create(struct if_clone *ifc, int unit)
 {
 	struct gif_softc *sc;
 
-	sc = malloc(sizeof(*sc), M_DEVBUF, M_NOWAIT|M_ZERO);
-	if (!sc)
-		return (ENOMEM);
-
+	sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK|M_ZERO);
 	snprintf(sc->gif_if.if_xname, sizeof sc->gif_if.if_xname,
 	     "%s%d", ifc->ifc_name, unit);
 	sc->gif_if.if_mtu    = GIF_MTU;
@@ -231,17 +228,11 @@ gif_start(struct ifnet *ifp)
 
 		switch (sc->gif_psrc->sa_family) {
 		case AF_INET:
-			ip_output(m, NULL, NULL, 0, NULL, NULL, 0);
+			ip_send(m);
 			break;
 #ifdef INET6
 		case AF_INET6:
-			/*
-			 * force fragmentation to minimum MTU, to avoid path
-			 * MTU discovery. It is too painful to ask for resend
-			 * of inner packet, to achieve path MTU discovery for
-			 * encapsulated packets.
-			 */
-			ip6_output(m, 0, NULL, IPV6_MINMTU, 0, NULL);
+			ip6_send(m);
 			break;
 #endif
 		default:

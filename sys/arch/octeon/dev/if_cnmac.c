@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_cnmac.c,v 1.73 2017/11/26 15:44:20 visa Exp $	*/
+/*	$OpenBSD: if_cnmac.c,v 1.75 2018/01/07 05:30:03 visa Exp $	*/
 
 /*
  * Copyright (c) 2007 Internet Initiative Japan, Inc.
@@ -724,19 +724,12 @@ cnmac_send_makecmd_w1(int size, paddr_t addr)
 }
 
 #define KVTOPHYS(addr)	cnmac_kvtophys((vaddr_t)(addr))
-paddr_t cnmac_kvtophys(vaddr_t);
 
-paddr_t
+static inline paddr_t
 cnmac_kvtophys(vaddr_t kva)
 {
-	if (IS_XKPHYS(kva))
-		return XKPHYS_TO_PHYS(kva);
-	else if (kva >= CKSEG0_BASE && kva < CKSEG0_BASE + CKSEG_SIZE)
-		return CKSEG0_TO_PHYS(kva);
-	else if (kva >= CKSEG1_BASE && kva < CKSEG1_BASE + CKSEG_SIZE)
-		return CKSEG1_TO_PHYS(kva);
-
-	panic("%s: non-direct mapped address %p", __func__, (void *)kva);
+	KASSERT(IS_XKPHYS(kva));
+	return XKPHYS_TO_PHYS(kva);
 }
 
 int
@@ -1162,10 +1155,11 @@ cnmac_recv_mbuf(struct cnmac_softc *sc, uint64_t *work,
 
 		/*
 		 * Because of a hardware bug in some Octeon models the size
-		 * field of word3 can be wrong. However, the hardware uses
-		 * all space in a buffer before moving to the next one so
-		 * it is possible to derive the size of this data segment
-		 * from the size of packet data buffers.
+		 * field of word3 can be wrong (erratum PKI-100).
+		 * However, the hardware uses all space in a buffer before
+		 * moving to the next one so it is possible to derive
+		 * the size of this data segment from the size
+		 * of packet data buffers.
 		 */
 		size = OCTEON_POOL_SIZE_PKT - (addr - pktbuf);
 		if (size > left)

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap.c,v 1.106 2017/10/14 04:44:43 jsg Exp $	*/
+/*	$OpenBSD: pmap.c,v 1.108 2018/01/07 19:56:19 mlarkin Exp $	*/
 /*	$NetBSD: pmap.c,v 1.3 2003/05/08 18:13:13 thorpej Exp $	*/
 
 /*
@@ -513,7 +513,7 @@ pmap_kenter_pa(vaddr_t va, paddr_t pa, vm_prot_t prot)
 
 	/* special 1:1 mappings in the first 2MB must not be global */
 	if (va >= (vaddr_t)NBPD_L2)
-		npte |= PG_G;
+		npte |= pg_g_kern;
 
 	if (!(prot & PROT_EXEC))
 		npte |= pg_nx;
@@ -620,10 +620,7 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 	 *
 	 * the kernel pmap's pm_obj is not used for much.   however, in
 	 * user pmaps the pm_obj contains the list of active PTPs.
-	 * the pm_obj currently does not have a pager.   it might be possible
-	 * to add a pager that would allow a process to read-only mmap its
-	 * own page tables (fast user level vtophys?).   this may or may not
-	 * be useful.
+	 * the pm_obj currently does not have a pager.
 	 */
 
 	kpm = pmap_kernel();
@@ -636,13 +633,12 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 	kpm->pm_pdirpa = proc0.p_addr->u_pcb.pcb_cr3;
 	kpm->pm_stats.wired_count = kpm->pm_stats.resident_count =
 		atop(kva_start - VM_MIN_KERNEL_ADDRESS);
-
-	kpm->pm_type = PMAP_TYPE_NORMAL;
-
 	/*
 	 * the above is just a rough estimate and not critical to the proper
 	 * operation of the system.
 	 */
+
+	kpm->pm_type = PMAP_TYPE_NORMAL;
 
 	curpcb->pcb_pmap = kpm;	/* proc0's pcb */
 
@@ -659,7 +655,7 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 	     kva += PAGE_SIZE) {
 		p1i = pl1_i(kva);
 		if (pmap_valid_entry(PTE_BASE[p1i]))
-			PTE_BASE[p1i] |= PG_G;
+			PTE_BASE[p1i] |= pg_g_kern;
 	}
 
 	/*
@@ -684,7 +680,7 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 		va = PMAP_DIRECT_MAP(pdp);
 
 		*((pd_entry_t *)va) = ((paddr_t)i << L2_SHIFT);
-		*((pd_entry_t *)va) |= PG_RW | PG_V | PG_PS | PG_G | PG_U |
+		*((pd_entry_t *)va) |= PG_RW | PG_V | PG_PS | pg_g_kern | PG_U |
 		    PG_M | pg_nx;
 	}
 
@@ -2159,7 +2155,7 @@ enter_now:
 	else if (va < VM_MAX_ADDRESS)
 		npte |= (PG_u | PG_RW);	/* XXXCDC: no longer needed? */
 	if (pmap == pmap_kernel())
-		npte |= PG_G;
+		npte |= pg_g_kern;
 
 	ptes[pl1_i(va)] = npte;		/* zap! */
 

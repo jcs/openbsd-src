@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.226 2017/12/12 01:12:34 deraadt Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.228 2018/01/09 15:14:23 mpi Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -1123,6 +1123,14 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			if (cdevsw[major(vp->v_rdev)].d_open != ptmopen)
 				break;
 			return (0);
+		case TIOCUCNTL:		/* vmd */
+			if ((p->p_p->ps_pledge & PLEDGE_RPATH) == 0)
+				break;
+			if ((p->p_p->ps_pledge & PLEDGE_WPATH) == 0)
+				break;
+			if (cdevsw[major(vp->v_rdev)].d_open != ptcopen)
+				break;
+			return (0);
 #endif /* NPTY > 0 */
 		case TIOCSPGRP:
 			if ((p->p_p->ps_pledge & PLEDGE_PROC) == 0)
@@ -1329,7 +1337,7 @@ pledge_sockopt(struct proc *p, int set, int level, int optname)
 }
 
 int
-pledge_socket(struct proc *p, int domain, int state)
+pledge_socket(struct proc *p, int domain, unsigned int state)
 {
 	if (! ISSET(p->p_p->ps_flags, PS_PLEDGE))
 		return 0;
