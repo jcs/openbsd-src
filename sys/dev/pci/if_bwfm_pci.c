@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bwfm_pci.c,v 1.11 2018/01/08 17:57:48 patrick Exp $	*/
+/*	$OpenBSD: if_bwfm_pci.c,v 1.15 2018/01/10 17:54:26 jcs Exp $	*/
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2017 Patrick Wildt <patrick@blueri.se>
@@ -296,6 +296,7 @@ struct cfattach bwfm_pci_ca = {
 
 static const struct pci_matchid bwfm_pci_devices[] = {
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM43602 },
+	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM4350 },
 };
 
 int
@@ -388,15 +389,18 @@ bwfm_pci_attachhook(struct device *self)
 
 	switch (bwfm->sc_chip.ch_chip)
 	{
+	case BRCM_CC_4350_CHIP_ID:
+		if (bwfm->sc_chip.ch_chiprev > 7)
+			name = "brcmfmac4350-pcie.bin";
+		else
+			name = "brcmfmac4350c2-pcie.bin";
+		break;
 	case BRCM_CC_43602_CHIP_ID:
 		name = "brcmfmac43602-pcie.bin";
 		break;
 	default:
-		break;
-	}
-
-	if (name == NULL) {
-		printf("%s: unknown firmware\n", DEVNAME(sc));
+		printf("%s: unknown firmware for chip %s\n",
+		    DEVNAME(sc), bwfm->sc_chip.ch_name);
 		return;
 	}
 
@@ -614,9 +618,9 @@ bwfm_pci_attachhook(struct device *self)
 		bus_dmamap_create(sc->sc_dmat, MSGBUF_MAX_PKT_SIZE,
 		    BWFM_NUM_RX_DESCS, MSGBUF_MAX_PKT_SIZE, 0, BUS_DMA_WAITOK,
 		    &sc->sc_rx_pkts.pkts[i].bb_map);
-	sc->sc_tx_pkts.npkt = BWFM_NUM_TX_PKTIDS;
 
 	/* Maps TX mbufs to a packet id and back. */
+	sc->sc_tx_pkts.npkt = BWFM_NUM_TX_PKTIDS;
 	sc->sc_tx_pkts.pkts = malloc(BWFM_NUM_TX_PKTIDS
 	    * sizeof(struct bwfm_pci_buf), M_DEVBUF, M_WAITOK | M_ZERO);
 	for (i = 0; i < BWFM_NUM_TX_PKTIDS; i++)
@@ -699,8 +703,10 @@ bwfm_pci_load_microcode(struct bwfm_pci_softc *sc, const u_char *ucode, size_t s
 	/* TODO: restore NVRAM */
 
 	/* Load reset vector from firmware and kickstart core. */
-	core = bwfm_chip_get_core(bwfm, BWFM_AGENT_INTERNAL_MEM);
-	bwfm->sc_chip.ch_core_reset(bwfm, core, 0, 0, 0);
+	if (bwfm->sc_chip.ch_chip == BRCM_CC_43602_CHIP_ID) {
+		core = bwfm_chip_get_core(bwfm, BWFM_AGENT_INTERNAL_MEM);
+		bwfm->sc_chip.ch_core_reset(bwfm, core, 0, 0, 0);
+	}
 	bwfm_chip_set_active(bwfm, *(uint32_t *)ucode);
 
 	for (i = 0; i < 40; i++) {

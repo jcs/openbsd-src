@@ -1,4 +1,4 @@
-/*	$OpenBSD: nvme.c,v 1.60 2017/08/18 09:26:43 jsg Exp $ */
+/*	$OpenBSD: nvme.c,v 1.61 2018/01/10 15:45:46 jcs Exp $ */
 
 /*
  * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>

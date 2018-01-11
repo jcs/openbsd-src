@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.535 2018/01/09 06:24:14 dlg Exp $	*/
+/*	$OpenBSD: if.c,v 1.537 2018/01/10 23:50:39 dlg Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -920,7 +920,6 @@ if_netisr(void *unused)
 {
 	int n, t = 0;
 
-	KERNEL_LOCK();
 	NET_LOCK();
 
 	while ((n = netisr) != 0) {
@@ -934,8 +933,11 @@ if_netisr(void *unused)
 		atomic_clearbits_int(&netisr, n);
 
 #if NETHER > 0
-		if (n & (1 << NETISR_ARP))
+		if (n & (1 << NETISR_ARP)) {
+			KERNEL_LOCK();
 			arpintr();
+			KERNEL_UNLOCK();
+		}
 #endif
 		if (n & (1 << NETISR_IP))
 			ipintr();
@@ -944,35 +946,52 @@ if_netisr(void *unused)
 			ip6intr();
 #endif
 #if NPPP > 0
-		if (n & (1 << NETISR_PPP))
+		if (n & (1 << NETISR_PPP)) {
+			KERNEL_LOCK();
 			pppintr();
+			KERNEL_UNLOCK();
+		}
 #endif
 #if NBRIDGE > 0
-		if (n & (1 << NETISR_BRIDGE))
+		if (n & (1 << NETISR_BRIDGE)) {
+			KERNEL_LOCK();
 			bridgeintr();
+			KERNEL_UNLOCK();
+		}
 #endif
 #if NSWITCH > 0
-		if (n & (1 << NETISR_SWITCH))
+		if (n & (1 << NETISR_SWITCH)) {
+			KERNEL_LOCK();
 			switchintr();
+			KERNEL_UNLOCK();
+		}
 #endif
 #if NPPPOE > 0
-		if (n & (1 << NETISR_PPPOE))
+		if (n & (1 << NETISR_PPPOE)) {
+			KERNEL_LOCK();
 			pppoeintr();
+			KERNEL_UNLOCK();
+		}
 #endif
 #ifdef PIPEX
-		if (n & (1 << NETISR_PIPEX))
+		if (n & (1 << NETISR_PIPEX)) {
+			KERNEL_LOCK();
 			pipexintr();
+			KERNEL_UNLOCK();
+		}
 #endif
 		t |= n;
 	}
 
 #if NPFSYNC > 0
-	if (t & (1 << NETISR_PFSYNC))
+	if (t & (1 << NETISR_PFSYNC)) {
+		KERNEL_LOCK();
 		pfsyncintr();
+		KERNEL_UNLOCK();
+	}
 #endif
 
 	NET_UNLOCK();
-	KERNEL_UNLOCK();
 }
 
 void
@@ -988,7 +1007,7 @@ if_deactivate(struct ifnet *ifp)
 
 #if NCARP > 0
 	/* Remove the interface from any carp group it is a part of.  */
-	if (ifp->if_carp && ifp->if_type != IFT_CARP)
+	if (ifp->if_type != IFT_CARP && !SRPL_EMPTY_LOCKED(&ifp->if_carp))
 		carp_ifdetach(ifp);
 #endif
 	NET_UNLOCK();

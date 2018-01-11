@@ -1,4 +1,4 @@
-/*	$OpenBSD: nvme_pci.c,v 1.6 2017/07/03 23:27:53 dlg Exp $ */
+/*	$OpenBSD: nvme_pci.c,v 1.7 2018/01/10 15:45:46 jcs Exp $ */
 
 /*
  * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>
