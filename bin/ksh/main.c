@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.86 2018/01/05 15:44:31 jca Exp $	*/
+/*	$OpenBSD: main.c,v 1.89 2018/01/16 22:52:32 jca Exp $	*/
 
 /*
  * startup, main loop, environments and error handling
@@ -69,9 +69,7 @@ int	 builtin_flag;
 char	*current_wd;
 int	 current_wd_size;
 
-#ifdef EDIT
 int	x_cols = 80;
-#endif /* EDIT */
 
 /*
  * shell initialization
@@ -94,9 +92,7 @@ static const char *initcoms [] = {
 	  "stop=kill -STOP",
 	  "autoload=typeset -fu",
 	  "functions=typeset -f",
-#ifdef HISTORY
 	  "history=fc -l",
-#endif /* HISTORY */
 	  "integer=typeset -i",
 	  "nohup=nohup ",
 	  "local=typeset",
@@ -226,9 +222,7 @@ main(int argc, char *argv[])
 	 * brace expansion, so set this before setting up FPOSIX
 	 * (change_flag() clears FBRACEEXPAND when FPOSIX is set).
 	 */
-#ifdef BRACE_EXPAND
 	Flag(FBRACEEXPAND) = 1;
-#endif /* BRACE_EXPAND */
 
 	/* set posix flag just before environment so that it will have
 	 * exactly the same effect as the POSIXLY_CORRECT environment
@@ -251,12 +245,12 @@ main(int argc, char *argv[])
 	/* Set edit mode to emacs by default, may be overridden
 	 * by the environment or the user.  Also, we want tab completion
 	 * on in vi by default. */
-#if defined(EDIT) && defined(EMACS)
+#if defined(EMACS)
 	change_flag(FEMACS, OF_SPECIAL, 1);
-#endif /* EDIT && EMACS */
-#if defined(EDIT) && defined(VI)
+#endif /* EMACS */
+#if defined(VI)
 	Flag(FVITABCOMPLETE) = 1;
-#endif /* EDIT && VI */
+#endif /* VI */
 
 	/* import environment */
 	if (environ != NULL)
@@ -369,11 +363,9 @@ main(int argc, char *argv[])
 	i = Flag(FMONITOR) != 127;
 	Flag(FMONITOR) = 0;
 	j_init(i);
-#ifdef EDIT
 	/* Do this after j_init(), as tty_fd is not initialized 'til then */
 	if (Flag(FTALKING))
 		x_init();
-#endif
 
 	l = genv->loc;
 	l->argv = make_argv(argc - (argi - 1), &argv[argi - 1]);
@@ -500,7 +492,7 @@ include(const char *name, int argc, char **argv, int intr_ok)
 			unwind(i);
 			/* NOTREACHED */
 		default:
-			internal_errorf(1, "include: %d", i);
+			internal_errorf("include: %d", i);
 			/* NOTREACHED */
 		}
 	}
@@ -587,7 +579,7 @@ shell(Source *volatile s, volatile int toplevel)
 		default:
 			source = old_source;
 			quitenv(NULL);
-			internal_errorf(1, "shell: %d", i);
+			internal_errorf("shell: %d", i);
 			/* NOTREACHED */
 		}
 	}

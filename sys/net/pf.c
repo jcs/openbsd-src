@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1055 2018/01/10 13:57:17 bluhm Exp $ */
+/*	$OpenBSD: pf.c,v 1.1057 2018/01/16 14:48:38 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -62,6 +62,7 @@
 #include <net/route.h>
 
 #include <netinet/in.h>
+#include <netinet/in_var.h>
 #include <netinet/ip.h>
 #include <netinet/in_pcb.h>
 #include <netinet/ip_var.h>
@@ -77,6 +78,7 @@
 #include <netinet/ip_divert.h>
 
 #ifdef INET6
+#include <netinet6/in6_var.h>
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
 #include <netinet/icmp6.h>
@@ -5912,6 +5914,17 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 	dst->sin_addr = ip->ip_dst;
 	rtableid = m0->m_pkthdr.ph_rtableid;
 
+	if (pd->dir == PF_IN) {
+		if (ip->ip_ttl <= IPTTLDEC) {
+			if (r->rt != PF_DUPTO)
+				pf_send_icmp(m0, ICMP_TIMXCEED,
+				    ICMP_TIMXCEED_INTRANS, 0,
+				    pd->af, r, pd->rdomain);
+			goto bad;
+		}
+		ip->ip_ttl -= IPTTLDEC;
+	}
+
 	if (s == NULL) {
 		bzero(sns, sizeof(sns));
 		if (pf_map_addr(AF_INET, r,
@@ -5948,13 +5961,16 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		ip = mtod(m0, struct ip *);
 	}
 
-	in_proto_cksum_out(m0, ifp);
-
 	rt = rtalloc(sintosa(dst), RT_RESOLVE, rtableid);
 	if (!rtisvalid(rt)) {
 		ipstat_inc(ips_noroute);
 		goto bad;
 	}
+	/* A locally generated packet may have invalid source address. */
+	if ((ntohl(ip->ip_src.s_addr) >> IN_CLASSA_NSHIFT) == IN_LOOPBACKNET)
+		ip->ip_src = ifatoia(rt->rt_ifa)->ia_addr.sin_addr;
+
+	in_proto_cksum_out(m0, ifp);
 
 	if (ntohs(ip->ip_len) <= ifp->if_mtu) {
 		ip->ip_sum = 0;
@@ -6054,6 +6070,17 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 	dst->sin6_addr = ip6->ip6_dst;
 	rtableid = m0->m_pkthdr.ph_rtableid;
 
+	if (pd->dir == PF_IN) {
+		if (ip6->ip6_hlim <= IPV6_HLIMDEC) {
+			if (r->rt != PF_DUPTO)
+				pf_send_icmp(m0, ICMP6_TIME_EXCEEDED,
+				    ICMP6_TIME_EXCEED_TRANSIT, 0,
+				    pd->af, r, pd->rdomain);
+			goto bad;
+		}
+		ip6->ip6_hlim -= IPV6_HLIMDEC;
+	}
+
 	if (s == NULL) {
 		bzero(sns, sizeof(sns));
 		if (pf_map_addr(AF_INET6, r, (struct pf_addr *)&ip6->ip6_src,
@@ -6087,16 +6114,18 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		}
 	}
 
-	in6_proto_cksum_out(m0, ifp);
-
 	if (IN6_IS_SCOPE_EMBED(&dst->sin6_addr))
 		dst->sin6_addr.s6_addr16[1] = htons(ifp->if_index);
-
 	rt = rtalloc(sin6tosa(dst), RT_RESOLVE, rtableid);
 	if (!rtisvalid(rt)) {
 		ip6stat_inc(ip6s_noroute);
 		goto bad;
 	}
+	/* A locally generated packet may have invalid source address. */
+	if (IN6_IS_ADDR_LOOPBACK(&ip6->ip6_src))
+		ip6->ip6_src = ifatoia6(rt->rt_ifa)->ia_addr.sin6_addr;
+
+	in6_proto_cksum_out(m0, ifp);
 
 	/*
 	 * If packet has been reassembled by PF earlier, we have to

@@ -1,4 +1,4 @@
-/*	$OpenBSD: drm_linux.c,v 1.15 2017/07/12 20:12:19 kettenis Exp $	*/
+/*	$OpenBSD: drm_linux.c,v 1.18 2018/01/15 22:24:17 kettenis Exp $	*/
 /*
  * Copyright (c) 2013 Jonathan Gray <jsg@openbsd.org>
  * Copyright (c) 2015, 2016 Mark Kettenis <kettenis@openbsd.org>
@@ -18,6 +18,7 @@
 
 #include <dev/pci/drm/drmP.h>
 #include <dev/pci/ppbreg.h>
+#include <sys/event.h>
 
 void
 flush_barrier(void *arg)
@@ -204,8 +205,8 @@ alloc_pages(unsigned int gfp_mask, unsigned int order)
 		flags |= UVM_PLA_ZERO;
 
 	TAILQ_INIT(&mlist);
-	if (uvm_pglistalloc(PAGE_SIZE << order, 0, -1, PAGE_SIZE, 0,
-	    &mlist, 1, flags))
+	if (uvm_pglistalloc(PAGE_SIZE << order, dma_constraint.ucr_low,
+	    dma_constraint.ucr_high, PAGE_SIZE, 0, &mlist, 1, flags))
 		return NULL;
 	return TAILQ_FIRST(&mlist);
 }
@@ -551,15 +552,12 @@ sg_copy_from_buffer(struct scatterlist *sgl, unsigned int nents,
 }
 
 int
-i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
+i2c_master_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 {
 	void *cmd = NULL;
 	int cmdlen = 0;
 	int err, ret = 0;
 	int op;
-
-	if (adap->algo)
-		return adap->algo->master_xfer(adap, msgs, num);
 
 	iic_acquire_bus(&adap->ic, 0);
 
@@ -584,8 +582,10 @@ i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 		ret++;
 	}
 
-	op = (msgs->flags & I2C_M_RD) ? I2C_OP_READ_WITH_STOP : I2C_OP_WRITE_WITH_STOP;
-	err = iic_exec(&adap->ic, op, msgs->addr, cmd, cmdlen, msgs->buf, msgs->len, 0);
+	op = (msgs->flags & I2C_M_RD) ?
+	    I2C_OP_READ_WITH_STOP : I2C_OP_WRITE_WITH_STOP;
+	err = iic_exec(&adap->ic, op, msgs->addr, cmd, cmdlen,
+	    msgs->buf, msgs->len, 0);
 	if (err) {
 		ret = -err;
 		goto fail;
@@ -598,6 +598,38 @@ fail:
 
 	return ret;
 }
+
+int
+i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
+{
+	if (adap->algo)
+		return adap->algo->master_xfer(adap, msgs, num);
+
+	return i2c_master_xfer(adap, msgs, num);
+}
+
+int
+i2c_bb_master_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
+{
+	struct i2c_algo_bit_data *algo = adap->algo_data;
+	struct i2c_adapter bb;
+
+	memset(&bb, 0, sizeof(bb));
+	bb.ic = algo->ic;
+	bb.retries = adap->retries;
+	return i2c_master_xfer(&bb, msgs, num);
+}
+
+uint32_t
+i2c_bb_functionality(struct i2c_adapter *adap)
+{
+	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
+}
+
+struct i2c_algorithm i2c_bit_algo = {
+	.master_xfer = i2c_bb_master_xfer,
+	.functionality = i2c_bb_functionality
+};
 
 #if defined(__amd64__) || defined(__i386__)
 
@@ -729,4 +761,10 @@ void
 backlight_schedule_update_status(struct backlight_device *bd)
 {
 	task_add(systq, &bd->task);
+}
+
+void
+drm_sysfs_hotplug_event(struct drm_device *dev)
+{
+	KNOTE(&dev->note, NOTE_CHANGE);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: c_ksh.c,v 1.56 2018/01/06 16:28:58 millert Exp $	*/
+/*	$OpenBSD: c_ksh.c,v 1.58 2018/01/16 22:52:32 jca Exp $	*/
 
 /*
  * built-in Korn commands: c_*
@@ -1273,7 +1273,7 @@ c_getopts(char **wp)
 	}
 
 	if (genv->loc->next == NULL) {
-		internal_errorf(0, "c_getopts: no argv");
+		internal_warningf("c_getopts: no argv");
 		return 1;
 	}
 	/* Which arguments are we parsing... */
@@ -1384,9 +1384,7 @@ const struct builtin kshbuiltins [] = {
 	{"+command", c_command},
 	{"echo", c_print},
 	{"*=export", c_typeset},
-#ifdef HISTORY
 	{"+fc", c_fc},
-#endif /* HISTORY */
 	{"+getopts", c_getopts},
 	{"+jobs", c_jobs},
 	{"+kill", c_kill},

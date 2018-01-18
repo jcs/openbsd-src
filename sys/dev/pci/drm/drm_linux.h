@@ -1,4 +1,4 @@
-/*	$OpenBSD: drm_linux.h,v 1.65 2017/11/29 03:59:34 dlg Exp $	*/
+/*	$OpenBSD: drm_linux.h,v 1.67 2018/01/15 22:24:17 kettenis Exp $	*/
 /*
  * Copyright (c) 2013, 2014, 2015 Mark Kettenis
  * Copyright (c) 2017 Martin Pieuchot
@@ -1199,6 +1199,11 @@ finish_wait(wait_queue_head_t *wq, wait_queue_head_t **wait)
 static inline long
 schedule_timeout(long timeout, wait_queue_head_t **wait)
 {
+	if (cold) {
+		delay((timeout * 1000000) / hz);
+		return -ETIMEDOUT;
+	}
+
 	return -msleep(*wait, &(*wait)->lock, PZERO, "schto", timeout);
 }
 
@@ -1609,8 +1614,14 @@ struct i2c_msg {
 #define I2C_M_NOSTART	0x0002
 
 struct i2c_algorithm {
-	u32 (*functionality)(struct i2c_adapter *);
 	int (*master_xfer)(struct i2c_adapter *, struct i2c_msg *, int);
+	u32 (*functionality)(struct i2c_adapter *);
+};
+
+extern struct i2c_algorithm i2c_bit_algo;
+
+struct i2c_algo_bit_data {
+	struct i2c_controller ic;
 };
 
 int i2c_transfer(struct i2c_adapter *, struct i2c_msg *, int);
@@ -2161,6 +2172,7 @@ size_t sg_copy_from_buffer(struct scatterlist *, unsigned int,
     const void *, size_t);
 
 struct firmware {
+	size_t size;
 	const u8 *data;
 };
 
@@ -2168,7 +2180,14 @@ static inline int
 request_firmware(const struct firmware **fw, const char *name,
     struct device *device)
 {
-	return -EINVAL;
+	int r;
+	struct firmware *f = malloc(sizeof(struct firmware), M_DRM, M_WAITOK);
+	*fw = f;
+	r = loadfirmware(name, __DECONST(u_char **, &f->data), &f->size);
+	if (r != 0)
+		return -r;
+	else
+		return 0;
 }
 
 #define request_firmware_nowait(a, b, c, d, e, f, g) -EINVAL
@@ -2176,6 +2195,8 @@ request_firmware(const struct firmware **fw, const char *name,
 static inline void
 release_firmware(const struct firmware *fw)
 {
+	free(__DECONST(u_char *, fw->data), M_DRM, fw->size);
+	free(__DECONST(struct firmware *, fw), M_DRM, sizeof(*fw));
 }
 
 void *memchr_inv(const void *, int, size_t);

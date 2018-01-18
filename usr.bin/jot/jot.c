@@ -1,4 +1,4 @@
-/*	$OpenBSD: jot.c,v 1.42 2018/01/11 14:53:42 tb Exp $	*/
+/*	$OpenBSD: jot.c,v 1.45 2018/01/13 15:43:39 tb Exp $	*/
 /*	$NetBSD: jot.c,v 1.3 1994/12/02 20:29:43 pk Exp $	*/
 
 /*-
@@ -370,7 +370,7 @@ getformat(void)
 		/*
 		 * Allow conversion format specifiers of the form
 		 * %[#][ ][{+,-}][0-9]*[.[0-9]*]? where ? must be one of
-		 * [l]{d,i,o,u,x} or {f,e,g,E,G,d,o,x,D,O,U,X,c,u}
+		 * [l]{d,i,o,u,x} or {f,e,g,F,E,G,d,o,x,D,O,U,X,c,u}
 		 */
 		char	*fmt;
 		int	dot, hash, space, sign, numbers;
@@ -398,38 +398,42 @@ getformat(void)
 			}
 		}
 		switch (*p) {
-		case 'o': case 'u': case 'x': case 'X':
-			intdata = nosign = true;
-			break;
-		case 'd': case 'i':
+		case 'd':
+		case 'i':
 			intdata = true;
 			break;
+		case 'o':
+		case 'u':
+		case 'x':
+		case 'X':
+			intdata = nosign = true;
+			break;
 		case 'D':
-			/* %lD is undefined */
-			if (!longdata) {
-				longdata = true; /* %D behaves as %ld */
-				intdata = true;
-				break;
-			}
-			goto fmt_broken;
-		case 'O': case 'U':
-			/* %lO and %lU are undefined */
-			if (!longdata) {
-				longdata = true; /* %O, %U behave as %lo, %lu */
-				intdata = nosign = true;
-				break;
-			}
-			goto fmt_broken;
+			if (longdata)
+				goto fmt_broken;
+			longdata = intdata = true; /* same as %ld */
+			break;
+		case 'O':
+		case 'U':
+			if (longdata)
+				goto fmt_broken;
+			longdata = intdata = nosign = true; /* same as %l[ou] */
+			break;
 		case 'c':
-			if (!(intdata | longdata)) {
-				chardata = true;
-				break;
-			}
-			goto fmt_broken;
-		case 'f': case 'e': case 'g': case 'E': case 'G':
-			if (!longdata)
-				break;
-			/* FALLTHROUGH */
+			if (longdata)
+				goto fmt_broken;
+			chardata = true;
+			break;
+		case 'e':
+		case 'E':
+		case 'f':
+		case 'F':
+		case 'g':
+		case 'G':
+			if (longdata)
+				goto fmt_broken;
+			/* No cast needed for printing in putdata() */
+			break;
 		default:
 fmt_broken:
 			errx(1, "illegal or unsupported format '%.*s'",

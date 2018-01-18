@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ether.c,v 1.231 2017/08/11 21:24:19 mpi Exp $	*/
+/*	$OpenBSD: if_ether.c,v 1.233 2018/01/16 10:33:55 mpi Exp $	*/
 /*	$NetBSD: if_ether.c,v 1.31 1996/05/11 12:59:58 mycroft Exp $	*/
 
 /*
@@ -356,7 +356,7 @@ arpresolve(struct ifnet *ifp, struct rtentry *rt0, struct mbuf *m,
 		return (0);
 	}
 
-	if (ifp->if_flags & IFF_NOARP)
+	if (ifp->if_flags & (IFF_NOARP|IFF_STATICARP))
 		goto bad;
 
 	/*
@@ -694,6 +694,7 @@ arptfree(struct rtentry *rt)
 {
 	struct ifnet *ifp;
 
+	KASSERT(!ISSET(rt->rt_flags, RTF_LOCAL));
 	arpinvalidate(rt);
 
 	ifp = if_get(rt->rt_ifidx);

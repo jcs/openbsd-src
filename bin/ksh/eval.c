@@ -1,4 +1,4 @@
-/*	$OpenBSD: eval.c,v 1.57 2018/01/06 16:28:58 millert Exp $	*/
+/*	$OpenBSD: eval.c,v 1.59 2018/01/16 22:52:32 jca Exp $	*/
 
 /*
  * Expansion - quoting, separation, substitution, globbing
@@ -56,9 +56,7 @@ static	void	globit(XString *, char **, char *, XPtrV *, int);
 static char	*maybe_expand_tilde(char *, XString *, char **, int);
 static	char   *tilde(char *);
 static	char   *homedir(char *);
-#ifdef BRACE_EXPAND
 static void	alt_expand(XPtrV *, char *, char *, char *, int);
-#endif
 
 /* compile and expand word */
 char *
@@ -71,7 +69,7 @@ substitute(const char *cp, int f)
 	s->start = s->str = cp;
 	source = s;
 	if (yylex(ONEWORD) != LWORD)
-		internal_errorf(1, "substitute");
+		internal_errorf("substitute");
 	source = sold;
 	afree(s, ATEMP);
 	return evalstr(yylval.cp, f);
@@ -170,7 +168,7 @@ expand(char *cp,	/* input word */
 	size_t len;
 
 	if (cp == NULL)
-		internal_errorf(1, "expand(NULL)");
+		internal_errorf("expand(NULL)");
 	/* for alias, readonly, set, typeset commands */
 	if ((f & DOVACHECK) && is_wdvarassign(cp)) {
 		f &= ~(DOVACHECK|DOBLANK|DOGLOB|DOTILDE);
@@ -180,10 +178,8 @@ expand(char *cp,	/* input word */
 		f &= ~DOGLOB;
 	if (Flag(FMARKDIRS))
 		f |= DOMARKDIRS;
-#ifdef BRACE_EXPAND
 	if (Flag(FBRACEEXPAND) && (f & DOGLOB))
 		f |= DOBRACE_;
-#endif /* BRACE_EXPAND */
 
 	Xinit(ds, dp, 128, ATEMP);	/* init dest. string */
 	type = XBASE;
@@ -563,15 +559,12 @@ expand(char *cp,	/* input word */
 
 				*dp++ = '\0';
 				p = Xclose(ds, dp);
-#ifdef BRACE_EXPAND
 				if (fdo & DOBRACE_)
 					/* also does globbing */
 					alt_expand(wp, p, p,
 					    p + Xlength(ds, (dp - 1)),
 					    fdo | (f & DOMARKDIRS));
-				else
-#endif /* BRACE_EXPAND */
-				if (fdo & DOGLOB)
+				else if (fdo & DOGLOB)
 					glob(p, wp, f & DOMARKDIRS);
 				else if ((f & DOPAT) || !(fdo & DOMAGIC_))
 					XPput(*wp, p);
@@ -594,7 +587,7 @@ expand(char *cp,	/* input word */
 					char *p;
 
 					if ((p = strdup("")) == NULL)
-						internal_errorf(1, "unable "
+						internal_errorf("unable "
 						    "to allocate memory");
 					XPput(*wp, p);
 				}
@@ -628,7 +621,6 @@ expand(char *cp,	/* input word */
 						*dp++ = MAGIC;
 					}
 					break;
-#ifdef BRACE_EXPAND
 				case OBRACE:
 				case ',':
 				case CBRACE:
@@ -638,7 +630,6 @@ expand(char *cp,	/* input word */
 						*dp++ = MAGIC;
 					}
 					break;
-#endif /* BRACE_EXPAND */
 				case '=':
 					/* Note first unquoted = for ~ */
 					if (!(f & DOTEMP_) && !saw_eq) {
@@ -1221,7 +1212,6 @@ homedir(char *name)
 	return ap->val.s;
 }
 
-#ifdef BRACE_EXPAND
 static void
 alt_expand(XPtrV *wp, char *start, char *exp_start, char *end, int fdo)
 {
@@ -1296,4 +1286,3 @@ alt_expand(XPtrV *wp, char *start, char *exp_start, char *end, int fdo)
 	}
 	return;
 }
-#endif /* BRACE_EXPAND */

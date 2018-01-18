@@ -1,4 +1,4 @@
-/* $OpenBSD: pmap.c,v 1.43 2018/01/10 23:27:18 kettenis Exp $ */
+/* $OpenBSD: pmap.c,v 1.46 2018/01/17 10:22:25 kettenis Exp $ */
 /*
  * Copyright (c) 2008-2009,2014-2016 Dale Rahn <drahn@dalerahn.com>
  *
@@ -454,10 +454,14 @@ pmap_enter(pmap_t pm, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 {
 	struct pte_desc *pted;
 	struct vm_page *pg;
-	int s, cache, error;
+	int s, error;
+	int cache = PMAP_CACHE_WB;
 	int need_sync = 0;
 
-	cache = (pa & PMAP_NOCACHE) ? PMAP_CACHE_CI : PMAP_CACHE_WB;
+	if (pa & PMAP_NOCACHE)
+		cache = PMAP_CACHE_CI;
+	if (pa & PMAP_DEVICE)
+		cache = PMAP_CACHE_DEV;
 	pg = PHYS_TO_VM_PAGE(pa);
 
 	/* MP - Acquire lock for this pmap */
@@ -2051,6 +2055,8 @@ pmap_map_early(paddr_t spa, psize_t len)
 		    ATTR_IDX(PTE_ATTR_WB) | ATTR_SH(SH_INNER) |
 		    ATTR_nG | ATTR_UXN | ATTR_AF | ATTR_AP(0);
 	}
+	__asm volatile("dsb sy");
+	__asm volatile("isb");
 }
 
 /*
@@ -2093,10 +2099,12 @@ pmap_free_asid(pmap_t pm)
 void
 pmap_setttb(struct proc *p)
 {
+	struct cpu_info *ci = curcpu();
 	pmap_t pm = p->p_vmspace->vm_map.pmap;
 
 	WRITE_SPECIALREG(ttbr0_el1, pmap_kernel()->pm_pt0pa);
 	__asm volatile("isb");
 	cpu_setttb(pm->pm_asid, pm->pm_pt0pa);
-	curcpu()->ci_curpm = pm;
+	ci->ci_flush_bp();
+	ci->ci_curpm = pm;
 }

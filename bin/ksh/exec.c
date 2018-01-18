@@ -1,4 +1,4 @@
-/*	$OpenBSD: exec.c,v 1.70 2017/12/27 13:02:57 millert Exp $	*/
+/*	$OpenBSD: exec.c,v 1.72 2018/01/16 22:52:32 jca Exp $	*/
 
 /*
  * execute command tree
@@ -644,7 +644,7 @@ comexec(struct op *t, struct tbl *volatile tp, char **ap, volatile int flags,
 			/* NOTREACHED */
 		default:
 			quitenv(NULL);
-			internal_errorf(1, "CFUNC %d", i);
+			internal_errorf("CFUNC %d", i);
 		}
 		break;
 	    }
@@ -727,7 +727,7 @@ shcomexec(char **wp)
 
 	tp = ktsearch(&builtins, *wp, hash(*wp));
 	if (tp == NULL)
-		internal_errorf(1, "shcomexec: %s", *wp);
+		internal_errorf("shcomexec: %s", *wp);
 	return call_builtin(tp, wp);
 }
 
@@ -1221,7 +1221,7 @@ herein(const char *content, int sub)
 		s->start = s->str = content;
 		source = s;
 		if (yylex(ONEWORD|HEREDOC) != LWORD)
-			internal_errorf(1, "herein: yylex");
+			internal_errorf("herein: yylex");
 		source = osource;
 		shf_puts(evalstr(yylval.cp, 0), shf);
 	} else
@@ -1239,7 +1239,6 @@ herein(const char *content, int sub)
 	return fd;
 }
 
-#ifdef EDIT
 /*
  *	ksh special - the select command processing section
  *	print the args in column form - assuming that we can
@@ -1365,7 +1364,6 @@ pr_list(char *const *ap)
 
 	return n;
 }
-#endif /* EDIT */
 
 /*
  *	[[ ... ]] evaluation routines
@@ -1448,5 +1446,5 @@ static void
 dbteste_error(Test_env *te, int offset, const char *msg)
 {
 	te->flags |= TEF_ERROR;
-	internal_errorf(0, "dbteste_error: %s (offset %d)", msg, offset);
+	internal_warningf("dbteste_error: %s (offset %d)", msg, offset);
 }
