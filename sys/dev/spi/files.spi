@@ -1,0 +1,10 @@
+#	$OpenBSD$
+#	$NetBSD: files.spi,v 1.5 2015/08/18 15:54:20 phx Exp $
+
+device	spi { slave }
+attach	spi at spibus
+file	dev/spi/spi.c			spi | spibus
+
+#
+# SPI client devices
+#
