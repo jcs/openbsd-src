@@ -374,7 +374,6 @@ struct acpiec_softc {
 	struct acpiec_event	sc_events[ACPIEC_MAX_EVENTS];
 	int			sc_gotsci;
 	int			sc_glk;
-	int			sc_canburst;
 };
 
 void		acpibtn_disable_psw(void);
