@@ -2171,10 +2171,7 @@ request_firmware(const struct firmware **fw, const char *name,
 	return -EINVAL;
 }
 
-int
-request_firmware_nowait(struct module *module, bool uevent,
-    const char *name, struct device *device, gfp_t gfp, void *context,
-    void (*cont)(const struct firmware *fw, void *context));
+#define request_firmware_nowait(a, b, c, d, e, f, g) -EINVAL
 
 static inline void
 release_firmware(const struct firmware *fw)
