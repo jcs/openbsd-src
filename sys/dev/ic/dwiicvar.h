@@ -98,6 +98,5 @@ uint32_t	dwiic_read(struct dwiic_softc *, int);
 void		dwiic_write(struct dwiic_softc *, int, uint32_t);
 int		dwiic_i2c_exec(void *, i2c_op_t, i2c_addr_t, const void *,
 		    size_t, void *, size_t, int);
-void		dwiic_xfer_msg(struct dwiic_softc *);
 
 int		dwiic_acpi_found_hid(struct aml_node *node, void *arg);
