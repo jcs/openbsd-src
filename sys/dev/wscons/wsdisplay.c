@@ -256,6 +256,11 @@ int	wsdisplay_switch3(void *, int, int);
 
 int	wsdisplay_clearonclose;
 
+#ifdef DDB
+extern int db_max_line;
+extern int db_max_width;
+#endif
+
 struct wsscreen *
 wsscreen_attach(struct wsdisplay_softc *sc, int console, const char *emul,
     const struct wsscreen_descr *type, void *cookie, int ccol, int crow,
@@ -813,8 +818,17 @@ wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie, int ccol,
 	wsdisplay_console_conf.wsemulcookie =
 	    (*wsemul->cnattach)(type, cookie, ccol, crow, defattr);
 
-	if (!wsdisplay_console_initted)
+	if (!wsdisplay_console_initted) {
 		cn_tab = &wsdisplay_cons;
+#ifdef DDB
+		/*
+		 * Tell DDB what our new console rows/cols are so it can wrap
+		 * lines accordingly.
+		 */
+		db_max_line = crow;
+		db_max_width = ccol;
+#endif
+	}
 
 	wsdisplay_console_initted = 1;
 }
