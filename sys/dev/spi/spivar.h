@@ -71,16 +71,18 @@ typedef struct spi_controller {
 	int	sct_nslaves;
 	int	(*sct_configure)(void *, int, int, int);
 	int	(*sct_transfer)(void *, struct spi_transfer *);
-} *spi_tag_t;
 
-int spibus_print(void *, const char *);
+	void	*(*sct_intr_establish)(void *, void *, int, int (*)(void *),
+		    void *, const char *);
+	const char *(*sct_intr_string)(void *, void *);
+} *spi_tag_t;
 
 /* one per chip select */
 struct spibus_attach_args {
 	const char *sba_name;	/* bus name ("spi") */
 	spi_tag_t sba_tag;
-	void	(*sba_bus_scan)(struct device *, struct spibus_attach_args *,
-		    void *);
+	void	(*sba_bus_scan)(struct device *,
+		    struct spibus_attach_args *, void *);
 	void	*sba_bus_scan_arg;
 };
 
@@ -94,13 +96,15 @@ struct spi_handle {
 };
 
 struct spi_attach_args {
-	spi_tag_t	sa_tag;		/* our controller */
-	struct spi_handle *sa_handle;
+	spi_tag_t	sa_tag;
 	char		*sa_name;	/* device name */
 	void		*sa_cookie;	/* pass extra info from bus to dev */
 	void		*sa_intr;	/* interrupt info */
-	int		sa_poll;	/* force polling */
+
+	struct spi_handle *sa_handle;
 };
+
+int spibus_print(void *, const char *);
 
 /*
  * This is similar in some respects to struct buf, but we cannot use
@@ -148,6 +152,12 @@ SIMPLEQ_HEAD(spi_transq, spi_transfer);
 
 #define	SPI_F_DONE		0x0001
 #define	SPI_F_ERROR		0x0002
+
+#define spi_intr_establish(sct, ih, level, func, arg, name)		\
+	(*(sct)->sct_intr_establish)((sct)->sct_cookie, (ih), (level),	\
+	    (func), (arg), (name))
+#define spi_intr_string(sct, ih)					\
+	(*(sct)->sct_intr_string)((sct)->sct_cookie, (ih))
 
 int spi_configure(struct spi_handle *, int mode, int speed);
 int spi_transfer(struct spi_handle *, struct spi_transfer *);

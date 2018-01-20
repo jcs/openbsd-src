@@ -57,7 +57,7 @@
 
 struct spi_softc {
 	struct device		sc_dev;
-	struct spi_controller	sc_controller;
+	spi_tag_t		sc_tag;
 	int			sc_mode;
 	int			sc_speed;
 	int			sc_nslaves;
@@ -123,7 +123,7 @@ spi_search(struct device *parent, void *arg, void *aux)
 	int addr;
 
 	addr = cf->cf_loc[SPICF_SLAVE];
-	if ((addr < 0) || (addr >= sc->sc_controller.sct_nslaves)) {
+	if ((addr < 0) || (addr >= sc->sc_tag->sct_nslaves)) {
 		return -1;
 	}
 
@@ -148,11 +148,13 @@ spi_attach(struct device *parent, struct device *self, void *aux)
 	struct spibus_attach_args *sba = aux;
 	int i;
 
-	sc->sc_controller = *sba->sba_tag;
+	sc->sc_tag = sba->sba_tag;
 	sc->sc_nslaves = sba->sba_tag->sct_nslaves;
 	/* allocate slave structures */
 	sc->sc_slaves = malloc(sizeof (struct spi_handle) * sc->sc_nslaves,
 	    M_DEVBUF, M_WAITOK | M_ZERO);
+
+	printf("\n");
 
 	sc->sc_speed = 0;
 	sc->sc_mode = -1;
@@ -163,7 +165,7 @@ spi_attach(struct device *parent, struct device *self, void *aux)
 	for (i = 0; i < sc->sc_nslaves; i++) {
 		sc->sc_slaves[i].sh_slave = i;
 		sc->sc_slaves[i].sh_sc = sc;
-		sc->sc_slaves[i].sh_controller = &sc->sc_controller;
+		sc->sc_slaves[i].sh_controller = sc->sc_tag;
 	}
 
 	/*
