@@ -1,4 +1,4 @@
-/*	$OpenBSD: ffs.S,v 1.6 2018/01/18 08:23:44 guenther Exp $	*/
+/*	$OpenBSD: ffs.S,v 1.8 2018/01/18 23:42:13 deraadt Exp $	*/
 
 /*
  * Copyright (c) 1992, 1993
@@ -86,7 +86,6 @@ ENTRY(ffs)
 END(ffs)
 .protected ffs
 
-	.section .rodata
 _C_LABEL(__ffstab):
 	.byte	-24,1,2,1,3,1,2,1,4,1,2,1,3,1,2,1 /* 00-0f */
 	.byte	5,1,2,1,3,1,2,1,4,1,2,1,3,1,2,1	/* 10-1f */

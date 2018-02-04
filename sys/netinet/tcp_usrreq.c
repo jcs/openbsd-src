@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_usrreq.c,v 1.163 2018/01/09 15:14:23 mpi Exp $	*/
+/*	$OpenBSD: tcp_usrreq.c,v 1.166 2018/02/03 16:14:26 bluhm Exp $	*/
 /*	$NetBSD: tcp_usrreq.c,v 1.20 1996/02/13 23:44:16 christos Exp $	*/
 
 /*
@@ -167,18 +167,15 @@ tcp_usrreq(struct socket *so, int req, struct mbuf *m, struct mbuf *nam,
 			m_freem(m);
 		return (error);
 	}
-	if (inp) {
-		tp = intotcpcb(inp);
-		/* tp might get 0 when using socket splicing */
-		if (tp == NULL) {
-			return (0);
-		}
+	tp = intotcpcb(inp);
+	/* tp might get 0 when using socket splicing */
+	if (tp == NULL)
+		return (0);
 #ifdef KPROF
-		tcp_acounts[tp->t_state][req]++;
+	tcp_acounts[tp->t_state][req]++;
 #endif
-		ostate = tp->t_state;
-	} else
-		ostate = 0;
+	ostate = tp->t_state;
+
 	switch (req) {
 
 	/*
@@ -603,8 +600,8 @@ tcp_attach(struct socket *so, int proto)
 	if ((so->so_options & SO_LINGER) && so->so_linger == 0)
 		so->so_linger = TCP_LINGERTIME;
 
-	if (tp && (so->so_options & SO_DEBUG))
-		tcp_trace(TA_USER, 0, tp, (caddr_t)0, 0 /* XXX */, 0);
+	if (so->so_options & SO_DEBUG)
+		tcp_trace(TA_USER, TCPS_CLOSED, tp, (caddr_t)0, PRU_ATTACH, 0);
 	return (0);
 }
 
@@ -628,21 +625,16 @@ tcp_detach(struct socket *so)
 		error = so->so_error;
 		if (error == 0)
 			error = EINVAL;
-
 		return (error);
 	}
-	if (inp) {
-		tp = intotcpcb(inp);
-		/* tp might get 0 when using socket splicing */
-		if (tp == NULL) {
-			return (0);
-		}
+	tp = intotcpcb(inp);
+	/* tp might get 0 when using socket splicing */
+	if (tp == NULL)
+		return (0);
 #ifdef KPROF
-		tcp_acounts[tp->t_state][req]++;
+	tcp_acounts[tp->t_state][req]++;
 #endif
-		ostate = tp->t_state;
-	} else
-		ostate = 0;
+	ostate = tp->t_state;
 
 	/*
 	 * Detach the TCP protocol from the socket.
@@ -651,8 +643,10 @@ tcp_detach(struct socket *so)
 	 * which may finish later; embryonic TCB's can just
 	 * be discarded here.
 	 */
-	tcp_disconnect(tp);
+	tp = tcp_disconnect(tp);
 
+	if (tp && (so->so_options & SO_DEBUG))
+		tcp_trace(TA_USER, ostate, tp, (caddr_t)0, PRU_DETACH, 0);
 	return (error);
 }
 

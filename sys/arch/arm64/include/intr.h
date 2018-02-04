@@ -1,4 +1,4 @@
-/*	$OpenBSD: intr.h,v 1.7 2018/01/13 15:18:11 mpi Exp $ */
+/*	$OpenBSD: intr.h,v 1.9 2018/01/31 10:52:12 kettenis Exp $ */
 
 /*
  * Copyright (c) 2001-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)
@@ -61,7 +61,9 @@
 
 #define	IPL_MPFLOOR	IPL_TTY
 /* Interrupt priority 'flags'. */
-#define	IPL_MPSAFE	0	/* no "mpsafe" interrupts */
+#define	IPL_IRQMASK	0xf	/* priority only */
+#define	IPL_FLAGMASK	0xf00	/* flags only*/
+#define	IPL_MPSAFE	0x100	/* 'mpsafe' interrupt, no kernel lock */
 
 /* Interrupt sharing types. */
 #define	IST_NONE	0	/* none */
@@ -141,6 +143,7 @@ struct interrupt_controller {
 		    int (*)(void *), void *, char *);
 	void	 (*ic_disestablish)(void *);
 	void	 (*ic_route)(void *, int, struct cpu_info *);
+	void	 (*ic_cpu_enable)(void);
 
 	LIST_ENTRY(interrupt_controller) ic_list;
 	uint32_t ic_phandle;
@@ -159,10 +162,16 @@ void	*arm_intr_establish_fdt_msi(int, uint64_t *, uint64_t *, int ,
 	    int (*)(void *), void *, char *);
 void	 arm_intr_disestablish_fdt(void *);
 void	 arm_intr_route(void *, int, struct cpu_info *);
-
+void	 arm_intr_cpu_enable(void);
 void	*arm_intr_parent_establish_fdt(void *, int *, int,
 	    int (*)(void *), void *, char *);
 void	 arm_intr_parent_disestablish_fdt(void *);
+
+void	 arm_send_ipi(struct cpu_info *, int);
+extern void (*intr_send_ipi_func)(struct cpu_info *, int);
+
+#define ARM_IPI_NOP	0
+#define ARM_IPI_DDB	1
 
 #ifdef DIAGNOSTIC
 /*

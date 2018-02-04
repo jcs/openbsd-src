@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.245 2018/01/04 03:02:05 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.249 2018/01/30 13:22:42 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -146,8 +146,15 @@ struct interface_info {
 	struct in_addr		 requested_address;
 	struct client_lease	*active;
 	struct client_lease	*offer;
+	char			*offer_src;
 	struct client_lease_tq	 lease_db;
 };
+
+#ifdef DEBUG
+#define DPRINTF(...)	log_debug(__VA_ARGS__)
+#else
+#define DPRINTF(...)	do {} while(0)
+#endif
 
 #define	_PATH_DHCLIENT_CONF	"/etc/dhclient.conf"
 #define	_PATH_LEASE_DB		"/var/db/dhclient.leases"
@@ -213,9 +220,12 @@ extern int			 cmd_opts;
 #define		OPT_FOREGROUND	4
 
 void		 dhcpoffer(struct interface_info *, struct option_data *,
-    char *);
-void		 dhcpack(struct interface_info *, struct option_data *,char *);
-void		 dhcpnak(struct interface_info *, struct option_data *,char *);
+    const char *);
+void		 dhcpack(struct interface_info *, struct option_data *,
+    const char *);
+void		 dhcpnak(struct interface_info *, const char *);
+void		 bootreply(struct interface_info *, struct option_data *,
+    const char *);
 void		 free_client_lease(struct client_lease *);
 void		 routehandler(struct interface_info *, int);
 

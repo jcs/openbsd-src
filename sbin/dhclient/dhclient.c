@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.543 2017/12/20 18:51:14 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.551 2018/01/30 13:22:42 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -101,7 +101,6 @@ char *log_procname;
 
 char path_option_db[PATH_MAX];
 
-int log_perror = 1;
 int nullfd = -1;
 int cmd_opts;
 
@@ -154,6 +153,8 @@ void send_discover(struct interface_info *);
 void send_request(struct interface_info *);
 void send_decline(struct interface_info *);
 
+void process_offer(struct interface_info *, struct option_data *,
+    const char *);
 void bind_lease(struct interface_info *);
 
 void make_discover(struct interface_info *, struct client_lease *);
@@ -342,7 +343,7 @@ routehandler(struct interface_info *ifi, int routefd)
 				ifi->flags |= IFI_IN_CHARGE;
 				goto done;
 			} else if ((ifi->flags & IFI_IN_CHARGE) != 0)
-				fatal("yielding responsibility");
+				fatalx("yielding responsibility");
 		}
 		break;
 	case RTM_DESYNC:
@@ -353,7 +354,7 @@ routehandler(struct interface_info *ifi, int routefd)
 		if (ifm->ifm_index != ifi->index)
 			break;
 		if ((rtm->rtm_flags & RTF_UP) == 0)
-			fatal("down");
+			fatalx("down");
 
 		if ((ifi->flags & IFI_VALID_LLADDR) != 0) {
 			memcpy(&hw, &ifi->hw_address, sizeof(hw));
@@ -368,11 +369,9 @@ routehandler(struct interface_info *ifi, int routefd)
 
 		linkstat = interface_status(ifi->name);
 		if (linkstat != ifi->linkstat) {
-#ifdef DEBUG
-			log_debug("%s: link %s -> %s", log_procname,
+			DPRINTF("%s: link %s -> %s", log_procname,
 			    (ifi->linkstat != 0) ? "up" : "down",
 			    (linkstat != 0) ? "up" : "down");
-#endif	/* DEBUG */
 			ifi->linkstat = linkstat;
 			if (ifi->linkstat != 0) {
 				if (ifi->state == S_PREBOOT) {
@@ -392,7 +391,7 @@ routehandler(struct interface_info *ifi, int routefd)
 		ifan = (struct if_announcemsghdr *)rtm;
 		if (ifan->ifan_what == IFAN_DEPARTURE &&
 		    ifan->ifan_index == ifi->index)
-			fatal("departed");
+			fatalx("departed");
 		break;
 	case RTM_NEWADDR:
 	case RTM_DELADDR:
@@ -437,12 +436,11 @@ main(int argc, char *argv[])
 	saved_argv = argv;
 
 	if (isatty(STDERR_FILENO) != 0)
-		log_perror = 1; /* log to stderr until daemonized */
+		log_init(1, LOG_DEBUG); /* log to stderr until daemonized */
 	else
-		log_perror = 0; /* can't log to stderr */
+		log_init(0, LOG_DEBUG); /* can't log to stderr */
 
-	log_init(log_perror, LOG_DAEMON);
-	log_setverbose(1);
+	log_setverbose(1);	/* Show log_debug() messages. */
 
 	while ((ch = getopt(argc, argv, "c:di:l:L:nq")) != -1)
 		switch (ch) {
@@ -491,9 +489,7 @@ main(int argc, char *argv[])
 		cmd_opts &= ~OPT_QUIET;
 
 	if ((cmd_opts & OPT_QUIET) != 0)
-		log_perror = 0;
-
-	log_init(log_perror, LOG_DAEMON);
+		log_setverbose(0);	/* Don't show log_debug() */
 
 	ifi = calloc(1, sizeof(*ifi));
 	if (ifi == NULL)
@@ -715,7 +711,7 @@ state_preboot(struct interface_info *ifi)
 
 	ifi->linkstat = interface_status(ifi->name);
 
-	if (log_perror != 0 && interval > 3) {
+	if (isatty(STDERR_FILENO) != 0 && interval > 3) {
 		if (preamble == 0 && ifi->linkstat == 0) {
 			fprintf(stderr, "%s: no link ....", ifi->name);
 			preamble = 1;
@@ -828,31 +824,55 @@ state_selecting(struct interface_info *ifi)
 	/* Toss the lease we picked - we'll get it back in a DHCPACK. */
 	free_client_lease(ifi->offer);
 	ifi->offer = NULL;
+	free(ifi->offer_src);
+	ifi->offer_src = NULL;
 
 	send_request(ifi);
 }
 
 void
-dhcpoffer(struct interface_info *ifi, struct option_data *options, char *info)
+dhcpoffer(struct interface_info *ifi, struct option_data *options,
+    const char *src)
+{
+	if (ifi->state != S_SELECTING) {
+		DPRINTF("%s: unexpected DHCPOFFER from %s - state #%d",
+		    log_procname, src, ifi->state);
+		return;
+	}
+
+	log_debug("%s: DHCPOFFER from %s", log_procname, src);
+	process_offer(ifi, options, src);
+}
+
+void
+bootreply(struct interface_info *ifi, struct option_data *options,
+    const char *src)
+{
+	if (ifi->state != S_SELECTING) {
+		DPRINTF("%s: unexpected BOOTREPLY from %s - state #%d",
+		    log_procname, src, ifi->state);
+		return;
+	}
+
+	log_debug("%s: BOOTREPLY from %s", log_procname, src);
+	process_offer(ifi, options, src);
+}
+
+void
+process_offer(struct interface_info *ifi, struct option_data *options,
+    const char *src)
 {
 	struct client_lease	*lease;
 	time_t			 cur_time, stop_selecting;
 
-	if (ifi->state != S_SELECTING) {
-#ifdef DEBUG
-		log_debug("%s: unexpected %s - state #%d", log_procname, info,
-		    ifi->state);
-#endif	/* DEBUG */
-		return;
-	}
-
 	time(&cur_time);
-	log_info("%s: %s", log_procname, info);
 
 	lease = packet_to_lease(ifi, options);
 	if (lease != NULL) {
 		if (ifi->offer == NULL) {
 			ifi->offer = lease;
+			free(ifi->offer_src);
+			ifi->offer_src = strdup(src);	/* NULL is OK */
 		} else if (lease->address.s_addr ==
 		    ifi->offer->address.s_addr) {
 			/* Decline duplicate offers. */
@@ -860,6 +880,8 @@ dhcpoffer(struct interface_info *ifi, struct option_data *options, char *info)
 		    ifi->requested_address.s_addr) {
 			free_client_lease(ifi->offer);
 			ifi->offer = lease;
+			free(ifi->offer_src);
+			ifi->offer_src = strdup(src);	/* NULL is OK */
 		}
 		if (ifi->offer != lease) {
 			make_decline(ifi, lease);
@@ -877,7 +899,8 @@ dhcpoffer(struct interface_info *ifi, struct option_data *options, char *info)
 }
 
 void
-dhcpack(struct interface_info *ifi, struct option_data *options, char *info)
+dhcpack(struct interface_info *ifi, struct option_data *options,
+    const char *src)
 {
 	struct client_lease	*lease;
 
@@ -885,14 +908,12 @@ dhcpack(struct interface_info *ifi, struct option_data *options, char *info)
 	    ifi->state != S_REQUESTING &&
 	    ifi->state != S_RENEWING &&
 	    ifi->state != S_REBINDING) {
-#ifdef DEBUG
-		log_debug("%s: unexpected %s - state #%d", log_procname, info,
-		    ifi->state);
-#endif	/* DEBUG */
+		DPRINTF("%s: unexpected DHCPACK from %s - state #%d",
+		    log_procname, src, ifi->state);
 		return;
 	}
 
-	log_info("%s: %s", log_procname, info);
+	log_debug("%s: DHCPACK from %s", log_procname, src);
 
 	lease = packet_to_lease(ifi, options);
 	if (lease == NULL) {
@@ -902,6 +923,7 @@ dhcpack(struct interface_info *ifi, struct option_data *options, char *info)
 	}
 
 	ifi->offer = lease;
+	ifi->offer_src = strdup(src);	/* NULL is OK */
 	memcpy(ifi->offer->ssid, ifi->ssid, sizeof(ifi->offer->ssid));
 	ifi->offer->ssid_len = ifi->ssid_len;
 
@@ -912,28 +934,24 @@ dhcpack(struct interface_info *ifi, struct option_data *options, char *info)
 }
 
 void
-dhcpnak(struct interface_info *ifi, struct option_data *options, char *info)
+dhcpnak(struct interface_info *ifi, const char *src)
 {
 	if (ifi->state != S_REBOOTING &&
 	    ifi->state != S_REQUESTING &&
 	    ifi->state != S_RENEWING &&
 	    ifi->state != S_REBINDING) {
-#ifdef DEBUG
-		log_debug("%s: unexpected %s - state #%d", log_procname, info,
-		    ifi->state);
-#endif	/* DEBUG */
+		DPRINTF("%s: unexpected DHCPNAK from %s - state #%d",
+		    log_procname, src, ifi->state);
 		return;
 	}
 
 	if (ifi->active == NULL) {
-#ifdef DEBUG
-		log_debug("%s: unexpected %s - no active lease", log_procname,
-		    info);
-#endif	/* DEBUG */
+		DPRINTF("%s: unexpected DHCPNAK from %s - no active lease",
+		    log_procname, src);
 		return;
 	}
 
-	log_info("%s: %s", log_procname, info);
+	log_debug("%s: DHCPNAK from %s", log_procname, src);
 	delete_address(ifi->active->address);
 
 	/* XXX Do we really want to remove a NAK'd lease from the database? */
@@ -970,14 +988,12 @@ bind_lease(struct interface_info *ifi)
 	 * renewal == time to renew lease from server that provided it.
 	 * rebind  == time to renew lease from any server.
 	 *
-	 * 0 <= renewal <= rebind <= expiry
-	 * &&
-	 * expiry >= MIN(time_max, 60)
+	 * N.B.: renewal and/or rebind time could be < cur_time when the
+	 *       lease was obtained from the leases file.
 	 */
 	ifi->expiry = lease_expiry(lease);
 	ifi->rebind = lease_rebind(lease);
-
-	renewal = lease_renewal(lease) - cur_time;
+	renewal = lease_renewal(lease);
 
 	/*
 	 * A duplicate proposal once we are responsible & S_RENEWING means we
@@ -1015,8 +1031,12 @@ bind_lease(struct interface_info *ifi)
 
 newlease:
 	write_resolv_conf();
-	log_info("%s: bound to %s -- renewal in %lld seconds", log_procname,
-	    inet_ntoa(ifi->active->address), (long long)renewal);
+	log_info("%s: bound to %s from %s", log_procname,
+	    inet_ntoa(ifi->active->address),
+	    (ifi->offer_src == NULL) ? "<unknown>" : ifi->offer_src
+	);
+	free(ifi->offer_src);
+	ifi->offer_src = NULL;
 	go_daemon(ifi->name);
 	rewrite_option_db(ifi->name, ifi->active, lease);
 	free_client_lease(lease);
@@ -1054,7 +1074,7 @@ newlease:
 	ifi->state = S_BOUND;
 
 	/* Set timeout to start the renewal process. */
-	set_timeout(ifi, renewal, state_bound);
+	set_timeout(ifi, renewal - cur_time, state_bound);
 }
 
 /*
@@ -1315,7 +1335,7 @@ send_discover(struct interface_info *ifi)
 
 	rslt = send_packet(ifi, inaddr_any, inaddr_broadcast, "DHCPDISCOVER");
 	if (rslt != -1)
-		log_info("%s: DHCPDISCOVER - interval %lld", log_procname,
+		log_debug("%s: DHCPDISCOVER - interval %lld", log_procname,
 		    (long long)ifi->interval);
 
 	set_timeout(ifi, ifi->interval, send_discover);
@@ -1328,11 +1348,12 @@ send_discover(struct interface_info *ifi)
 void
 state_panic(struct interface_info *ifi)
 {
-	log_info("%s: no acceptable DHCPOFFERS received", log_procname);
+	log_debug("%s: no acceptable DHCPOFFERS received", log_procname);
 
 	ifi->offer = get_recorded_lease(ifi);
 	if (ifi->offer != NULL) {
 		ifi->state = S_REQUESTING;
+		ifi->offer_src = strdup(path_lease_db); /* NULL is OK. */
 		bind_lease(ifi);
 		return;
 	}
@@ -1340,7 +1361,7 @@ state_panic(struct interface_info *ifi)
 	/*
 	 * No leases were available, or what was available didn't work
 	 */
-	log_info("%s: no working leases in persistent database - sleeping",
+	log_debug("%s: no working leases in persistent database - sleeping",
 	    log_procname);
 	ifi->state = S_INIT;
 	set_timeout(ifi, config->retry_interval, state_init);
@@ -1445,7 +1466,7 @@ send_request(struct interface_info *ifi)
 
 	rslt = send_packet(ifi, from, destination.sin_addr, "DHCPREQUEST");
 	if (rslt != -1)
-		log_info("%s: DHCPREQUEST to %s", log_procname,
+		log_debug("%s: DHCPREQUEST to %s", log_procname,
 		    inet_ntoa(destination.sin_addr));
 
 	set_timeout(ifi, ifi->interval, send_request);
@@ -1458,7 +1479,7 @@ send_decline(struct interface_info *ifi)
 
 	rslt = send_packet(ifi, inaddr_any, inaddr_broadcast, "DHCPDECLINE");
 	if (rslt != -1)
-		log_info("%s: DHCPDECLINE", log_procname);
+		log_debug("%s: DHCPDECLINE", log_procname);
 }
 
 void
@@ -1973,14 +1994,10 @@ go_daemon(const char *name)
 		fatal("daemonize");
 
 	/* Stop logging to stderr. */
-	log_perror = 0;
 	log_init(0, LOG_DAEMON);
+	if ((cmd_opts & OPT_QUIET) == 0)
+		log_setverbose(1);	/* show log_debug() messages. */
 	log_procinit(log_procname);
-#ifdef DEBUG
-	log_setverbose(1);
-#else
-	log_setverbose(0);
-#endif	/* DEBUG */
 
 	setproctitle("%s", log_procname);
 	signal(SIGHUP, sighdlr);
@@ -2374,7 +2391,7 @@ apply_ignore_list(char *ignore_list)
 
 		i = name_to_code(p);
 		if (i == DHO_END) {
-			log_info("%s: invalid option name: '%s'", log_procname,
+			log_debug("%s: invalid option name: '%s'", log_procname,
 			    p);
 			return;
 		}
@@ -2414,20 +2431,24 @@ take_charge(struct interface_info *ifi, int routefd)
 	rtm.rtm_msglen = sizeof(rtm);
 	rtm.rtm_tableid = ifi->rdomain;
 	rtm.rtm_index = ifi->index;
-	rtm.rtm_seq = ifi->xid = arc4random();
 	rtm.rtm_priority = RTP_PROPOSAL_DHCLIENT;
 	rtm.rtm_addrs = 0;
 	rtm.rtm_flags = RTF_UP | RTF_PROTO3;
 
+	rtm.rtm_seq = ifi->xid = arc4random();
+	if (write(routefd, &rtm, sizeof(rtm)) == -1)
+		fatal("write(routefd)");
+
 	retries = 0;
 	while ((ifi->flags & IFI_IN_CHARGE) == 0) {
-		if (write(routefd, &rtm, sizeof(rtm)) == -1)
-			fatal("write(routefd)");
 		time(&cur_time);
 		if ((cur_time - start_time) > 3) {
 			if (++retries <= 3) {
 				if (time(&start_time) == -1)
 					fatal("time");
+				rtm.rtm_seq = ifi->xid = arc4random();
+				if (write(routefd, &rtm, sizeof(rtm)) == -1)
+					fatal("write(routefd)");
 			} else {
 				fatalx("failed to take charge");
 			}

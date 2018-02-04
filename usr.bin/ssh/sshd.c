@@ -1,4 +1,4 @@
-/* $OpenBSD: sshd.c,v 1.499 2017/11/14 00:45:29 djm Exp $ */
+/* $OpenBSD: sshd.c,v 1.503 2018/01/23 20:00:58 stsp Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -422,16 +422,12 @@ sshd_exchange_identification(struct ssh *ssh, int sock_in, int sock_out)
 		logit("Client version \"%.100s\" uses unsafe RSA signature "
 		    "scheme; disabling use of RSA keys", remote_version);
 	}
-	if ((ssh->compat & SSH_BUG_DERIVEKEY) != 0) {
-		fatal("Client version \"%.100s\" uses unsafe key agreement; "
-		    "refusing connection", remote_version);
-	}
 
 	chop(server_version_string);
 	debug("Local version string %.200s", server_version_string);
 
-	if (remote_major != 2 ||
-	    (remote_major == 1 && remote_minor != 99)) {
+	if (remote_major != 2 &&
+	    !(remote_major == 1 && remote_minor == 99)) {
 		s = "Protocol major versions differ.\n";
 		(void) atomicio(vwrite, sock_out, s, strlen(s));
 		close(sock_in);
@@ -502,8 +498,9 @@ privsep_preauth_child(void)
 		if ((pw = getpwnam(SSH_PRIVSEP_USER)) == NULL)
 			fatal("Privilege separation user %s does not exist",
 			    SSH_PRIVSEP_USER);
-		explicit_bzero(pw->pw_passwd, strlen(pw->pw_passwd));
+		pw = pwcopy(pw); /* Ensure mutable */
 		endpwent();
+		freezero(pw->pw_passwd, strlen(pw->pw_passwd));
 
 		/* Change our root directory */
 		if (chroot(_PATH_PRIVSEP_CHROOT_DIR) == -1)
@@ -1674,6 +1671,7 @@ main(int ac, char **av)
 		if (getpwnam(SSH_PRIVSEP_USER) == NULL)
 			fatal("Privilege separation user %s does not exist",
 			    SSH_PRIVSEP_USER);
+		endpwent();
 		if ((stat(_PATH_PRIVSEP_CHROOT_DIR, &st) == -1) ||
 		    (S_ISDIR(st.st_mode) == 0))
 			fatal("Missing privilege separation directory: %s",

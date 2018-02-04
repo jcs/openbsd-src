@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_etherip.c,v 1.29 2018/01/09 15:24:24 bluhm Exp $	*/
+/*	$OpenBSD: if_etherip.c,v 1.31 2018/02/01 21:18:12 bluhm Exp $	*/
 /*
  * Copyright (c) 2015 Kazuya GODA <goda@openbsd.org>
  *
@@ -394,7 +394,8 @@ ip_etherip_output(struct ifnet *ifp, struct mbuf *m)
 	etheripstat_pkt(etherips_opackets, etherips_obytes, m->m_pkthdr.len -
 	    (sizeof(struct ip) + sizeof(struct etherip_header)));
 
-	return ip_output(m, NULL, NULL, IP_RAWOUTPUT, NULL, NULL, 0);
+	ip_send(m);
+	return (0);
 }
 
 int
@@ -546,7 +547,8 @@ ip6_etherip_output(struct ifnet *ifp, struct mbuf *m)
 	etheripstat_pkt(etherips_opackets, etherips_obytes, m->m_pkthdr.len -
 	    (sizeof(struct ip6_hdr) + sizeof(struct etherip_header)));
 
-	return ip6_output(m, 0, NULL, IPV6_MINMTU, 0, NULL);
+	ip6_send(m);
+	return (0);
 
 drop:
 	m_freem(m);
@@ -569,7 +571,7 @@ ip6_etherip_input(struct mbuf **mp, int *offp, int proto, int af)
 	if (!etherip_allow && (m->m_flags & (M_AUTH|M_CONF)) == 0) {
 		m_freem(m);
 		etheripstat_inc(etherips_pdrops);
-		return IPPROTO_NONE;
+		return IPPROTO_DONE;
 	}
 
 	ip6 = mtod(m, const struct ip6_hdr *);

@@ -1,4 +1,4 @@
-/* $OpenBSD: dwiic_acpi.c,v 1.2 2017/12/03 19:42:20 kettenis Exp $ */
+/* $OpenBSD: dwiic_acpi.c,v 1.3 2018/01/19 18:20:38 jcs Exp $ */
 /*
  * Synopsys DesignWare I2C controller
  *

@@ -25,7 +25,6 @@
 #include <err.h>
 #include <errno.h>
 #include <event.h>
-#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +35,7 @@
 #include "unpack_dns.h"
 #include "parser.h"
 
-int do_spfwalk(int, struct parameter *);
+int spfwalk(int, struct parameter *);
 
 static void	dispatch_txt(struct dns_rr *);
 static void	dispatch_mx(struct dns_rr *);
@@ -51,9 +50,8 @@ int     ip_v6 = 0;
 int     ip_both = 1;
 
 int
-do_spfwalk(int argc, struct parameter *argv)
+spfwalk(int argc, struct parameter *argv)
 {
-	struct passwd	*pw;
 	const char	*ip_family = NULL;
 	char		*line = NULL;
 	size_t		 linesize = 0;
@@ -75,14 +73,6 @@ do_spfwalk(int argc, struct parameter *argv)
 
 	argv += optind;
 	argc -= optind;
-
-	if ((pw = getpwnam(SMTPD_USER)) == NULL)
-		errx(1, "unknown user " SMTPD_USER);
-
-	if (setgroups(1, &pw->pw_gid) ||
-	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
-	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
-		err(1, "do_spfwalk: cannot drop privileges");
 
   	event_init();
 
@@ -184,6 +174,14 @@ dispatch_txt(struct dns_rr *rr)
 		if (strncasecmp("+ip6:", *ap, 5) == 0) {
 			if (ip_v6 == 1 || ip_both == 1)
 				printf("%s\n", *(ap) + 5);
+			continue;
+		}
+		if (strncasecmp("a:", *ap, 2) == 0) {
+			lookup_record(T_A, *(ap) + 2, dispatch_a);
+			continue;
+		}
+		if (strncasecmp("exists:", *ap, 7) == 0) {
+			lookup_record(T_A, *(ap) + 7, dispatch_a);
 			continue;
 		}
 		if (strncasecmp("include:", *ap, 8) == 0) {

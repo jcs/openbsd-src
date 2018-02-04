@@ -1,4 +1,4 @@
-/* $OpenBSD: dwiicvar.h,v 1.1 2017/11/16 18:12:27 jcs Exp $ */
+/* $OpenBSD: dwiicvar.h,v 1.2 2018/01/19 18:20:38 jcs Exp $ */
 /*
  * Synopsys DesignWare I2C controller
  *
