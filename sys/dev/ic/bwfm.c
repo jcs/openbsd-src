@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.33 2018/01/31 12:36:13 stsp Exp $ */
+/* $OpenBSD: bwfm.c,v 1.39 2018/02/08 05:00:38 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -89,6 +89,7 @@ int	 bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *, int,
 	     int, char *, size_t *);
 int	 bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *, int,
 	     int, char *, size_t);
+void	 bwfm_proto_bcdc_rx(struct bwfm_softc *, struct mbuf *);
 
 int	 bwfm_fwvar_cmd_get_data(struct bwfm_softc *, int, void *, size_t);
 int	 bwfm_fwvar_cmd_set_data(struct bwfm_softc *, int, void *, size_t);
@@ -123,7 +124,7 @@ int	 bwfm_newstate(struct ieee80211com *, enum ieee80211_state, int);
 
 void	 bwfm_set_key_cb(struct bwfm_softc *, void *);
 void	 bwfm_delete_key_cb(struct bwfm_softc *, void *);
-void	 bwfm_newstate_cb(struct bwfm_softc *, void *);
+void	 bwfm_rx_event_cb(struct bwfm_softc *, void *);
 
 struct mbuf *bwfm_newbuf(void);
 void	 bwfm_rx(struct bwfm_softc *, struct mbuf *);
@@ -134,7 +135,7 @@ void	 bwfm_rx_deauth_ind(struct bwfm_softc *, struct bwfm_event *, size_t);
 void	 bwfm_rx_disassoc_ind(struct bwfm_softc *, struct bwfm_event *, size_t);
 void	 bwfm_rx_leave_ind(struct bwfm_softc *, struct bwfm_event *, size_t, int);
 #endif
-void	 bwfm_rx_event(struct bwfm_softc *, char *, size_t);
+void	 bwfm_rx_event(struct bwfm_softc *, struct mbuf *);
 void	 bwfm_scan_node(struct bwfm_softc *, struct bwfm_bss_info *, size_t);
 
 extern void ieee80211_node2req(struct ieee80211com *,
@@ -153,6 +154,7 @@ uint8_t bwfm_5ghz_channels[] = {
 struct bwfm_proto_ops bwfm_proto_bcdc_ops = {
 	.proto_query_dcmd = bwfm_proto_bcdc_query_dcmd,
 	.proto_set_dcmd = bwfm_proto_bcdc_set_dcmd,
+	.proto_rx = bwfm_proto_bcdc_rx,
 };
 
 struct cfdriver bwfm_cd = {
@@ -291,7 +293,6 @@ bwfm_start(struct ifnet *ifp)
 {
 	struct bwfm_softc *sc = ifp->if_softc;
 	struct mbuf *m;
-	int error;
 
 	if (!(ifp->if_flags & IFF_RUNNING))
 		return;
@@ -302,30 +303,26 @@ bwfm_start(struct ifnet *ifp)
 
 	/* TODO: return if no link? */
 
-	m = ifq_deq_begin(&ifp->if_snd);
-	while (m != NULL) {
-		error = sc->sc_bus_ops->bs_txdata(sc, m);
-		if (error == ENOBUFS) {
-			ifq_deq_rollback(&ifp->if_snd, m);
+	for (;;) {
+		if (sc->sc_bus_ops->bs_txcheck(sc)) {
 			ifq_set_oactive(&ifp->if_snd);
 			break;
 		}
-		if (error == EFBIG) {
-			ifq_deq_commit(&ifp->if_snd, m);
-			m_freem(m); /* give up: drop it */
+
+		m = ifq_dequeue(&ifp->if_snd);
+		if (m == NULL)
+			break;
+
+		if (sc->sc_bus_ops->bs_txdata(sc, m) != 0) {
 			ifp->if_oerrors++;
+			m_freem(m);
 			continue;
 		}
-
-		/* Now we are committed to transmit the packet. */
-		ifq_deq_commit(&ifp->if_snd, m);
 
 #if NBPFILTER > 0
 		if (ifp->if_bpf)
 			bpf_mtap(ifp->if_bpf, m, BPF_DIRECTION_OUT);
 #endif
-
-		m = ifq_deq_begin(&ifp->if_snd);
 	}
 }
 
@@ -989,7 +986,18 @@ bwfm_chip_ca7_set_passive(struct bwfm_softc *sc)
 int
 bwfm_chip_cm3_set_active(struct bwfm_softc *sc)
 {
-	panic("%s: cm3 not supported", DEVNAME(sc));
+	struct bwfm_core *core;
+
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_INTERNAL_MEM);
+	if (!sc->sc_chip.ch_core_isup(sc, core))
+		return 1;
+
+	sc->sc_buscore_ops->bc_activate(sc, 0);
+
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_ARM_CM3);
+	sc->sc_chip.ch_core_reset(sc, core, 0, 0, 0);
+
+	return 0;
 }
 
 void
@@ -1011,6 +1019,49 @@ bwfm_chip_cm3_set_passive(struct bwfm_softc *sc)
 		    core->co_base + BWFM_SOCRAM_BANKIDX, 3);
 		sc->sc_buscore_ops->bc_write(sc,
 		    core->co_base + BWFM_SOCRAM_BANKPDA, 0);
+	}
+}
+
+int
+bwfm_chip_sr_capable(struct bwfm_softc *sc)
+{
+	struct bwfm_core *core;
+	uint32_t reg;
+
+	if (sc->sc_chip.ch_pmurev < 17)
+		return 0;
+
+	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_CHIPCOMMON);
+	switch (sc->sc_chip.ch_chip) {
+	case BRCM_CC_4354_CHIP_ID:
+	case BRCM_CC_4356_CHIP_ID:
+		sc->sc_buscore_ops->bc_write(sc, core->co_base +
+		    BWFM_CHIP_REG_CHIPCONTROL_ADDR, 3);
+		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
+		    BWFM_CHIP_REG_CHIPCONTROL_DATA);
+		return (reg & (1 << 2)) != 0;
+	case BRCM_CC_43241_CHIP_ID:
+	case BRCM_CC_4335_CHIP_ID:
+	case BRCM_CC_4339_CHIP_ID:
+		sc->sc_buscore_ops->bc_write(sc, core->co_base +
+		    BWFM_CHIP_REG_CHIPCONTROL_ADDR, 3);
+		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
+		    BWFM_CHIP_REG_CHIPCONTROL_DATA);
+		return reg != 0;
+	case BRCM_CC_43430_CHIP_ID:
+		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
+		    BWFM_CHIP_REG_SR_CONTROL1);
+		return reg != 0;
+	default:
+		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
+		    BWFM_CHIP_REG_PMUCAPABILITIES_EXT);
+		if ((reg & BWFM_CHIP_REG_PMUCAPABILITIES_SR_SUPP) == 0)
+			return 0;
+
+		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
+		    BWFM_CHIP_REG_RETENTION_CTL);
+		return (reg & (BWFM_CHIP_REG_RETENTION_CTL_MACPHY_DIS |
+			       BWFM_CHIP_REG_RETENTION_CTL_LOGIC_DIS)) == 0;
 	}
 }
 
@@ -1074,7 +1125,31 @@ bwfm_chip_socram_ramsize(struct bwfm_softc *sc, struct bwfm_core *core)
 void
 bwfm_chip_sysmem_ramsize(struct bwfm_softc *sc, struct bwfm_core *core)
 {
-	panic("%s: sysmem ramsize not supported", DEVNAME(sc));
+	uint32_t coreinfo, nb, banksize, bankinfo;
+	uint32_t ramsize = 0;
+	int i;
+
+	if (!sc->sc_chip.ch_core_isup(sc, core))
+		sc->sc_chip.ch_core_reset(sc, core, 0, 0, 0);
+
+	coreinfo = sc->sc_buscore_ops->bc_read(sc,
+	    core->co_base + BWFM_SOCRAM_COREINFO);
+	nb = (coreinfo & BWFM_SOCRAM_COREINFO_SRNB_MASK)
+	    >> BWFM_SOCRAM_COREINFO_SRNB_SHIFT;
+
+	for (i = 0; i < nb; i++) {
+		sc->sc_buscore_ops->bc_write(sc,
+		    core->co_base + BWFM_SOCRAM_BANKIDX,
+		    (BWFM_SOCRAM_BANKIDX_MEMTYPE_RAM <<
+		    BWFM_SOCRAM_BANKIDX_MEMTYPE_SHIFT) | i);
+		bankinfo = sc->sc_buscore_ops->bc_read(sc,
+		    core->co_base + BWFM_SOCRAM_BANKINFO);
+		banksize = ((bankinfo & BWFM_SOCRAM_BANKINFO_SZMASK) + 1)
+		    * BWFM_SOCRAM_BANKINFO_SZBASE;
+		ramsize += banksize;
+	}
+
+	sc->sc_chip.ch_ramsize = ramsize;
 }
 
 void
@@ -1251,6 +1326,24 @@ bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *sc, int ifidx,
 err:
 	free(dcmd, M_TEMP, sizeof(*dcmd));
 	return ret;
+}
+
+void
+bwfm_proto_bcdc_rx(struct bwfm_softc *sc, struct mbuf *m)
+{
+	struct bwfm_proto_bcdc_hdr *hdr;
+
+	hdr = mtod(m, struct bwfm_proto_bcdc_hdr *);
+	if (m->m_len < sizeof(*hdr)) {
+		m_freem(m);
+		return;
+	}
+	if (m->m_len < sizeof(*hdr) + (hdr->data_offset << 2)) {
+		m_freem(m);
+		return;
+	}
+	m_adj(m, sizeof(*hdr) + (hdr->data_offset << 2));
+	bwfm_rx(sc, m);
 }
 
 /* FW Variable code */
@@ -1635,8 +1728,7 @@ bwfm_rx(struct bwfm_softc *sc, struct mbuf *m)
 	    ntohs(e->ehdr.ether_type) == BWFM_ETHERTYPE_LINK_CTL &&
 	    memcmp(BWFM_BRCM_OUI, e->hdr.oui, sizeof(e->hdr.oui)) == 0 &&
 	    ntohs(e->hdr.usr_subtype) == BWFM_BRCM_SUBTYPE_EVENT) {
-		bwfm_rx_event(sc, mtod(m, char *), m->m_len);
-		m_freem(m);
+		bwfm_rx_event(sc, m);
 		return;
 	}
 
@@ -1837,18 +1929,32 @@ bwfm_rx_leave_ind(struct bwfm_softc *sc, struct bwfm_event *e, size_t len,
 #endif
 
 void
-bwfm_rx_event(struct bwfm_softc *sc, char *buf, size_t len)
+bwfm_rx_event(struct bwfm_softc *sc, struct mbuf *m)
+{
+	struct bwfm_cmd_mbuf cmd;
+
+	cmd.m = m;
+	bwfm_do_async(sc, bwfm_rx_event_cb, &cmd, sizeof(cmd));
+}
+
+void
+bwfm_rx_event_cb(struct bwfm_softc *sc, void *arg)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
-	struct bwfm_event *e = (void *)buf;
+	struct bwfm_cmd_mbuf *cmd = arg;
+	struct mbuf *m = cmd->m;
+	struct bwfm_event *e = mtod(m, void *);
+	size_t len = m->m_len;
 
-	if (ntohl(e->msg.event_type) >= BWFM_E_LAST)
+	if (ntohl(e->msg.event_type) >= BWFM_E_LAST) {
+		m_freem(m);
 		return;
+	}
 
 	switch (ntohl(e->msg.event_type)) {
 	case BWFM_E_ESCAN_RESULT: {
-		struct bwfm_escan_results *res = (void *)(buf + sizeof(*e));
+		struct bwfm_escan_results *res = (void *)&e[1];
 		struct bwfm_bss_info *bss;
 		int i;
 		if (ntohl(e->msg.status) != BWFM_E_STATUS_PARTIAL) {
@@ -1858,11 +1964,13 @@ bwfm_rx_event(struct bwfm_softc *sc, char *buf, size_t len)
 		len -= sizeof(*e);
 		if (len < sizeof(*res) || len < letoh32(res->buflen)) {
 			printf("%s: results too small\n", DEVNAME(sc));
+			m_freem(m);
 			return;
 		}
 		len -= sizeof(*res);
 		if (len < letoh16(res->bss_count) * sizeof(struct bwfm_bss_info)) {
 			printf("%s: results too small\n", DEVNAME(sc));
+			m_freem(m);
 			return;
 		}
 		bss = &res->bss_info[0];
@@ -1928,6 +2036,8 @@ bwfm_rx_event(struct bwfm_softc *sc, char *buf, size_t len)
 		    ntohl(e->msg.reason)));
 		break;
 	}
+
+	m_freem(m);
 }
 
 void
@@ -2024,11 +2134,16 @@ bwfm_do_async(struct bwfm_softc *sc,
 	int s;
 
 	s = splsoftnet();
+	if (ring->queued >= BWFM_HOST_CMD_RING_COUNT) {
+		splx(s);
+		return;
+	}
 	cmd = &ring->cmd[ring->cur];
 	cmd->cb = cb;
 	KASSERT(len <= sizeof(cmd->data));
 	memcpy(cmd->data, arg, len);
 	ring->cur = (ring->cur + 1) % BWFM_HOST_CMD_RING_COUNT;
+	ring->queued++;
 	task_add(sc->sc_taskq, &sc->sc_task);
 	splx(s);
 }
@@ -2139,21 +2254,7 @@ int
 bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 {
 	struct bwfm_softc *sc = ic->ic_softc;
-	struct bwfm_cmd_newstate cmd;
-
-	cmd.state = nstate;
-	cmd.arg = arg;
-	bwfm_do_async(sc, bwfm_newstate_cb, &cmd, sizeof(cmd));
-	return 0;
-}
-
-void
-bwfm_newstate_cb(struct bwfm_softc *sc, void *arg)
-{
-	struct bwfm_cmd_newstate *cmd = arg;
-	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
-	enum ieee80211_state nstate = cmd->state;
 	int s;
 
 	s = splnet();
@@ -2167,7 +2268,7 @@ bwfm_newstate_cb(struct bwfm_softc *sc, void *arg)
 			    ieee80211_state_name[nstate]);
 		ic->ic_state = nstate;
 		splx(s);
-		return;
+		return 0;
 	case IEEE80211_S_AUTH:
 		ic->ic_bss->ni_rsn_supp_state = RSNA_SUPP_INITIALIZE;
 		bwfm_connect(sc);
@@ -2179,7 +2280,7 @@ bwfm_newstate_cb(struct bwfm_softc *sc, void *arg)
 		if (ic->ic_flags & IEEE80211_F_RSNON)
 			ic->ic_bss->ni_rsn_supp_state = RSNA_SUPP_PTKSTART;
 		splx(s);
-		return;
+		return 0;
 #ifndef IEEE80211_STA_ONLY
 	case IEEE80211_S_RUN:
 		if (ic->ic_opmode == IEEE80211_M_HOSTAP)
@@ -2189,7 +2290,7 @@ bwfm_newstate_cb(struct bwfm_softc *sc, void *arg)
 	default:
 		break;
 	}
-	sc->sc_newstate(ic, nstate, cmd->arg);
+	sc->sc_newstate(ic, nstate, arg);
 	splx(s);
-	return;
+	return 0;
 }

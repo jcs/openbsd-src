@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfmvar.h,v 1.8 2018/01/07 22:08:04 patrick Exp $ */
+/* $OpenBSD: bwfmvar.h,v 1.12 2018/02/08 05:00:38 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -87,6 +87,7 @@ struct bwfm_chip {
 struct bwfm_bus_ops {
 	void (*bs_init)(struct bwfm_softc *);
 	void (*bs_stop)(struct bwfm_softc *);
+	int (*bs_txcheck)(struct bwfm_softc *);
 	int (*bs_txdata)(struct bwfm_softc *, struct mbuf *);
 	int (*bs_txctl)(struct bwfm_softc *, char *, size_t);
 	int (*bs_rxctl)(struct bwfm_softc *, char *, size_t *);
@@ -106,6 +107,7 @@ struct bwfm_proto_ops {
 	    char *, size_t *);
 	int (*proto_set_dcmd)(struct bwfm_softc *, int, int,
 	    char *, size_t);
+	void (*proto_rx)(struct bwfm_softc *, struct mbuf *);
 };
 extern struct bwfm_proto_ops bwfm_proto_bcdc_ops;
 
@@ -114,19 +116,17 @@ struct bwfm_host_cmd {
 	uint8_t	 data[256];
 };
 
-struct bwfm_cmd_newstate {
-	enum ieee80211_state	 state;
-	int			 arg;
-};
-
 struct bwfm_cmd_key {
 	struct ieee80211_node	 *ni;
 	struct ieee80211_key	 *k;
 };
 
+struct bwfm_cmd_mbuf {
+	struct mbuf		 *m;
+};
+
 struct bwfm_cmd_flowring_create {
-	uint8_t			 da[ETHER_ADDR_LEN];
-	uint8_t			 sa[ETHER_ADDR_LEN];
+	struct mbuf		*m;
 	int			 flowid;
 	int			 prio;
 };
@@ -165,6 +165,7 @@ int bwfm_detach(struct bwfm_softc *, int);
 int bwfm_chip_attach(struct bwfm_softc *);
 int bwfm_chip_set_active(struct bwfm_softc *, uint32_t);
 void bwfm_chip_set_passive(struct bwfm_softc *);
+int bwfm_chip_sr_capable(struct bwfm_softc *);
 struct bwfm_core *bwfm_chip_get_core(struct bwfm_softc *, int);
 struct bwfm_core *bwfm_chip_get_pmu(struct bwfm_softc *);
 void bwfm_rx(struct bwfm_softc *, struct mbuf *);

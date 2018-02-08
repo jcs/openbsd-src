@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.249 2018/01/30 13:22:42 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.252 2018/02/07 01:03:10 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -75,8 +75,7 @@ enum dhcp_state {
 	S_SELECTING,
 	S_REQUESTING,
 	S_BOUND,
-	S_RENEWING,
-	S_REBINDING
+	S_RENEWING
 };
 
 TAILQ_HEAD(client_lease_tq, client_lease);
@@ -147,6 +146,7 @@ struct interface_info {
 	struct client_lease	*active;
 	struct client_lease	*offer;
 	char			*offer_src;
+	struct proposal		*configured;
 	struct client_lease_tq	 lease_db;
 };
 
@@ -216,7 +216,7 @@ extern struct imsgbuf		*unpriv_ibuf;
 extern volatile sig_atomic_t	 quit;
 extern int			 cmd_opts;
 #define		OPT_NOACTION	1
-#define		OPT_QUIET	2
+#define		OPT_VERBOSE	2
 #define		OPT_FOREGROUND	4
 
 void		 dhcpoffer(struct interface_info *, struct option_data *,

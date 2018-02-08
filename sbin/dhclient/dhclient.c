@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.551 2018/01/30 13:22:42 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.561 2018/02/08 08:22:31 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -137,6 +137,7 @@ int		 get_ifa_family(char *, int);
 void		 interface_link_forceup(char *, int);
 int		 interface_status(char *);
 void		 get_hw_address(struct interface_info *);
+void		 tick_msg(const char *, int, time_t, time_t);
 
 struct client_lease *apply_defaults(struct client_lease *);
 struct client_lease *clone_lease(struct client_lease *);
@@ -172,7 +173,7 @@ time_t lease_rebind(struct client_lease *);
 
 struct client_lease *packet_to_lease(struct interface_info *,
     struct option_data *);
-void go_daemon(const char *);
+void go_daemon(void);
 int rdaemon(int);
 void	take_charge(struct interface_info *, int);
 void	set_default_client_identifier(struct interface_info *);
@@ -342,8 +343,11 @@ routehandler(struct interface_info *ifi, int routefd)
 			if (rtm->rtm_seq == (int32_t)ifi->xid) {
 				ifi->flags |= IFI_IN_CHARGE;
 				goto done;
-			} else if ((ifi->flags & IFI_IN_CHARGE) != 0)
-				fatalx("yielding responsibility");
+			} else if ((ifi->flags & IFI_IN_CHARGE) != 0) {
+				log_debug("%s: yielding responsibility",
+				    log_procname);
+				exit(0);
+			}
 		}
 		break;
 	case RTM_DESYNC:
@@ -373,18 +377,8 @@ routehandler(struct interface_info *ifi, int routefd)
 			    (ifi->linkstat != 0) ? "up" : "down",
 			    (linkstat != 0) ? "up" : "down");
 			ifi->linkstat = linkstat;
-			if (ifi->linkstat != 0) {
-				if (ifi->state == S_PREBOOT) {
-					state_preboot(ifi);
-					get_hw_address(ifi);
-				} else {
-					ifi->state = S_REBOOTING;
-					state_reboot(ifi);
-				}
-			} else {
-				/* No need to wait for anything but link. */
-				cancel_timeout(ifi);
-			}
+			ifi->state = S_PREBOOT;
+			state_preboot(ifi);
 		}
 		break;
 	case RTM_IFANNOUNCE:
@@ -440,9 +434,9 @@ main(int argc, char *argv[])
 	else
 		log_init(0, LOG_DEBUG); /* can't log to stderr */
 
-	log_setverbose(1);	/* Show log_debug() messages. */
+	log_setverbose(0);	/* Don't show log_debug() messages. */
 
-	while ((ch = getopt(argc, argv, "c:di:l:L:nq")) != -1)
+	while ((ch = getopt(argc, argv, "c:di:l:L:nv")) != -1)
 		switch (ch) {
 		case 'c':
 			path_dhclient_conf = optarg;
@@ -472,8 +466,8 @@ main(int argc, char *argv[])
 		case 'n':
 			cmd_opts |= OPT_NOACTION;
 			break;
-		case 'q':
-			cmd_opts |= OPT_QUIET;
+		case 'v':
+			cmd_opts |= OPT_VERBOSE;
 			break;
 		default:
 			usage();
@@ -486,10 +480,10 @@ main(int argc, char *argv[])
 		usage();
 
 	if ((cmd_opts & (OPT_FOREGROUND | OPT_NOACTION)) != 0)
-		cmd_opts &= ~OPT_QUIET;
+		cmd_opts |= OPT_VERBOSE;
 
-	if ((cmd_opts & OPT_QUIET) != 0)
-		log_setverbose(0);	/* Don't show log_debug() */
+	if ((cmd_opts & OPT_VERBOSE) != 0)
+		log_setverbose(1);	/* Show log_debug() messages. */
 
 	ifi = calloc(1, sizeof(*ifi));
 	if (ifi == NULL)
@@ -673,13 +667,8 @@ main(int argc, char *argv[])
 
 	time(&ifi->startup_time);
 
-	if (ifi->linkstat != 0) {
-		ifi->state = S_REBOOTING;
-		state_reboot(ifi);
-	} else {
-		ifi->state = S_PREBOOT;
-		state_preboot(ifi);
-	}
+	ifi->state = S_PREBOOT;
+	state_preboot(ifi);
 
 	dispatch(ifi, routefd);
 
@@ -693,7 +682,7 @@ usage(void)
 	extern char	*__progname;
 
 	fprintf(stderr,
-	    "usage: %s [-dnq] [-c file] [-i options] [-L file] "
+	    "usage: %s [-dnv] [-c file] [-i options] [-L file] "
 	    "[-l file] interface\n", __progname);
 	exit(1);
 }
@@ -701,40 +690,27 @@ usage(void)
 void
 state_preboot(struct interface_info *ifi)
 {
-	static int	 preamble;
-	time_t		 cur_time;
-	int		 interval;
+	time_t		 cur_time, tickstart, tickstop;
 
 	time(&cur_time);
 
-	interval = cur_time - ifi->startup_time;
+	tickstart = ifi->startup_time + 3;
+	tickstop = ifi->startup_time + config->link_timeout;
 
 	ifi->linkstat = interface_status(ifi->name);
 
-	if (isatty(STDERR_FILENO) != 0 && interval > 3) {
-		if (preamble == 0 && ifi->linkstat == 0) {
-			fprintf(stderr, "%s: no link ....", ifi->name);
-			preamble = 1;
-		}
-		if (preamble != 0) {
-			if (ifi->linkstat != 0)
-				fprintf(stderr, " got link\n");
-			else if (interval > config->link_timeout)
-				fprintf(stderr, " sleeping\n");
-			else
-				fprintf(stderr, ".");
-			fflush(stderr);
-		}
-	}
-
 	if (ifi->linkstat != 0) {
+		tick_msg("link", 1, tickstart, tickstop);
+		if ((ifi->flags & IFI_VALID_LLADDR) == 0)
+			get_hw_address(ifi);
 		ifi->state = S_REBOOTING;
-		set_timeout(ifi, 1, state_reboot);
+		state_reboot(ifi);
 	} else {
-		if (interval > config->link_timeout)
-			go_daemon(ifi->name);
-		ifi->state = S_PREBOOT;
-		set_timeout(ifi, 1, state_preboot);
+		tick_msg("link", 0, tickstart, tickstop);
+		if (cur_time > tickstop)
+			cancel_timeout(ifi); /* Wait for RTM_IFINFO. */
+		else
+			set_timeout(ifi, 1, state_preboot);
 	}
 }
 
@@ -810,8 +786,6 @@ state_selecting(struct interface_info *ifi)
 	}
 
 	ifi->destination.s_addr = INADDR_BROADCAST;
-	time(&ifi->first_sending);
-
 	ifi->interval = 0;
 
 	/*
@@ -906,8 +880,7 @@ dhcpack(struct interface_info *ifi, struct option_data *options,
 
 	if (ifi->state != S_REBOOTING &&
 	    ifi->state != S_REQUESTING &&
-	    ifi->state != S_RENEWING &&
-	    ifi->state != S_REBINDING) {
+	    ifi->state != S_RENEWING) {
 		DPRINTF("%s: unexpected DHCPACK from %s - state #%d",
 		    log_procname, src, ifi->state);
 		return;
@@ -938,8 +911,7 @@ dhcpnak(struct interface_info *ifi, const char *src)
 {
 	if (ifi->state != S_REBOOTING &&
 	    ifi->state != S_REQUESTING &&
-	    ifi->state != S_RENEWING &&
-	    ifi->state != S_REBINDING) {
+	    ifi->state != S_RENEWING) {
 		DPRINTF("%s: unexpected DHCPNAK from %s - state #%d",
 		    log_procname, src, ifi->state);
 		return;
@@ -971,13 +943,18 @@ void
 bind_lease(struct interface_info *ifi)
 {
 	struct client_lease	*lease, *pl;
-	struct proposal		*active_proposal = NULL;
 	struct proposal		*offered_proposal = NULL;
 	struct proposal		*effective_proposal = NULL;
-	time_t			 cur_time, renewal;
-	int			 seen;
+	char			*msg;
+	time_t			 cur_time, renewal, tickstart, tickstop;
+	int			 rslt, seen;
 
 	time(&cur_time);
+	tickstart = ifi->first_sending + 3;
+	tickstop = ifi->startup_time + config->link_timeout;
+	if ((cmd_opts & OPT_VERBOSE) == 0)
+		tick_msg("lease", 1, tickstart, tickstop);
+
 	lease = apply_defaults(ifi->offer);
 
 	/*
@@ -995,52 +972,56 @@ bind_lease(struct interface_info *ifi)
 	ifi->rebind = lease_rebind(lease);
 	renewal = lease_renewal(lease);
 
-	/*
-	 * A duplicate proposal once we are responsible & S_RENEWING means we
-	 * don't need to change the interface, routing table or resolv.conf.
-	 */
-	if ((ifi->flags & IFI_IN_CHARGE) && ifi->state == S_RENEWING) {
-		active_proposal = lease_as_proposal(ifi->active);
-		offered_proposal = lease_as_proposal(ifi->offer);
-		if (memcmp(active_proposal, offered_proposal,
-		    sizeof(*active_proposal)) == 0) {
-			ifi->active = ifi->offer;
-			ifi->offer = NULL;
-			goto newlease;
-		}
-	}
-
 	/* Replace the old active lease with the accepted offer. */
 	ifi->active = ifi->offer;
 	ifi->offer = NULL;
+
 	effective_proposal = lease_as_proposal(lease);
+	if (ifi->configured != NULL) {
+		if (memcmp(ifi->configured, effective_proposal,
+		    sizeof(*ifi->configured)) == 0)
+			goto newlease;
+	}
+	free(ifi->configured);
+	ifi->configured = effective_proposal;
+	effective_proposal = NULL;
 
 	set_resolv_conf(ifi->name,
-	    effective_proposal->rtsearch,
-	    effective_proposal->rtsearch_len,
-	    effective_proposal->rtdns,
-	    effective_proposal->rtdns_len);
+	    ifi->configured->rtsearch,
+	    ifi->configured->rtsearch_len,
+	    ifi->configured->rtdns,
+	    ifi->configured->rtdns_len);
 
-	set_mtu(effective_proposal->inits, effective_proposal->mtu);
+	set_mtu(ifi->configured->inits, ifi->configured->mtu);
 
-	set_address(ifi->name, effective_proposal->ifa,
-	    effective_proposal->netmask);
+	set_address(ifi->name, ifi->configured->ifa, ifi->configured->netmask);
 
-	set_routes(effective_proposal->ifa, effective_proposal->netmask,
-	    effective_proposal->rtstatic, effective_proposal->rtstatic_len);
+	set_routes(ifi->configured->ifa, ifi->configured->netmask,
+	    ifi->configured->rtstatic, ifi->configured->rtstatic_len);
+
+	rslt = asprintf(&msg, "bound to %s from %s",
+	    inet_ntoa(ifi->active->address),
+	    (ifi->offer_src == NULL) ? "<unknown>" : ifi->offer_src);
+	if (rslt == -1)
+		fatal("bind msg");
+	if ((cmd_opts & OPT_FOREGROUND) != 0) {
+		/* log_info() will put messages on console only. */
+		;
+	} else if (isatty(STDERR_FILENO) != 0) {
+		/* log_info() to console and then /var/log/daemon. */
+		log_info("%s: %s", log_procname, msg);
+		go_daemon();
+	}
+	log_info("%s: %s", log_procname, msg);
+	free(msg);
 
 newlease:
 	write_resolv_conf();
-	log_info("%s: bound to %s from %s", log_procname,
-	    inet_ntoa(ifi->active->address),
-	    (ifi->offer_src == NULL) ? "<unknown>" : ifi->offer_src
-	);
 	free(ifi->offer_src);
 	ifi->offer_src = NULL;
-	go_daemon(ifi->name);
+	go_daemon();
 	rewrite_option_db(ifi->name, ifi->active, lease);
 	free_client_lease(lease);
-	free(active_proposal);
 	free(offered_proposal);
 	free(effective_proposal);
 
@@ -1073,8 +1054,17 @@ newlease:
 
 	ifi->state = S_BOUND;
 
-	/* Set timeout to start the renewal process. */
-	set_timeout(ifi, renewal - cur_time, state_bound);
+	/*
+	 * Set timeout to start the renewal process.
+	 *
+	 * If the renewal time is in the past, the lease is from the
+	 * leaseDB. Rather than immediately trying to contact a server,
+	 * pause the configured time between attempts.
+	 */
+	if (renewal < cur_time)
+		set_timeout(ifi, config->retry_interval, state_bound);
+	else
+		set_timeout(ifi, renewal - cur_time, state_bound);
 }
 
 /*
@@ -1285,14 +1275,16 @@ void
 send_discover(struct interface_info *ifi)
 {
 	struct dhcp_packet	*packet = &ifi->sent_packet;
-	time_t			 cur_time;
+	time_t			 cur_time, interval, tickstart, tickstop;
 	ssize_t			 rslt;
-	int			 interval;
 
 	time(&cur_time);
 
 	/* Figure out how long it's been since we started transmitting. */
 	interval = cur_time - ifi->first_sending;
+
+	tickstart = ifi->first_sending + 3;
+	tickstop = ifi->startup_time + config->link_timeout;
 
 	if (interval > config->timeout) {
 		state_panic(ifi);
@@ -1320,10 +1312,22 @@ send_discover(struct interface_info *ifi)
 	 * If the backoff would take us to the panic timeout, just use that
 	 * as the interval.
 	 */
-	if (cur_time + ifi->interval >
-	    ifi->first_sending + config->timeout)
+	if (cur_time + ifi->interval > ifi->first_sending + config->timeout)
 		ifi->interval = (ifi->first_sending +
 		    config->timeout) - cur_time + 1;
+
+	/*
+	 * If we are still starting up, backoff 1 second. If we are past
+	 * link_timeout we just go daemon and finish things up in the
+	 * background.
+	 */
+	if (cur_time < tickstop) {
+		if ((cmd_opts & OPT_VERBOSE) == 0)
+			tick_msg("lease", 0, tickstart, tickstop);
+		ifi->interval = 1;
+	} else {
+		tick_msg("lease", 0, tickstart, tickstop);
+	}
 
 	/* Record the number of seconds since we started sending. */
 	if (interval < UINT16_MAX)
@@ -1331,7 +1335,6 @@ send_discover(struct interface_info *ifi)
 	else
 		packet->secs = htons(UINT16_MAX);
 	ifi->secs = packet->secs;
-
 
 	rslt = send_packet(ifi, inaddr_any, inaddr_broadcast, "DHCPDISCOVER");
 	if (rslt != -1)
@@ -1365,7 +1368,7 @@ state_panic(struct interface_info *ifi)
 	    log_procname);
 	ifi->state = S_INIT;
 	set_timeout(ifi, config->retry_interval, state_init);
-	go_daemon(ifi->name);
+	go_daemon();
 }
 
 void
@@ -1375,13 +1378,15 @@ send_request(struct interface_info *ifi)
 	struct in_addr		 from;
 	struct dhcp_packet	*packet = &ifi->sent_packet;
 	ssize_t			 rslt;
-	time_t			 cur_time;
-	int			 interval;
+	time_t			 cur_time, interval, tickstart, tickstop;
 
 	time(&cur_time);
 
 	/* Figure out how long it's been since we started transmitting. */
 	interval = cur_time - ifi->first_sending;
+
+	tickstart = ifi->first_sending + 3;
+	tickstop = ifi->startup_time + config->link_timeout;
 
 	/*
 	 * If we're in the INIT-REBOOT state and we've been trying longer
@@ -1435,6 +1440,19 @@ send_request(struct interface_info *ifi)
 		ifi->interval = ifi->expiry - cur_time + 1;
 
 	/*
+	 * If we are still starting up, backoff 1 second. If we are past
+	 * link_timeout we just go daemon and finish things up in the
+	 * background.
+	 */
+	if (cur_time < tickstop) {
+		if ((cmd_opts & OPT_VERBOSE) == 0)
+			tick_msg("lease", 0, tickstart, tickstop);
+		ifi->interval = 1;
+	} else {
+		tick_msg("lease", 0, tickstart, tickstop);
+	}
+
+	/*
 	 * If the reboot timeout has expired, or the lease rebind time has
 	 * elapsed, or if we're not yet bound, broadcast the DHCPREQUEST rather
 	 * than unicasting.
@@ -1462,7 +1480,6 @@ send_request(struct interface_info *ifi)
 		else
 			packet->secs = htons(UINT16_MAX);
 	}
-
 
 	rslt = send_packet(ifi, from, destination.sin_addr, "DHCPREQUEST");
 	if (rslt != -1)
@@ -1623,8 +1640,7 @@ make_request(struct interface_info *ifi, struct client_lease * lease)
 	 * set ciaddr to zero.
 	 */
 	if (ifi->state == S_BOUND ||
-	    ifi->state == S_RENEWING ||
-	    ifi->state == S_REBINDING)
+	    ifi->state == S_RENEWING)
 		packet->ciaddr.s_addr = lease->address.s_addr;
 	else
 		packet->ciaddr.s_addr = INADDR_ANY;
@@ -1981,7 +1997,7 @@ lease_as_string(char *ifname, char *type, struct client_lease *lease)
 }
 
 void
-go_daemon(const char *name)
+go_daemon(void)
 {
 	static int	 daemonized = 0;
 
@@ -1995,8 +2011,8 @@ go_daemon(const char *name)
 
 	/* Stop logging to stderr. */
 	log_init(0, LOG_DAEMON);
-	if ((cmd_opts & OPT_QUIET) == 0)
-		log_setverbose(1);	/* show log_debug() messages. */
+	if ((cmd_opts & OPT_VERBOSE) != 0)
+		log_setverbose(1);	/* Show log_debug() messages. */
 	log_procinit(log_procname);
 
 	setproctitle("%s", log_procname);
@@ -2090,7 +2106,7 @@ fork_privchld(struct interface_info *ifi, int fd, int fd2)
 	if (chdir("/") == -1)
 		fatal("chdir(\"/\")");
 
-	go_daemon(ifi->name);
+	go_daemon();
 
 	if (log_procname != NULL)
 		free(log_procname);
@@ -2623,4 +2639,36 @@ lease_rebind(struct client_lease *lease)
 		rebind = renewal;
 
 	return lease->epoch + rebind;
+}
+
+void
+tick_msg(const char *preamble, int success, time_t start, time_t stop)
+{
+	static int	preamble_sent;
+	time_t		cur_time;
+
+	time(&cur_time);
+
+	if (isatty(STDERR_FILENO) == 0 || cur_time < start)
+		return;
+
+	if (preamble_sent == 0) {
+		fprintf(stderr, "%s: no %s ...", log_procname, preamble);
+		fflush(stderr);
+		preamble_sent = 1;
+	}
+
+	if (success == 1) {
+		fprintf(stderr, " got %s\n", preamble);
+		fflush(stderr);
+		preamble_sent = 0;
+	} else if (cur_time < stop) {
+		fprintf(stderr, ".");
+		fflush(stderr);
+	} else {
+		fprintf(stderr, " sleeping\n");
+		fflush(stderr);
+		go_daemon();
+		preamble_sent = 0;
+	}
 }

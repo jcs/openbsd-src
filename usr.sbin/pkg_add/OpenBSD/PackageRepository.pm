@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: PackageRepository.pm,v 1.151 2018/01/20 12:01:56 espie Exp $
+# $OpenBSD: PackageRepository.pm,v 1.155 2018/02/07 11:38:38 espie Exp $
 #
 # Copyright (c) 2003-2010 Marc Espie <espie@openbsd.org>
 #
@@ -293,9 +293,13 @@ sub parse_problems
 	my $signify_error = 0;
 	$self->{last_error} = 0;
 	while(<$fh>) {
-		if (m/^Redirected to https?\:\/\/([^\/]*)/) {
+		if (m/^Redirected to (https?)\:\/\/([^\/]*)/) {
+			my ($scheme, $newhost) = ($1, $2);
 			$self->{state}->print("#1", $_);
-			$self->{host} = $1;
+			next if $scheme ne $self->urlscheme;
+			$self->{state}->syslog("Redirected from #1 to #2",
+			    $self->{host}, $newhost);
+			$self->{host} = $newhost;
 			$baseurl = $self->url;
 			next;
 		}
@@ -739,23 +743,49 @@ our @ISA=qw(OpenBSD::PackageRepository::Distant);
 
 our %distant = ();
 
+my ($fetch_uid, $fetch_gid, $fetch_user);
+
+sub fill_up_fetch_data
+{
+	my $self = shift;
+	if ($< == 0) {
+		$fetch_user = '_pkgfetch';
+		unless ((undef, undef, $fetch_uid, $fetch_gid) = 
+		    getpwnam($fetch_user)) {
+			$self->{state}->fatal(
+			    "Couldn't change identity: can't find #1 user", 
+			    $fetch_user);
+		}
+	} else {
+		($fetch_user) = getpwuid($<);
+    	}
+}
+
+sub fetch_id
+{
+	my $self = shift;
+	if (!defined $fetch_user) {
+		$self->fill_up_fetch_data;
+	}
+	return ($fetch_uid, $fetch_gid, $fetch_user);
+}
+
+sub ftp_cmd
+{
+	my $self = shift;
+	return OpenBSD::Paths->ftp;
+}
+
 sub drop_privileges_and_setup_env
 {
 	my $self = shift;
-	my $user = '_pkgfetch';
-	if ($< == 0) {
-		# we can't cache anything, we happen after the fork, 
-		# right before exec
-		if (my (undef, undef, $uid, $gid) = getpwnam($user)) {
-			$( = $gid;
-			$) = "$gid $gid";
-			$< = $uid;
-			$> = $uid;
-		} else {
-			$self->{state}->fatal("Couldn't change identity: can't find #1 user", $user);
-		}
-	} else {
-		($user) = getpwuid($<);
+	my ($uid, $gid, $user) = $self->fetch_id;
+	if (defined $uid) {
+		# we happen right before exec, so change id permanently
+		$( = $gid;
+		$) = "$gid $gid";
+		$< = $uid;
+		$> = $uid;
 	}
 	# create sanitized env for ftp
 	my %newenv = (
@@ -793,14 +823,14 @@ sub drop_privileges_and_setup_env
 sub grab_object
 {
 	my ($self, $object) = @_;
-	my ($ftp, @extra) = split(/\s+/, OpenBSD::Paths->ftp);
+	my ($ftp, @extra) = split(/\s+/, $self->ftp_cmd);
 	$self->drop_privileges_and_setup_env;
 	exec {$ftp}
 	    $ftp,
 	    @extra,
 	    "-o",
 	    "-", $self->url($object->{name})
-	or $self->{state}->fatal("Can't run #1: #2", OpenBSD::Paths->ftp, $!);
+	or $self->{state}->fatal("Can't run #1: #2", $self->ftp_cmd, $!);
 }
 
 sub open_read_ftp
@@ -916,7 +946,7 @@ sub get_http_list
 
 	my $fullname = $self->url;
 	my $l = [];
-	my $fh = $self->open_read_ftp(OpenBSD::Paths->ftp." -o - $fullname", 
+	my $fh = $self->open_read_ftp($self->ftp_cmd." -o - $fullname", 
 	    $error) or return;
 	while(<$fh>) {
 		chomp;
@@ -953,6 +983,20 @@ sub urlscheme
 	return 'https';
 }
 
+OpenBSD::Auto::cache(session_file,
+    sub {
+	my $self = shift;
+	require OpenBSD::Temp;
+
+	local ($>, $));
+	my ($uid, $gid, $user) = $self->fetch_id;
+	if (defined $uid) {
+		$> = $uid;
+		$) = "$gid $gid";
+	}
+	return OpenBSD::Temp->file;
+    });
+
 package OpenBSD::PackageRepository::FTP;
 our @ISA=qw(OpenBSD::PackageRepository::HTTPorFTP);
 
@@ -984,8 +1028,8 @@ sub get_ftp_list
 	my ($self, $error) = @_;
 
 	my $fullname = $self->url;
-	return $self->_list("echo 'nlist'| ".OpenBSD::Paths->ftp
-	    ." $fullname", $error);
+	return $self->_list("echo 'nlist'| ".$self->ftp_cmd." $fullname", 
+	    $error);
 }
 
 sub obtain_list

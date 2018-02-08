@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_var.h,v 1.129 2018/01/23 21:41:17 bluhm Exp $	*/
+/*	$OpenBSD: tcp_var.h,v 1.131 2018/02/07 00:31:10 bluhm Exp $	*/
 /*	$NetBSD: tcp_var.h,v 1.17 1996/02/13 23:44:24 christos Exp $	*/
 
 /*
@@ -100,6 +100,12 @@ struct tcpcb {
 #define TF_NEEDOUTPUT	0x00800000	/* call tcp_output after tcp_input */
 #define TF_BLOCKOUTPUT	0x01000000	/* avert tcp_output during tcp_input */
 #define TF_NOPUSH	0x02000000	/* don't push */
+#define TF_TMR_REXMT	0x04000000	/* retransmit timer armed */
+#define TF_TMR_PERSIST	0x08000000	/* retransmit persistence timer armed */
+#define TF_TMR_KEEP	0x10000000	/* keep alive timer armed */
+#define TF_TMR_2MSL	0x20000000	/* 2*msl quiet time timer armed */
+#define TF_TMR_REAPER	0x40000000	/* delayed cleanup timer armed, dead */
+#define TF_TIMER	TF_TMR_REXMT	/* used to shift with TCPT values */
 
 	struct	mbuf *t_template;	/* skeletal packet for transmit */
 	struct	inpcb *t_inpcb;		/* back pointer to internet pcb */
@@ -199,14 +205,13 @@ struct tcpcb {
 #define	sototcpcb(so)	(intotcpcb(sotoinpcb(so)))
 
 #ifdef _KERNEL
-extern int tcp_delack_ticks;
 void	tcp_delack(void *);
 
 #define TCP_INIT_DELACK(tp)						\
 	timeout_set_proc(&(tp)->t_delack_to, tcp_delack, tp)
 
 #define TCP_RESTART_DELACK(tp)						\
-	timeout_add(&(tp)->t_delack_to, tcp_delack_ticks)
+	timeout_add_msec(&(tp)->t_delack_to, tcp_delack_msecs)
 
 #define	TCP_SET_DELACK(tp)						\
 do {									\

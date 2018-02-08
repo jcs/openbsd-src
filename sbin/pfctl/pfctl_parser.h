@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfctl_parser.h,v 1.107 2017/11/25 22:20:06 sashan Exp $ */
+/*	$OpenBSD: pfctl_parser.h,v 1.110 2018/02/08 09:15:46 henning Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -91,6 +91,8 @@ struct pfctl {
 	u_int32_t	 debug;
 	u_int32_t	 hostid;
 	u_int32_t	 reassemble;
+	u_int8_t	 syncookies;
+	u_int8_t	 syncookieswat[2];	/* lowat, hiwat */
 	char		*ifname;
 
 	u_int8_t	 timeout_set[PFTM_MAX];
@@ -99,6 +101,8 @@ struct pfctl {
 	u_int8_t	 hostid_set;
 	u_int8_t	 ifname_set;
 	u_int8_t	 reass_set;
+	u_int8_t	 syncookies_set;
+	u_int8_t	 syncookieswat_set;
 };
 
 struct node_if {
@@ -201,6 +205,10 @@ struct pfctl_qsitem {
 	int				 matches;
 };
 
+struct pfctl_watermarks {
+	u_int32_t	hi;
+	u_int32_t	lo;
+};
 
 int	pfctl_rules(int, char *, int, int, char *, struct pfr_buffer *);
 int	pfctl_optimize_ruleset(struct pfctl *, struct pf_ruleset *);
@@ -215,6 +223,8 @@ void	pfctl_clear_pool(struct pf_pool *);
 
 int	pfctl_set_timeout(struct pfctl *, const char *, int, int);
 int	pfctl_set_reassembly(struct pfctl *, int, int);
+int	pfctl_set_syncookies(struct pfctl *, u_int8_t,
+	    struct pfctl_watermarks *);
 int	pfctl_set_optimization(struct pfctl *, const char *);
 int	pfctl_set_limit(struct pfctl *, const char *, unsigned int);
 int	pfctl_set_logif(struct pfctl *, char *);
@@ -234,7 +244,7 @@ void	print_pool(struct pf_pool *, u_int16_t, u_int16_t, sa_family_t, int, int);
 void	print_src_node(struct pf_src_node *, int);
 void	print_rule(struct pf_rule *, const char *, int);
 void	print_tabledef(const char *, int, int, struct node_tinithead *);
-void	print_status(struct pf_status *, int);
+void	print_status(struct pf_status *, struct pfctl_watermarks *, int);
 void	print_queuespec(struct pf_queuespec *);
 
 int	pfctl_define_table(char *, int, int, const char *, struct pfr_buffer *,

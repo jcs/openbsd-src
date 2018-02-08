@@ -1,4 +1,4 @@
-/* $OpenBSD: ocsp.c,v 1.13 2017/11/29 23:47:18 guenther Exp $ */
+/* $OpenBSD: ocsp.c,v 1.15 2018/02/07 05:49:36 jsing Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
  */
@@ -732,7 +732,7 @@ done_resp:
 
 	ret = 0;
 
-end:
+ end:
 	ERR_print_errors(bio_err);
 	X509_free(signer);
 	X509_STORE_free(store);
@@ -783,7 +783,7 @@ add_ocsp_cert(OCSP_REQUEST ** req, X509 * cert, const EVP_MD * cert_id_md, X509 
 		goto err;
 	return 1;
 
-err:
+ err:
 	BIO_printf(bio_err, "Error Creating OCSP request\n");
 	return 0;
 }
@@ -819,7 +819,7 @@ add_ocsp_serial(OCSP_REQUEST ** req, char *serial, const EVP_MD * cert_id_md, X5
 		goto err;
 	return 1;
 
-err:
+ err:
 	BIO_printf(bio_err, "Error Creating OCSP request\n");
 	return 0;
 }
@@ -926,8 +926,7 @@ make_ocsp_response(OCSP_RESPONSE ** resp, OCSP_REQUEST * req, CA_DB * db,
 			    NULL);
 			goto end;
 		}
-		if (ca_id)
-			OCSP_CERTID_free(ca_id);
+		OCSP_CERTID_free(ca_id);
 		ca_id = OCSP_cert_to_id(cert_id_md, NULL, ca);
 
 		/* Is this request about our CA? */
@@ -977,7 +976,7 @@ make_ocsp_response(OCSP_RESPONSE ** resp, OCSP_REQUEST * req, CA_DB * db,
 
 	*resp = OCSP_response_create(OCSP_RESPONSE_STATUS_SUCCESSFUL, bs);
 
-end:
+ end:
 	ASN1_TIME_free(thisupd);
 	ASN1_TIME_free(nextupd);
 	OCSP_CERTID_free(ca_id);
@@ -1030,7 +1029,7 @@ init_responder(char *port)
 	}
 	return acbio;
 
-err:
+ err:
 	BIO_free_all(acbio);
 	BIO_free(bufbio);
 	return NULL;
@@ -1173,9 +1172,8 @@ query_responder(BIO * err, BIO * cbio, char *path,
 			break;
 		}
 	}
-err:
-	if (ctx)
-		OCSP_REQ_CTX_free(ctx);
+ err:
+	OCSP_REQ_CTX_free(ctx);
 
 	return rsp;
 }
@@ -1210,11 +1208,9 @@ process_responder(BIO * err, OCSP_REQUEST * req,
 	resp = query_responder(err, cbio, path, headers, req, req_timeout);
 	if (!resp)
 		BIO_printf(bio_err, "Error querying OCSP responder\n");
-end:
-	if (cbio)
-		BIO_free_all(cbio);
-	if (ctx)
-		SSL_CTX_free(ctx);
+ end:
+	BIO_free_all(cbio);
+	SSL_CTX_free(ctx);
 	return resp;
 }
 
