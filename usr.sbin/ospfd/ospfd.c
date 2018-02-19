@@ -1,4 +1,4 @@
-/*	$OpenBSD: ospfd.c,v 1.95 2018/02/05 12:11:28 remi Exp $ */
+/*	$OpenBSD: ospfd.c,v 1.97 2018/02/11 02:27:33 benno Exp $ */
 
 /*
  * Copyright (c) 2005 Claudio Jeker <claudio@openbsd.org>
@@ -265,7 +265,7 @@ main(int argc, char *argv[])
 	event_add(&iev_rde->ev, NULL);
 
 	if (kr_init(!(ospfd_conf->flags & OSPFD_FLAG_NO_FIB_UPDATE),
-	    ospfd_conf->rdomain) == -1)
+	    ospfd_conf->rdomain, ospfd_conf->redist_label_or_prefix) == -1)
 		fatalx("kr_init failed");
 
 	/* remove unneeded stuff from config */
@@ -516,13 +516,12 @@ ospf_redistribute(struct kroute *kr, u_int32_t *metric)
 	struct in_addr		 addr;
 	struct kif		*kif;
 	struct redistribute	*r;
-	int		 	 is_default = 0, depend_ok = 1;
+	int		 	 is_default, depend_ok;
 
 	bzero(&addr, sizeof(addr));
 
 	/* only allow 0.0.0.0/0 via REDIST_DEFAULT */
-	if (kr->prefix.s_addr == INADDR_ANY && kr->prefixlen == 0)
-		is_default = 1;
+	is_default = (kr->prefix.s_addr == INADDR_ANY && kr->prefixlen == 0);
 
 	SIMPLEQ_FOREACH(r, &ospfd_conf->redist_list, entry) {
 		if (r->dependon[0] != '\0') {
@@ -530,7 +529,7 @@ ospf_redistribute(struct kroute *kr, u_int32_t *metric)
 				depend_ok = ifstate_is_up(kif);
 			else
 				depend_ok = 0;
-		} else 
+		} else
 			depend_ok = 1;
 
 		switch (r->type & ~REDIST_NO) {
@@ -638,7 +637,7 @@ ospf_reload(void)
 
 	merge_config(ospfd_conf, xconf);
 	/* update redistribute lists */
-	kr_reload();
+	kr_reload(ospfd_conf->redist_label_or_prefix);
 	return (0);
 }
 
@@ -668,6 +667,7 @@ merge_config(struct ospfd_conf *conf, struct ospfd_conf *xconf)
 	    SIMPLEQ_EMPTY(&xconf->redist_list))
 		rchange = 1;
 	conf->rfc1583compat = xconf->rfc1583compat;
+	conf->redist_label_or_prefix = xconf->redist_label_or_prefix;
 
 	if (ospfd_process == PROC_MAIN) {
 		/* main process does neither use areas nor interfaces */

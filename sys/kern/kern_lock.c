@@ -1,28 +1,21 @@
-/*	$OpenBSD: kern_lock.c,v 1.54 2018/02/08 12:57:24 mpi Exp $	*/
+/*	$OpenBSD: kern_lock.c,v 1.59 2018/02/19 09:18:00 mpi Exp $	*/
 
 /*
+ * Copyright (c) 2017 Visa Hankala
+ * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>
  * Copyright (c) 2004 Artur Grabowski <art@openbsd.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
  *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. The name of the author may not be used to endorse or promote products
- *    derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
- * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
- * AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
- * THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL  DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
- * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
- * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
- * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #include <sys/param.h>
@@ -30,8 +23,14 @@
 #include <sys/sched.h>
 #include <sys/atomic.h>
 #include <sys/witness.h>
+#include <sys/mutex.h>
 
 #include <ddb/db_output.h>
+
+#if defined(MULTIPROCESSOR) || defined(WITNESS)
+#include <sys/mplock.h>
+struct __mp_lock kernel_lock;
+#endif
 
 #ifdef MP_LOCKDEBUG
 #ifndef DDB
@@ -41,10 +40,6 @@
 /* CPU-dependent timing, this needs to be settable from ddb. */
 int __mp_lock_spinout = 200000000;
 #endif /* MP_LOCKDEBUG */
-
-#if defined(MULTIPROCESSOR) || defined(WITNESS)
-struct __mp_lock kernel_lock;
-#endif
 
 #ifdef MULTIPROCESSOR
 
@@ -92,21 +87,6 @@ _kernel_lock_held(void)
 #ifdef __USE_MI_MPLOCK
 
 /* Ticket lock implementation */
-/*
- * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #include <machine/cpu.h>
 
@@ -373,3 +353,52 @@ __mtx_leave(struct mutex *mtx)
 		splx(s);
 }
 #endif /* __USE_MI_MUTEX */
+
+#ifdef WITNESS
+void
+_mtx_init_flags(struct mutex *m, int ipl, const char *name, int flags,
+    struct lock_type *type)
+{
+	struct lock_object *lo = MUTEX_LOCK_OBJECT(m);
+
+	lo->lo_flags = MTX_LO_FLAGS(flags);
+	if (name != NULL)
+		lo->lo_name = name;
+	else
+		lo->lo_name = type->lt_name;
+	WITNESS_INIT(lo, type);
+
+	_mtx_init(m, ipl);
+}
+
+void
+_mtx_enter(struct mutex *m, const char *file, int line)
+{
+	struct lock_object *lo = MUTEX_LOCK_OBJECT(m);
+
+	WITNESS_CHECKORDER(lo, LOP_EXCLUSIVE | LOP_NEWORDER, file, line, NULL);
+	__mtx_enter(m);
+	WITNESS_LOCK(lo, LOP_EXCLUSIVE, file, line);
+}
+
+int
+_mtx_enter_try(struct mutex *m, const char *file, int line)
+{
+	struct lock_object *lo = MUTEX_LOCK_OBJECT(m);
+
+	if (__mtx_enter_try(m)) {
+		WITNESS_LOCK(lo, LOP_EXCLUSIVE, file, line);
+		return 1;
+	}
+	return 0;
+}
+
+void
+_mtx_leave(struct mutex *m, const char *file, int line)
+{
+	struct lock_object *lo = MUTEX_LOCK_OBJECT(m);
+
+	WITNESS_UNLOCK(lo, LOP_EXCLUSIVE, file, line);
+	__mtx_leave(m);
+}
+#endif /* WITNESS */

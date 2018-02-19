@@ -1,4 +1,4 @@
-/*	$OpenBSD: usb.c,v 1.115 2018/02/03 13:37:37 mpi Exp $	*/
+/*	$OpenBSD: usb.c,v 1.117 2018/02/19 09:20:45 jsg Exp $	*/
 /*	$NetBSD: usb.c,v 1.77 2003/01/01 00:10:26 thorpej Exp $	*/
 
 /*
@@ -598,7 +598,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 #ifdef USB_DEBUG
 	case USB_SETDEBUG:
 		/* only root can access to these debug flags */
-		if ((error = suser(curproc, 0)) != 0)
+		if ((error = suser(curproc)) != 0)
 			return (error);
 		if (!(flag & FWRITE))
 			return (EBADF);
@@ -1020,6 +1020,8 @@ usb_tap(struct usbd_bus *bus, struct usbd_xfer *xfer, uint8_t dir)
 		uph->uph_hlen = htole16(sizeof(*uph));
 		uph->uph_xfertype = USBPCAP_TRANSFER_INTERRUPT;
 		break;
+	default:
+		return;
 	}
 
 	uph->uph_id = 0; /* not yet used */

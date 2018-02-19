@@ -1,4 +1,4 @@
-/* $OpenBSD: dsa.h,v 1.22 2016/11/04 18:35:30 jsing Exp $ */
+/* $OpenBSD: dsa.h,v 1.26 2018/02/18 14:58:12 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -256,6 +256,12 @@ int	DSA_print_fp(FILE *bp, const DSA *x, int off);
  * (be careful to avoid small subgroup attacks when using this!) */
 DH *DSA_dup_DH(const DSA *r);
 #endif
+
+void DSA_get0_pqg(const DSA *d, const BIGNUM **p, const BIGNUM **q,
+    const BIGNUM **g);
+int DSA_set0_pqg(DSA *d, BIGNUM *p, BIGNUM *q, BIGNUM *g);
+void DSA_get0_key(const DSA *d, const BIGNUM **pub_key, const BIGNUM **priv_key);
+int DSA_set0_key(DSA *d, BIGNUM *pub_key, BIGNUM *priv_key);
 
 #define EVP_PKEY_CTX_set_dsa_paramgen_bits(ctx, nbits) \
 	EVP_PKEY_CTX_ctrl(ctx, EVP_PKEY_DSA, EVP_PKEY_OP_PARAMGEN, \

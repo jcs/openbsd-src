@@ -1,4 +1,4 @@
-/*	$OpenBSD: print-gre.c,v 1.15 2018/02/08 09:01:45 dlg Exp $	*/
+/*	$OpenBSD: print-gre.c,v 1.18 2018/02/09 04:08:26 dlg Exp $	*/
 
 /*
  * Copyright (c) 2002 Jason L. Wright (jason@thought.net)
@@ -65,6 +65,17 @@
 #define NVGRE_VSID_SHIFT	8
 #define NVGRE_FLOWID_MASK	0x000000ffU
 #define NVGRE_FLOWID_SHIFT	0
+
+#define GRE_WCCP	0x883e
+
+struct wccp_redirect {
+	uint8_t		flags;
+#define WCCP_D			(1 << 7)
+#define WCCP_A			(1 << 6)
+	uint8_t		ServiceId;
+	uint8_t		AltBucket;
+	uint8_t		PriBucket;
+};
 
 void gre_print_0(const u_char *, u_int);
 void gre_print_1(const u_char *, u_int);
@@ -207,6 +218,35 @@ gre_print_0(const u_char *p, u_int length)
 	case 0:
 		printf("keep-alive");
 		break;
+	case GRE_WCCP: {
+		printf("wccp ");
+
+		if (l == 0)
+			return;
+
+		if (*p >> 4 != 4) {
+			struct wccp_redirect *wccp;
+
+			if (l < sizeof(*wccp)) {
+				printf("[|wccp]");
+				return;
+			}
+
+			wccp = (struct wccp_redirect *)p;
+
+			printf("D:%c A:%c SId:%u Alt:%u Pri:%u",
+			    (wccp->flags & WCCP_D) ? '1' : '0',
+			    (wccp->flags & WCCP_A) ? '1' : '0',
+			    wccp->ServiceId, wccp->AltBucket, wccp->PriBucket);
+
+			p += sizeof(*wccp);
+			l -= sizeof(*wccp);
+
+			printf(": ");
+		}
+
+		/* FALLTHROUGH */
+	}
 	case ETHERTYPE_IP:
 		ip_print(p, length);
 		break;
@@ -217,7 +257,7 @@ gre_print_0(const u_char *p, u_int length)
 		mpls_print(p, length);
 		break;
 	case ETHERTYPE_TRANSETHER:
-		ether_print(p, length);
+		ether_tryprint(p, length, 0);
 		break;
 	default:
 		printf("unknown-proto-%04x", proto);

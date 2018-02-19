@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.24 2018/02/08 13:51:08 mpi Exp $
+# $OpenBSD: Makefile,v 1.28 2018/02/19 11:37:38 mpi Exp $
 
 RDOMAIN?=	5
 
@@ -10,16 +10,19 @@ RDOMAIN?=	5
 .SILENT: .BEGIN .END
 
 .BEGIN:
+.for itf in lo10001 lo10002 lo10003 lo10004 vlan99 vether99
+	-${SUDO} ifconfig ${itf} destroy 2>/dev/null || true
+.endfor
+	-${SUDO} ifconfig lo${RDOMAIN} rdomain ${RDOMAIN} -inet6 down
 	-${SUDO} ifconfig lo10001 up rdomain ${RDOMAIN} 192.0.2.1/32
 	-${SUDO} ifconfig lo10002 up rdomain ${RDOMAIN} 192.0.2.2/32
 	-${SUDO} ifconfig lo10003 up rdomain ${RDOMAIN} 192.0.2.3/32
 	-${SUDO} ifconfig lo10004 up rdomain ${RDOMAIN} 192.0.2.4/32
 
 .END:
-	-${SUDO} ifconfig lo10001 destroy
-	-${SUDO} ifconfig lo10002 destroy
-	-${SUDO} ifconfig lo10003 destroy
-	-${SUDO} ifconfig lo10004 destroy
+.for itf in lo10001 lo10002 lo10003 lo10004 vlan99 vether99
+	-${SUDO} ifconfig ${itf} destroy 2>/dev/null || true
+.endfor
 
 .endif
 .endif
@@ -121,7 +124,7 @@ rttest${n}:
 	${SUDO} ifconfig lo10002 down
 	! ${RCMD} add -priority 17 10.8.1/24 192.0.2.2
 	# Wait until SRP reference count are dropped
-	sleep .1
+	sleep .5
 	${RCMD} show -inet 2>&1 | \
 		diff -u ${.CURDIR}/${.TARGET}.ok /dev/stdin
 
@@ -342,11 +345,9 @@ rttest${n}:
 	${SUDO} ifconfig vlan99 inet alias 10.1.255.3/14
 	${SUDO} ifconfig vlan99 down
 	# Wait until SRP reference count are dropped
-	sleep .1
+	sleep .5
 	${RCMD} show -inet 2>&1 | \
 		diff -u ${.CURDIR}/${.TARGET}.ok /dev/stdin
-	${SUDO} ifconfig vlan99 destroy
-	${SUDO} ifconfig vether99 destroy
 
 # Check that routes are inserted respecting their priority order
 n=	31
@@ -375,9 +376,7 @@ rttest${n}:
 	${RCMD} add -net 192.168.67.128/25 130.102.71.67 -priority 3 -ifp vlan99
 	${RCMD} show -inet 2>&1 | \
 		sed -e "s,link\#[0-9 ]*U,link#              U," | \
-		cat > ${.CURDIR}/${.TARGET}.ok
-	${SUDO} ifconfig vlan99 destroy
-	${SUDO} ifconfig vether99 destroy
+		diff -u ${.CURDIR}/${.TARGET}.ok /dev/stdin
 
 REGRESS_TARGETS=netmask ${RTTEST_TARGETS}
 REGRESS_ROOT_TARGETS=${REGRESS_TARGETS}

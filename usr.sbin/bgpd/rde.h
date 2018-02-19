@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.166 2018/02/07 00:02:02 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.168 2018/02/10 05:54:31 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -411,7 +411,7 @@ enum filter_actions rde_filter(struct filter_head *, struct rde_aspath **,
 void		 rde_apply_set(struct rde_aspath *, struct filter_set_head *,
 		     u_int8_t, struct rde_peer *, struct rde_peer *);
 int		 rde_filter_equal(struct filter_head *, struct filter_head *,
-		     struct rde_peer *);
+		     struct rde_peer *, struct prefixset_head *);
 void		 rde_filter_calc_skip_steps(struct filter_head *);
 
 /* rde_prefix.c */
@@ -484,7 +484,7 @@ void		 path_put(struct rde_aspath *);
 #define	PREFIX_SIZE(x)	(((x) + 7) / 8 + 1)
 int		 prefix_remove(struct rib *, struct rde_peer *,
 		    struct bgpd_addr *, int, u_int32_t);
-int		 prefix_write(u_char *, int, struct bgpd_addr *, u_int8_t);
+int		 prefix_write(u_char *, int, struct bgpd_addr *, u_int8_t, int);
 int		 prefix_writebuf(struct ibuf *, struct bgpd_addr *, u_int8_t);
 struct prefix	*prefix_bypeer(struct rib_entry *, struct rde_peer *,
 		     u_int32_t);
@@ -529,7 +529,7 @@ void		 up_generate_default(struct filter_head *, struct rde_peer *,
 		     u_int8_t);
 int		 up_generate_marker(struct rde_peer *, u_int8_t);
 int		 up_dump_prefix(u_char *, int, struct uplist_prefix *,
-		     struct rde_peer *);
+		     struct rde_peer *, int);
 int		 up_dump_attrnlri(u_char *, int, struct rde_peer *);
 u_char		*up_dump_mp_unreach(u_char *, u_int16_t *, struct rde_peer *,
 		     u_int8_t);

@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_lib.c,v 1.172 2017/10/11 17:35:00 jsing Exp $ */
+/* $OpenBSD: ssl_lib.c,v 1.176 2018/02/17 15:19:43 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -469,10 +469,22 @@ SSL_set_trust(SSL *s, int trust)
 	return (X509_VERIFY_PARAM_set_trust(s->param, trust));
 }
 
+X509_VERIFY_PARAM *
+SSL_CTX_get0_param(SSL_CTX *ctx)
+{
+	return (ctx->param);
+}
+
 int
 SSL_CTX_set1_param(SSL_CTX *ctx, X509_VERIFY_PARAM *vpm)
 {
 	return (X509_VERIFY_PARAM_set1(ctx->param, vpm));
+}
+
+X509_VERIFY_PARAM *
+SSL_get0_param(SSL *ssl)
+{
+	return (ssl->param);
 }
 
 int
@@ -746,7 +758,8 @@ SSL_CTX_get_verify_depth(const SSL_CTX *ctx)
 	return (X509_VERIFY_PARAM_get_depth(ctx->param));
 }
 
-int (*SSL_CTX_get_verify_callback(const SSL_CTX *ctx))(int, X509_STORE_CTX *)
+int
+(*SSL_CTX_get_verify_callback(const SSL_CTX *ctx))(int, X509_STORE_CTX *)
 {
 	return (ctx->internal->default_verify_callback);
 }
@@ -1952,6 +1965,13 @@ SSL_CTX_free(SSL_CTX *ctx)
 	free(ctx);
 }
 
+int
+SSL_CTX_up_ref(SSL_CTX *ctx)
+{
+	int refs = CRYPTO_add(&ctx->references, 1, CRYPTO_LOCK_SSL_CTX);
+	return ((refs > 1) ? 1 : 0);
+}
+
 void
 SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_password_cb *cb)
 {
@@ -2626,6 +2646,38 @@ SSL_get_current_expansion(SSL *s)
 	return (NULL);
 }
 
+size_t
+SSL_get_client_random(const SSL *s, unsigned char *out, size_t max_out)
+{
+	size_t len = sizeof(s->s3->client_random);
+
+	if (out == NULL)
+		return len;
+
+	if (len > max_out)
+		len = max_out;
+
+	memcpy(out, s->s3->client_random, len);
+
+	return len;
+}
+
+size_t
+SSL_get_server_random(const SSL *s, unsigned char *out, size_t max_out)
+{
+	size_t len = sizeof(s->s3->server_random);
+
+	if (out == NULL)
+		return len;
+
+	if (len > max_out)
+		len = max_out;
+
+	memcpy(out, s->s3->server_random, len);
+
+	return len;
+}
+
 int
 ssl_init_wbio_buffer(SSL *s, int push)
 {
@@ -2856,6 +2908,15 @@ SSL_CTX_set_cert_store(SSL_CTX *ctx, X509_STORE *store)
 {
 	X509_STORE_free(ctx->cert_store);
 	ctx->cert_store = store;
+}
+
+X509 *
+SSL_CTX_get0_certificate(const SSL_CTX *ctx)
+{
+	if (ctx->internal->cert == NULL)
+		return NULL;
+
+	return ctx->internal->cert->key->x509;
 }
 
 int

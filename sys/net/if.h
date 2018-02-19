@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.h,v 1.190 2018/01/16 10:33:55 mpi Exp $	*/
+/*	$OpenBSD: if.h,v 1.192 2018/02/19 04:43:48 dlg Exp $	*/
 /*	$NetBSD: if.h,v 1.23 1996/05/07 02:40:27 thorpej Exp $	*/
 
 /*
@@ -221,6 +221,7 @@ struct if_status_description {
 #define	IFXF_MPLS		0x8	/* [N] supports MPLS */
 #define	IFXF_WOL		0x10	/* [N] wake on lan enabled */
 #define	IFXF_AUTOCONF6		0x20	/* [N] v6 autoconf enabled */
+#define IFXF_INET6_NOSOII	0x40	/* [N] don't do RFC 7217 */
 
 #define	IFXF_CANTCHANGE \
 	(IFXF_MPSAFE|IFXF_CLONED)
@@ -386,6 +387,7 @@ struct	ifreq {
 #define	ifr_rdomainid	ifr_ifru.ifru_metric	/* VRF instance (overload) */
 #define ifr_vnetid	ifr_ifru.ifru_vnetid	/* Virtual Net Id */
 #define ifr_ttl		ifr_ifru.ifru_metric	/* tunnel TTL (overload) */
+#define ifr_df		ifr_ifru.ifru_metric	/* tunnel DF (overload) */
 #define	ifr_data	ifr_ifru.ifru_data	/* for use by interface */
 #define ifr_index	ifr_ifru.ifru_index	/* interface index */
 #define ifr_llprio	ifr_ifru.ifru_metric	/* link layer priority */

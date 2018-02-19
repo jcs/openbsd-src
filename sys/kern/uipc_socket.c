@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_socket.c,v 1.215 2018/01/10 18:14:34 bluhm Exp $	*/
+/*	$OpenBSD: uipc_socket.c,v 1.217 2018/02/19 11:35:41 mpi Exp $	*/
 /*	$NetBSD: uipc_socket.c,v 1.21 1996/02/04 02:17:52 christos Exp $	*/
 
 /*
@@ -127,7 +127,7 @@ socreate(int dom, struct socket **aso, int type, int proto)
 	TAILQ_INIT(&so->so_q0);
 	TAILQ_INIT(&so->so_q);
 	so->so_type = type;
-	if (suser(p, 0) == 0)
+	if (suser(p) == 0)
 		so->so_state = SS_PRIV;
 	so->so_ruid = p->p_ucred->cr_ruid;
 	so->so_euid = p->p_ucred->cr_uid;
@@ -337,11 +337,12 @@ soconnect(struct socket *so, struct mbuf *nam)
 int
 soconnect2(struct socket *so1, struct socket *so2)
 {
-	int error;
+	int s, error;
 
-	soassertlocked(so1);
+	s = solock(so1);
 	error = (*so1->so_proto->pr_usrreq)(so1, PRU_CONNECT2, NULL,
 	    (struct mbuf *)so2, NULL, curproc);
+	sounlock(s);
 	return (error);
 }
 
@@ -1575,7 +1576,7 @@ sosetopt(struct socket *so, int level, int optname, struct mbuf *m)
 	} else {
 		switch (optname) {
 		case SO_BINDANY:
-			if ((error = suser(curproc, 0)) != 0)	/* XXX */
+			if ((error = suser(curproc)) != 0)	/* XXX */
 				return (error);
 			break;
 		}

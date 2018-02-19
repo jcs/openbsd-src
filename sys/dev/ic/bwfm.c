@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.39 2018/02/08 05:00:38 patrick Exp $ */
+/* $OpenBSD: bwfm.c,v 1.41 2018/02/11 05:33:12 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -1331,6 +1331,10 @@ err:
 void
 bwfm_proto_bcdc_rx(struct bwfm_softc *sc, struct mbuf *m)
 {
+#ifdef __STRICT_ALIGNMENT
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+#endif
 	struct bwfm_proto_bcdc_hdr *hdr;
 
 	hdr = mtod(m, struct bwfm_proto_bcdc_hdr *);
@@ -1343,6 +1347,21 @@ bwfm_proto_bcdc_rx(struct bwfm_softc *sc, struct mbuf *m)
 		return;
 	}
 	m_adj(m, sizeof(*hdr) + (hdr->data_offset << 2));
+
+#ifdef __STRICT_ALIGNMENT
+	/* Remaining data is an ethernet packet, so align. */
+	if ((mtod(m, paddr_t) & 0x3) != ETHER_ALIGN) {
+		struct mbuf *m0;
+		m0 = m_devget(mtod(m, caddr_t), m->m_len, ETHER_ALIGN);
+		m_freem(m);
+		if (m0 == NULL) {
+			ifp->if_ierrors++;
+			return;
+		}
+		m = m0;
+	}
+#endif
+
 	bwfm_rx(sc, m);
 }
 
@@ -1954,22 +1973,33 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, void *arg)
 
 	switch (ntohl(e->msg.event_type)) {
 	case BWFM_E_ESCAN_RESULT: {
-		struct bwfm_escan_results *res = (void *)&e[1];
+		struct bwfm_escan_results *res;
 		struct bwfm_bss_info *bss;
+		size_t reslen;
 		int i;
 		if (ntohl(e->msg.status) != BWFM_E_STATUS_PARTIAL) {
 			ieee80211_end_scan(ifp);
 			break;
 		}
 		len -= sizeof(*e);
-		if (len < sizeof(*res) || len < letoh32(res->buflen)) {
+		if (len < sizeof(*res)) {
 			printf("%s: results too small\n", DEVNAME(sc));
+			m_freem(m);
+			return;
+		}
+		reslen = len;
+		res = malloc(len, M_TEMP, M_WAITOK);
+		memcpy(res, (void *)&e[1], len);
+		if (len < letoh32(res->buflen)) {
+			printf("%s: results too small\n", DEVNAME(sc));
+			free(res, M_TEMP, reslen);
 			m_freem(m);
 			return;
 		}
 		len -= sizeof(*res);
 		if (len < letoh16(res->bss_count) * sizeof(struct bwfm_bss_info)) {
 			printf("%s: results too small\n", DEVNAME(sc));
+			free(res, M_TEMP, reslen);
 			m_freem(m);
 			return;
 		}
@@ -1981,6 +2011,7 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, void *arg)
 			if (len <= 0)
 				break;
 		}
+		free(res, M_TEMP, reslen);
 		break;
 		}
 	case BWFM_E_SET_SSID:

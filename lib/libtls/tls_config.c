@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_config.c,v 1.47 2018/02/08 05:56:49 jsing Exp $ */
+/* $OpenBSD: tls_config.c,v 1.49 2018/02/10 04:57:35 jsing Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -89,6 +89,7 @@ tls_config_new(void)
 		goto err;
 
 	config->refcount = 1;
+	config->session_fd = -1;
 
 	/*
 	 * Default configuration.
@@ -350,12 +351,13 @@ tls_config_add_keypair_mem_internal(struct tls_config *config, const uint8_t *ce
 
 	if ((keypair = tls_keypair_new()) == NULL)
 		return (-1);
-	if (tls_keypair_set_cert_mem(keypair, cert, cert_len) != 0)
+	if (tls_keypair_set_cert_mem(keypair, &config->error, cert, cert_len) != 0)
 		goto err;
-	if (tls_keypair_set_key_mem(keypair, key, key_len) != 0)
+	if (tls_keypair_set_key_mem(keypair, &config->error, key, key_len) != 0)
 		goto err;
 	if (staple != NULL &&
-	    tls_keypair_set_ocsp_staple_mem(keypair, staple, staple_len) != 0)
+	    tls_keypair_set_ocsp_staple_mem(keypair, &config->error, staple,
+		staple_len) != 0)
 		goto err;
 
 	tls_config_keypair_add(config, keypair);
@@ -430,7 +432,8 @@ int
 tls_config_set_cert_mem(struct tls_config *config, const uint8_t *cert,
     size_t len)
 {
-	return tls_keypair_set_cert_mem(config->keypair, cert, len);
+	return tls_keypair_set_cert_mem(config->keypair, &config->error,
+	    cert, len);
 }
 
 int
@@ -591,7 +594,8 @@ int
 tls_config_set_key_mem(struct tls_config *config, const uint8_t *key,
     size_t len)
 {
-	return tls_keypair_set_key_mem(config->keypair, key, len);
+	return tls_keypair_set_key_mem(config->keypair, &config->error,
+	    key, len);
 }
 
 static int
@@ -665,6 +669,44 @@ int
 tls_config_set_protocols(struct tls_config *config, uint32_t protocols)
 {
 	config->protocols = protocols;
+
+	return (0);
+}
+
+int
+tls_config_set_session_fd(struct tls_config *config, int session_fd)
+{
+	struct stat sb;
+	mode_t mugo;
+
+	if (session_fd == -1) {
+		config->session_fd = session_fd;
+		return (0);
+	}
+
+	if (fstat(session_fd, &sb) == -1) {
+		tls_config_set_error(config, "failed to stat session file");
+		return (-1);
+	}
+	if (!S_ISREG(sb.st_mode)) {
+		tls_config_set_errorx(config,
+		    "session file is not a regular file");
+		return (-1);
+	}
+
+	if (sb.st_uid != getuid()) {
+		tls_config_set_errorx(config, "session file has incorrect "
+		    "owner (uid %i != %i)", sb.st_uid, getuid());
+		return (-1);
+	}
+	mugo = sb.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO);
+	if (mugo != (S_IRUSR|S_IWUSR)) {
+		tls_config_set_errorx(config, "session file has incorrect "
+		    "permissions (%o != 600)", mugo);
+		return (-1);
+	}
+
+	config->session_fd = session_fd;
 
 	return (0);
 }
@@ -750,7 +792,8 @@ int
 tls_config_set_ocsp_staple_mem(struct tls_config *config, const uint8_t *staple,
     size_t len)
 {
-	return tls_keypair_set_ocsp_staple_mem(config->keypair, staple, len);
+	return tls_keypair_set_ocsp_staple_mem(config->keypair, &config->error,
+	    staple, len);
 }
 
 int

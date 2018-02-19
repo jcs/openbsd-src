@@ -1,4 +1,4 @@
-#	$OpenBSD: rc,v 1.523 2017/11/09 11:02:10 tb Exp $
+#	$OpenBSD: rc,v 1.525 2018/02/18 18:52:02 rpe Exp $
 
 # System startup script run by init on autoboot or after single-user.
 # Output and error are redirected to console by init, and the console is the
@@ -158,6 +158,12 @@ make_keys() {
 	fi
 
 	ssh-keygen -A
+
+	if [[ ! -f /etc/soii.key ]]; then
+		openssl rand -hex 16 > /etc/soii.key &&
+		    chmod 600 /etc/soii.key && sysctl -q \
+		    "net.inet6.ip6.soiikey=$(</etc/soii.key)"
+	fi
 }
 
 # Re-link libraries, placing the objects in a random order.
@@ -309,7 +315,7 @@ _rc_parse_conf
 # - execute the rc.d scripts specified by $pkg_scripts in reverse order
 # - bring carp interfaces down gracefully
 if [[ $1 == shutdown ]]; then
-	if echo 2>/dev/null >>/var/db/host.random || \
+	if echo 2>/dev/null >>/var/db/host.random ||
 	    echo 2>/dev/null >>/etc/random.seed; then
 		random_seed
 	else

@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1058 2018/02/06 22:14:52 sthen Exp $
+#	$OpenBSD: install.sub,v 1.1063 2018/02/18 01:50:04 kn Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -329,8 +329,7 @@ get_dkdevs_uninitialized() {
 get_ifs() {
 	local _if _iflist=$(rmel vlan $(ifconfig -C))
 
-	for _if in $(ifconfig "$@" 2>/dev/null |
-		sed -n 's/^\([^[:space:]]*\):.*/\1/p'); do
+	for _if in $(ifconfig "$@" 2>/dev/null | sed '/^[a-z]/!d;s/:.*//'); do
 		isin "${_if%%+([0-9])}" $_iflist || echo $_if
 	done
 }
@@ -872,7 +871,7 @@ ask_password() {
 
 # Issue a DHCP request to configure interface $1.
 dhcp_request() {
-	local _if=$1 _hn=$2
+	local _if=$1
 
 	echo "lookup file bind" >/etc/resolv.conf.tail
 
@@ -1005,7 +1004,7 @@ vlan_config() {
 # Parameters:
 #
 # $1 = name of the network device
-# $2 = hostname to use for dhcp request
+# $2 = hostname to add to hosts file
 # $3 = /path/to/hostname.if
 #
 v4_config() {
@@ -1037,7 +1036,7 @@ v4_config() {
 				echo "DHCP not possible - no /sbin/dhclient."
 				$AUTO && exit 1 || continue
 			else
-				dhcp_request $_if "$_name"
+				dhcp_request $_if
 				echo "dhcp" >>$_hn
 				return
 			fi
@@ -1111,7 +1110,7 @@ v6_defroute() {
 # Parameters:
 #
 # $1 = name of the network device
-# $2 = hostname to use for dhcp request
+# $2 = hostname to add to hosts file
 # $3 = /path/to/hostname.if
 #
 v6_config() {
@@ -2312,6 +2311,9 @@ ifstart() {
 	local _if=$1 _hn=/mnt/etc/hostname.$1 _cmds _i=0 _line
 	set -A _cmds
 
+	# Create interface if it does not yet exist.
+	{ ifconfig $_if || ifconfig $_if create; } >/dev/null 2>&1 || return
+
 	((NIFS++))
 
 	# Parse the hostname.if(5) file and fill _cmds array with interface
@@ -3090,6 +3092,8 @@ do_install() {
 }
 
 do_upgrade() {
+	local _f
+
 	# Get $ROOTDISK and $ROOTDEV
 	get_rootinfo
 
@@ -3111,6 +3115,9 @@ do_upgrade() {
 	hostname $(stripcom /tmp/i/myname)
 	THESETS="$THESETS site$VERSION-$(hostname -s).tgz"
 	export PS1='\h# '
+
+	_f=/mnt/etc/soii.key
+	[[ ! -f $_f ]] || sysctl net.inet6.ip6.soiikey=$(<$_f)
 
 	# Configure the network.
 	enable_network

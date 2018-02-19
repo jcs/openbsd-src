@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_vfy.h,v 1.18 2016/12/21 15:15:45 jsing Exp $ */
+/* $OpenBSD: x509_vfy.h,v 1.20 2018/02/14 17:06:34 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -446,7 +446,11 @@ int X509_STORE_CTX_get1_issuer(X509 **issuer, X509_STORE_CTX *ctx, X509 *x);
 void X509_STORE_CTX_free(X509_STORE_CTX *ctx);
 int X509_STORE_CTX_init(X509_STORE_CTX *ctx, X509_STORE *store,
 			 X509 *x509, STACK_OF(X509) *chain);
+X509 *X509_STORE_CTX_get0_cert(X509_STORE_CTX *ctx);
+STACK_OF(X509) *X509_STORE_CTX_get0_untrusted(X509_STORE_CTX *ctx);
+void X509_STORE_CTX_set0_untrusted(X509_STORE_CTX *ctx, STACK_OF(X509) *sk);
 void X509_STORE_CTX_trusted_stack(X509_STORE_CTX *ctx, STACK_OF(X509) *sk);
+void X509_STORE_CTX_set0_trusted_stack(X509_STORE_CTX *ctx, STACK_OF(X509) *sk);
 void X509_STORE_CTX_cleanup(X509_STORE_CTX *ctx);
 
 X509_LOOKUP *X509_STORE_add_lookup(X509_STORE *v, X509_LOOKUP_METHOD *m);
@@ -512,7 +516,7 @@ void X509_STORE_CTX_set_time(X509_STORE_CTX *ctx, unsigned long flags,
 								time_t t);
 void X509_STORE_CTX_set_verify_cb(X509_STORE_CTX *ctx,
 				  int (*verify_cb)(int, X509_STORE_CTX *));
-  
+ 
 X509_POLICY_TREE *X509_STORE_CTX_get0_policy_tree(X509_STORE_CTX *ctx);
 int X509_STORE_CTX_get_explicit_policy(X509_STORE_CTX *ctx);
 
@@ -542,6 +546,21 @@ int X509_VERIFY_PARAM_add0_policy(X509_VERIFY_PARAM *param,
 int X509_VERIFY_PARAM_set1_policies(X509_VERIFY_PARAM *param, 
 					STACK_OF(ASN1_OBJECT) *policies);
 int X509_VERIFY_PARAM_get_depth(const X509_VERIFY_PARAM *param);
+int X509_VERIFY_PARAM_set1_host(X509_VERIFY_PARAM *param, const char *name,
+    size_t namelen);
+int X509_VERIFY_PARAM_add1_host(X509_VERIFY_PARAM *param, const char *name,
+    size_t namelen);
+void X509_VERIFY_PARAM_set_hostflags(X509_VERIFY_PARAM *param,
+    unsigned int flags);
+char *X509_VERIFY_PARAM_get0_peername(X509_VERIFY_PARAM *param);
+int X509_VERIFY_PARAM_set1_email(X509_VERIFY_PARAM *param,  const char *email,
+    size_t emaillen);
+int X509_VERIFY_PARAM_set1_ip(X509_VERIFY_PARAM *param, const unsigned char *ip,
+    size_t iplen);
+int X509_VERIFY_PARAM_set1_ip_asc(X509_VERIFY_PARAM *param, const char *ipasc);
+const char *X509_VERIFY_PARAM_get0_name(const X509_VERIFY_PARAM *param);
+const X509_VERIFY_PARAM *X509_VERIFY_PARAM_get0(int id);
+int X509_VERIFY_PARAM_get_count(void);
 
 int X509_VERIFY_PARAM_add0_table(X509_VERIFY_PARAM *param);
 const X509_VERIFY_PARAM *X509_VERIFY_PARAM_lookup(const char *name);

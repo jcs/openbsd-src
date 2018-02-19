@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.561 2018/02/08 08:22:31 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.564 2018/02/11 22:00:19 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -707,9 +707,10 @@ state_preboot(struct interface_info *ifi)
 		state_reboot(ifi);
 	} else {
 		tick_msg("link", 0, tickstart, tickstop);
-		if (cur_time > tickstop)
+		if (cur_time > tickstop) {
+			go_daemon();
 			cancel_timeout(ifi); /* Wait for RTM_IFINFO. */
-		else
+		} else
 			set_timeout(ifi, 1, state_preboot);
 	}
 }
@@ -931,6 +932,8 @@ dhcpnak(struct interface_info *ifi, const char *src)
 	free_client_lease(ifi->active);
 
 	ifi->active = NULL;
+	free(ifi->configured);
+	ifi->configured = NULL;
 
 	/* Stop sending DHCPREQUEST packets. */
 	cancel_timeout(ifi);
@@ -1162,7 +1165,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 			buf = pretty_print_domain_search(options[i].data,
 			    options[i].len);
 			if (buf == NULL || res_hnok_list(buf) == 0) {
-				log_warnx("%s: invalid host name in %s",
+				log_debug("%s: invalid host name in %s",
 				    log_procname, name);
 				continue;
 			}
@@ -1175,7 +1178,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 			 * entries in the resolv.conf 'search' statement.
 			 */
 			if (res_hnok_list(pretty) == 0) {
-				log_warnx("%s: invalid host name in %s",
+				log_debug("%s: invalid host name in %s",
 				    log_procname, name);
 				continue;
 			}
@@ -1183,7 +1186,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 		case DHO_HOST_NAME:
 		case DHO_NIS_DOMAIN:
 			if (res_hnok(pretty) == 0) {
-				log_warnx("%s: invalid host name in %s",
+				log_debug("%s: invalid host name in %s",
 				    log_procname, name);
 				continue;
 			}
@@ -1235,7 +1238,7 @@ packet_to_lease(struct interface_info *ifi, struct option_data *options)
 		}
 		memcpy(lease->server_name, packet->sname, DHCP_SNAME_LEN);
 		if (res_hnok(lease->server_name) == 0) {
-			log_warnx("%s: invalid host name in SNAME ignored",
+			log_debug("%s: invalid host name in SNAME ignored",
 			    log_procname);
 			free(lease->server_name);
 			lease->server_name = NULL;

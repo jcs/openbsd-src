@@ -1,4 +1,4 @@
-/* $OpenBSD: rebound.c,v 1.93 2018/02/07 01:02:46 tedu Exp $ */
+/* $OpenBSD: rebound.c,v 1.95 2018/02/11 01:23:40 tb Exp $ */
 /*
  * Copyright (c) 2015 Ted Unangst <tedu@openbsd.org>
  *
@@ -24,7 +24,6 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/wait.h>
-#include <sys/sysctl.h>
 
 #include <signal.h>
 #include <syslog.h>
@@ -885,6 +884,9 @@ monitorloop(int ud, int ld, int ud6, int ld6, const char *confname)
 	int r, kq;
 	int conffd = -1;
 	struct timespec ts, *timeout = NULL;
+
+	if (pledge("stdio rpath proc exec", NULL) == -1)
+		err(1, "pledge");
 
 	kq = kqueue();
 

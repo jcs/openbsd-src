@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mobileip.c,v 1.3 2018/02/07 06:02:01 dlg Exp $ */
+/*	$OpenBSD: if_mobileip.c,v 1.8 2018/02/18 23:53:17 dlg Exp $ */
 
 /*
  * Copyright (c) 2016 David Gwynne <dlg@openbsd.org>
@@ -28,7 +28,7 @@
 #include <sys/kernel.h>
 #include <sys/systm.h>
 #include <sys/timeout.h>
-#include <sys/tree.h>
+#include <sys/queue.h>
 
 #include <net/if.h>
 #include <net/if_types.h>
@@ -49,15 +49,20 @@
 
 #include <net/if_mobileip.h>
 
+struct mobileip_tunnel {
+	unsigned int		t_rtableid;
+	struct in_addr		t_src;
+	struct in_addr		t_dst;
+
+	TAILQ_ENTRY(mobileip_tunnel)
+				t_entry;
+};
+
+TAILQ_HEAD(mobileip_list, mobileip_tunnel);
+
 struct mobileip_softc {
+	struct mobileip_tunnel	sc_tunnel;
 	struct ifnet		sc_if;
-
-	RBT_ENTRY(mobileip_softc)
-				sc_entry;
-
-	unsigned int		sc_rtableid;
-	uint32_t		sc_src;
-	uint32_t		sc_dst;
 };
 
 static int	mobileip_clone_create(struct if_clone *, int);
@@ -66,15 +71,11 @@ static int	mobileip_clone_destroy(struct ifnet *);
 static struct if_clone mobileip_cloner = IF_CLONE_INITIALIZER("mobileip",
     mobileip_clone_create, mobileip_clone_destroy);
 
-RBT_HEAD(mobileip_tree, mobileip_softc);
-
 static inline int
-		mobileip_cmp(const struct mobileip_softc *,
-		    const struct mobileip_softc *);
+		mobileip_cmp(const struct mobileip_tunnel *,
+		    const struct mobileip_tunnel *);
 
-RBT_PROTOTYPE(mobileip_tree, mobileip_softc, sc_entry, mobileip_cmp);
-
-struct mobileip_tree mobileip_softcs = RBT_INITIALIZER();
+struct mobileip_list mobileip_list = TAILQ_HEAD_INITIALIZER(mobileip_list);
 
 #define MOBILEIPMTU	(1500 - (sizeof(struct mobileip_header) +	\
 			    sizeof(struct mobileip_h_src)))		\
@@ -92,6 +93,8 @@ static int	mobileip_output(struct ifnet *, struct mbuf *,
 		    struct sockaddr *, struct rtentry *);
 static void	mobileip_start(struct ifnet *);
 static int	mobileip_encap(struct mobileip_softc *, struct mbuf *);
+static struct mobileip_softc *
+		mobileip_find(const struct mobileip_tunnel *);
 
 /*
  * let's begin
@@ -114,9 +117,9 @@ mobileip_clone_create(struct if_clone *ifc, int unit)
 	if (!sc)
 		return (ENOMEM);
 
-	sc->sc_rtableid = 0;
-	sc->sc_src = INADDR_ANY;
-	sc->sc_dst = INADDR_ANY;
+	sc->sc_tunnel.t_rtableid = 0;
+	sc->sc_tunnel.t_src.s_addr = INADDR_ANY;
+	sc->sc_tunnel.t_dst.s_addr = INADDR_ANY;
 
 	snprintf(sc->sc_if.if_xname, sizeof sc->sc_if.if_xname, "%s%d",
 	    ifc->ifc_name, unit);
@@ -137,6 +140,10 @@ mobileip_clone_create(struct if_clone *ifc, int unit)
 	bpfattach(&sc->sc_if.if_bpf, &sc->sc_if, DLT_LOOP, sizeof(uint32_t));
 #endif
 
+	NET_LOCK();
+	TAILQ_INSERT_TAIL(&mobileip_list, &sc->sc_tunnel, t_entry);
+	NET_UNLOCK();
+
 	return (0);
 }
 
@@ -150,6 +157,8 @@ mobileip_clone_destroy(struct ifnet *ifp)
 	NET_LOCK();
 	if (ISSET(ifp->if_flags, IFF_RUNNING))
 		mobileip_down(sc);
+
+	TAILQ_REMOVE(&mobileip_list, &sc->sc_tunnel, t_entry);
 	NET_UNLOCK();
 
 	free(sc, M_DEVBUF, sizeof(*sc));
@@ -179,21 +188,21 @@ mobileip_cksum(const void *buf, size_t len)
 }
 
 static inline int
-mobileip_cmp(const struct mobileip_softc *a, const struct mobileip_softc *b)
+mobileip_cmp(const struct mobileip_tunnel *a, const struct mobileip_tunnel *b)
 {
-	if (a->sc_src > b->sc_src)
+	if (a->t_src.s_addr > b->t_src.s_addr)
 		return (1);
-	if (a->sc_src < b->sc_src)
+	if (a->t_src.s_addr < b->t_src.s_addr)
 		return (-1);
 
-	if (a->sc_dst > b->sc_dst)
+	if (a->t_dst.s_addr > b->t_dst.s_addr)
 		return (1);
-	if (a->sc_dst < b->sc_dst)
+	if (a->t_dst.s_addr < b->t_dst.s_addr)
 		return (-1);
 
-	if (a->sc_rtableid > b->sc_rtableid)
+	if (a->t_rtableid > b->t_rtableid)
 		return (1);
-	if (a->sc_rtableid < b->sc_rtableid)
+	if (a->t_rtableid < b->t_rtableid)
 		return (-1);
 
 	return (0);
@@ -272,6 +281,7 @@ static int
 mobileip_encap(struct mobileip_softc *sc, struct mbuf *m)
 {
 	struct ip *ip;
+	struct mobileip_tunnel *tunnel = &sc->sc_tunnel;
 	struct mobileip_header *mh;
 	struct mobileip_h_src *msh;
 	caddr_t hdr;
@@ -288,7 +298,7 @@ mobileip_encap(struct mobileip_softc *sc, struct mbuf *m)
 
 	/* figure out how much extra space we'll need */
 	hlen = sizeof(*mh);
-	if (ip->ip_src.s_addr != sc->sc_src)
+	if (ip->ip_src.s_addr != tunnel->t_src.s_addr)
 		hlen += sizeof(*msh);
 
 	/* add the space */
@@ -313,23 +323,23 @@ mobileip_encap(struct mobileip_softc *sc, struct mbuf *m)
 	mh->mip_hcrc = 0;
 	mh->mip_dst = ip->ip_dst.s_addr;
 
-	if (ip->ip_src.s_addr != sc->sc_src) {
+	if (ip->ip_src.s_addr != tunnel->t_src.s_addr) {
 		mh->mip_flags |= MOBILEIP_SP;
 
 		msh = (struct mobileip_h_src *)(mh + 1);
 		msh->mip_src = ip->ip_src.s_addr;
 
-		ip->ip_src.s_addr = sc->sc_src;
+		ip->ip_src.s_addr = tunnel->t_src.s_addr;
 	}
 
 	htobem16(&mh->mip_hcrc, mobileip_cksum(mh, hlen));
 
 	ip->ip_p = IPPROTO_MOBILE;
 	htobem16(&ip->ip_len, bemtoh16(&ip->ip_len) + hlen);
-	ip->ip_dst.s_addr = sc->sc_dst;
+	ip->ip_dst = tunnel->t_dst;
 
 	m->m_flags &= ~(M_BCAST|M_MCAST);
-	m->m_pkthdr.ph_rtableid = sc->sc_rtableid;
+	m->m_pkthdr.ph_rtableid = tunnel->t_rtableid;
 
 #if NPF > 0
 	pf_pkt_addr_changed(m);
@@ -345,11 +355,16 @@ mobileip_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 {
 	struct mobileip_softc *sc = ifp->if_softc;
 	struct ifreq *ifr = (struct ifreq *)data;
+	struct ifaddr *ifa = (struct ifaddr *)data;
 	int error = 0;
 
 	switch(cmd) {
 	case SIOCSIFADDR:
-		/* XXX restrict to AF_INET */
+		if (ifa->ifa_addr->sa_family != AF_INET) {
+			error = EAFNOSUPPORT;
+			break;
+		}
+
 		ifp->if_flags |= IFF_UP;
 		/* FALLTHROUGH */
 	case SIOCSIFFLAGS:
@@ -389,22 +404,21 @@ mobileip_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		error = mobileip_del_tunnel(sc);
 		break;
 
-	case SIOCSLIFPHYRTABLE:
-		if (ISSET(ifp->if_flags, IFF_RUNNING)) {
-			error = EBUSY;
-			break;
-		}
+	case SIOCGLIFPHYTTL:
+		ifr->ifr_ttl = -1;
+		break;
 
+	case SIOCSLIFPHYRTABLE:
 		if (ifr->ifr_rdomainid < 0 ||
 		    ifr->ifr_rdomainid > RT_TABLEID_MAX ||
 		    !rtable_exists(ifr->ifr_rdomainid)) {
 			error = EINVAL;
 			break;
 		}
-		sc->sc_rtableid = ifr->ifr_rdomainid;
+		sc->sc_tunnel.t_rtableid = ifr->ifr_rdomainid;
 		break;
 	case SIOCGLIFPHYRTABLE:
-		ifr->ifr_rdomainid = sc->sc_rtableid;
+		ifr->ifr_rdomainid = sc->sc_tunnel.t_rtableid;
 		break;
 
 	default:
@@ -418,15 +432,7 @@ mobileip_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 static int
 mobileip_up(struct mobileip_softc *sc)
 {
-	struct mobileip_softc *osc;
-
-	if (sc->sc_dst == INADDR_ANY)
-		return (EDESTADDRREQ);
-
 	NET_ASSERT_LOCKED();
-	osc = RBT_INSERT(mobileip_tree, &mobileip_softcs, sc);
-	if (osc != NULL)
-		return (EADDRINUSE);
 
 	SET(sc->sc_if.if_flags, IFF_RUNNING);
 
@@ -437,7 +443,6 @@ static int
 mobileip_down(struct mobileip_softc *sc)
 {
 	NET_ASSERT_LOCKED();
-	RBT_REMOVE(mobileip_tree, &mobileip_softcs, sc);
 
 	CLR(sc->sc_if.if_flags, IFF_RUNNING);
 
@@ -451,9 +456,6 @@ mobileip_set_tunnel(struct mobileip_softc *sc, struct if_laddrreq *req)
 {
 	struct sockaddr_in *src = (struct sockaddr_in *)&req->addr;
 	struct sockaddr_in *dst = (struct sockaddr_in *)&req->dstaddr;
-
-	if (ISSET(sc->sc_if.if_flags, IFF_RUNNING))
-		return (EBUSY);
 
 	/* sa_family and sa_len must be equal */
 	if (src->sin_family != dst->sin_family || src->sin_len != dst->sin_len)
@@ -471,8 +473,8 @@ mobileip_set_tunnel(struct mobileip_softc *sc, struct if_laddrreq *req)
 		return (EINVAL);
 
 	/* commit */
-	sc->sc_src = src->sin_addr.s_addr;
-	sc->sc_dst = dst->sin_addr.s_addr;
+	sc->sc_tunnel.t_src = src->sin_addr;
+	sc->sc_tunnel.t_dst = dst->sin_addr;
 
 	return (0);
 }
@@ -483,18 +485,18 @@ mobileip_get_tunnel(struct mobileip_softc *sc, struct if_laddrreq *req)
 	struct sockaddr_in *src = (struct sockaddr_in *)&req->addr;
 	struct sockaddr_in *dst = (struct sockaddr_in *)&req->dstaddr;
 
-	if (sc->sc_dst == INADDR_ANY)
+	if (sc->sc_tunnel.t_dst.s_addr == INADDR_ANY)
 		return (EADDRNOTAVAIL);
 
 	memset(src, 0, sizeof(*src));
 	src->sin_family = AF_INET;
 	src->sin_len = sizeof(*src);
-	src->sin_addr.s_addr = sc->sc_src;
+	src->sin_addr = sc->sc_tunnel.t_src;
 
 	memset(dst, 0, sizeof(*dst));
 	dst->sin_family = AF_INET;
 	dst->sin_len = sizeof(*dst);
-	dst->sin_addr.s_addr = sc->sc_dst;
+	dst->sin_addr = sc->sc_tunnel.t_dst;
 
 	return (0);
 }
@@ -502,20 +504,37 @@ mobileip_get_tunnel(struct mobileip_softc *sc, struct if_laddrreq *req)
 static int
 mobileip_del_tunnel(struct mobileip_softc *sc)
 {
-	if (ISSET(sc->sc_if.if_flags, IFF_RUNNING))
-		return (EBUSY);
-
 	/* commit */
-	sc->sc_src = INADDR_ANY;
-	sc->sc_dst = INADDR_ANY;
+	sc->sc_tunnel.t_src.s_addr = INADDR_ANY;
+	sc->sc_tunnel.t_dst.s_addr = INADDR_ANY;
 
 	return (0);
+}
+
+static struct mobileip_softc *
+mobileip_find(const struct mobileip_tunnel *key)
+{
+	struct mobileip_tunnel *t;
+	struct mobileip_softc *sc;
+
+	TAILQ_FOREACH(t, &mobileip_list, t_entry) {
+		if (mobileip_cmp(key, t) != 0)
+			continue;
+
+		sc = (struct mobileip_softc *)t;
+		if (!ISSET(sc->sc_if.if_flags, IFF_RUNNING))
+			continue;
+
+		return (sc);
+	}
+
+	return (NULL);
 }
 
 int
 mobileip_input(struct mbuf **mp, int *offp, int type, int af)
 {
-	struct mobileip_softc key;
+	struct mobileip_tunnel key;
 	struct mbuf *m = *mp;
 	struct ifnet *ifp;
 	struct mobileip_softc *sc;
@@ -531,12 +550,12 @@ mobileip_input(struct mbuf **mp, int *offp, int type, int af)
 
 	ip = mtod(m, struct ip *);
 
-	key.sc_rtableid = m->m_pkthdr.ph_rtableid;
-	key.sc_src = ip->ip_dst.s_addr;
-	key.sc_dst = ip->ip_src.s_addr;
+	key.t_rtableid = m->m_pkthdr.ph_rtableid;
+	key.t_src = ip->ip_dst;
+	key.t_dst = ip->ip_src;
 
 	/* NET_ASSERT_READ_LOCKED() */
-	sc = RBT_FIND(mobileip_tree, &mobileip_softcs, &key);
+	sc = mobileip_find(&key);
 	if (sc == NULL)
 		goto drop;
 
@@ -638,5 +657,3 @@ mobileip_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 
 	return (0);
 }
-
-RBT_GENERATE(mobileip_tree, mobileip_softc, sc_entry, mobileip_cmp);

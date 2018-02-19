@@ -1,4 +1,4 @@
-/* $OpenBSD: rsa.h,v 1.31 2017/08/30 16:07:35 jsing Exp $ */
+/* $OpenBSD: rsa.h,v 1.36 2018/02/18 12:57:14 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -256,6 +256,7 @@ struct rsa_st {
 
 RSA *RSA_new(void);
 RSA *RSA_new_method(ENGINE *engine);
+int RSA_bits(const RSA *rsa);
 int RSA_size(const RSA *rsa);
 
 /* Deprecated version */
@@ -394,6 +395,15 @@ int RSA_get_ex_new_index(long argl, void *argp, CRYPTO_EX_new *new_func,
     CRYPTO_EX_dup *dup_func, CRYPTO_EX_free *free_func);
 int RSA_set_ex_data(RSA *r, int idx, void *arg);
 void *RSA_get_ex_data(const RSA *r, int idx);
+
+void RSA_get0_key(const RSA *r, const BIGNUM **n, const BIGNUM **e,
+    const BIGNUM **d);
+int RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d);
+void RSA_get0_crt_params(const RSA *r, const BIGNUM **dmp1, const BIGNUM **dmq1,
+    const BIGNUM **iqmp);
+int RSA_set0_crt_params(RSA *r, BIGNUM *dmp1, BIGNUM *dmq1, BIGNUM *iqmp);
+void RSA_get0_factors(const RSA *r, const BIGNUM **p, const BIGNUM **q);
+int RSA_set0_factors(RSA *r, BIGNUM *p, BIGNUM *q);
 
 RSA *RSAPublicKey_dup(RSA *rsa);
 RSA *RSAPrivateKey_dup(RSA *rsa);

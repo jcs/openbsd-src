@@ -33,8 +33,8 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.\" $OpenBSD: ssh_config.5,v 1.263 2018/02/06 06:01:54 dtucker Exp $
-.Dd $Mdocdate: February 6 2018 $
+.\" $OpenBSD: ssh_config.5,v 1.266 2018/02/16 02:40:45 djm Exp $
+.Dd $Mdocdate: February 16 2018 $
 .Dt SSH_CONFIG 5
 .Os
 .Sh NAME
@@ -1015,7 +1015,10 @@ The default is:
 curve25519-sha256,curve25519-sha256@libssh.org,
 ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,
 diffie-hellman-group-exchange-sha256,
+diffie-hellman-group16-sha512,
+diffie-hellman-group18-sha512,
 diffie-hellman-group-exchange-sha1,
+diffie-hellman-group14-sha256,
 diffie-hellman-group14-sha1
 .Ed
 .Pp
@@ -1107,10 +1110,7 @@ hmac-sha2-256,hmac-sha2-512,hmac-sha1
 The list of available MAC algorithms may also be obtained using
 .Qq ssh -Q mac .
 .It Cm NoHostAuthenticationForLocalhost
-This option can be used if the home directory is shared across machines.
-In this case localhost will refer to a different machine on each of
-the machines and the user will get many warnings about changed host keys.
-However, this option disables host authentication for localhost.
+Disable host authentication for localhost (loopback addresses).
 The argument to this keyword must be
 .Cm yes
 or
@@ -1510,6 +1510,9 @@ This is important in scripts, and many users want it too.
 .Pp
 To disable TCP keepalive messages, the value should be set to
 .Cm no .
+See also
+.Cm ServerAliveInterval
+for protocol-level keepalives.
 .It Cm Tunnel
 Request
 .Xr tun 4

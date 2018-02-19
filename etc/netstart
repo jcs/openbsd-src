@@ -1,6 +1,6 @@
 #!/bin/sh -
 #
-#	$OpenBSD: netstart,v 1.188 2018/02/06 19:53:50 tb Exp $
+#	$OpenBSD: netstart,v 1.192 2018/02/17 13:11:03 rpe Exp $
 
 # Turn off Strict Bourne shell mode.
 set +o sh
@@ -72,6 +72,27 @@ parse_hn_line() {
 	set +o noglob
 }
 
+# Create interface $1 if it does not yet exist.
+ifcreate() {
+	local _if=$1
+
+	{ ifconfig $_if || ifconfig $_if create; } >/dev/null 2>&1
+}
+
+# Create interfaces for network pseudo-devices referred to by hostname.if files.
+vifscreate() {
+	local _vif _hn _if
+
+	for _vif in $(ifconfig -C); do
+		for _hn in /etc/hostname.${_vif}*; do
+			[[ -f $_hn ]] || continue
+			_if=${_hn#/etc/hostname.}
+
+			ifcreate $_if || return
+		done
+	done
+}
+
 # Start a single interface.
 # Usage: ifstart if1
 ifstart() {
@@ -97,8 +118,7 @@ ifstart() {
 
 	# Check for ifconfig'able interface, except if -n option is specified.
 	if ! $PRINT_ONLY; then
-		(ifconfig $_if || ifconfig $_if create) >/dev/null 2>&1 ||
-		return
+		ifcreate $_if || return
 	fi
 
 	# Parse the hostname.if(5) file and fill _cmds array with interface
@@ -194,6 +214,9 @@ if $PRINT_ONLY && (($# == 0)); then
 	exit 1
 fi
 
+$PRINT_ONLY || [[ ! -f /etc/soii.key ]] ||
+	sysctl -q "net.inet6.ip6.soiikey=$(</etc/soii.key)"
+
 # If we were invoked with a list of interface names, just reconfigure these
 # interfaces (or bridges), add default routes and return.
 if (($# > 0)); then
@@ -227,12 +250,6 @@ if ifconfig lo0 inet6 >/dev/null 2>&1; then
 	# Disallow "internal" addresses to appear on the wire.
 	route -qn add -inet6 ::ffff:0.0.0.0 -prefixlen 96 ::1 -reject >/dev/null
 
-	# Disallow packets to malicious IPv4 compatible prefix.
-	route -qn add -inet6 ::224.0.0.0 -prefixlen 100 ::1 -reject >/dev/null
-	route -qn add -inet6 ::127.0.0.0 -prefixlen 104 ::1 -reject >/dev/null
-	route -qn add -inet6 ::0.0.0.0 -prefixlen 104 ::1 -reject >/dev/null
-	route -qn add -inet6 ::255.0.0.0 -prefixlen 104 ::1 -reject >/dev/null
-
 	# Disallow packets to malicious 6to4 prefix.
 	route -qn add -inet6 2002:e000:: -prefixlen 20 ::1 -reject >/dev/null
 	route -qn add -inet6 2002:7f00:: -prefixlen 24 ::1 -reject >/dev/null
@@ -263,15 +280,17 @@ else
 	ip6kernel=NO
 fi
 
+# Create all the pseudo interfaces up front
+vifscreate
 
 # Configure all the non-loopback interfaces which we know about, but
 # do not start interfaces which must be delayed. Refer to hostname.if(5)
-ifmstart "" "trunk svlan vlan carp gif gre pfsync pppoe tun bridge switch pflow"
+ifmstart "" "trunk svlan vlan carp pppoe tun tap gif etherip gre egre mobileip pflow"
 
 # The trunk interfaces need to come up first in this list.
 # The (s)vlan interfaces need to come up after trunk.
 # Configure all the carp interfaces which we know about before default route.
-ifmstart "trunk svlan vlan carp"
+ifmstart "trunk svlan vlan carp pppoe"
 
 # Look for default routes in /etc/mygate.
 defaultroute
@@ -282,14 +301,11 @@ if [[ $multicast != YES ]]; then
 	route -qn add -net 224.0.0.0/4 -interface 127.0.0.1 -reject >/dev/null
 fi
 
-# Configure PPPoE, GIF, GRE, TUN and PFLOW interfaces, delayed because they
-# require routes to be set. TUN might depend on PPPoE, and GIF or GRE may
-# depend on either of them. PFLOW might bind to ip addresses configured
-# on either of them.
-ifmstart "pppoe tun gif gre bridge switch pflow"
-
 # Reject 127/8 other than 127.0.0.1.
 route -qn add -net 127 127.0.0.1 -reject >/dev/null
+
+# Configure interfaces that rely on routing
+ifmstart "tun tap gif etherip gre egre mobileip pflow"
 
 if [[ $ip6kernel == YES ]]; then
 	# This is to make sure DAD is completed before going further.
