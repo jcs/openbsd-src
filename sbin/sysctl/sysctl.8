@@ -38,7 +38,7 @@
 .Nd get or set kernel state
 .Sh SYNOPSIS
 .Nm sysctl
-.Op Fl Aanq
+.Op Fl AaFnq
 .Op Ar name Ns Op = Ns Ar value
 .Sh DESCRIPTION
 The
@@ -68,6 +68,8 @@ flag; for the table values, the name of the utility to retrieve them is given.
 List all the currently available string or integer values.
 This is the default, if no parameters are given to
 .Nm .
+.It Fl F
+Print temperature fields in Fahrenheit rather than Celsius.
 .It Fl n
 Suppress printing of the field name, only output the field value.
 Useful for setting shell variables.

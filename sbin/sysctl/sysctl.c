@@ -158,7 +158,7 @@ struct list secondlevel[] = {
 	{ 0, 0 },			/* CTL_VFS */
 };
 
-int	Aflag, aflag, nflag, qflag;
+int	Aflag, aflag, Fflag, nflag, qflag;
 
 /*
  * Variables requiring special processing.
@@ -221,7 +221,7 @@ main(int argc, char *argv[])
 {
 	int ch, lvl1;
 
-	while ((ch = getopt(argc, argv, "Aanqw")) != -1) {
+	while ((ch = getopt(argc, argv, "AaFnqw")) != -1) {
 		switch (ch) {
 
 		case 'A':
@@ -230,6 +230,10 @@ main(int argc, char *argv[])
 
 		case 'a':
 			aflag = 1;
+			break;
+
+		case 'F':
+			Fflag = 1;
 			break;
 
 		case 'n':
@@ -2561,8 +2565,12 @@ print_sensor(struct sensor *s)
 	else {
 		switch (s->type) {
 		case SENSOR_TEMP:
-			printf("%.2f degC",
-			    (s->value - 273150000) / 1000000.0);
+			if (Fflag)
+				printf("%.2f degF",
+				    (s->value * 1.8 - 459670000) / 1000000.0);
+			else
+				printf("%.2f degC",
+				    (s->value - 273150000) / 1000000.0);
 			break;
 		case SENSOR_FANRPM:
 			printf("%lld RPM", s->value);
@@ -2721,8 +2729,7 @@ findname(char *string, char *level, char **bufp, struct list *namelist)
 void
 usage(void)
 {
-
 	(void)fprintf(stderr,
-	    "usage: sysctl [-Aanq] [name[=value]]\n");
+	    "usage: sysctl [-AaFnq] [name[=value]]\n");
 	exit(1);
 }
