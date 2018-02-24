@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl.h,v 1.140 2018/02/17 15:32:20 jsing Exp $ */
+/* $OpenBSD: ssl.h,v 1.145 2018/02/22 17:30:25 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -1207,6 +1207,7 @@ BIO *BIO_new_buffer_ssl_connect(SSL_CTX *ctx);
 int BIO_ssl_copy_session_id(BIO *to, BIO *from);
 void BIO_ssl_shutdown(BIO *ssl_bio);
 
+STACK_OF(SSL_CIPHER) *SSL_CTX_get_ciphers(const SSL_CTX *ctx);
 int	SSL_CTX_set_cipher_list(SSL_CTX *, const char *str);
 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth);
 void	SSL_CTX_free(SSL_CTX *);
@@ -1279,6 +1280,7 @@ const char *SSL_state_string_long(const SSL *s);
 const char *SSL_rstate_string_long(const SSL *s);
 size_t	SSL_SESSION_get_master_key(const SSL_SESSION *ss,
 	    unsigned char *out, size_t max_out);
+int	SSL_SESSION_get_protocol_version(SSL_SESSION *s);
 long	SSL_SESSION_get_time(const SSL_SESSION *s);
 long	SSL_SESSION_set_time(SSL_SESSION *s, long t);
 long	SSL_SESSION_get_timeout(const SSL_SESSION *s);
@@ -1289,12 +1291,13 @@ int	SSL_SESSION_set1_id_context(SSL_SESSION *s,
 	    const unsigned char *sid_ctx, unsigned int sid_ctx_len);
 
 SSL_SESSION *SSL_SESSION_new(void);
+void	SSL_SESSION_free(SSL_SESSION *ses);
+int	SSL_SESSION_up_ref(SSL_SESSION *ss);
 const unsigned char *SSL_SESSION_get_id(const SSL_SESSION *s,
 	    unsigned int *len);
 unsigned int SSL_SESSION_get_compress_id(const SSL_SESSION *s);
 int	SSL_SESSION_print_fp(FILE *fp, const SSL_SESSION *ses);
 int	SSL_SESSION_print(BIO *fp, const SSL_SESSION *ses);
-void	SSL_SESSION_free(SSL_SESSION *ses);
 int	i2d_SSL_SESSION(SSL_SESSION *in, unsigned char **pp);
 int	SSL_set_session(SSL *to, SSL_SESSION *session);
 int	SSL_CTX_add_session(SSL_CTX *s, SSL_SESSION *c);
@@ -1334,7 +1337,6 @@ int SSL_check_private_key(const SSL *ctx);
 
 int SSL_CTX_set_session_id_context(SSL_CTX *ctx, const unsigned char *sid_ctx, unsigned int sid_ctx_len);
 
-SSL *SSL_new(SSL_CTX *ctx);
 int SSL_set_session_id_context(SSL *ssl, const unsigned char *sid_ctx, unsigned int sid_ctx_len);
 
 int SSL_CTX_set_purpose(SSL_CTX *s, int purpose);
@@ -1347,9 +1349,12 @@ int SSL_CTX_set1_param(SSL_CTX *ctx, X509_VERIFY_PARAM *vpm);
 X509_VERIFY_PARAM *SSL_get0_param(SSL *ssl);
 int SSL_set1_param(SSL *ssl, X509_VERIFY_PARAM *vpm);
 
+SSL *SSL_new(SSL_CTX *ctx);
 void	SSL_free(SSL *ssl);
+int	SSL_up_ref(SSL *ssl);
 int 	SSL_accept(SSL *ssl);
 int 	SSL_connect(SSL *ssl);
+int	SSL_is_server(const SSL *s);
 int 	SSL_read(SSL *ssl, void *buf, int num);
 int 	SSL_peek(SSL *ssl, void *buf, int num);
 int 	SSL_write(SSL *ssl, const void *buf, int num);

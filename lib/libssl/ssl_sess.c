@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_sess.c,v 1.72 2018/02/17 15:32:20 jsing Exp $ */
+/* $OpenBSD: ssl_sess.c,v 1.74 2018/02/22 17:25:18 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -710,6 +710,13 @@ SSL_SESSION_free(SSL_SESSION *ss)
 }
 
 int
+SSL_SESSION_up_ref(SSL_SESSION *ss)
+{
+	int refs = CRYPTO_add(&ss->references, 1, CRYPTO_LOCK_SSL_SESSION);
+	return (refs > 1) ? 1 : 0;
+}
+
+int
 SSL_set_session(SSL *s, SSL_SESSION *session)
 {
 	int ret = 0;
@@ -804,6 +811,12 @@ SSL_SESSION_set_time(SSL_SESSION *s, long t)
 		return (0);
 	s->time = t;
 	return (t);
+}
+
+int
+SSL_SESSION_get_protocol_version(SSL_SESSION *s)
+{
+	return s->ssl_version;
 }
 
 X509 *

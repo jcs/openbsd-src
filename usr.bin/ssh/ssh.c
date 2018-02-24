@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh.c,v 1.473 2018/02/13 03:36:56 djm Exp $ */
+/* $OpenBSD: ssh.c,v 1.475 2018/02/23 15:58:38 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -185,13 +185,13 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-"usage: ssh [-46AaCfGgKkMNnqsTtVvXxYy] [-b bind_address] [-c cipher_spec]\n"
-"           [-D [bind_address:]port] [-E log_file] [-e escape_char]\n"
-"           [-F configfile] [-I pkcs11] [-i identity_file]\n"
-"           [-J [user@]host[:port]] [-L address] [-l login_name] [-m mac_spec]\n"
-"           [-O ctl_cmd] [-o option] [-p port] [-Q query_option] [-R address]\n"
-"           [-S ctl_path] [-W host:port] [-w local_tun[:remote_tun]]\n"
-"           destination [command]\n"
+"usage: ssh [-46AaCfGgKkMNnqsTtVvXxYy] [-B bind_interface]\n"
+"           [-b bind_address] [-c cipher_spec] [-D [bind_address:]port]\n"
+"           [-E log_file] [-e escape_char] [-F configfile] [-I pkcs11]\n"
+"           [-i identity_file] [-J [user@]host[:port]] [-L address]\n"
+"           [-l login_name] [-m mac_spec] [-O ctl_cmd] [-o option] [-p port]\n"
+"           [-Q query_option] [-R address] [-S ctl_path] [-W host:port]\n"
+"           [-w local_tun[:remote_tun]] destination [command]\n"
 	);
 	exit(255);
 }
@@ -632,7 +632,7 @@ main(int ac, char **av)
 
  again:
 	while ((opt = getopt(ac, av, "1246ab:c:e:fgi:kl:m:no:p:qstvx"
-	    "ACD:E:F:GI:J:KL:MNO:PQ:R:S:TVw:W:XYy")) != -1) {
+	    "AB:CD:E:F:GI:J:KL:MNO:PQ:R:S:TVw:W:XYy")) != -1) {
 		switch (opt) {
 		case '1':
 			fatal("SSH protocol v.1 is no longer supported");
@@ -941,6 +941,9 @@ main(int ac, char **av)
 			break;
 		case 'b':
 			options.bind_address = optarg;
+			break;
+		case 'B':
+			options.bind_interface = optarg;
 			break;
 		case 'F':
 			config = optarg;
@@ -1347,7 +1350,7 @@ main(int ac, char **av)
 	sensitive_data.keys = NULL;
 	sensitive_data.external_keysign = 0;
 	if (options.hostbased_authentication) {
-		sensitive_data.nkeys = 9;
+		sensitive_data.nkeys = 11;
 		sensitive_data.keys = xcalloc(sensitive_data.nkeys,
 		    sizeof(struct sshkey));	/* XXX */
 
@@ -1368,6 +1371,10 @@ main(int ac, char **av)
 		    _PATH_HOST_RSA_KEY_FILE, "", NULL, NULL);
 		sensitive_data.keys[8] = key_load_private_type(KEY_DSA,
 		    _PATH_HOST_DSA_KEY_FILE, "", NULL, NULL);
+		sensitive_data.keys[9] = key_load_private_cert(KEY_XMSS,
+		    _PATH_HOST_XMSS_KEY_FILE, "", NULL);
+		sensitive_data.keys[10] = key_load_private_type(KEY_XMSS,
+		    _PATH_HOST_XMSS_KEY_FILE, "", NULL, NULL);
 		PRIV_END;
 
 		if (options.hostbased_authentication == 1 &&
@@ -1375,7 +1382,8 @@ main(int ac, char **av)
 		    sensitive_data.keys[5] == NULL &&
 		    sensitive_data.keys[6] == NULL &&
 		    sensitive_data.keys[7] == NULL &&
-		    sensitive_data.keys[8] == NULL) {
+		    sensitive_data.keys[8] == NULL &&
+		    sensitive_data.keys[9] == NULL) {
 			sensitive_data.keys[1] = key_load_cert(
 			    _PATH_HOST_ECDSA_KEY_FILE);
 			sensitive_data.keys[2] = key_load_cert(
@@ -1392,6 +1400,10 @@ main(int ac, char **av)
 			    _PATH_HOST_RSA_KEY_FILE, NULL);
 			sensitive_data.keys[8] = key_load_public(
 			    _PATH_HOST_DSA_KEY_FILE, NULL);
+			sensitive_data.keys[9] = key_load_cert(
+			    _PATH_HOST_XMSS_KEY_FILE);
+			sensitive_data.keys[10] = key_load_public(
+			    _PATH_HOST_XMSS_KEY_FILE, NULL);
 			sensitive_data.external_keysign = 1;
 		}
 	}

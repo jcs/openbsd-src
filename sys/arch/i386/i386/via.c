@@ -1,4 +1,4 @@
-/*	$OpenBSD: via.c,v 1.40 2017/12/29 13:24:11 fcambus Exp $	*/
+/*	$OpenBSD: via.c,v 1.42 2018/02/21 21:09:57 mikeb Exp $	*/
 /*	$NetBSD: machdep.c,v 1.214 1996/11/10 03:16:17 thorpej Exp $	*/
 
 /*-
@@ -98,6 +98,7 @@ viac3_crypto_setup(void)
 	algs[CRYPTO_SHA2_256_HMAC] = CRYPTO_ALG_FLAG_SUPPORTED;
 	algs[CRYPTO_SHA2_384_HMAC] = CRYPTO_ALG_FLAG_SUPPORTED;
 	algs[CRYPTO_SHA2_512_HMAC] = CRYPTO_ALG_FLAG_SUPPORTED;
+	algs[CRYPTO_ESN] = CRYPTO_ALG_FLAG_SUPPORTED;
 
 	vc3_sc->sc_cid = crypto_get_driverid(0);
 	if (vc3_sc->sc_cid < 0) {
@@ -180,9 +181,9 @@ viac3_crypto_newsession(u_int32_t *sidp, struct cryptoini *cri)
 
 			/* Build expanded keys for both directions */
 			AES_KeySetup_Encrypt(ses->ses_ekey, c->cri_key,
-			    c->cri_klen);
+			    c->cri_klen / 8);
 			AES_KeySetup_Decrypt(ses->ses_dkey, c->cri_key,
-			    c->cri_klen);
+			    c->cri_klen / 8);
 			for (i = 0; i < 4 * (AES_MAXROUNDS + 1); i++) {
 				ses->ses_ekey[i] = ntohl(ses->ses_ekey[i]);
 				ses->ses_dkey[i] = ntohl(ses->ses_dkey[i]);
@@ -253,6 +254,9 @@ viac3_crypto_newsession(u_int32_t *sidp, struct cryptoini *cri)
 			swd->sw_axf = axf;
 			swd->sw_alg = c->cri_alg;
 
+			break;
+		case CRYPTO_ESN:
+			/* nothing to do */
 			break;
 		default:
 			viac3_crypto_freesession(sesn);

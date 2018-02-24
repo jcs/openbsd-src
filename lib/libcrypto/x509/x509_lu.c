@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_lu.c,v 1.23 2017/01/29 17:49:23 beck Exp $ */
+/* $OpenBSD: x509_lu.c,v 1.26 2018/02/22 17:19:31 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -268,6 +268,13 @@ X509_STORE_free(X509_STORE *vfy)
 	free(vfy);
 }
 
+int
+X509_STORE_up_ref(X509_STORE *x)
+{
+	int refs = CRYPTO_add(&x->references, 1, CRYPTO_LOCK_X509_STORE);
+	return (refs > 1) ? 1 : 0;
+}
+
 X509_LOOKUP *
 X509_STORE_add_lookup(X509_STORE *v, X509_LOOKUP_METHOD *m)
 {
@@ -526,6 +533,22 @@ X509_OBJECT_retrieve_by_subject(STACK_OF(X509_OBJECT) *h, int type,
 	return sk_X509_OBJECT_value(h, idx);
 }
 
+X509 *
+X509_OBJECT_get0_X509(const X509_OBJECT *xo)
+{
+	if (xo != NULL && xo->type == X509_LU_X509)
+		return xo->data.x509;
+	return NULL;
+}
+
+X509_CRL *
+X509_OBJECT_get0_X509_CRL(X509_OBJECT *xo)
+{
+	if (xo != NULL && xo->type == X509_LU_CRL)
+		return xo->data.crl;
+	return NULL;
+}
+
 STACK_OF(X509) *
 X509_STORE_get1_certs(X509_STORE_CTX *ctx, X509_NAME *nm)
 {
@@ -649,7 +672,6 @@ X509_OBJECT_retrieve_match(STACK_OF(X509_OBJECT) *h, X509_OBJECT *x)
 	return NULL;
 }
 
-
 /* Try to get issuer certificate from store. Due to limitations
  * of the API this can only retrieve a single certificate matching
  * a given subject name. However it will fill the cache with all
@@ -724,6 +746,24 @@ X509_STORE_CTX_get1_issuer(X509 **issuer, X509_STORE_CTX *ctx, X509 *x)
 	if (*issuer)
 		CRYPTO_add(&(*issuer)->references, 1, CRYPTO_LOCK_X509);
 	return ret;
+}
+
+STACK_OF(X509_OBJECT) *
+X509_STORE_get0_objects(X509_STORE *xs)
+{
+	return xs->objs;
+}
+
+void *
+X509_STORE_get_ex_data(X509_STORE *xs, int idx)
+{
+	return CRYPTO_get_ex_data(&xs->ex_data, idx);
+}
+
+int
+X509_STORE_set_ex_data(X509_STORE *xs, int idx, void *data)
+{
+	return CRYPTO_set_ex_data(&xs->ex_data, idx, data);
 }
 
 int

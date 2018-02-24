@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_vfy.h,v 1.20 2018/02/14 17:06:34 jsing Exp $ */
+/* $OpenBSD: x509_vfy.h,v 1.24 2018/02/22 17:19:31 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -426,11 +426,18 @@ X509_OBJECT *X509_OBJECT_retrieve_by_subject(STACK_OF(X509_OBJECT) *h,int type,X
 X509_OBJECT *X509_OBJECT_retrieve_match(STACK_OF(X509_OBJECT) *h, X509_OBJECT *x);
 void X509_OBJECT_up_ref_count(X509_OBJECT *a);
 void X509_OBJECT_free_contents(X509_OBJECT *a);
-X509_STORE *X509_STORE_new(void );
-void X509_STORE_free(X509_STORE *v);
+X509 *X509_OBJECT_get0_X509(const X509_OBJECT *xo);
+X509_CRL *X509_OBJECT_get0_X509_CRL(X509_OBJECT *xo);
 
+X509_STORE *X509_STORE_new(void);
+void X509_STORE_free(X509_STORE *v);
+int X509_STORE_up_ref(X509_STORE *x);
 STACK_OF(X509)* X509_STORE_get1_certs(X509_STORE_CTX *st, X509_NAME *nm);
 STACK_OF(X509_CRL)* X509_STORE_get1_crls(X509_STORE_CTX *st, X509_NAME *nm);
+STACK_OF(X509_OBJECT) *X509_STORE_get0_objects(X509_STORE *xs);
+void *X509_STORE_get_ex_data(X509_STORE *xs, int idx);
+int X509_STORE_set_ex_data(X509_STORE *xs, int idx, void *data);
+
 int X509_STORE_set_flags(X509_STORE *ctx, unsigned long flags);
 int X509_STORE_set_purpose(X509_STORE *ctx, int purpose);
 int X509_STORE_set_trust(X509_STORE *ctx, int trust);
@@ -447,6 +454,8 @@ void X509_STORE_CTX_free(X509_STORE_CTX *ctx);
 int X509_STORE_CTX_init(X509_STORE_CTX *ctx, X509_STORE *store,
 			 X509 *x509, STACK_OF(X509) *chain);
 X509 *X509_STORE_CTX_get0_cert(X509_STORE_CTX *ctx);
+STACK_OF(X509) *X509_STORE_CTX_get0_chain(X509_STORE_CTX *xs);
+X509_STORE *X509_STORE_CTX_get0_store(X509_STORE_CTX *xs);
 STACK_OF(X509) *X509_STORE_CTX_get0_untrusted(X509_STORE_CTX *ctx);
 void X509_STORE_CTX_set0_untrusted(X509_STORE_CTX *ctx, STACK_OF(X509) *sk);
 void X509_STORE_CTX_trusted_stack(X509_STORE_CTX *ctx, STACK_OF(X509) *sk);

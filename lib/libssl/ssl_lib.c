@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_lib.c,v 1.176 2018/02/17 15:19:43 jsing Exp $ */
+/* $OpenBSD: ssl_lib.c,v 1.179 2018/02/22 17:30:25 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -568,6 +568,13 @@ SSL_free(SSL *s)
 	free(s);
 }
 
+int
+SSL_up_ref(SSL *s)
+{
+	int refs = CRYPTO_add(&s->references, 1, CRYPTO_LOCK_SSL);
+	return (refs > 1) ? 1 : 0;
+}
+
 void
 SSL_set_bio(SSL *s, BIO *rbio, BIO *wbio)
 {
@@ -931,6 +938,12 @@ SSL_connect(SSL *s)
 		SSL_set_connect_state(s); /* Not properly initialized yet */
 
 	return (s->method->internal->ssl_connect(s));
+}
+
+int
+SSL_is_server(const SSL *s)
+{
+	return s->server;
 }
 
 long
@@ -1312,6 +1325,12 @@ SSL_get_cipher_list(const SSL *s, int n)
 	if (c == NULL)
 		return (NULL);
 	return (c->name);
+}
+
+STACK_OF(SSL_CIPHER) *
+SSL_CTX_get_ciphers(const SSL_CTX *ctx)
+{
+	return ctx->cipher_list;
 }
 
 /* Specify the ciphers to be used by default by the SSL_CTX. */

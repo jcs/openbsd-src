@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.13 2018/01/31 10:52:12 kettenis Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.16 2018/02/24 09:45:10 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
@@ -231,19 +231,11 @@ cpu_attach(struct device *parent, struct device *dev, void *aux)
 	}
 #ifdef MULTIPROCESSOR
 	else {
-		ncpusfound++;
 		ci = malloc(sizeof(*ci), M_DEVBUF, M_WAITOK | M_ZERO);
 		cpu_info[dev->dv_unit] = ci;
 		ci->ci_next = cpu_info_list->ci_next;
 		cpu_info_list->ci_next = ci;
 		ci->ci_flags |= CPUF_AP;
-	}
-#else
-	else {
-		ncpusfound++;
-		printf(" mpidr %llx not configured\n",
-		    faa->fa_reg[0].addr);
-		return;
 	}
 #endif
 
@@ -323,8 +315,6 @@ cpu_clockspeed(int *freq)
 	return 0;
 }
 
-int	(*cpu_on_fn)(register_t, register_t);
-
 #ifdef MULTIPROCESSOR
 
 void cpu_boot_secondary(struct cpu_info *ci);
@@ -391,8 +381,9 @@ cpu_hatch_secondary(struct cpu_info *ci, int method, uint64_t data)
 	switch (method) {
 	case 1:
 		/* psci  */
-		if (cpu_on_fn != 0)
-			rc = !cpu_on_fn(ci->ci_mpidr, startaddr);
+#if NPSCI > 0
+		rc = (psci_cpu_on(ci->ci_mpidr, startaddr, 0) == PSCI_SUCCESS);
+#endif
 		break;
 	case 2:
 		/* spin-table */
@@ -454,13 +445,8 @@ cpu_start_secondary(struct cpu_info *ci)
 
 	spllower(IPL_NONE);
 
-#ifdef notyet
 	SCHED_LOCK(s);
 	cpu_switchto(NULL, sched_chooseproc());
-#else
-	for (;;)
-		__asm volatile("wfe");
-#endif
 }
 
 void

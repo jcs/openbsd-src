@@ -1,4 +1,4 @@
-/* $OpenBSD: x_crl.c,v 1.27 2017/01/29 17:49:22 beck Exp $ */
+/* $OpenBSD: x_crl.c,v 1.29 2018/02/22 16:58:45 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -684,4 +684,38 @@ void *
 X509_CRL_get_meth_data(X509_CRL *crl)
 {
 	return crl->meth_data;
+}
+
+int
+X509_CRL_get_signature_nid(const X509_CRL *crl)
+{
+	return OBJ_obj2nid(crl->sig_alg->algorithm);
+}
+
+const STACK_OF(X509_EXTENSION) *
+X509_CRL_get0_extensions(const X509_CRL *crl)
+{
+	return crl->crl->extensions;
+}
+
+const ASN1_TIME *
+X509_CRL_get0_lastUpdate(const X509_CRL *crl)
+{
+	return crl->crl->lastUpdate;
+}
+
+const ASN1_TIME *
+X509_CRL_get0_nextUpdate(const X509_CRL *crl)
+{
+	return crl->crl->nextUpdate;
+}
+
+void
+X509_CRL_get0_signature(const X509_CRL *crl, const ASN1_BIT_STRING **psig,
+    const X509_ALGOR **palg)
+{
+	if (psig != NULL)
+		*psig = crl->signature;
+	if (palg != NULL)
+		*palg = crl->sig_alg;
 }

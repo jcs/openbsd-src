@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.358 2018/02/19 00:23:57 dlg Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.361 2018/02/23 05:17:39 akoshibe Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -121,6 +121,23 @@
 	"\5VLAN_MTU\6VLAN_HWTAGGING\10CSUM_TCPv6"			\
 	"\11CSUM_UDPv6\20WOL"
 
+struct ifencap {
+	unsigned int	 ife_flags;
+#define IFE_VNETID_MASK		0xf
+#define IFE_VNETID_NOPE		0x0
+#define IFE_VNETID_NONE		0x1
+#define IFE_VNETID_ANY		0x2
+#define IFE_VNETID_SET		0x3
+	int64_t		 ife_vnetid;
+#define IFE_VNETFLOWID		0x10
+
+#define IFE_PARENT_MASK		0xf00
+#define IFE_PARENT_NOPE		0x000
+#define IFE_PARENT_NONE		0x100
+#define IFE_PARENT_SET		0x200
+	char		ife_parent[IFNAMSIZ];
+};
+
 struct	ifreq		ifr, ridreq;
 struct	in_aliasreq	in_addreq;
 struct	in6_ifreq	ifr6;
@@ -220,6 +237,7 @@ void	unsetvlandev(const char *, int);
 void	mpe_status(void);
 void	mpw_status(void);
 void	setrdomain(const char *, int);
+void	unsetrdomain(const char *, int);
 int	prefix(void *val, int);
 void	getifgroups(void);
 void	setifgroup(const char *, int);
@@ -252,6 +270,9 @@ void	setpfsync_syncpeer(const char *, int);
 void	unsetpfsync_syncpeer(const char *, int);
 void	setpfsync_defer(const char *, int);
 void	pfsync_status(void);
+void	setvnetflowid(const char *, int);
+void	delvnetflowid(const char *, int);
+void	getvnetflowid(struct ifencap *);
 void	settunneldf(const char *, int);
 void	settunnelnodf(const char *, int);
 void	setpppoe_dev(const char *,int);
@@ -401,6 +422,7 @@ const struct	cmd {
 	{ "rtlabel",	NEXTARG,	0,		setifrtlabel },
 	{ "-rtlabel",	-1,		0,		setifrtlabel },
 	{ "rdomain",	NEXTARG,	0,		setrdomain },
+	{ "-rdomain",	0,		0,		unsetrdomain },
 	{ "staticarp",	IFF_STATICARP,	0,		setifflags },
 	{ "-staticarp",	-IFF_STATICARP,	0,		setifflags },
 	{ "mpls",	IFXF_MPLS,	0,		setifxflags },
@@ -438,6 +460,8 @@ const struct	cmd {
 	{ "tunnelttl",	NEXTARG,	0,		settunnelttl },
 	{ "tunneldf",	0,		0,		settunneldf },
 	{ "-tunneldf",	0,		0,		settunnelnodf },
+	{ "vnetflowid",	0,		0,		setvnetflowid },
+	{ "-vnetflowid", 0,		0,		delvnetflowid },
 	{ "pppoedev",	NEXTARG,	0,		setpppoe_dev },
 	{ "pppoesvc",	NEXTARG,	0,		setpppoe_svc },
 	{ "-pppoesvc",	1,		0,		setpppoe_svc },
@@ -3312,6 +3336,30 @@ settunnelnodf(const char *ignored, int alsoignored)
 }
 
 void
+setvnetflowid(const char *ignored, int alsoignored)
+{
+	if (strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name)) >=
+	    sizeof(ifr.ifr_name))
+		errx(1, "vnetflowid: name is too long");
+
+	ifr.ifr_vnetid = 1;
+	if (ioctl(s, SIOCSVNETFLOWID, &ifr) < 0)
+		warn("SIOCSVNETFLOWID");
+}
+
+void
+delvnetflowid(const char *ignored, int alsoignored)
+{
+	if (strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name)) >=
+	    sizeof(ifr.ifr_name))
+		errx(1, "vnetflowid: name is too long");
+
+	ifr.ifr_vnetid = 0;
+	if (ioctl(s, SIOCSVNETFLOWID, &ifr) < 0)
+		warn("SIOCSVNETFLOWID");
+}
+
+void
 mpe_status(void)
 {
 	struct shim_hdr	shim;
@@ -3497,21 +3545,19 @@ setmpwcontrolword(const char *value, int d)
 }
 #endif /* SMALL */
 
-struct ifencap {
-	unsigned int	 ife_flags;
-#define IFE_VNETID_MASK		0xf
-#define IFE_VNETID_NOPE		0x0
-#define IFE_VNETID_NONE		0x1
-#define IFE_VNETID_ANY		0x2
-#define IFE_VNETID_SET		0x3
-	int64_t		 ife_vnetid;
+void
+getvnetflowid(struct ifencap *ife)
+{
+	if (strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name)) >=
+	    sizeof(ifr.ifr_name))
+		errx(1, "vnetflowid: name is too long");
 
-#define IFE_PARENT_MASK		0xf0
-#define IFE_PARENT_NOPE		0x00
-#define IFE_PARENT_NONE		0x10
-#define IFE_PARENT_SET		0x20
-	char		ife_parent[IFNAMSIZ];
-};
+	if (ioctl(s, SIOCGVNETFLOWID, &ifr) == -1)
+		return;
+
+	if (ifr.ifr_vnetid)
+		ife->ife_flags |= IFE_VNETFLOWID;
+}
 
 void
 setvnetid(const char *id, int param)
@@ -3619,6 +3665,7 @@ getencap(void)
 	struct ifencap ife = { .ife_flags = 0 };
 
 	getvnetid(&ife);
+	getvnetflowid(&ife);
 	getifparent(&ife);
 
 	if (ife.ife_flags == 0)
@@ -3635,6 +3682,8 @@ getencap(void)
 		break;
 	case IFE_VNETID_SET:
 		printf(" vnetid %lld", ife.ife_vnetid);
+		if (ife.ife_flags & IFE_VNETFLOWID)
+			printf("+");
 		break;
 	}
 
@@ -5618,6 +5667,15 @@ setrdomain(const char *id, int param)
 	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 	ifr.ifr_rdomainid = rdomainid;
 	if (ioctl(s, SIOCSIFRDOMAIN, (caddr_t)&ifr) < 0)
+		warn("SIOCSIFRDOMAIN");
+}
+
+void
+unsetrdomain(const char *ignored, int alsoignored)
+{
+	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+	ifr.ifr_rdomainid = 0;
+	if (ioctl(s, SIOCSIFRDOMAIN, (caddr_t)&ifr) < 0) 	
 		warn("SIOCSIFRDOMAIN");
 }
 #endif
