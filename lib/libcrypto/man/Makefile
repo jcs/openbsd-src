@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.133 2018/02/19 14:08:52 schwarze Exp $
+# $OpenBSD: Makefile,v 1.138 2018/03/18 13:06:36 schwarze Exp $
 
 .include <bsd.own.mk>
 
@@ -85,6 +85,7 @@ MAN=	\
 	DSA_generate_parameters.3 \
 	DSA_get_ex_new_index.3 \
 	DSA_get0_pqg.3 \
+	DSA_meth_new.3 \
 	DSA_new.3 \
 	DSA_set_method.3 \
 	DSA_sign.3 \
@@ -155,8 +156,10 @@ MAN=	\
 	OPENSSL_VERSION_NUMBER.3 \
 	OPENSSL_cleanse.3 \
 	OPENSSL_config.3 \
+	OPENSSL_init_crypto.3 \
 	OPENSSL_load_builtin_modules.3 \
 	OPENSSL_malloc.3 \
+	OPENSSL_sk_new.3 \
 	OpenSSL_add_all_algorithms.3 \
 	PEM_bytes_read_bio.3 \
 	PEM_read.3 \
@@ -190,6 +193,7 @@ MAN=	\
 	RSA_generate_key.3 \
 	RSA_get_ex_new_index.3 \
 	RSA_get0_key.3 \
+	RSA_meth_new.3 \
 	RSA_new.3 \
 	RSA_padding_add_PKCS1_type_1.3 \
 	RSA_print.3 \
@@ -202,6 +206,7 @@ MAN=	\
 	SHA1.3 \
 	SMIME_read_PKCS7.3 \
 	SMIME_write_PKCS7.3 \
+	STACK_OF.3 \
 	SXNET_new.3 \
 	TS_REQ_new.3 \
 	UI_UTIL_read_pw.3 \
@@ -222,6 +227,7 @@ MAN=	\
 	X509_NAME_get_index_by_NID.3 \
 	X509_NAME_new.3 \
 	X509_NAME_print_ex.3 \
+	X509_OBJECT_get0_X509.3 \
 	X509_PUBKEY_new.3 \
 	X509_REQ_new.3 \
 	X509_REVOKED_new.3 \
@@ -231,6 +237,7 @@ MAN=	\
 	X509_STORE_CTX_new.3 \
 	X509_STORE_CTX_set_verify_cb.3 \
 	X509_STORE_load_locations.3 \
+	X509_STORE_new.3 \
 	X509_STORE_set_verify_cb_func.3 \
 	X509_STORE_set1_param.3 \
 	X509_VERIFY_PARAM_set_flags.3 \

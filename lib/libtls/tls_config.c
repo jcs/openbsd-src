@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_config.c,v 1.49 2018/02/10 04:57:35 jsing Exp $ */
+/* $OpenBSD: tls_config.c,v 1.52 2018/04/07 16:35:34 jsing Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -77,7 +77,7 @@ tls_config_load_file(struct tls_error *error, const char *filetype,
 }
 
 struct tls_config *
-tls_config_new(void)
+tls_config_new_internal(void)
 {
 	struct tls_config *config;
 	unsigned char sid[TLS_MAX_SESSION_ID_LENGTH];
@@ -126,6 +126,15 @@ tls_config_new(void)
  err:
 	tls_config_free(config);
 	return (NULL);
+}
+
+struct tls_config *
+tls_config_new(void)
+{
+	if (tls_init() == -1)
+		return (NULL);
+
+	return tls_config_new_internal();
 }
 
 void
@@ -180,10 +189,7 @@ tls_config_clear_keys(struct tls_config *config)
 	struct tls_keypair *kp;
 
 	for (kp = config->keypair; kp != NULL; kp = kp->next)
-		tls_keypair_clear(kp);
-
-	tls_config_set_ca_mem(config, NULL, 0);
-	tls_config_set_crl_mem(config, NULL, 0);
+		tls_keypair_clear_key(kp);
 }
 
 int
@@ -508,17 +514,16 @@ tls_config_set_dheparams(struct tls_config *config, const char *params)
 int
 tls_config_set_ecdhecurve(struct tls_config *config, const char *curve)
 {
-	if (strchr(curve, ',') != NULL || strchr(curve, ':') != NULL) {
+	if (curve == NULL ||
+	    strcasecmp(curve, "none") == 0 ||
+	    strcasecmp(curve, "auto") == 0) {
+		curve = TLS_ECDHE_CURVES;
+	} else if (strchr(curve, ',') != NULL || strchr(curve, ':') != NULL) {
 		tls_config_set_errorx(config, "invalid ecdhe curve '%s'",
 		    curve);
 		return (-1);
 	}
 
-	if (curve == NULL ||
-	    strcasecmp(curve, "none") == 0 ||
-	    strcasecmp(curve, "auto") == 0)
-		curve = TLS_ECDHE_CURVES;
-		
 	return tls_config_set_ecdhecurves(config, curve);
 }
 

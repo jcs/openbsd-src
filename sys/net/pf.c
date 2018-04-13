@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1061 2018/02/18 21:45:30 sashan Exp $ */
+/*	$OpenBSD: pf.c,v 1.1064 2018/04/06 10:39:15 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -319,8 +319,10 @@ static __inline int pf_state_compare_key(struct pf_state_key *,
 	struct pf_state_key *);
 static __inline int pf_state_compare_id(struct pf_state *,
 	struct pf_state *);
+#ifdef INET6
 static __inline void pf_cksum_uncover(u_int16_t *, u_int16_t, u_int8_t);
 static __inline void pf_cksum_cover(u_int16_t *, u_int16_t, u_int8_t);
+#endif /* INET6 */
 static __inline void pf_set_protostate(struct pf_state *, int, u_int8_t);
 
 struct pf_src_tree tree_src_tracking;
@@ -1816,6 +1818,7 @@ pf_cksum_fixup(u_int16_t *cksum, u_int16_t was, u_int16_t now,
 	*cksum = (u_int16_t)(x);
 }
 
+#ifdef INET6
 /* pre: coverage(cksum) is superset of coverage(covered_cksum) */
 static __inline void
 pf_cksum_uncover(u_int16_t *cksum, u_int16_t covered_cksum, u_int8_t proto)
@@ -1829,6 +1832,7 @@ pf_cksum_cover(u_int16_t *cksum, u_int16_t uncovered_cksum, u_int8_t proto)
 {
 	pf_cksum_fixup(cksum, 0x0, ~uncovered_cksum, proto);
 }
+#endif /* INET6 */
 
 /* pre: *a is 16-bit aligned within its packet
  *
@@ -3650,7 +3654,7 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_ruleset *ruleset)
 #if NPFLOG > 0
 				if (r->log) {
 					REASON_SET(&ctx->reason, PFRES_MATCH);
-					PFLOG_PACKET(ctx->pd, ctx->reason, r,
+					pflog_packet(ctx->pd, ctx->reason, r,
 					    ctx->a, ruleset, NULL);
 				}
 #endif	/* NPFLOG > 0 */
@@ -3789,7 +3793,7 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 
 #if NPFLOG > 0
 	if (r->log)
-		PFLOG_PACKET(pd, ctx.reason, r, a, ruleset, NULL);
+		pflog_packet(pd, ctx.reason, r, a, ruleset, NULL);
 	if (ctx.act.log & PF_LOG_MATCHES)
 		pf_log_matches(pd, r, a, ruleset, &ctx.rules);
 #endif	/* NPFLOG > 0 */
@@ -7091,11 +7095,11 @@ done:
 		struct pf_rule_item	*ri;
 
 		if (pd.pflog & PF_LOG_FORCE || r->log & PF_LOG_ALL)
-			PFLOG_PACKET(&pd, reason, r, a, ruleset, NULL);
+			pflog_packet(&pd, reason, r, a, ruleset, NULL);
 		if (s) {
 			SLIST_FOREACH(ri, &s->match_rules, entry)
 				if (ri->r->log & PF_LOG_ALL)
-					PFLOG_PACKET(&pd, reason, ri->r, a,
+					pflog_packet(&pd, reason, ri->r, a,
 					    ruleset, NULL);
 		}
 	}
@@ -7269,12 +7273,10 @@ pf_inp_unlink(struct inpcb *inp)
 void
 pf_state_key_link_reverse(struct pf_state_key *sk, struct pf_state_key *skrev)
 {
-	/*
-	 * Assert will not wire as long as we are called by pf_find_state()
-	 */
+	/* Note that sk and skrev may be equal, then we refcount twice. */
 	KASSERT(sk->reverse == NULL);
-	sk->reverse = pf_state_key_ref(skrev);
 	KASSERT(skrev->reverse == NULL);
+	sk->reverse = pf_state_key_ref(skrev);
 	skrev->reverse = pf_state_key_ref(sk);
 }
 
@@ -7291,7 +7293,7 @@ pf_log_matches(struct pf_pdesc *pd, struct pf_rule *rm, struct pf_rule *am,
 
 	SLIST_FOREACH(ri, matchrules, entry)
 		if (ri->r->log & PF_LOG_MATCHES)
-			PFLOG_PACKET(pd, PFRES_MATCH, rm, am, ruleset, ri->r);
+			pflog_packet(pd, PFRES_MATCH, rm, am, ruleset, ri->r);
 }
 #endif	/* NPFLOG > 0 */
 
@@ -7382,6 +7384,7 @@ pf_state_key_unlink_reverse(struct pf_state_key *sk)
 {
 	struct pf_state_key *skrev = sk->reverse;
 
+	/* Note that sk and skrev may be equal, then we unref twice. */
 	if (skrev != NULL) {
 		KASSERT(skrev->reverse == sk);
 		sk->reverse = NULL;

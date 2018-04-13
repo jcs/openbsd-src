@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gif.c,v 1.111 2018/02/19 00:34:32 dlg Exp $	*/
+/*	$OpenBSD: if_gif.c,v 1.115 2018/04/08 00:44:21 dlg Exp $	*/
 /*	$KAME: if_gif.c,v 1.43 2001/02/20 08:51:07 itojun Exp $	*/
 
 /*
@@ -191,7 +191,7 @@ gif_clone_destroy(struct ifnet *ifp)
 	if (ISSET(ifp->if_flags, IFF_RUNNING))
 		gif_down(sc);
 
-	TAILQ_INSERT_TAIL(&gif_list, &sc->sc_tunnel, t_entry);
+	TAILQ_REMOVE(&gif_list, &sc->sc_tunnel, t_entry);
 	NET_UNLOCK();
 
 	if_detach(ifp);
@@ -338,7 +338,7 @@ gif_send(struct gif_softc *sc, struct mbuf *m,
 		ip6->ip6_flow = htonl(flow);
 		ip6->ip6_vfc |= IPV6_VERSION;
 		ip6->ip6_plen = htons(len);
-		ip6->ip6_nxt = IPPROTO_GRE;
+		ip6->ip6_nxt = proto;
 		ip6->ip6_hlim = ttl;
 		ip6->ip6_src = sc->sc_tunnel.t_src6;
 		ip6->ip6_dst = sc->sc_tunnel.t_dst6;
@@ -403,6 +403,8 @@ gif_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 		error = ENOBUFS;
 		goto drop;
 	}
+	memcpy((caddr_t)(mtag + 1), &ifp->if_index, sizeof(ifp->if_index));
+	m_tag_prepend(m, mtag);
 
 	m->m_pkthdr.ph_family = dst->sa_family;
 
@@ -671,7 +673,7 @@ in_gif_input(struct mbuf **mp, int *offp, int proto, int af)
 
 	key.t_af = AF_INET;
 	key.t_src4 = ip->ip_dst;
-	key.t_dst4 = ip->ip_dst;
+	key.t_dst4 = ip->ip_src;
 
 	rv = gif_input(&key, mp, offp, proto, af, ip->ip_ttl, ip->ip_tos);
 	if (rv == -1)
@@ -744,10 +746,6 @@ gif_input(struct gif_tunnel *key, struct mbuf **mp, int *offp, int proto,
 		return (-1);
 	}
 	
-	/* XXX What if we run transport-mode IPsec to protect gif tunnel ? */
-	if (m->m_flags & (M_AUTH | M_CONF))
-		return (-1);
-
 	key->t_rtableid = m->m_pkthdr.ph_rtableid;
 
 	sc = gif_find(key);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: c_ksh.c,v 1.58 2018/01/16 22:52:32 jca Exp $	*/
+/*	$OpenBSD: c_ksh.c,v 1.60 2018/04/09 17:53:36 tobias Exp $	*/
 
 /*
  * built-in Korn commands: c_*
@@ -1017,7 +1017,7 @@ int
 c_let(char **wp)
 {
 	int rv = 1;
-	long val;
+	int64_t val;
 
 	if (wp[1] == NULL) /* at&t ksh does this */
 		bi_errorf("no arguments");
@@ -1273,7 +1273,7 @@ c_getopts(char **wp)
 	}
 
 	if (genv->loc->next == NULL) {
-		internal_warningf("c_getopts: no argv");
+		internal_warningf("%s: no argv", __func__);
 		return 1;
 	}
 	/* Which arguments are we parsing... */

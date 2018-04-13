@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_output.c,v 1.234 2018/02/19 08:59:53 mpi Exp $	*/
+/*	$OpenBSD: ip6_output.c,v 1.237 2018/03/27 15:03:52 dhill Exp $	*/
 /*	$KAME: ip6_output.c,v 1.172 2001/03/25 09:55:56 itojun Exp $	*/
 
 /*
@@ -463,6 +463,17 @@ reroute:
 			ifp = if_get(rtable_loindex(m->m_pkthdr.ph_rtableid));
 		else
 			ifp = if_get(rt->rt_ifidx);
+		/*
+		 * We aren't using rtisvalid() here because the UP/DOWN state
+		 * machine is broken with some Ethernet drivers like em(4).
+		 * As a result we might try to use an invalid cached route
+		 * entry while an interface is being detached.
+		 */
+		if (ifp == NULL) {
+			ip6stat_inc(ip6s_noroute);
+			error = EHOSTUNREACH;
+			goto bad;
+		}
 	} else {
 		*dst = dstsock;
 	}
@@ -850,7 +861,7 @@ ip6_copyexthdr(struct mbuf **mp, caddr_t hdr, int hlen)
 	}
 	m->m_len = hlen;
 	if (hdr)
-		bcopy(hdr, mtod(m, caddr_t), hlen);
+		memcpy(mtod(m, caddr_t), hdr, hlen);
 
 	*mp = m;
 	return (0);
@@ -918,7 +929,7 @@ ip6_insert_jumboopt(struct ip6_exthdrs *exthdrs, u_int32_t plen)
 			if (!n)
 				return (ENOBUFS);
 			n->m_len = oldoptlen + JUMBOOPTLEN;
-			bcopy(mtod(mopt, caddr_t), mtod(n, caddr_t),
+			memcpy(mtod(n, caddr_t), mtod(mopt, caddr_t),
 			      oldoptlen);
 			optbuf = mtod(n, u_int8_t *) + oldoptlen;
 			m_freem(mopt);
@@ -1040,7 +1051,7 @@ ip6_ctloutput(int op, struct socket *so, int level, int optname,
 	void *optdata;
 	struct inpcb *inp = sotoinpcb(so);
 	int error, optval;
-	struct proc *p = curproc; /* For IPSec and rdomain */
+	struct proc *p = curproc; /* For IPsec and rdomain */
 	u_int rtid = 0;
 
 	error = optval = 0;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_lock.c,v 1.59 2018/02/19 09:18:00 mpi Exp $	*/
+/*	$OpenBSD: kern_lock.c,v 1.61 2018/03/27 08:32:29 mpi Exp $	*/
 
 /*
  * Copyright (c) 2017 Visa Hankala
@@ -79,7 +79,7 @@ _kernel_unlock(void)
 int
 _kernel_lock_held(void)
 {
-	if (panicstr)
+	if (panicstr || db_active)
 		return 1;
 	return (__mp_lock_held(&kernel_lock, curcpu()));
 }
@@ -262,6 +262,10 @@ __mtx_enter(struct mutex *mtx)
 	int nticks = __mp_lock_spinout;
 #endif
 
+	/* Avoid deadlocks after panic or in DDB */
+	if (panicstr || db_active)
+		return;
+
 	while (__mtx_enter_try(mtx) == 0) {
 		CPU_BUSY_CYCLE();
 
@@ -310,6 +314,10 @@ __mtx_enter(struct mutex *mtx)
 {
 	struct cpu_info *ci = curcpu();
 
+	/* Avoid deadlocks after panic or in DDB */
+	if (panicstr || db_active)
+		return;
+
 #ifdef DIAGNOSTIC
 	if (__predict_false(mtx->mtx_owner == ci))
 		panic("mtx %p: locking against myself", mtx);
@@ -337,6 +345,10 @@ void
 __mtx_leave(struct mutex *mtx)
 {
 	int s;
+
+	/* Avoid deadlocks after panic or in DDB */
+	if (panicstr || db_active)
+		return;
 
 	MUTEX_ASSERT_LOCKED(mtx);
 

@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_locl.h,v 1.202 2018/01/27 15:30:05 jsing Exp $ */
+/* $OpenBSD: ssl_locl.h,v 1.204 2018/04/07 17:02:34 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -385,9 +385,6 @@ typedef struct ssl_method_internal_st {
 
 	int (*ssl_accept)(SSL *s);
 	int (*ssl_connect)(SSL *s);
-	int (*ssl_read)(SSL *s, void *buf, int len);
-	int (*ssl_peek)(SSL *s, void *buf, int len);
-	int (*ssl_write)(SSL *s, const void *buf, int len);
 	int (*ssl_shutdown)(SSL *s);
 
 	int (*ssl_renegotiate)(SSL *s);
@@ -760,8 +757,6 @@ typedef struct ssl_internal_st {
 } SSL_INTERNAL;
 
 typedef struct ssl3_state_internal_st {
-	int delay_buf_pop_ret;
-
 	unsigned char read_sequence[SSL3_SEQUENCE_SIZE];
 	int read_mac_secret_size;
 	unsigned char read_mac_secret[EVP_MAX_MD_SIZE];

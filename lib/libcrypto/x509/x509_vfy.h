@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_vfy.h,v 1.24 2018/02/22 17:19:31 jsing Exp $ */
+/* $OpenBSD: x509_vfy.h,v 1.27 2018/03/20 15:26:22 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -425,6 +425,7 @@ int X509_OBJECT_idx_by_subject(STACK_OF(X509_OBJECT) *h, int type,
 X509_OBJECT *X509_OBJECT_retrieve_by_subject(STACK_OF(X509_OBJECT) *h,int type,X509_NAME *name);
 X509_OBJECT *X509_OBJECT_retrieve_match(STACK_OF(X509_OBJECT) *h, X509_OBJECT *x);
 void X509_OBJECT_up_ref_count(X509_OBJECT *a);
+int X509_OBJECT_get_type(const X509_OBJECT *a);
 void X509_OBJECT_free_contents(X509_OBJECT *a);
 X509 *X509_OBJECT_get0_X509(const X509_OBJECT *xo);
 X509_CRL *X509_OBJECT_get0_X509_CRL(X509_OBJECT *xo);
@@ -438,10 +439,15 @@ STACK_OF(X509_OBJECT) *X509_STORE_get0_objects(X509_STORE *xs);
 void *X509_STORE_get_ex_data(X509_STORE *xs, int idx);
 int X509_STORE_set_ex_data(X509_STORE *xs, int idx, void *data);
 
+#define X509_STORE_get_ex_new_index(l, p, newf, dupf, freef) \
+	CRYPTO_get_ex_new_index(CRYPTO_EX_INDEX_X509_STORE, (l), (p), \
+		(newf), (dupf), (freef))
+
 int X509_STORE_set_flags(X509_STORE *ctx, unsigned long flags);
 int X509_STORE_set_purpose(X509_STORE *ctx, int purpose);
 int X509_STORE_set_trust(X509_STORE *ctx, int trust);
 int X509_STORE_set1_param(X509_STORE *ctx, X509_VERIFY_PARAM *pm);
+X509_VERIFY_PARAM *X509_STORE_get0_param(X509_STORE *ctx);
 
 void X509_STORE_set_verify_cb(X509_STORE *ctx,
 				  int (*verify_cb)(int, X509_STORE_CTX *));

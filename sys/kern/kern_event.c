@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_event.c,v 1.84 2018/01/13 12:58:40 robert Exp $	*/
+/*	$OpenBSD: kern_event.c,v 1.87 2018/04/10 09:17:45 mpi Exp $	*/
 
 /*-
  * Copyright (c) 1999,2000,2001 Jonathan Lemon <jlemon@FreeBSD.org>
@@ -71,13 +71,13 @@ int	kqueue_close(struct file *fp, struct proc *p);
 void	kqueue_wakeup(struct kqueue *kq);
 
 struct fileops kqueueops = {
-	kqueue_read,
-	kqueue_write,
-	kqueue_ioctl,
-	kqueue_poll,
-	kqueue_kqfilter,
-	kqueue_stat,
-	kqueue_close
+	.fo_read	= kqueue_read,
+	.fo_write	= kqueue_write,
+	.fo_ioctl	= kqueue_ioctl,
+	.fo_poll	= kqueue_poll,
+	.fo_kqfilter	= kqueue_kqfilter,
+	.fo_stat	= kqueue_stat,
+	.fo_close	= kqueue_close
 };
 
 void	knote_attach(struct knote *kn, struct filedesc *fdp);
@@ -479,11 +479,14 @@ sys_kevent(struct proc *p, void *v, register_t *retval)
 	int i, n, nerrors, error;
 	struct kevent kev[KQ_NEVENTS];
 
-	if ((fp = fd_getfile(fdp, SCARG(uap, fd))) == NULL ||
-	    (fp->f_type != DTYPE_KQUEUE))
+	if ((fp = fd_getfile(fdp, SCARG(uap, fd))) == NULL)
 		return (EBADF);
-
 	FREF(fp);
+
+	if (fp->f_type != DTYPE_KQUEUE) {
+		error = EBADF;
+		goto done;
+	}
 
 	if (SCARG(uap, timeout) != NULL) {
 		error = copyin(SCARG(uap, timeout), &ts, sizeof(ts));
@@ -673,6 +676,8 @@ kqueue_register(struct kqueue *kq, struct kevent *kev, struct proc *p)
 	if ((kev->flags & EV_ENABLE) && (kn->kn_status & KN_DISABLED)) {
 		s = splhigh();
 		kn->kn_status &= ~KN_DISABLED;
+		if (kn->kn_fop->f_event(kn, 0))
+			kn->kn_status |= KN_ACTIVE;
 		if ((kn->kn_status & KN_ACTIVE) &&
 		    ((kn->kn_status & KN_QUEUED) == 0))
 			knote_enqueue(kn);

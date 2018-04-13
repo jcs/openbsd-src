@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.89 2018/01/16 22:52:32 jca Exp $	*/
+/*	$OpenBSD: main.c,v 1.91 2018/04/09 17:53:36 tobias Exp $	*/
 
 /*
  * startup, main loop, environments and error handling
@@ -287,7 +287,7 @@ main(int argc, char *argv[])
 			setstr(pwd_v, current_wd, KSH_RETURN_ERROR);
 	}
 	ppid = getppid();
-	setint(global("PPID"), (long) ppid);
+	setint(global("PPID"), (int64_t) ppid);
 	/* setstr can't fail here */
 	setstr(global(version_param), ksh_version, KSH_RETURN_ERROR);
 
@@ -492,7 +492,7 @@ include(const char *name, int argc, char **argv, int intr_ok)
 			unwind(i);
 			/* NOTREACHED */
 		default:
-			internal_errorf("include: %d", i);
+			internal_errorf("%s: %d", __func__, i);
 			/* NOTREACHED */
 		}
 	}
@@ -579,7 +579,7 @@ shell(Source *volatile s, volatile int toplevel)
 		default:
 			source = old_source;
 			quitenv(NULL);
-			internal_errorf("shell: %d", i);
+			internal_errorf("%s: %d", __func__, i);
 			/* NOTREACHED */
 		}
 	}

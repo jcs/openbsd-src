@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmctl.c,v 1.45 2018/01/03 05:39:56 ccardenas Exp $	*/
+/*	$OpenBSD: vmctl.c,v 1.48 2018/03/14 07:29:34 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
@@ -207,7 +207,7 @@ vm_start_complete(struct imsg *imsg, int *ret, int autoconnect)
 				*ret = ENOENT;
 				break;
 			case VMD_DISK_MISSING:
-				warnx("could not find specified disk image(s)");
+				warnx("could not open specified disk image(s)");
 				*ret = ENOENT;
 				break;
 			case VMD_DISK_INVALID:
@@ -220,8 +220,8 @@ vm_start_complete(struct imsg *imsg, int *ret, int autoconnect)
 				*ret = ENOENT;
 				break;
 			case VMD_CDROM_INVALID:
-				warnx("specified iso image is "
-				    "not a regular file");
+				warnx("specified iso image is not a regular "
+				    "file");
 				*ret = ENOENT;
 				break;
 			default:
@@ -702,7 +702,7 @@ vm_console(struct vmop_info_result *list, size_t ct)
 		}
 	}
 
-	errx(1, "console %d not found", info_id);
+	errx(1, "console not found");
 }
 
 /*

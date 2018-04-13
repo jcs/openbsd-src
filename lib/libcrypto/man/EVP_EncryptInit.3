@@ -1,6 +1,6 @@
-.\" $OpenBSD: EVP_EncryptInit.3,v 1.8 2018/02/19 10:04:08 schwarze Exp $
+.\" $OpenBSD: EVP_EncryptInit.3,v 1.21 2018/03/29 21:12:02 schwarze Exp $
 .\" full merge up to: OpenSSL 5211e094 Nov 11 14:39:11 2014 -0800
-.\" selective merge up to: OpenSSL 5c5eb286 Dec 5 00:36:43 2017 +0100
+.\" selective merge up to: OpenSSL 16cfc2c9 Mar 8 22:30:28 2018 +0100
 .\"
 .\" This file was written by Dr. Stephen Henson <steve@openssl.org>
 .\" and Richard Levitte <levitte@openssl.org>.
@@ -51,7 +51,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 .\" OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: February 19 2018 $
+.Dd $Mdocdate: March 29 2018 $
 .Dt EVP_ENCRYPTINIT 3
 .Os
 .Sh NAME
@@ -156,10 +156,6 @@
 .Nm EVP_aes_256_ccm ,
 .Nm EVP_aes_128_cbc_hmac_sha1 ,
 .Nm EVP_aes_256_cbc_hmac_sha1 ,
-.Nm EVP_rc5_32_12_16_cbc ,
-.Nm EVP_rc5_32_12_16_cfb ,
-.Nm EVP_rc5_32_12_16_ecb ,
-.Nm EVP_rc5_32_12_16_ofb ,
 .Nm EVP_chacha20
 .Nd EVP cipher routines
 .Sh SYNOPSIS
@@ -187,8 +183,8 @@
 .Fa "EVP_CIPHER_CTX *ctx"
 .Fa "const EVP_CIPHER *type"
 .Fa "ENGINE *impl"
-.Fa "unsigned char *key"
-.Fa "unsigned char *iv"
+.Fa "const unsigned char *key"
+.Fa "const unsigned char *iv"
 .Fc
 .Ft int
 .Fo EVP_EncryptUpdate
@@ -209,8 +205,8 @@
 .Fa "EVP_CIPHER_CTX *ctx"
 .Fa "const EVP_CIPHER *type"
 .Fa "ENGINE *impl"
-.Fa "unsigned char *key"
-.Fa "unsigned char *iv"
+.Fa "const unsigned char *key"
+.Fa "const unsigned char *iv"
 .Fc
 .Ft int
 .Fo EVP_DecryptUpdate
@@ -231,8 +227,8 @@
 .Fa "EVP_CIPHER_CTX *ctx"
 .Fa "const EVP_CIPHER *type"
 .Fa "ENGINE *impl"
-.Fa "unsigned char *key"
-.Fa "unsigned char *iv"
+.Fa "const unsigned char *key"
+.Fa "const unsigned char *iv"
 .Fa "int enc"
 .Fc
 .Ft int
@@ -240,7 +236,7 @@
 .Fa "EVP_CIPHER_CTX *ctx"
 .Fa "unsigned char *out"
 .Fa "int *outl"
-.Fa "unsigned char *in"
+.Fa "const unsigned char *in"
 .Fa "int inl"
 .Fc
 .Ft int
@@ -253,8 +249,8 @@
 .Fo EVP_EncryptInit
 .Fa "EVP_CIPHER_CTX *ctx"
 .Fa "const EVP_CIPHER *type"
-.Fa "unsigned char *key"
-.Fa "unsigned char *iv"
+.Fa "const unsigned char *key"
+.Fa "const unsigned char *iv"
 .Fc
 .Ft int
 .Fo EVP_EncryptFinal
@@ -266,8 +262,8 @@
 .Fo EVP_DecryptInit
 .Fa "EVP_CIPHER_CTX *ctx"
 .Fa "const EVP_CIPHER *type"
-.Fa "unsigned char *key"
-.Fa "unsigned char *iv"
+.Fa "const unsigned char *key"
+.Fa "const unsigned char *iv"
 .Fc
 .Ft int
 .Fo EVP_DecryptFinal
@@ -279,8 +275,8 @@
 .Fo EVP_CipherInit
 .Fa "EVP_CIPHER_CTX *ctx"
 .Fa "const EVP_CIPHER *type"
-.Fa "unsigned char *key"
-.Fa "unsigned char *iv"
+.Fa "const unsigned char *key"
+.Fa "const unsigned char *iv"
 .Fa "int enc"
 .Fc
 .Ft int
@@ -737,8 +733,7 @@ the RC2 effective key length is not supported).
 .Pp
 .Fn EVP_CIPHER_CTX_ctrl
 allows various cipher specific parameters to be determined and set.
-Currently only the RC2 effective key length and the number of rounds of
-RC5 can be set.
+Currently only the RC2 effective key length can be set.
 .Pp
 .Fn EVP_CIPHER_CTX_rand_key
 generates a random key of the appropriate length based on the cipher
@@ -985,16 +980,6 @@ This is a variable key length cipher.
 CAST encryption algorithm in CBC, ECB, CFB and OFB modes respectively.
 This is a variable key length cipher.
 .It Xo
-.Fn EVP_rc5_32_12_16_cbc ,
-.Fn EVP_rc5_32_12_16_ecb ,
-.Fn EVP_rc5_32_12_16_cfb ,
-.Fn EVP_rc5_32_12_16_ofb
-.Xc
-RC5 encryption algorithm in CBC, ECB, CFB and OFB modes respectively.
-This is a variable key length cipher with an additional "number of
-rounds" parameter.
-By default the key length is set to 128 bits and 12 rounds.
-.It Xo
 .Fn EVP_aes_128_gcm ,
 .Fn EVP_aes_192_gcm ,
 .Fn EVP_aes_256_gcm
@@ -1219,7 +1204,96 @@ do_crypt(FILE *in, FILE *out, int do_encrypt)
 .Sh SEE ALSO
 .Xr evp 3
 .Sh HISTORY
+.Fn EVP_EncryptInit ,
+.Fn EVP_EncryptUpdate ,
+.Fn EVP_EncryptFinal ,
+.Fn EVP_DecryptInit ,
+.Fn EVP_DecryptUpdate ,
+.Fn EVP_DecryptFinal ,
+.Fn EVP_CipherInit ,
+.Fn EVP_CipherUpdate ,
+.Fn EVP_CipherFinal ,
+.Fn EVP_get_cipherbyname ,
+.Fn EVP_des_cbc ,
+.Fn EVP_des_ecb ,
+.Fn EVP_des_cfb ,
+.Fn EVP_des_ofb ,
+.Fn EVP_des_ede_cbc ,
+.Fn EVP_des_ede ,
+.Fn EVP_des_ede_ofb ,
+.Fn EVP_des_ede_cfb ,
+.Fn EVP_des_ede3_cbc ,
+.Fn EVP_des_ede3 ,
+.Fn EVP_des_ede3_ofb ,
+.Fn EVP_des_ede3_cfb ,
+.Fn EVP_rc4 ,
+.Fn EVP_idea_cbc ,
+.Fn EVP_idea_ecb ,
+.Fn EVP_idea_cfb ,
+and
+.Fn EVP_idea_ofb
+first appeared in SSLeay 0.5.1.
+.Fn EVP_rc2_cbc ,
+.Fn EVP_rc2_ecb ,
+.Fn EVP_rc2_cfb ,
+and
+.Fn EVP_rc2_ofb
+first appeared in SSLeay 0.5.2.
+.Fn EVP_desx_cbc
+first appeared in SSLeay 0.6.2.
+.Fn EVP_CIPHER_block_size ,
+.Fn EVP_CIPHER_key_length ,
+.Fn EVP_CIPHER_iv_length ,
+.Fn EVP_CIPHER_type ,
+.Fn EVP_CIPHER_CTX_block_size ,
+.Fn EVP_CIPHER_CTX_key_length ,
+.Fn EVP_CIPHER_CTX_iv_length ,
+and
+.Fn EVP_CIPHER_CTX_type
+first appeared in SSLeay 0.6.5.
+.Fn EVP_bf_cbc ,
+.Fn EVP_bf_ecb ,
+.Fn EVP_bf_cfb ,
+and
+.Fn EVP_bf_ofb
+first appeared in SSLeay 0.6.6.
+.Fn EVP_CIPHER_CTX_cleanup ,
+.Fn EVP_get_cipherbyobj ,
+.Fn EVP_CIPHER_nid ,
+.Fn EVP_CIPHER_CTX_cipher ,
+.Fn EVP_CIPHER_CTX_nid ,
+.Fn EVP_CIPHER_CTX_get_app_data ,
+.Fn EVP_CIPHER_CTX_set_app_data ,
+and
+.Fn EVP_enc_null
+first appeared in SSLeay 0.8.0.
+.Fn EVP_get_cipherbynid
+first appeared in SSLeay 0.8.1.
 .Fn EVP_CIPHER_CTX_init ,
+.Fn EVP_CIPHER_param_to_asn1 ,
+and
+.Fn EVP_CIPHER_asn1_to_param
+first appeared in SSLeay 0.9.0.
+All these functions have been available since
+.Ox 2.4 .
+.Pp
+.Fn EVP_rc2_64_cbc
+first appeared in SSL_eay 0.9.1.
+.Fn EVP_CIPHER_CTX_type
+first appeared in OpenSSL 0.9.3.
+These functions and have been available since
+.Ox 2.6 .
+.Pp
+.Fn EVP_CIPHER_CTX_set_key_length ,
+.Fn EVP_CIPHER_CTX_ctrl ,
+.Fn EVP_CIPHER_flags ,
+.Fn EVP_CIPHER_mode ,
+.Fn EVP_CIPHER_CTX_flags ,
+and
+.Fn EVP_CIPHER_CTX_mode
+first appeared in OpenSSL 0.9.6 and have been available since
+.Ox 2.9 .
+.Pp
 .Fn EVP_EncryptInit_ex ,
 .Fn EVP_EncryptFinal_ex ,
 .Fn EVP_DecryptInit_ex ,
@@ -1228,15 +1302,35 @@ do_crypt(FILE *in, FILE *out, int do_encrypt)
 .Fn EVP_CipherFinal_ex ,
 and
 .Fn EVP_CIPHER_CTX_set_padding
-appeared in OpenSSL 0.9.7.
+first appeared in OpenSSL 0.9.7 and have been available since
+.Ox 3.2 .
+.Pp
+.Fn EVP_CIPHER_CTX_rand_key
+first appeared in OpenSSL 0.9.8.
+.Fn EVP_CIPHER_CTX_new
+and
+.Fn EVP_CIPHER_CTX_free
+first appeared in OpenSSL 0.9.8b.
+These functions have been available since
+.Ox 4.5 .
+.Pp
+.Fn EVP_rc4_hmac_md5 ,
+.Fn EVP_aes_128_gcm ,
+.Fn EVP_aes_192_gcm ,
+.Fn EVP_aes_256_gcm ,
+.Fn EVP_aes_128_ccm ,
+.Fn EVP_aes_192_ccm ,
+.Fn EVP_aes_256_ccm ,
+.Fn EVP_aes_128_cbc_hmac_sha1 ,
+and
+.Fn EVP_aes_256_cbc_hmac_sha1
+first appeared in OpenSSL 1.0.1 and have been available since
+.Ox 5.3 .
 .Pp
 .Fn EVP_CIPHER_CTX_reset
-fist appeared in OpenSSL 1.1.0.
+first appeared in OpenSSL 1.1.0 and has been available since
+.Ox 6.3 .
 .Sh BUGS
-For RC5 the number of rounds can currently only be set to 8, 12 or 16.
-This is a limitation of the current RC5 code rather than the EVP
-interface.
-.Pp
 .Dv EVP_MAX_KEY_LENGTH
 and
 .Dv EVP_MAX_IV_LENGTH

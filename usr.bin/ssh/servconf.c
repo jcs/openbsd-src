@@ -1,5 +1,5 @@
 
-/* $OpenBSD: servconf.c,v 1.325 2018/02/23 15:58:37 markus Exp $ */
+/* $OpenBSD: servconf.c,v 1.328 2018/04/10 00:10:49 djm Exp $ */
 /*
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
  *                    All rights reserved
@@ -232,8 +232,10 @@ fill_default_server_options(ServerOptions *options)
 		    _PATH_HOST_ECDSA_KEY_FILE);
 		servconf_add_hostkey("[default]", 0, options,
 		    _PATH_HOST_ED25519_KEY_FILE);
+#ifdef WITH_XMSS
 		servconf_add_hostkey("[default]", 0, options,
 		    _PATH_HOST_XMSS_KEY_FILE);
+#endif /* WITH_XMSS */
 	}
 	/* No certificates by default */
 	if (options->num_ports == 0)
@@ -349,9 +351,9 @@ fill_default_server_options(ServerOptions *options)
 	if (options->permit_tun == -1)
 		options->permit_tun = SSH_TUNMODE_NO;
 	if (options->ip_qos_interactive == -1)
-		options->ip_qos_interactive = IPTOS_LOWDELAY;
+		options->ip_qos_interactive = IPTOS_DSCP_AF21;
 	if (options->ip_qos_bulk == -1)
-		options->ip_qos_bulk = IPTOS_THROUGHPUT;
+		options->ip_qos_bulk = IPTOS_DSCP_CS1;
 	if (options->version_addendum == NULL)
 		options->version_addendum = xstrdup("");
 	if (options->fwd_opts.streamlocal_bind_mask == (mode_t)-1)
@@ -1886,7 +1888,7 @@ process_server_config_line(ServerOptions *options, char *line,
 	case sAuthenticationMethods:
 		if (options->num_auth_methods == 0) {
 			value = 0; /* seen "any" pseudo-method */
-			value2 = 0; /* sucessfully parsed any method */
+			value2 = 0; /* successfully parsed any method */
 			while ((arg = strdelim(&cp)) && *arg != '\0') {
 				if (strcmp(arg, "any") == 0) {
 					if (options->num_auth_methods > 0) {
@@ -2070,7 +2072,7 @@ int parse_server_match_testspec(struct connection_info *ci, char *spec)
  *
  * If the preauth flag is set, we do not bother copying the string or
  * array values that are not used pre-authentication, because any that we
- * do use must be explictly sent in mm_getpwnamallow().
+ * do use must be explicitly sent in mm_getpwnamallow().
  */
 void
 copy_set_server_options(ServerOptions *dst, ServerOptions *src, int preauth)

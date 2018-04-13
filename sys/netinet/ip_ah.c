@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_ah.c,v 1.136 2018/02/07 22:46:11 procter Exp $ */
+/*	$OpenBSD: ip_ah.c,v 1.138 2018/03/14 22:38:46 bluhm Exp $ */
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -194,12 +194,12 @@ ah_massage_headers(struct mbuf **m0, int af, int skip, int alg, int out)
 {
 	struct mbuf *m = *m0;
 	unsigned char *ptr;
-	int error, off, count;
+	int off, count;
 	struct ip *ip;
 #ifdef INET6
 	struct ip6_ext *ip6e;
 	struct ip6_hdr ip6;
-	int ad, alloc, nxt, noff;
+	int ad, alloc, nxt, noff, error;
 #endif /* INET6 */
 
 	switch (af) {
@@ -592,7 +592,16 @@ ah_input(struct mbuf *m, struct tdb *tdb, int skip, int protoff)
 		    "in SA %s/%08x\n", __func__, hl * sizeof(u_int32_t),
 		    ipsp_address(&tdb->tdb_dst, buf, sizeof(buf)),
 		    ntohl(tdb->tdb_spi)));
-
+		ahstat_inc(ahs_badauthl);
+		m_freem(m);
+		return EACCES;
+	}
+	if (skip + ahx->authsize + rplen > m->m_pkthdr.len) {
+		DPRINTF(("%s: bad mbuf length %d (expecting %d) "
+		    "for packet in SA %s/%08x\n", __func__,
+		    m->m_pkthdr.len, skip + ahx->authsize + rplen,
+		    ipsp_address(&tdb->tdb_dst, buf, sizeof(buf)),
+		    ntohl(tdb->tdb_spi)));
 		ahstat_inc(ahs_badauthl);
 		m_freem(m);
 		return EACCES;

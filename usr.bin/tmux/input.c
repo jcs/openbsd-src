@@ -1,4 +1,4 @@
-/* $OpenBSD: input.c,v 1.131 2018/02/19 21:20:10 nicm Exp $ */
+/* $OpenBSD: input.c,v 1.134 2018/04/10 11:20:15 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -30,7 +30,7 @@
 /*
  * Based on the description by Paul Williams at:
  *
- * http://vt100.net/emu/dec_ansi_parser
+ * https://vt100.net/emu/dec_ansi_parser
  *
  * With the following changes:
  *
@@ -1845,10 +1845,12 @@ input_csi_dispatch_sgr_colon(struct input_ctx *ictx, u_int i)
 
 	ptr = copy = xstrdup(s);
 	while ((out = strsep(&ptr, ":")) != NULL) {
-		p[n++] = strtonum(out, 0, INT_MAX, &errstr);
-		if (errstr != NULL || n == nitems(p)) {
-			free(copy);
-			return;
+		if (*out != '\0') {
+			p[n++] = strtonum(out, 0, INT_MAX, &errstr);
+			if (errstr != NULL || n == nitems(p)) {
+				free(copy);
+				return;
+			}
 		}
 		log_debug("%s: %u = %d", __func__, n - 1, p[n - 1]);
 	}
@@ -1856,16 +1858,21 @@ input_csi_dispatch_sgr_colon(struct input_ctx *ictx, u_int i)
 
 	if (n == 0 || (p[0] != 38 && p[0] != 48))
 		return;
-	switch (p[1]) {
+	if (p[1] == -1)
+		i = 2;
+	else
+		i = 1;
+	switch (p[i]) {
 	case 2:
-		if (n != 5)
+		if (n < i + 4)
 			break;
-		input_csi_dispatch_sgr_rgb_do(ictx, p[0], p[2], p[3], p[4]);
+		input_csi_dispatch_sgr_rgb_do(ictx, p[0], p[i + 1], p[i + 2],
+		    p[i + 3]);
 		break;
 	case 5:
-		if (n != 3)
+		if (n < i + 2)
 			break;
-		input_csi_dispatch_sgr_256_do(ictx, p[0], p[2]);
+		input_csi_dispatch_sgr_256_do(ictx, p[0], p[i + 1]);
 		break;
 	}
 }
@@ -1907,7 +1914,6 @@ input_csi_dispatch_sgr(struct input_ctx *ictx)
 
 		switch (n) {
 		case 0:
-		case 10:
 			memcpy(gc, &grid_default_cell, sizeof *gc);
 			break;
 		case 1:

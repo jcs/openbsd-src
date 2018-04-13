@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.c,v 1.80 2018/02/18 01:00:25 pd Exp $	*/
+/*	$OpenBSD: vmd.c,v 1.82 2018/03/29 18:29:24 martijn Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -811,9 +811,10 @@ vmd_configure(void)
 	 * recvfd - for send and receive.
 	 * getpw - lookup user or group id by name.
 	 * chown, fattr - change tty ownership
+	 * flock - locking disk files
 	 */
 	if (pledge("stdio rpath wpath proc tty recvfd sendfd getpw"
-	    " chown fattr", NULL) == -1)
+	    " chown fattr flock", NULL) == -1)
 		fatal("pledge");
 
 	if (parse_config(env->vmd_conffile) == -1) {
@@ -826,6 +827,10 @@ vmd_configure(void)
 		proc_kill(&env->vmd_ps);
 		exit(0);
 	}
+
+	/* Send shared global configuration to all children */
+	if (config_setconfig(env) == -1)
+		return (-1);
 
 	TAILQ_FOREACH(vsw, env->vmd_switches, sw_entry) {
 		if (vsw->sw_running)
@@ -848,10 +853,6 @@ vmd_configure(void)
 		if (config_setvm(&env->vmd_ps, vm, -1, vm->vm_params.vmc_uid) == -1)
 			return (-1);
 	}
-
-	/* Send shared global configuration to all children */
-	if (config_setconfig(env) == -1)
-		return (-1);
 
 	return (0);
 }
@@ -892,16 +893,18 @@ vmd_reload(unsigned int reset, const char *filename)
 					vm_remove(vm);
 				}
 			}
-
-			/* Update shared global configuration in all children */
-			if (config_setconfig(env) == -1)
-				return (-1);
 		}
 
 		if (parse_config(filename) == -1) {
 			log_debug("%s: failed to load config file %s",
 			    __func__, filename);
 			return (-1);
+		}
+
+		if (reload) {
+			/* Update shared global configuration in all children */
+			if (config_setconfig(env) == -1)
+				return (-1);
 		}
 
 		TAILQ_FOREACH(vsw, env->vmd_switches, sw_entry) {

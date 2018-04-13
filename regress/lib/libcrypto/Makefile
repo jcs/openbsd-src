@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.28 2017/05/06 20:42:57 beck Exp $
+#	$OpenBSD: Makefile,v 1.30 2018/04/07 13:54:46 schwarze Exp $
 
 SUBDIR= \
 	aead \
@@ -27,6 +27,7 @@ SUBDIR= \
 	hmac \
 	idea \
 	ige \
+	init \
 	md4 \
 	md5 \
 	pbkdf2 \
@@ -41,7 +42,8 @@ SUBDIR= \
 	sha2 \
 	sha256 \
 	sha512 \
-	utf8
+	utf8 \
+	x509
 
 install:
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: malloc.c,v 1.245 2018/02/07 18:58:30 otto Exp $	*/
+/*	$OpenBSD: malloc.c,v 1.249 2018/04/07 09:57:08 otto Exp $	*/
 /*
  * Copyright (c) 2008, 2010, 2011, 2016 Otto Moerbeek <otto@drijf.net>
  * Copyright (c) 2012 Matthew Dempsky <matthew@openbsd.org>
@@ -26,16 +26,14 @@
 /* #define MALLOC_STATS */
 
 #include <sys/types.h>
-#include <sys/param.h>	/* PAGE_SHIFT ALIGN */
 #include <sys/queue.h>
 #include <sys/mman.h>
-#include <sys/uio.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <unistd.h>
 
 #ifdef MALLOC_STATS
@@ -46,11 +44,7 @@
 #include "thread_private.h"
 #include <tib.h>
 
-#if defined(__mips64__)
-#define MALLOC_PAGESHIFT	(14U)
-#else
-#define MALLOC_PAGESHIFT	(PAGE_SHIFT)
-#endif
+#define MALLOC_PAGESHIFT	_MAX_PAGE_SHIFT
 
 #define MALLOC_MINSHIFT		4
 #define MALLOC_MAXSHIFT		(MALLOC_PAGESHIFT - 1)
@@ -62,7 +56,11 @@
 #define MALLOC_MAXCHUNK		(1 << MALLOC_MAXSHIFT)
 #define MALLOC_MAXCACHE		256
 #define MALLOC_DELAYED_CHUNK_MASK	15
+#ifdef MALLOC_STATS
+#define MALLOC_INITIAL_REGIONS	512
+#else
 #define MALLOC_INITIAL_REGIONS	(MALLOC_PAGESIZE / sizeof(struct region_info))
+#endif
 #define MALLOC_DEFAULT_CACHE	64
 #define MALLOC_CHUNK_LISTS	4
 #define CHUNK_CHECK_LENGTH	32
@@ -837,7 +835,7 @@ alloc_chunk_info(struct dir_info *d, int bits)
 		size = sizeof(struct chunk_info) + (size - 1) * sizeof(u_short);
 		if (mopts.chunk_canaries)
 			size += count * sizeof(u_short);
-		size = ALIGN(size);
+		size = _ALIGN(size);
 
 		q = MMAP(MALLOC_PAGESIZE);
 		if (q == MAP_FAILED)

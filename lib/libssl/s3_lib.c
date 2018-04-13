@@ -1,4 +1,4 @@
-/* $OpenBSD: s3_lib.c,v 1.164 2018/02/17 15:08:21 jsing Exp $ */
+/* $OpenBSD: s3_lib.c,v 1.166 2018/04/07 16:55:13 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -1984,6 +1984,12 @@ ssl3_ctrl(SSL *s, int cmd, long larg, void *parg)
 	case SSL_CTRL_GET_SERVER_TMP_KEY:
 		return ssl_ctrl_get_server_tmp_key(s, parg);
 
+	case SSL_CTRL_GET_MIN_PROTO_VERSION:
+		return SSL_get_min_proto_version(s);
+
+	case SSL_CTRL_GET_MAX_PROTO_VERSION:
+		return SSL_get_max_proto_version(s);
+
 	case SSL_CTRL_SET_MIN_PROTO_VERSION:
 		if (larg < 0 || larg > UINT16_MAX)
 			return 0;
@@ -2242,6 +2248,12 @@ ssl3_ctx_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg)
 
 	case SSL_CTRL_SET_GROUPS_LIST:
 		return SSL_CTX_set1_groups_list(ctx, parg);
+
+	case SSL_CTRL_GET_MIN_PROTO_VERSION:
+		return SSL_CTX_get_min_proto_version(ctx);
+
+	case SSL_CTRL_GET_MAX_PROTO_VERSION:
+		return SSL_CTX_get_max_proto_version(ctx);
 
 	case SSL_CTRL_SET_MIN_PROTO_VERSION:
 		if (larg < 0 || larg > UINT16_MAX)
@@ -2512,56 +2524,13 @@ ssl3_shutdown(SSL *s)
 int
 ssl3_write(SSL *s, const void *buf, int len)
 {
-	int	ret, n;
-
-#if 0
-	if (s->internal->shutdown & SSL_SEND_SHUTDOWN) {
-		s->internal->rwstate = SSL_NOTHING;
-		return (0);
-	}
-#endif
 	errno = 0;
+
 	if (S3I(s)->renegotiate)
 		ssl3_renegotiate_check(s);
 
-	/*
-	 * This is an experimental flag that sends the
-	 * last handshake message in the same packet as the first
-	 * use data - used to see if it helps the TCP protocol during
-	 * session-id reuse
-	 */
-	/* The second test is because the buffer may have been removed */
-	if ((s->s3->flags & SSL3_FLAGS_POP_BUFFER) && (s->wbio == s->bbio)) {
-		/* First time through, we write into the buffer */
-		if (S3I(s)->delay_buf_pop_ret == 0) {
-			ret = ssl3_write_bytes(s, SSL3_RT_APPLICATION_DATA,
-			    buf, len);
-			if (ret <= 0)
-				return (ret);
-
-			S3I(s)->delay_buf_pop_ret = ret;
-		}
-
-		s->internal->rwstate = SSL_WRITING;
-		n = BIO_flush(s->wbio);
-		if (n <= 0)
-			return (n);
-		s->internal->rwstate = SSL_NOTHING;
-
-		/* We have flushed the buffer, so remove it */
-		ssl_free_wbio_buffer(s);
-		s->s3->flags&= ~SSL3_FLAGS_POP_BUFFER;
-
-		ret = S3I(s)->delay_buf_pop_ret;
-		S3I(s)->delay_buf_pop_ret = 0;
-	} else {
-		ret = s->method->internal->ssl_write_bytes(s,
-		    SSL3_RT_APPLICATION_DATA, buf, len);
-		if (ret <= 0)
-			return (ret);
-	}
-
-	return (ret);
+	return s->method->internal->ssl_write_bytes(s,
+	    SSL3_RT_APPLICATION_DATA, buf, len);
 }
 
 static int

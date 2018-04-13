@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh-agent.c,v 1.228 2018/02/23 15:58:37 markus Exp $ */
+/* $OpenBSD: ssh-agent.c,v 1.230 2018/04/10 00:10:49 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -694,7 +694,7 @@ process_message(u_int socknum)
 
 	debug("%s: socket %u (fd=%d) type %d", __func__, socknum, e->fd, type);
 
-	/* check wheter agent is locked */
+	/* check whether agent is locked */
 	if (locked && type != SSH_AGENTC_UNLOCK) {
 		sshbuf_reset(e->request);
 		switch (type) {
@@ -894,9 +894,8 @@ after_poll(struct pollfd *pfd, size_t npfd)
 		/* Process events */
 		switch (sockets[socknum].type) {
 		case AUTH_SOCKET:
-			if ((pfd[i].revents & (POLLIN|POLLERR)) != 0 &&
-			    handle_socket_read(socknum) != 0)
-				close_socket(&sockets[socknum]);
+			if ((pfd[i].revents & (POLLIN|POLLERR)) != 0)
+				handle_socket_read(socknum);
 			break;
 		case AUTH_CONNECTION:
 			if ((pfd[i].revents & (POLLIN|POLLERR)) != 0 &&

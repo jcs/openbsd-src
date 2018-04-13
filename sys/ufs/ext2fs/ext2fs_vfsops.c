@@ -1,4 +1,4 @@
-/*	$OpenBSD: ext2fs_vfsops.c,v 1.102 2018/02/10 05:24:23 deraadt Exp $	*/
+/*	$OpenBSD: ext2fs_vfsops.c,v 1.104 2018/03/28 09:37:42 mpi Exp $	*/
 /*	$NetBSD: ext2fs_vfsops.c,v 1.1 1997/06/11 09:34:07 bouyer Exp $	*/
 
 /*
@@ -798,8 +798,10 @@ ext2fs_sync(struct mount *mp, int waitfor, int stall,
 #endif
 		} else {
 			fs->e2fs.e2fs_state = 0;
+#if 0
 			printf("%s force dirty (dangling %d inflight %d)\n",
 			    mp->mnt_stat.f_mntonname, esa.nlink0, esa.inflight);
+#endif
 		}
 	}		
 	if (fs->e2fs_fmod != 0) {
@@ -849,7 +851,7 @@ ext2fs_vget(struct mount *mp, ino_t ino, struct vnode **vpp)
 	}
 
 	ip = pool_get(&ext2fs_inode_pool, PR_WAITOK|PR_ZERO);
-	rrw_init_flags(&ip->i_lock, "inode", RWL_DUPOK);
+	rrw_init_flags(&ip->i_lock, "inode", RWL_DUPOK | RWL_IS_VNODE);
 	vp->v_data = ip;
 	ip->i_vnode = vp;
 	ip->i_ump = ump;

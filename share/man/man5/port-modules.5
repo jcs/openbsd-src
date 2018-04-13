@@ -1,4 +1,4 @@
-.\"	$OpenBSD: port-modules.5,v 1.226 2018/01/26 13:12:08 jca Exp $
+.\"	$OpenBSD: port-modules.5,v 1.229 2018/03/31 11:37:01 espie Exp $
 .\"
 .\" Copyright (c) 2008 Marc Espie
 .\"
@@ -24,7 +24,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: January 26 2018 $
+.Dd $Mdocdate: March 31 2018 $
 .Dt PORT-MODULES 5
 .Os
 .Sh NAME
@@ -612,6 +612,10 @@ instead of the standard crates-io network source.
 Finally, any crates listed in
 .Ev MODCARGO_CRATES_UPDATE
 are updated.
+.Ev MODCARGO_RUSTFLAGS
+can be used to pass custom flags to all
+.Xr rustc 1
+invocations.
 .Pp
 .Pa lang/rust ,
 .Pa devel/cargo
@@ -1434,9 +1438,6 @@ and
 by appending
 .Ev MODINTLTOOL_OVERRIDE
 to them.
-.It www/drupal6
-This module is legacy.
-drupal6 is still supported, but new work should mostly happen in drupal7 land.
 .It www/drupal7
 Can be used to install plugins (default), themes if
 .Ev MODDRUPAL_THEME
@@ -1444,12 +1445,14 @@ is yes, or languages packs if
 .Ev DRUPAL_LANG
 is set to the desired language.
 .Pp
-The module will set or add to default values for
+The module may set or add to default values for
 .Ev HOMEPAGE ,
 .Ev MASTER_SITES ,
 .Ev PREFIX ,
+.Ev DISTNAME ,
 .Ev DIST_SUBDIR ,
 .Ev CATEGORIES ,
+.Ev PKGNAME ,
 .Ev PKG_ARCH ,
 .Ev WRKDIST ,
 .Ev RUN_DEPENDS .
@@ -1478,6 +1481,26 @@ are set to root, daemon, since drupal doesn't need to write
 to any file except the files/ directory and the site settings (those
 belong to www instead).
 .Pp
+Most modules are actually separate projects on the drupal site.
+If
+.Ev MODDRUPAL_PROJECT
+is set,
+.Ev HOMEPAGE
+will lead to the corresponding project.
+If
+.Ev MODDRUPAL_VERSION
+is also set,
+.Ev DISTNAME
+will default to
+.Pa ${MODDRUPAL_PROJECT}-7.x-${MODDRUPAL_VERSION} ,
+MODDRUPAL_PKGNAME
+will default to
+.Pa ${MODDRUPAL_PROJECT}
+and
+.Ev PKGNAME
+will default to
+.Pa drupal7-${MODDRUPAL_PKGNAME}-${MODDRUPAL_VERSION} .
+.Pp
 Translations are handled by setting
 .Ev DRUPAL_LANG
 to the language letter code, and by setting
@@ -1488,7 +1511,6 @@ With drupal7, all translations have been put in separate .po files.
 It has been deemed simplest to pack all translations for a given language
 into a single package, since translations for non installed modules won't
 affect anything.
-.It www/horde
 .It www/mozilla
 Sets
 .Ev PKGNAME ,
@@ -1590,7 +1612,6 @@ to
 and also sets
 .Ev NO_TEST
 to Yes.
-.It www/zope
 .It x11/gnome
 This module has full support for the
 .Ar gnu ,

@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_lib.c,v 1.179 2018/02/22 17:30:25 jsing Exp $ */
+/* $OpenBSD: ssl_lib.c,v 1.183 2018/04/07 17:02:34 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -964,7 +964,7 @@ SSL_read(SSL *s, void *buf, int num)
 		s->internal->rwstate = SSL_NOTHING;
 		return (0);
 	}
-	return (s->method->internal->ssl_read(s, buf, num));
+	return ssl3_read(s, buf, num);
 }
 
 int
@@ -978,7 +978,7 @@ SSL_peek(SSL *s, void *buf, int num)
 	if (s->internal->shutdown & SSL_RECEIVED_SHUTDOWN) {
 		return (0);
 	}
-	return (s->method->internal->ssl_peek(s, buf, num));
+	return ssl3_peek(s, buf, num);
 }
 
 int
@@ -994,7 +994,7 @@ SSL_write(SSL *s, const void *buf, int num)
 		SSLerror(s, SSL_R_PROTOCOL_IS_SHUTDOWN);
 		return (-1);
 	}
-	return (s->method->internal->ssl_write(s, buf, num));
+	return ssl3_write(s, buf, num);
 }
 
 int
@@ -1791,6 +1791,11 @@ SSL_CTX_new(const SSL_METHOD *meth)
 {
 	SSL_CTX	*ret;
 
+	if (!OPENSSL_init_ssl(0, NULL)) {
+		SSLerrorx(SSL_R_LIBRARY_BUG);
+		return (NULL);
+	}
+
 	if (meth == NULL) {
 		SSLerrorx(SSL_R_NULL_SSL_METHOD_PASSED);
 		return (NULL);
@@ -1991,10 +1996,22 @@ SSL_CTX_up_ref(SSL_CTX *ctx)
 	return ((refs > 1) ? 1 : 0);
 }
 
+pem_password_cb *
+SSL_CTX_get_default_passwd_cb(SSL_CTX *ctx)
+{
+	return (ctx->default_passwd_callback);
+}
+
 void
 SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_password_cb *cb)
 {
 	ctx->default_passwd_callback = cb;
+}
+
+void *
+SSL_CTX_get_default_passwd_cb_userdata(SSL_CTX *ctx)
+{
+	return ctx->default_passwd_callback_userdata;
 }
 
 void
@@ -3024,10 +3041,22 @@ SSL_cache_hit(SSL *s)
 }
 
 int
+SSL_CTX_get_min_proto_version(SSL_CTX *ctx)
+{
+	return ctx->internal->min_version;
+}
+
+int
 SSL_CTX_set_min_proto_version(SSL_CTX *ctx, uint16_t version)
 {
 	return ssl_version_set_min(ctx->method, version,
 	    ctx->internal->max_version, &ctx->internal->min_version);
+}
+
+int
+SSL_CTX_get_max_proto_version(SSL_CTX *ctx)
+{
+	return ctx->internal->max_version;
 }
 
 int
@@ -3038,10 +3067,21 @@ SSL_CTX_set_max_proto_version(SSL_CTX *ctx, uint16_t version)
 }
 
 int
+SSL_get_min_proto_version(SSL *ssl)
+{
+	return ssl->internal->min_version;
+}
+
+int
 SSL_set_min_proto_version(SSL *ssl, uint16_t version)
 {
 	return ssl_version_set_min(ssl->method, version,
 	    ssl->internal->max_version, &ssl->internal->min_version);
+}
+int
+SSL_get_max_proto_version(SSL *ssl)
+{
+	return ssl->internal->max_version;
 }
 
 int

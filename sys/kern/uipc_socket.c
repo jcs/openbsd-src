@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_socket.c,v 1.217 2018/02/19 11:35:41 mpi Exp $	*/
+/*	$OpenBSD: uipc_socket.c,v 1.220 2018/04/08 18:57:39 guenther Exp $	*/
 /*	$NetBSD: uipc_socket.c,v 1.21 1996/02/04 02:17:52 christos Exp $	*/
 
 /*
@@ -60,6 +60,7 @@ int	sosplice(struct socket *, int, off_t, struct timeval *);
 void	sounsplice(struct socket *, struct socket *, int);
 void	soidle(void *);
 void	sotask(void *);
+void	soput(void *);
 int	somove(struct socket *, int);
 
 void	filt_sordetach(struct knote *kn);
@@ -212,13 +213,20 @@ sofree(struct socket *so)
 			    so->so_sp->ssp_soback != so);
 		if (isspliced(so))
 			sounsplice(so, so->so_sp->ssp_socket, 0);
-		pool_put(&sosplice_pool, so->so_sp);
-		so->so_sp = NULL;
 	}
 #endif /* SOCKET_SPLICE */
 	sbrelease(so, &so->so_snd);
 	sorflush(so);
-	pool_put(&socket_pool, so);
+#ifdef SOCKET_SPLICE
+	if (so->so_sp) {
+		/* Reuse splice task, sounsplice() has been called before. */
+		task_set(&so->so_sp->ssp_task, soput, so);
+		task_add(sosplice_taskq, &so->so_sp->ssp_task);
+	} else 
+#endif /* SOCKET_SPLICE */
+	{
+		pool_put(&socket_pool, so);
+	}
 }
 
 /*
@@ -411,8 +419,8 @@ sosend(struct socket *so, struct mbuf *addr, struct uio *uio, struct mbuf *top,
 		 * of space and clen.
 		 */
 		clen = control->m_len;
-		/* reserve extra space for AF_LOCAL's internalize */
-		if (so->so_proto->pr_domain->dom_family == AF_LOCAL &&
+		/* reserve extra space for AF_UNIX's internalize */
+		if (so->so_proto->pr_domain->dom_family == AF_UNIX &&
 		    clen >= CMSG_ALIGN(sizeof(struct cmsghdr)) &&
 		    mtod(control, struct cmsghdr *)->cmsg_type == SCM_RIGHTS)
 			clen = CMSG_SPACE(
@@ -446,7 +454,7 @@ restart:
 		if (flags & MSG_OOB)
 			space += 1024;
 		if ((atomic && resid > so->so_snd.sb_hiwat) ||
-		    (so->so_proto->pr_domain->dom_family != AF_LOCAL &&
+		    (so->so_proto->pr_domain->dom_family != AF_UNIX &&
 		    clen > so->so_snd.sb_hiwat))
 			snderr(EMSGSIZE);
 		if (space < clen ||
@@ -1133,13 +1141,11 @@ sosplice(struct socket *so, int fd, off_t max, struct timeval *tv)
 	/* Lock both receive and send buffer. */
 	if ((error = sblock(so, &so->so_rcv,
 	    (so->so_state & SS_NBIO) ? M_NOWAIT : M_WAITOK)) != 0) {
-		FRELE(fp, curproc);
-		return (error);
+		goto frele;
 	}
 	if ((error = sblock(so, &sosp->so_snd, M_WAITOK)) != 0) {
 		sbunlock(so, &so->so_rcv);
-		FRELE(fp, curproc);
-		return (error);
+		goto frele;
 	}
 
 	if (so->so_sp->ssp_socket || sosp->so_sp->ssp_soback) {
@@ -1183,6 +1189,7 @@ sosplice(struct socket *so, int fd, off_t max, struct timeval *tv)
  release:
 	sbunlock(sosp, &sosp->so_snd);
 	sbunlock(so, &so->so_rcv);
+ frele:
 	FRELE(fp, curproc);
 	return (error);
 }
@@ -1234,6 +1241,21 @@ sotask(void *arg)
 
 	/* Avoid user land starvation. */
 	yield();
+}
+
+/*
+ * The socket splicing task may sleep while grabbing the net lock.  As sofree()
+ * can be called anytime, sotask() can access the socket memory of a freed
+ * socket after wakeup.  So delay the pool_put() after all pending socket
+ * splicing tasks have finished.  Do this by scheduling it on the same thread.
+ */
+void
+soput(void *arg)
+{
+	struct socket *so = arg;
+
+	pool_put(&sosplice_pool, so->so_sp);
+	pool_put(&socket_pool, so);
 }
 
 /*

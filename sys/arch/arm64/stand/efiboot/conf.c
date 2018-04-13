@@ -1,4 +1,4 @@
-/*	$OpenBSD: conf.c,v 1.12 2018/02/06 20:35:21 naddy Exp $	*/
+/*	$OpenBSD: conf.c,v 1.15 2018/04/08 13:27:22 kettenis Exp $	*/
 
 /*
  * Copyright (c) 1996 Michael Shalayeff
@@ -36,11 +36,13 @@
 #include "efidev.h"
 #include "efipxe.h"
 
-const char version[] = "0.11";
+const char version[] = "0.13";
 int	debug = 0;
 
 struct fs_ops file_system[] = {
-	{ tftp_open,   tftp_close,   tftp_read,   tftp_write,   tftp_seek,
+	{ mtftp_open,  mtftp_close,  mtftp_read,  mtftp_write,  mtftp_seek,
+	  mtftp_stat,  mtftp_readdir   },
+	{ efitftp_open,tftp_close,   tftp_read,   tftp_write,   tftp_seek,
 	  tftp_stat,   tftp_readdir   },
 	{ ufs_open,    ufs_close,    ufs_read,    ufs_write,    ufs_seek,
 	  ufs_stat,    ufs_readdir    },
@@ -58,3 +60,8 @@ struct consdev constab[] = {
 	{ NULL }
 };
 struct consdev *cn_tab;
+
+struct netif_driver *netif_drivers[] = {
+	&efinet_driver,
+};
+int n_netif_drivers = nitems(netif_drivers);

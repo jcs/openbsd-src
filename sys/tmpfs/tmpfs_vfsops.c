@@ -1,4 +1,4 @@
-/*	$OpenBSD: tmpfs_vfsops.c,v 1.14 2017/12/11 05:27:40 deraadt Exp $	*/
+/*	$OpenBSD: tmpfs_vfsops.c,v 1.16 2018/04/06 15:14:27 patrick Exp $	*/
 /*	$NetBSD: tmpfs_vfsops.c,v 1.52 2011/09/27 01:10:43 christos Exp $	*/
 
 /*
@@ -65,7 +65,7 @@ int	tmpfs_vget(struct mount *, ino_t, struct vnode **);
 int	tmpfs_fhtovp(struct mount *, struct fid *, struct vnode **);
 int	tmpfs_vptofh(struct vnode *, struct fid *);
 int	tmpfs_statfs(struct mount *, struct statfs *, struct proc *);
-int	tmpfs_sync(struct mount *, int, struct ucred *, struct proc *);
+int	tmpfs_sync(struct mount *, int, int, struct ucred *, struct proc *);
 int	tmpfs_init(struct vfsconf *);
 
 int
@@ -121,9 +121,6 @@ tmpfs_mount(struct mount *mp, const char *path, void *data,
 	if (tmpfs_mem_info(1) < TMPFS_PAGES_RESERVED)
 		return EINVAL;
 
-	error = copyin(data, args, sizeof(struct tmpfs_args));
-	if (error)
-		return error;
 	if (args->ta_root_uid == VNOVAL || args->ta_root_gid == VNOVAL ||
 	    args->ta_root_mode == VNOVAL)
 		return EINVAL;
@@ -350,7 +347,8 @@ tmpfs_statfs(struct mount *mp, struct statfs *sbp, struct proc *p)
 }
 
 int
-tmpfs_sync(struct mount *mp, int waitfor, struct ucred *cred, struct proc *p)
+tmpfs_sync(struct mount *mp, int waitfor, int stall, struct ucred *cred,
+    struct proc *p)
 {
 
 	return 0;

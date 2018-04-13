@@ -1,4 +1,4 @@
-/*	$OpenBSD: tree.c,v 1.32 2018/01/20 15:32:20 anton Exp $	*/
+/*	$OpenBSD: tree.c,v 1.34 2018/04/09 17:53:36 tobias Exp $	*/
 
 /*
  * command tree climbing
@@ -365,7 +365,7 @@ vfptreef(struct shf *shf, int indent, const char *fmt, va_list va)
 
 	while ((c = *fmt++)) {
 		if (c == '%') {
-			long n;
+			int64_t n;
 			char *p;
 			int neg;
 
@@ -376,7 +376,7 @@ vfptreef(struct shf *shf, int indent, const char *fmt, va_list va)
 			case 'd': /* decimal */
 				n = va_arg(va, int);
 				neg = n < 0;
-				p = ulton(neg ? -n : n, 10);
+				p = u64ton(neg ? -n : n, 10);
 				if (neg)
 					*--p = '-';
 				while (*p)
@@ -392,7 +392,7 @@ vfptreef(struct shf *shf, int indent, const char *fmt, va_list va)
 				tputS(p, shf);
 				break;
 			case 'u': /* unsigned decimal */
-				p = ulton(va_arg(va, unsigned int), 10);
+				p = u64ton(va_arg(va, unsigned int), 10);
 				while (*p)
 					tputc(*p++, shf);
 				break;
@@ -533,8 +533,8 @@ wdscan(const char *wp, int c)
 			break;
 		default:
 			internal_warningf(
-			    "wdscan: unknown char 0x%x (carrying on)",
-			    wp[-1]);
+			    "%s: unknown char 0x%x (carrying on)",
+			    __func__, wp[-1]);
 		}
 }
 

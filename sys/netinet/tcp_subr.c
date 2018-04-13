@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcp_subr.c,v 1.168 2018/01/23 21:41:17 bluhm Exp $	*/
+/*	$OpenBSD: tcp_subr.c,v 1.170 2018/04/02 14:19:17 dhill Exp $	*/
 /*	$NetBSD: tcp_subr.c,v 1.22 1996/02/13 23:44:00 christos Exp $	*/
 
 /*
@@ -849,33 +849,36 @@ void
 tcp_mtudisc(struct inpcb *inp, int errno)
 {
 	struct tcpcb *tp = intotcpcb(inp);
-	struct rtentry *rt = in_pcbrtentry(inp);
+	struct rtentry *rt;
 	int change = 0;
 
-	if (tp != 0) {
+	if (tp == NULL)
+		return;
+
+	rt = in_pcbrtentry(inp);
+	if (rt != NULL) {
 		int orig_maxseg = tp->t_maxseg;
-		if (rt != 0) {
-			/*
-			 * If this was not a host route, remove and realloc.
-			 */
-			if ((rt->rt_flags & RTF_HOST) == 0) {
-				in_rtchange(inp, errno);
-				if ((rt = in_pcbrtentry(inp)) == 0)
-					return;
-			}
-			if (orig_maxseg != tp->t_maxseg ||
-			    (rt->rt_locks & RTV_MTU))
-				change = 1;
-		}
-		tcp_mss(tp, -1);
 
 		/*
-		 * Resend unacknowledged packets
+		 * If this was not a host route, remove and realloc.
 		 */
-		tp->snd_nxt = tp->snd_una;
-		if (change || errno > 0)
-			tcp_output(tp);
+		if ((rt->rt_flags & RTF_HOST) == 0) {
+			in_rtchange(inp, errno);
+			if ((rt = in_pcbrtentry(inp)) == NULL)
+				return;
+		}
+		if (orig_maxseg != tp->t_maxseg ||
+		    (rt->rt_locks & RTV_MTU))
+			change = 1;
 	}
+	tcp_mss(tp, -1);
+
+	/*
+	 * Resend unacknowledged packets
+	 */
+	tp->snd_nxt = tp->snd_una;
+	if (change || errno > 0)
+		tcp_output(tp);
 }
 
 void
@@ -949,7 +952,7 @@ tcp_signature_tdb_init(struct tdb *tdbp, struct xformsw *xsp,
 	tdbp->tdb_amxkey = malloc(ii->ii_authkeylen, M_XDATA, M_NOWAIT);
 	if (tdbp->tdb_amxkey == NULL)
 		return (ENOMEM);
-	bcopy(ii->ii_authkey, tdbp->tdb_amxkey, ii->ii_authkeylen);
+	memcpy(tdbp->tdb_amxkey, ii->ii_authkey, ii->ii_authkeylen);
 	tdbp->tdb_amxkeylen = ii->ii_authkeylen;
 
 	return (0);
@@ -960,7 +963,7 @@ tcp_signature_tdb_zeroize(struct tdb *tdbp)
 {
 	if (tdbp->tdb_amxkey) {
 		explicit_bzero(tdbp->tdb_amxkey, tdbp->tdb_amxkeylen);
-		free(tdbp->tdb_amxkey, M_XDATA, 0);
+		free(tdbp->tdb_amxkey, M_XDATA, tdbp->tdb_amxkeylen);
 		tdbp->tdb_amxkey = NULL;
 	}
 

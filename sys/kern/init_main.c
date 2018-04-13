@@ -1,4 +1,4 @@
-/*	$OpenBSD: init_main.c,v 1.273 2018/01/11 18:58:17 patrick Exp $	*/
+/*	$OpenBSD: init_main.c,v 1.275 2018/03/20 15:45:32 mpi Exp $	*/
 /*	$NetBSD: init_main.c,v 1.84.4.1 1996/06/02 09:08:06 mrg Exp $	*/
 
 /*
@@ -124,6 +124,7 @@ extern	struct user *proc0paddr;
 struct	vnode *rootvp, *swapdev_vp;
 int	boothowto;
 struct	timespec boottime;
+int	db_active = 0;
 int	ncpus =  1;
 int	ncpusfound = 1;			/* number of cpus we find */
 volatile int start_init_exec;		/* semaphore for start_init() */
@@ -546,12 +547,12 @@ main(void *framep)
 		panic("fork zerothread");
 #endif
 
-	config_process_deferred_mountroot();
-
 #if defined(MULTIPROCESSOR)
 	/* Boot the secondary processors. */
 	cpu_boot_secondary_processors();
 #endif
+
+	config_process_deferred_mountroot();
 
 	/*
 	 * Okay, now we can let init(8) exec!  It's off to userland!

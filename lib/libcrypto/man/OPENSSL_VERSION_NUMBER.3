@@ -1,4 +1,4 @@
-.\" $OpenBSD: OPENSSL_VERSION_NUMBER.3,v 1.6 2018/02/22 08:46:05 jmc Exp $
+.\" $OpenBSD: OPENSSL_VERSION_NUMBER.3,v 1.10 2018/03/27 17:35:50 schwarze Exp $
 .\" full merge up to: OpenSSL 1f13ad31 Dec 25 17:50:39 2017 +0800
 .\"
 .\" This file is a derived work.
@@ -68,7 +68,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 .\" OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: February 22 2018 $
+.Dd $Mdocdate: March 27 2018 $
 .Dt OPENSSL_VERSION_NUMBER 3
 .Os
 .Sh NAME
@@ -244,14 +244,21 @@ return pointers to static strings.
 .Sh SEE ALSO
 .Xr crypto 3
 .Sh HISTORY
-.Fn SSLeay
+.Fn SSLeay ,
+.Fn SSLeay_version ,
 and
 .Dv SSLEAY_VERSION_NUMBER
-are available in all versions of SSLeay and OpenSSL.
+first appeared in SSLeay 0.6.0 and have been available since
+.Ox 2.4 .
+.Pp
 .Dv OPENSSL_VERSION_NUMBER
-is available in all versions of OpenSSL.
+first appeared in the first OpenSSL release, OpenSSL 0.9.1c,
+and has been available since
+.Ox 2.6 .
+.Pp
 .Dv SSLEAY_DIR
-was added in OpenSSL 0.9.7.
+first appeared in OpenSSL 0.9.7 and have been available since
+.Ox 3.2 .
 .Pp
 .Dv LIBRESSL_VERSION_NUMBER
 first appeared in LibreSSL 2.0.0 and
@@ -261,3 +268,10 @@ and got its final format in LibreSSL 2.3.2 and
 .Dv LIBRESSL_VERSION_TEXT
 first appeared in LibreSSL 2.2.2 and
 .Ox 5.8 .
+.Pp
+.Fn OpenSSL_version_num
+and
+.Fn OpenSSL_version
+first appeared in OpenSSL 1.1.0
+and have been available since LibreSSL 2.7.1 and
+.Ox 6.3 .

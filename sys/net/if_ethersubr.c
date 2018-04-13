@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ethersubr.c,v 1.251 2018/02/02 22:00:39 bluhm Exp $	*/
+/*	$OpenBSD: if_ethersubr.c,v 1.253 2018/03/13 01:31:48 dlg Exp $	*/
 /*	$NetBSD: if_ethersubr.c,v 1.19 1996/05/07 02:40:30 thorpej Exp $	*/
 
 /*
@@ -248,11 +248,13 @@ ether_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 				memcpy(edst, LLADDR(satosdl(dst)),
 				    sizeof(edst));
 				break;
+#ifdef INET6
 			case AF_INET6:
 				error = nd6_resolve(ifp, rt, m, dst, edst);
 				if (error)
 					return (error == EAGAIN ? 0 : error);
 				break;
+#endif
 			case AF_INET:
 			case AF_MPLS:
 				error = arpresolve(ifp, rt, m, dst, edst);
@@ -326,7 +328,13 @@ ether_input(struct ifnet *ifp, struct mbuf *m, void *cookie)
 	ac = (struct arpcom *)ifp;
 	eh = mtod(m, struct ether_header *);
 
-	if (ETHER_IS_MULTICAST(eh->ether_dhost)) {
+	/* Is the packet for us? */
+	if (memcmp(ac->ac_enaddr, eh->ether_dhost, ETHER_ADDR_LEN) != 0) {
+
+		/* If not, it must be multicast or broadcast to go further */
+		if (!ETHER_IS_MULTICAST(eh->ether_dhost))
+			goto dropanyway;
+
 		/*
 		 * If this is not a simplex interface, drop the packet
 		 * if it came from us.
@@ -351,16 +359,6 @@ ether_input(struct ifnet *ifp, struct mbuf *m, void *cookie)
 	 */
 	if (m->m_flags & M_VLANTAG)
 		goto dropanyway;
-
-	/*
-	 * If packet is unicast, make sure it is for us.  Drop otherwise.
-	 * This check is required in promiscous mode, and for some hypervisors
-	 * where the MAC filter is 'best effort' only.
-	 */
-	if ((m->m_flags & (M_BCAST|M_MCAST)) == 0) {
-		if (memcmp(ac->ac_enaddr, eh->ether_dhost, ETHER_ADDR_LEN))
-			goto dropanyway;
-	}
 
 	etype = ntohs(eh->ether_type);
 

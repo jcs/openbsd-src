@@ -1,4 +1,4 @@
-/* $OpenBSD: mfii.c,v 1.47 2018/02/20 05:40:52 jmatthew Exp $ */
+/* $OpenBSD: mfii.c,v 1.50 2018/03/16 05:12:37 jmatthew Exp $ */
 
 /*
  * Copyright (c) 2012 David Gwynne <dlg@openbsd.org>
@@ -44,6 +44,8 @@
 
 #define MFII_OSTS_INTR_VALID	0x00000009
 #define MFII_RPI		0x6c /* reply post host index */
+#define MFII_OSP2		0xb4 /* outbound scratch pad 2 */
+#define MFII_OSP3		0xb8 /* outbound scratch pad 3 */
 
 #define MFII_REQ_TYPE_SCSI	MPII_REQ_DESCR_SCSI_IO
 #define MFII_REQ_TYPE_LDIO	(0x7 << 1)
@@ -55,6 +57,15 @@
 
 #define MFII_FUNCTION_PASSTHRU_IO			(0xf0)
 #define MFII_FUNCTION_LDIO_REQUEST			(0xf1)
+
+#define MFII_MAX_CHAIN_UNIT	0x00400000
+#define MFII_MAX_CHAIN_MASK	0x000003E0
+#define MFII_MAX_CHAIN_SHIFT	5
+
+#define MFII_256K_IO		128
+#define MFII_1MB_IO		(MFII_256K_IO * 4)
+
+#define MFII_CHAIN_FRAME_MIN	1024
 
 struct mfii_request_descr {
 	u_int8_t	flags;
@@ -180,6 +191,10 @@ struct mfii_ccb {
 	u_int64_t		ccb_request_dva;
 	bus_addr_t		ccb_request_offset;
 
+	void			*ccb_mfi;
+	u_int64_t		ccb_mfi_dva;
+	bus_addr_t		ccb_mfi_offset;
+
 	struct mfi_sense	*ccb_sense;
 	u_int64_t		ccb_sense_dva;
 	bus_addr_t		ccb_sense_offset;
@@ -250,6 +265,7 @@ struct mfii_softc {
 	struct mutex		sc_ccb_mtx;
 	struct mutex		sc_post_mtx;
 
+	u_int			sc_max_fw_cmds;
 	u_int			sc_max_cmds;
 	u_int			sc_max_sgl;
 
@@ -259,6 +275,7 @@ struct mfii_softc {
 	struct mfii_dmamem	*sc_reply_postq;
 
 	struct mfii_dmamem	*sc_requests;
+	struct mfii_dmamem	*sc_mfi;
 	struct mfii_dmamem	*sc_sense;
 	struct mfii_dmamem	*sc_sgl;
 
@@ -517,7 +534,8 @@ mfii_attach(struct device *parent, struct device *self, void *aux)
 	pcireg_t memtype;
 	pci_intr_handle_t ih;
 	struct scsibus_attach_args saa;
-	u_int32_t status;
+	u_int32_t status, scpad2, scpad3;
+	int chain_frame_sz, nsge_in_io, nsge_in_chain;
 
 	/* init sc */
 	sc->sc_iop = mfii_find_iop(aux);
@@ -556,9 +574,45 @@ mfii_attach(struct device *parent, struct device *self, void *aux)
 	if (mfii_transition_firmware(sc))
 		goto pci_unmap;
 
+	/* determine max_cmds (refer to the Linux megaraid_sas driver) */
+	scpad3 = mfii_read(sc, MFII_OSP3);
 	status = mfii_fw_state(sc);
-	sc->sc_max_cmds = status & MFI_STATE_MAXCMD_MASK;
-	sc->sc_max_sgl = (status & MFI_STATE_MAXSGL_MASK) >> 16;
+	sc->sc_max_fw_cmds = scpad3 & MFI_STATE_MAXCMD_MASK;
+	if (sc->sc_max_fw_cmds == 0)
+		sc->sc_max_fw_cmds = status & MFI_STATE_MAXCMD_MASK;
+	/*
+	 * reduce max_cmds by 1 to ensure that the reply queue depth does not
+	 * exceed FW supplied max_fw_cmds.
+	 */
+	sc->sc_max_cmds = min(sc->sc_max_fw_cmds, 1024) - 1;
+
+	/* determine max_sgl (refer to the Linux megaraid_sas driver) */
+	scpad2 = mfii_read(sc, MFII_OSP2);
+	chain_frame_sz =
+		((scpad2 & MFII_MAX_CHAIN_MASK) >> MFII_MAX_CHAIN_SHIFT) *
+		((scpad2 & MFII_MAX_CHAIN_UNIT) ? MFII_1MB_IO : MFII_256K_IO);
+	if (chain_frame_sz < MFII_CHAIN_FRAME_MIN)
+		chain_frame_sz = MFII_CHAIN_FRAME_MIN;
+
+	nsge_in_io = (MFII_REQUEST_SIZE -
+		sizeof(struct mpii_msg_scsi_io) -
+		sizeof(struct mfii_raid_context)) / sizeof(struct mfii_sge);
+	nsge_in_chain = chain_frame_sz / sizeof(struct mfii_sge);
+
+	/* round down to nearest power of two */
+	sc->sc_max_sgl = 1;
+	while ((sc->sc_max_sgl << 1) <= (nsge_in_io + nsge_in_chain))
+		sc->sc_max_sgl <<= 1;
+
+#ifdef MFI_DEBUG
+	printf("%s: OSP 0x%08x, OSP2 0x%08x, OSP3 0x%08x\n",
+	    DEVNAME(sc), status, scpad2, scpad3);
+	printf("%s: max_fw_cmds %d, max_cmds %d\n",
+	    DEVNAME(sc), sc->sc_max_fw_cmds, sc->sc_max_cmds);
+	printf("%s: nsge_in_io %d, nsge_in_chain %d, "
+	    "max_sgl %d\n", DEVNAME(sc), nsge_in_io, nsge_in_chain,
+	    sc->sc_max_sgl);
+#endif
 
 	/* sense memory */
 	CTASSERT(sizeof(struct mfi_sense) == MFI_SENSE_SIZE);
@@ -568,7 +622,8 @@ mfii_attach(struct device *parent, struct device *self, void *aux)
 		goto pci_unmap;
 	}
 
-	sc->sc_reply_postq_depth = roundup(sc->sc_max_cmds, 16);
+	/* reply post queue */
+	sc->sc_reply_postq_depth = roundup(sc->sc_max_fw_cmds, 16);
 
 	sc->sc_reply_postq = mfii_dmamem_alloc(sc,
 	    sc->sc_reply_postq_depth * sizeof(struct mpii_reply_descr));
@@ -578,15 +633,22 @@ mfii_attach(struct device *parent, struct device *self, void *aux)
 	memset(MFII_DMA_KVA(sc->sc_reply_postq), 0xff,
 	    MFII_DMA_LEN(sc->sc_reply_postq));
 
+	/* MPII request frame array */
 	sc->sc_requests = mfii_dmamem_alloc(sc,
 	    MFII_REQUEST_SIZE * (sc->sc_max_cmds + 1));
 	if (sc->sc_requests == NULL)
 		goto free_reply_postq;
 
+	/* MFI command frame array */
+	sc->sc_mfi = mfii_dmamem_alloc(sc, sc->sc_max_cmds * MFI_FRAME_SIZE);
+	if (sc->sc_mfi == NULL)
+		goto free_requests;
+
+	/* MPII SGL array */
 	sc->sc_sgl = mfii_dmamem_alloc(sc, sc->sc_max_cmds *
 	    sizeof(struct mfii_sge) * sc->sc_max_sgl);
 	if (sc->sc_sgl == NULL)
-		goto free_requests;
+		goto free_mfi;
 
 	if (mfii_init_ccb(sc) != 0) {
 		printf("%s: could not init ccb list\n", DEVNAME(sc));
@@ -644,6 +706,8 @@ intr_disestablish:
 	pci_intr_disestablish(sc->sc_pc, sc->sc_ih);
 free_sgl:
 	mfii_dmamem_free(sc, sc->sc_sgl);
+free_mfi:
+	mfii_dmamem_free(sc, sc->sc_mfi);
 free_requests:
 	mfii_dmamem_free(sc, sc->sc_requests);
 free_reply_postq:
@@ -762,6 +826,7 @@ mfii_detach(struct device *self, int flags)
 	mfii_aen_unregister(sc);
 	pci_intr_disestablish(sc->sc_pc, sc->sc_ih);
 	mfii_dmamem_free(sc, sc->sc_sgl);
+	mfii_dmamem_free(sc, sc->sc_mfi);
 	mfii_dmamem_free(sc, sc->sc_requests);
 	mfii_dmamem_free(sc, sc->sc_reply_postq);
 	mfii_dmamem_free(sc, sc->sc_sense);
@@ -1289,7 +1354,7 @@ mfii_mfa_poll(struct mfii_softc *sc, struct mfii_ccb *ccb)
 #endif
 
 	hdr->mfh_context = ccb->ccb_smid;
-	hdr->mfh_cmd_status = 0xff;
+	hdr->mfh_cmd_status = MFI_STAT_INVALID_STATUS;
 	hdr->mfh_flags |= htole16(MFI_FRAME_DONT_POST_IN_REPLY_QUEUE);
 
 	r = MFII_REQ_MFA(ccb->ccb_request_dva);
@@ -1302,7 +1367,7 @@ mfii_mfa_poll(struct mfii_softc *sc, struct mfii_ccb *ccb)
 		    ccb->ccb_request_offset, MFII_REQUEST_SIZE,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
-		if (hdr->mfh_cmd_status != 0xff)
+		if (hdr->mfh_cmd_status != MFI_STAT_INVALID_STATUS)
 			break;
 
 		if (to++ > 5000) { /* XXX 5 seconds busywait sucks */
@@ -2200,6 +2265,7 @@ mfii_scrub_ccb(struct mfii_ccb *ccb)
 
 	memset(&ccb->ccb_req, 0, sizeof(ccb->ccb_req));
 	memset(ccb->ccb_request, 0, MFII_REQUEST_SIZE);
+	memset(ccb->ccb_mfi, 0, MFI_FRAME_SIZE);
 }
 
 void
@@ -2218,6 +2284,7 @@ mfii_init_ccb(struct mfii_softc *sc)
 {
 	struct mfii_ccb *ccb;
 	u_int8_t *request = MFII_DMA_KVA(sc->sc_requests);
+	u_int8_t *mfi = MFII_DMA_KVA(sc->sc_mfi);
 	u_int8_t *sense = MFII_DMA_KVA(sc->sc_sense);
 	u_int8_t *sgl = MFII_DMA_KVA(sc->sc_sgl);
 	u_int i;
@@ -2245,6 +2312,12 @@ mfii_init_ccb(struct mfii_softc *sc)
 		ccb->ccb_request = request + ccb->ccb_request_offset;
 		ccb->ccb_request_dva = MFII_DMA_DVA(sc->sc_requests) +
 		    ccb->ccb_request_offset;
+
+		/* select i'th MFI command frame */
+		ccb->ccb_mfi_offset = MFI_FRAME_SIZE * i;
+		ccb->ccb_mfi = mfi + ccb->ccb_mfi_offset;
+		ccb->ccb_mfi_dva = MFII_DMA_DVA(sc->sc_mfi) +
+		    ccb->ccb_mfi_offset;
 
 		/* select i'th sense */
 		ccb->ccb_sense_offset = MFI_SENSE_SIZE * i;

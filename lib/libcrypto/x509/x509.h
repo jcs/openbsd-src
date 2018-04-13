@@ -1,4 +1,4 @@
-/* $OpenBSD: x509.h,v 1.41 2018/02/22 17:22:02 jsing Exp $ */
+/* $OpenBSD: x509.h,v 1.44 2018/03/17 15:28:27 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -806,6 +806,7 @@ extern const ASN1_ITEM X509_PUBKEY_it;
 
 int		X509_PUBKEY_set(X509_PUBKEY **x, EVP_PKEY *pkey);
 EVP_PKEY *	X509_PUBKEY_get(X509_PUBKEY *key);
+EVP_PKEY *	X509_PUBKEY_get0(X509_PUBKEY *key);
 int		X509_get_pubkey_parameters(EVP_PKEY *pkey,
 					   STACK_OF(X509) *chain);
 int		i2d_PUBKEY(EVP_PKEY *a,unsigned char **pp);
@@ -919,6 +920,7 @@ void X509_reject_clear(X509 *x);
 
 X509_REVOKED *X509_REVOKED_new(void);
 void X509_REVOKED_free(X509_REVOKED *a);
+X509_REVOKED *X509_REVOKED_dup(X509_REVOKED *a);
 X509_REVOKED *d2i_X509_REVOKED(X509_REVOKED **a, const unsigned char **in, long len);
 int i2d_X509_REVOKED(X509_REVOKED *a, unsigned char **out);
 extern const ASN1_ITEM X509_REVOKED_it;
@@ -1121,6 +1123,7 @@ int 		X509_NAME_ENTRY_set_data(X509_NAME_ENTRY *ne, int type,
 			const unsigned char *bytes, int len);
 ASN1_OBJECT *	X509_NAME_ENTRY_get_object(X509_NAME_ENTRY *ne);
 ASN1_STRING *	X509_NAME_ENTRY_get_data(X509_NAME_ENTRY *ne);
+int		X509_NAME_ENTRY_set(const X509_NAME_ENTRY *ne);
 
 int		X509v3_get_ext_count(const STACK_OF(X509_EXTENSION) *x);
 int		X509v3_get_ext_by_NID(const STACK_OF(X509_EXTENSION) *x,

@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.819 2018/02/16 09:51:41 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.823 2018/04/10 10:48:44 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -621,6 +621,9 @@ struct job {
 		JOB_DEAD,
 		JOB_CLOSED
 	} state;
+
+	int			 flags;
+#define JOB_NOWAIT 0x1
 
 	char			*cmd;
 	pid_t			 pid;
@@ -1649,7 +1652,7 @@ extern const struct options_table_entry options_table[];
 /* job.c */
 extern struct joblist all_jobs;
 struct job	*job_run(const char *, struct session *, const char *,
-		     job_update_cb, job_complete_cb, job_free_cb, void *);
+		     job_update_cb, job_complete_cb, job_free_cb, void *, int);
 void		 job_free(struct job *);
 void		 job_died(struct job *, int);
 
@@ -1917,6 +1920,7 @@ void	 server_status_window(struct window *);
 void	 server_lock(void);
 void	 server_lock_session(struct session *);
 void	 server_lock_client(struct client *);
+void	 server_kill_pane(struct window_pane *);
 void	 server_kill_window(struct window *);
 int	 server_link_window(struct session *,
 	     struct winlink *, struct session *, int, int, int, char **);
@@ -2142,7 +2146,7 @@ int		 window_has_pane(struct window *, struct window_pane *);
 int		 window_set_active_pane(struct window *, struct window_pane *);
 void		 window_redraw_active_switch(struct window *,
 		     struct window_pane *);
-struct window_pane *window_add_pane(struct window *, struct window_pane *,
+struct window_pane *window_add_pane(struct window *, struct window_pane *, int,
 		     int, u_int);
 void		 window_resize(struct window *, u_int, u_int);
 int		 window_zoom(struct window_pane *);
@@ -2247,6 +2251,7 @@ void	 mode_tree_down(struct mode_tree_data *, int);
 struct mode_tree_data *mode_tree_start(struct window_pane *, struct args *,
 	     mode_tree_build_cb, mode_tree_draw_cb, mode_tree_search_cb,
 	     void *, const char **, u_int, struct screen **);
+void	 mode_tree_zoom(struct mode_tree_data *, struct args *);
 void	 mode_tree_build(struct mode_tree_data *);
 void	 mode_tree_free(struct mode_tree_data *);
 void	 mode_tree_resize(struct mode_tree_data *, u_int, u_int);

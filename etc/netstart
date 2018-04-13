@@ -1,6 +1,6 @@
 #!/bin/sh -
 #
-#	$OpenBSD: netstart,v 1.195 2018/02/21 19:57:21 rpe Exp $
+#	$OpenBSD: netstart,v 1.197 2018/03/04 10:12:26 jmc Exp $
 
 # Turn off Strict Bourne shell mode.
 set +o sh
@@ -200,7 +200,7 @@ FUNCS_ONLY=1 . /etc/rc.d/rc.subr
 _rc_parse_conf
 
 PRINT_ONLY=false
-USAGE="USAGE: ${0##*/} [-n] [interface ...]"
+USAGE="usage: ${0##*/} [[-n] interface ...]"
 V4_DHCPCONF=false
 V6_AUTOCONF=false
 
@@ -214,7 +214,7 @@ shift $((OPTIND-1))
 
 # Option -n is only supported if interface names are specified as parameters.
 if $PRINT_ONLY && (($# == 0)); then
-	print -u2 "Missing parameters.\n$USAGE"
+	print -u2 "$USAGE"
 	exit 1
 fi
 

@@ -116,7 +116,12 @@
 ./usr/include/dev/eisa/eisavar.h
 ./usr/include/dev/fdt
 ./usr/include/dev/fdt/if_mvnetareg.h
+./usr/include/dev/fdt/imxccm_clocks.h
+./usr/include/dev/fdt/imxiicvar.h
+./usr/include/dev/fdt/imxuartreg.h
+./usr/include/dev/fdt/imxuartvar.h
 ./usr/include/dev/fdt/mvmdiovar.h
+./usr/include/dev/fdt/mvpinctrl_pins.h
 ./usr/include/dev/fdt/pscivar.h
 ./usr/include/dev/fdt/rkclock_clocks.h
 ./usr/include/dev/fdt/rsbvar.h
@@ -1759,6 +1764,7 @@
 ./usr/share/man/man3/DSA_generate_parameters.3
 ./usr/share/man/man3/DSA_get0_pqg.3
 ./usr/share/man/man3/DSA_get_ex_new_index.3
+./usr/share/man/man3/DSA_meth_new.3
 ./usr/share/man/man3/DSA_new.3
 ./usr/share/man/man3/DSA_set_method.3
 ./usr/share/man/man3/DSA_sign.3
@@ -1830,8 +1836,11 @@
 ./usr/share/man/man3/OPENSSL_VERSION_NUMBER.3
 ./usr/share/man/man3/OPENSSL_cleanse.3
 ./usr/share/man/man3/OPENSSL_config.3
+./usr/share/man/man3/OPENSSL_init_crypto.3
+./usr/share/man/man3/OPENSSL_init_ssl.3
 ./usr/share/man/man3/OPENSSL_load_builtin_modules.3
 ./usr/share/man/man3/OPENSSL_malloc.3
+./usr/share/man/man3/OPENSSL_sk_new.3
 ./usr/share/man/man3/OpenSSL_add_all_algorithms.3
 ./usr/share/man/man3/PEM_bytes_read_bio.3
 ./usr/share/man/man3/PEM_read.3
@@ -1866,6 +1875,7 @@
 ./usr/share/man/man3/RSA_generate_key.3
 ./usr/share/man/man3/RSA_get0_key.3
 ./usr/share/man/man3/RSA_get_ex_new_index.3
+./usr/share/man/man3/RSA_meth_new.3
 ./usr/share/man/man3/RSA_new.3
 ./usr/share/man/man3/RSA_padding_add_PKCS1_type_1.3
 ./usr/share/man/man3/RSA_print.3
@@ -1918,6 +1928,7 @@
 ./usr/share/man/man3/SSL_CTX_set_tlsext_servername_callback.3
 ./usr/share/man/man3/SSL_CTX_set_tlsext_status_cb.3
 ./usr/share/man/man3/SSL_CTX_set_tlsext_ticket_key_cb.3
+./usr/share/man/man3/SSL_CTX_set_tlsext_use_srtp.3
 ./usr/share/man/man3/SSL_CTX_set_tmp_dh_callback.3
 ./usr/share/man/man3/SSL_CTX_set_tmp_rsa_callback.3
 ./usr/share/man/man3/SSL_CTX_set_verify.3
@@ -1927,7 +1938,9 @@
 ./usr/share/man/man3/SSL_SESSION_get_compress_id.3
 ./usr/share/man/man3/SSL_SESSION_get_ex_new_index.3
 ./usr/share/man/man3/SSL_SESSION_get_id.3
+./usr/share/man/man3/SSL_SESSION_get_protocol_version.3
 ./usr/share/man/man3/SSL_SESSION_get_time.3
+./usr/share/man/man3/SSL_SESSION_has_ticket.3
 ./usr/share/man/man3/SSL_SESSION_new.3
 ./usr/share/man/man3/SSL_SESSION_print.3
 ./usr/share/man/man3/SSL_SESSION_set1_id_context.3
@@ -1983,6 +1996,7 @@
 ./usr/share/man/man3/SSL_state_string.3
 ./usr/share/man/man3/SSL_want.3
 ./usr/share/man/man3/SSL_write.3
+./usr/share/man/man3/STACK_OF.3
 ./usr/share/man/man3/SXNET_new.3
 ./usr/share/man/man3/SipHash24.3
 ./usr/share/man/man3/TS_REQ_new.3
@@ -2004,6 +2018,7 @@
 ./usr/share/man/man3/X509_NAME_get_index_by_NID.3
 ./usr/share/man/man3/X509_NAME_new.3
 ./usr/share/man/man3/X509_NAME_print_ex.3
+./usr/share/man/man3/X509_OBJECT_get0_X509.3
 ./usr/share/man/man3/X509_PUBKEY_new.3
 ./usr/share/man/man3/X509_REQ_new.3
 ./usr/share/man/man3/X509_REVOKED_new.3
@@ -2013,6 +2028,7 @@
 ./usr/share/man/man3/X509_STORE_CTX_new.3
 ./usr/share/man/man3/X509_STORE_CTX_set_verify_cb.3
 ./usr/share/man/man3/X509_STORE_load_locations.3
+./usr/share/man/man3/X509_STORE_new.3
 ./usr/share/man/man3/X509_STORE_set1_param.3
 ./usr/share/man/man3/X509_STORE_set_verify_cb_func.3
 ./usr/share/man/man3/X509_VERIFY_PARAM_set_flags.3
@@ -2384,6 +2400,7 @@
 ./usr/share/man/man3/lh_stats.3
 ./usr/share/man/man3/link_ntoa.3
 ./usr/share/man/man3/lldiv.3
+./usr/share/man/man3/localeconv.3
 ./usr/share/man/man3/lockf.3
 ./usr/share/man/man3/logb.3
 ./usr/share/man/man3/login.3
@@ -2595,6 +2612,7 @@
 ./usr/share/man/man3/sigvec.3
 ./usr/share/man/man3/sigwait.3
 ./usr/share/man/man3/sin.3
+./usr/share/man/man3/sincos.3
 ./usr/share/man/man3/sinh.3
 ./usr/share/man/man3/sio_open.3
 ./usr/share/man/man3/skey.3
@@ -2727,8 +2745,6 @@
 ./usr/share/man/man3/wscanf.3
 ./usr/share/man/man3/xdr.3
 ./usr/share/man/man3/ypclnt.3
-./usr/share/man/man4/vmmci.4
-./usr/share/man/man4/xbf.4
 ./usr/share/man/man9/RBT_INIT.9
 ./usr/share/man/man9/SRPL_EMPTY_LOCKED.9
 ./usr/share/man/man9/SipHash24.9

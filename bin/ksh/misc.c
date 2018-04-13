@@ -1,4 +1,4 @@
-/*	$OpenBSD: misc.c,v 1.68 2018/01/16 22:52:32 jca Exp $	*/
+/*	$OpenBSD: misc.c,v 1.70 2018/04/09 17:53:36 tobias Exp $	*/
 
 /*
  * Miscellaneous functions
@@ -56,10 +56,10 @@ initctypes(void)
 	setctypes(" \n\t\"#$&'()*;<>?[\\`|", C_QUOTE);
 }
 
-/* convert unsigned long to base N string */
+/* convert uint64_t to base N string */
 
 char *
-ulton(long unsigned int n, int base)
+u64ton(uint64_t n, int base)
 {
 	char *p;
 	static char buf [20];
@@ -407,7 +407,7 @@ parse_args(char **argv,
 					break;
 				}
 			if (ele == NELEM(sh_options)) {
-				internal_errorf("parse_args: `%c'", optc);
+				internal_errorf("%s: `%c'", __func__, optc);
 				return -1; /* not reached */
 			}
 		}

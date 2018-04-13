@@ -1,4 +1,4 @@
-/*	$OpenBSD: tsc.c,v 1.6 2017/10/19 22:09:49 mikeb Exp $	*/
+/*	$OpenBSD: tsc.c,v 1.9 2018/04/08 18:26:29 mikeb Exp $	*/
 /*
  * Copyright (c) 2016,2017 Reyk Floeter <reyk@openbsd.org>
  * Copyright (c) 2017 Adam Steen <adam@adamsteen.com.au>
@@ -56,14 +56,13 @@ tsc_freq_cpuid(struct cpu_info *ci)
 			case 0x5e: /* Skylake desktop */
 			case 0x8e: /* Kabylake mobile */
 			case 0x9e: /* Kabylake desktop */
-				khz = 24000; /* 24.0 Mhz */
+				khz = 24000; /* 24.0 MHz */
 				break;
-			case 0x55: /* Skylake X */
 			case 0x5f: /* Atom Denverton */
-				khz = 25000; /* 25.0 Mhz */
+				khz = 25000; /* 25.0 MHz */
 				break;
 			case 0x5c: /* Atom Goldmont */
-				khz = 19200; /* 19.2 Mhz */
+				khz = 19200; /* 19.2 MHz */
 				break;
 			}
 		}
@@ -176,9 +175,6 @@ calibrate_tsc_freq(void)
 	tsc_timecounter.tc_frequency = freq;
 	if (tsc_is_invariant)
 		tsc_timecounter.tc_quality = 2000;
-
-	printf("%s: recalibrated TSC frequency %llu Hz\n",
-	    reference->tc_name, tsc_timecounter.tc_frequency);
 }
 
 void

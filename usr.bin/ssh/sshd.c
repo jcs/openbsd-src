@@ -1,4 +1,4 @@
-/* $OpenBSD: sshd.c,v 1.505 2018/02/23 15:58:38 markus Exp $ */
+/* $OpenBSD: sshd.c,v 1.507 2018/04/10 00:10:49 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -101,6 +101,7 @@
 #endif
 #include "monitor_wrap.h"
 #include "ssh-sandbox.h"
+#include "auth-options.h"
 #include "version.h"
 #include "ssherr.h"
 
@@ -211,6 +212,9 @@ int privsep_is_preauth = 1;
 
 /* global authentication context */
 Authctxt *the_authctxt = NULL;
+
+/* global key/cert auth options. XXX move to permanent ssh->authctxt? */
+struct sshauthopt *auth_opts = NULL;
 
 /* sshd_config buffer */
 Buffer cfg;
@@ -1259,7 +1263,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
  * return an error if any are found).  Basically we are worried about
  * source routing; it can be used to pretend you are somebody
  * (ip-address) you are not. That itself may be "almost acceptable"
- * under certain circumstances, but rhosts autentication is useless
+ * under certain circumstances, but rhosts authentication is useless
  * if source routing is accepted. Notice also that if we just dropped
  * source routing here, the other side could use IP spoofing to do
  * rest of the interaction and could still bypass security.  So we
@@ -1903,6 +1907,10 @@ main(int ac, char **av)
 
 	/* XXX global for cleanup, access from other modules */
 	the_authctxt = authctxt;
+
+	/* Set default key authentication options */
+	if ((auth_opts = sshauthopt_new_with_keys_defaults()) == NULL)
+		fatal("allocation failed");
 
 	/* prepare buffer to collect messages to display to user after login */
 	buffer_init(&loginmsg);

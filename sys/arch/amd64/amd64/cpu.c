@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.112 2018/02/21 19:24:15 guenther Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.114 2018/03/29 01:21:02 guenther Exp $	*/
 /* $NetBSD: cpu.c,v 1.1 2003/04/26 18:39:26 fvdl Exp $ */
 
 /*-
@@ -352,7 +352,7 @@ cpu_attach(struct device *parent, struct device *self, void *aux)
 		ci = &cif->cif_cpu;
 #if defined(MULTIPROCESSOR)
 		ci->ci_tss = &cif->cif_tss;
-		ci->ci_gdt = (void *)(ci->ci_tss + 1);
+		ci->ci_gdt = &cif->cif_gdt;
 		memcpy(ci->ci_gdt, cpu_info_primary.ci_gdt, GDT_SIZE);
 		cpu_enter_pages(cif);
 		if (cpu_info[cpunum] != NULL)
@@ -520,8 +520,6 @@ cpu_init(struct cpu_info *ci)
 		cr4 |= CR4_SMEP;
 	if (ci->ci_feature_sefflags_ebx & SEFF0EBX_SMAP)
 		cr4 |= CR4_SMAP;
-	if (ci->ci_feature_sefflags_ebx & SEFF0EBX_FSGSBASE)
-		cr4 |= CR4_FSGSBASE;
 	if (ci->ci_feature_sefflags_ecx & SEFF0ECX_UMIP)
 		cr4 |= CR4_UMIP;
 	if (cpu_ecxfeature & CPUIDECX_XSAVE)

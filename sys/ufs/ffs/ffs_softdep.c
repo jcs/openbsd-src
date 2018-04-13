@@ -1,4 +1,4 @@
-/*	$OpenBSD: ffs_softdep.c,v 1.138 2018/02/10 05:24:23 deraadt Exp $	*/
+/*	$OpenBSD: ffs_softdep.c,v 1.140 2018/04/01 12:02:00 dhill Exp $	*/
 
 /*
  * Copyright 1998, 2000 Marshall Kirk McKusick. All Rights Reserved.
@@ -2307,7 +2307,7 @@ check_inode_unwritten(struct inodedep *inodedep)
 	if (inodedep->id_state & ONWORKLIST)
 		WORKLIST_REMOVE(&inodedep->id_list);
 	if (inodedep->id_savedino1 != NULL) {
-		free(inodedep->id_savedino1, M_INODEDEP, 0);
+		free(inodedep->id_savedino1, M_INODEDEP, inodedep->id_unsize);
 		inodedep->id_savedino1 = NULL;
 	}
 	if (free_inodedep(inodedep) == 0) {
@@ -3419,6 +3419,7 @@ initiate_write_inodeblock_ufs1(struct inodedep *inodedep, struct buf *bp)
 		FREE_LOCK(&lk);
 		inodedep->id_savedino1 = malloc(sizeof(struct ufs1_dinode),
 		    M_INODEDEP, M_WAITOK);
+		inodedep->id_unsize = sizeof(struct ufs1_dinode);
 		ACQUIRE_LOCK(&lk);
 		*inodedep->id_savedino1 = *dp;
 		memset(dp, 0, sizeof(struct ufs1_dinode));
@@ -3561,6 +3562,7 @@ initiate_write_inodeblock_ufs2(struct inodedep *inodedep, struct buf *bp)
 			panic("initiate_write_inodeblock_ufs2: I/O underway");
 		inodedep->id_savedino2 = malloc(sizeof(struct ufs2_dinode),
 		    M_INODEDEP, M_WAITOK);
+		inodedep->id_unsize = sizeof(struct ufs2_dinode);
 		*inodedep->id_savedino2 = *dp;
 		memset(dp, 0, sizeof(struct ufs2_dinode));
 		return;
@@ -3845,7 +3847,7 @@ softdep_disk_write_complete(struct buf *bp)
 			if (indirdep->ir_state & GOINGAWAY)
 				panic("disk_write_complete: indirdep gone");
 			memcpy(bp->b_data, indirdep->ir_saveddata, bp->b_bcount);
-			free(indirdep->ir_saveddata, M_INDIRDEP, 0);
+			free(indirdep->ir_saveddata, M_INDIRDEP, bp->b_bcount);
 			indirdep->ir_saveddata = NULL;
 			indirdep->ir_state &= ~UNDONE;
 			indirdep->ir_state |= ATTACHED;
@@ -4034,7 +4036,7 @@ handle_written_inodeblock(struct inodedep *inodedep, struct buf *bp)
 			*dp1 = *inodedep->id_savedino1;
 		else
 			*dp2 = *inodedep->id_savedino2;
-		free(inodedep->id_savedino1, M_INODEDEP, 0);
+		free(inodedep->id_savedino1, M_INODEDEP, inodedep->id_unsize);
 		inodedep->id_savedino1 = NULL;
 		if ((bp->b_flags & B_DELWRI) == 0)
 			stat_inode_bitmap++;

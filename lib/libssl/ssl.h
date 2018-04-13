@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl.h,v 1.145 2018/02/22 17:30:25 jsing Exp $ */
+/* $OpenBSD: ssl.h,v 1.155 2018/04/11 17:47:36 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -507,11 +507,6 @@ struct ssl_session_st {
 /* Set on servers to choose the cipher according to the server's
  * preferences */
 #define SSL_OP_CIPHER_SERVER_PREFERENCE			0x00400000L
-/* If set, a server will allow a client to issue a SSLv3.0 version number
- * as latest version supported in the premaster secret, even when TLSv1.0
- * (version 3.1) was announced in the client hello. Normally this is
- * forbidden to prevent version rollback attacks. */
-#define SSL_OP_TLS_ROLLBACK_BUG				0x00800000L
 
 #define SSL_OP_NO_TLSv1					0x04000000L
 #define SSL_OP_NO_TLSv1_2				0x08000000L
@@ -545,6 +540,7 @@ struct ssl_session_st {
 #define SSL_OP_TLSEXT_PADDING				0x0
 #define SSL_OP_TLS_BLOCK_PADDING_BUG			0x0
 #define SSL_OP_TLS_D5_BUG				0x0
+#define SSL_OP_TLS_ROLLBACK_BUG				0x0
 
 /* Allow SSL_write(..., n) to return r with 0 < r < n (i.e. report success
  * when just a single record has been written): */
@@ -1125,6 +1121,8 @@ int PEM_write_SSL_SESSION(FILE *fp, SSL_SESSION *x);
 
 #define SSL_CTRL_SET_MIN_PROTO_VERSION			123
 #define SSL_CTRL_SET_MAX_PROTO_VERSION			124
+#define SSL_CTRL_GET_MIN_PROTO_VERSION			130
+#define SSL_CTRL_GET_MAX_PROTO_VERSION			131
 
 #define DTLSv1_get_timeout(ssl, arg) \
 	SSL_ctrl(ssl,DTLS_CTRL_GET_TIMEOUT,0, (void *)arg)
@@ -1174,9 +1172,13 @@ int SSL_CTX_set1_groups_list(SSL_CTX *ctx, const char *groups);
 int SSL_set1_groups(SSL *ssl, const int *groups, size_t groups_len);
 int SSL_set1_groups_list(SSL *ssl, const char *groups);
 
+int SSL_CTX_get_min_proto_version(SSL_CTX *ctx);
+int SSL_CTX_get_max_proto_version(SSL_CTX *ctx);
 int SSL_CTX_set_min_proto_version(SSL_CTX *ctx, uint16_t version);
 int SSL_CTX_set_max_proto_version(SSL_CTX *ctx, uint16_t version);
 
+int SSL_get_min_proto_version(SSL *ssl);
+int SSL_get_max_proto_version(SSL *ssl);
 int SSL_set_min_proto_version(SSL *ssl, uint16_t version);
 int SSL_set_max_proto_version(SSL *ssl, uint16_t version);
 
@@ -1199,6 +1201,25 @@ int SSL_set_max_proto_version(SSL *ssl, uint16_t version);
 
 #define SSL_get_server_tmp_key(s, pk) \
 	SSL_ctrl(s,SSL_CTRL_GET_SERVER_TMP_KEY,0,pk)
+
+#ifndef LIBRESSL_INTERNAL
+/*
+ * Also provide those functions as macros for compatibility with
+ * existing users.
+ */
+#define SSL_CTX_set1_groups		SSL_CTX_set1_groups
+#define SSL_CTX_set1_groups_list	SSL_CTX_set1_groups_list
+#define SSL_set1_groups			SSL_set1_groups
+#define SSL_set1_groups_list		SSL_set1_groups_list
+#define SSL_CTX_get_min_proto_version	SSL_CTX_get_min_proto_version
+#define SSL_CTX_get_max_proto_version	SSL_CTX_get_max_proto_version
+#define SSL_CTX_set_min_proto_version	SSL_CTX_set_min_proto_version
+#define SSL_CTX_set_max_proto_version	SSL_CTX_set_max_proto_version
+#define SSL_get_min_proto_version	SSL_get_min_proto_version
+#define SSL_get_max_proto_version	SSL_get_max_proto_version
+#define SSL_set_min_proto_version	SSL_set_min_proto_version
+#define SSL_set_max_proto_version	SSL_set_max_proto_version
+#endif
 
 BIO_METHOD *BIO_f_ssl(void);
 BIO *BIO_new_ssl(SSL_CTX *ctx, int client);
@@ -1230,6 +1251,11 @@ char *	SSL_CIPHER_get_version(const SSL_CIPHER *c);
 const char *	SSL_CIPHER_get_name(const SSL_CIPHER *c);
 unsigned long 	SSL_CIPHER_get_id(const SSL_CIPHER *c);
 uint16_t SSL_CIPHER_get_value(const SSL_CIPHER *c);
+int SSL_CIPHER_get_cipher_nid(const SSL_CIPHER *c);
+int SSL_CIPHER_get_digest_nid(const SSL_CIPHER *c);
+int SSL_CIPHER_get_kx_nid(const SSL_CIPHER *c);
+int SSL_CIPHER_get_auth_nid(const SSL_CIPHER *c);
+int SSL_CIPHER_is_aead(const SSL_CIPHER *c);
 
 int	SSL_get_fd(const SSL *s);
 int	SSL_get_rfd(const SSL *s);
@@ -1280,22 +1306,28 @@ const char *SSL_state_string_long(const SSL *s);
 const char *SSL_rstate_string_long(const SSL *s);
 size_t	SSL_SESSION_get_master_key(const SSL_SESSION *ss,
 	    unsigned char *out, size_t max_out);
-int	SSL_SESSION_get_protocol_version(SSL_SESSION *s);
+int	SSL_SESSION_get_protocol_version(const SSL_SESSION *s);
 long	SSL_SESSION_get_time(const SSL_SESSION *s);
 long	SSL_SESSION_set_time(SSL_SESSION *s, long t);
 long	SSL_SESSION_get_timeout(const SSL_SESSION *s);
 long	SSL_SESSION_set_timeout(SSL_SESSION *s, long t);
 void	SSL_copy_session_id(SSL *to, const SSL *from);
 X509	*SSL_SESSION_get0_peer(SSL_SESSION *s);
+int	SSL_SESSION_set1_id(SSL_SESSION *s, const unsigned char *sid,
+	    unsigned int sid_len);
 int	SSL_SESSION_set1_id_context(SSL_SESSION *s,
 	    const unsigned char *sid_ctx, unsigned int sid_ctx_len);
 
 SSL_SESSION *SSL_SESSION_new(void);
 void	SSL_SESSION_free(SSL_SESSION *ses);
 int	SSL_SESSION_up_ref(SSL_SESSION *ss);
-const unsigned char *SSL_SESSION_get_id(const SSL_SESSION *s,
+const unsigned char *SSL_SESSION_get_id(const SSL_SESSION *ss,
 	    unsigned int *len);
-unsigned int SSL_SESSION_get_compress_id(const SSL_SESSION *s);
+const unsigned char *SSL_SESSION_get0_id_context(const SSL_SESSION *ss,
+	    unsigned int *len);
+unsigned long SSL_SESSION_get_ticket_lifetime_hint(const SSL_SESSION *s);
+int	SSL_SESSION_has_ticket(const SSL_SESSION *s);
+unsigned int SSL_SESSION_get_compress_id(const SSL_SESSION *ss);
 int	SSL_SESSION_print_fp(FILE *fp, const SSL_SESSION *ses);
 int	SSL_SESSION_print(BIO *fp, const SSL_SESSION *ses);
 int	i2d_SSL_SESSION(SSL_SESSION *in, unsigned char **pp);
@@ -1329,7 +1361,9 @@ int SSL_CTX_use_PrivateKey_ASN1(int pk, SSL_CTX *ctx, const unsigned char *d, lo
 int SSL_CTX_use_certificate(SSL_CTX *ctx, X509 *x);
 int SSL_CTX_use_certificate_ASN1(SSL_CTX *ctx, int len, const unsigned char *d);
 
+pem_password_cb *SSL_CTX_get_default_passwd_cb(SSL_CTX *ctx);
 void SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_password_cb *cb);
+void *SSL_CTX_get_default_passwd_cb_userdata(SSL_CTX *ctx);
 void SSL_CTX_set_default_passwd_cb_userdata(SSL_CTX *ctx, void *u);
 
 int SSL_CTX_check_private_key(const SSL_CTX *ctx);
@@ -2003,6 +2037,7 @@ void ERR_load_SSL_strings(void);
 #define SSL_R_SSL_SESSION_ID_CONTEXT_TOO_LONG		 273
 #define SSL_R_SSL_SESSION_ID_HAS_BAD_LENGTH		 303
 #define SSL_R_SSL_SESSION_ID_IS_DIFFERENT		 231
+#define SSL_R_SSL_SESSION_ID_TOO_LONG			 408
 #define SSL_R_TLSV1_ALERT_ACCESS_DENIED			 1049
 #define SSL_R_TLSV1_ALERT_DECODE_ERROR			 1050
 #define SSL_R_TLSV1_ALERT_DECRYPTION_FAILED		 1021
@@ -2075,6 +2110,19 @@ void ERR_load_SSL_strings(void);
 #define SSL_R_X509_LIB					 268
 #define SSL_R_X509_VERIFICATION_SETUP_PROBLEMS		 269
 #define SSL_R_PEER_BEHAVING_BADLY			 666
+
+/*
+ * OpenSSL compatible OPENSSL_INIT options
+ */
+
+/*
+ * These are provided for compatibiliy, but have no effect
+ * on how LibreSSL is initialized.
+ */
+#define OPENSSL_INIT_LOAD_SSL_STRINGS	_OPENSSL_INIT_FLAG_NOOP
+#define OPENSSL_INIT_SSL_DEFAULT	_OPENSSL_INIT_FLAG_NOOP
+
+int OPENSSL_init_ssl(uint64_t opts, const void *settings);
 
 #ifdef  __cplusplus
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_descrip.c,v 1.142 2018/02/19 08:59:52 mpi Exp $	*/
+/*	$OpenBSD: kern_descrip.c,v 1.150 2018/04/12 10:30:18 mpi Exp $	*/
 /*	$NetBSD: kern_descrip.c,v 1.42 1996/03/30 22:24:38 christos Exp $	*/
 
 /*
@@ -241,6 +241,7 @@ restart:
 		}
 		goto out;
 	}
+	/* No need for FRELE(), finishdup() uses current ref. */
 	error = finishdup(p, fp, old, new, retval, 0);
 
 out:
@@ -289,9 +290,12 @@ dodup3(struct proc *p, int old, int new, int flags, register_t *retval)
 restart:
 	if ((fp = fd_getfile(fdp, old)) == NULL)
 		return (EBADF);
+	FREF(fp);
 	if ((u_int)new >= p->p_rlimit[RLIMIT_NOFILE].rlim_cur ||
-	    (u_int)new >= maxfiles)
+	    (u_int)new >= maxfiles) {
+		FRELE(fp, p);
 		return (EBADF);
+	}
 	if (old == new) {
 		/*
 		 * NOTE! This doesn't clear the close-on-exec flag. This might
@@ -299,9 +303,9 @@ restart:
 		 * this is what everyone else does.
 		 */
 		*retval = new;
+		FRELE(fp, p);
 		return (0);
 	}
-	FREF(fp);
 	fdplock(fdp);
 	if (new >= fdp->fd_nfiles) {
 		if ((error = fdalloc(p, new, &i)) != 0) {
@@ -317,7 +321,7 @@ restart:
 			panic("dup2: fdalloc");
 		fd_unused(fdp, new);
 	}
-	/* finishdup() does FRELE */
+	/* No need for FRELE(), finishdup() uses current ref. */
 	error = finishdup(p, fp, old, new, retval, 1);
 	if (!error && flags & O_CLOEXEC)
 		fdp->fd_ofileflags[new] |= UF_EXCLOSE;
@@ -373,7 +377,7 @@ restart:
 				goto restart;
 			}
 		} else {
-			/* finishdup will FRELE for us. */
+			/* No need for FRELE(), finishdup() uses current ref. */
 			error = finishdup(p, fp, fd, i, retval, 0);
 
 			if (!error && SCARG(uap, cmd) == F_DUPFD_CLOEXEC)
@@ -612,9 +616,7 @@ finishdup(struct proc *p, struct file *fp, int old, int new,
 		FREF(oldfp);
 
 	fdp->fd_ofiles[new] = fp;
-	fdp->fd_ofileflags[new] = fdp->fd_ofileflags[old] & ~(UF_EXCLOSE|UF_PLEDGED);
-	fp->f_count++;
-	FRELE(fp, p);
+	fdp->fd_ofileflags[new] = fdp->fd_ofileflags[old] & ~UF_EXCLOSE;
 	if (dup2 && oldfp == NULL)
 		fd_used(fdp, new);
 	*retval = new;
@@ -1205,9 +1207,11 @@ sys_flock(struct proc *p, void *v, register_t *retval)
 
 	if ((fp = fd_getfile(fdp, fd)) == NULL)
 		return (EBADF);
-	if (fp->f_type != DTYPE_VNODE)
-		return (EOPNOTSUPP);
 	FREF(fp);
+	if (fp->f_type != DTYPE_VNODE) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
 	vp = fp->f_data;
 	lf.l_whence = SEEK_SET;
 	lf.l_start = 0;
@@ -1292,22 +1296,24 @@ dupfdopen(struct proc *p, int indx, int mode)
 	 */
 	if ((wfp = fd_getfile(fdp, dupfd)) == NULL)
 		return (EBADF);
+	FREF(wfp);
 
 	/*
 	 * Check that the mode the file is being opened for is a
 	 * subset of the mode of the existing descriptor.
 	 */
-	if (((mode & (FREAD|FWRITE)) | wfp->f_flag) != wfp->f_flag)
+	if (((mode & (FREAD|FWRITE)) | wfp->f_flag) != wfp->f_flag) {
+		FRELE(wfp, p);
 		return (EACCES);
-	if (wfp->f_count == LONG_MAX-2)
+	}
+	if (wfp->f_count == LONG_MAX-2) {
+		FRELE(wfp, p);
 		return (EDEADLK);
+	}
 
 	fdp->fd_ofiles[indx] = wfp;
 	fdp->fd_ofileflags[indx] = (fdp->fd_ofileflags[indx] & UF_EXCLOSE) |
 	    (fdp->fd_ofileflags[dupfd] & ~UF_EXCLOSE);
-	if (ISSET(p->p_p->ps_flags, PS_PLEDGE))
-		fdp->fd_ofileflags[indx] |= UF_PLEDGED;
-	wfp->f_count++;
 	fd_used(fdp, indx);
 	return (0);
 }
