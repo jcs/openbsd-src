@@ -66,7 +66,6 @@ int	ihidev_detach(struct device *, int);
 
 int	ihidev_hid_command(struct ihidev_softc *, int, void *);
 int	ihidev_intr(void *);
-int	ihidev_poll(void *);
 int	ihidev_reset(struct ihidev_softc *);
 int	ihidev_hid_desc_parse(struct ihidev_softc *);
 
@@ -129,7 +128,7 @@ ihidev_attach(struct device *parent, struct device *self, void *aux)
 			printf(", can't establish interrupt");
 	}
 
-	if (ia->ia_poll || sc->sc_ih == NULL) {
+	if (sc->sc_ih == NULL) {
 		printf(" (polling)");
 		sc->sc_poll = 1;
 		sc->sc_fastpoll = 1;
@@ -584,18 +583,6 @@ int
 ihidev_intr(void *arg)
 {
 	struct ihidev_softc *sc = arg;
-
-	if (sc->sc_poll)
-		printf("%s: %s when polling!\n", sc->sc_dev.dv_xname,
-		    __func__);
-
-	return ihidev_poll(arg);
-}
-
-int
-ihidev_poll(void *arg)
-{
-	struct ihidev_softc *sc = arg;
 	struct ihidev *scd;
 	u_int psize;
 	int res, i, fast = 0;
@@ -753,7 +740,7 @@ ihidev_open(struct ihidev *scd)
 
 	if (sc->sc_poll) {
 		if (!timeout_initialized(&sc->sc_timer))
-			timeout_set(&sc->sc_timer, (void *)ihidev_poll, sc);
+			timeout_set(&sc->sc_timer, (void *)ihidev_intr, sc);
 		if (!timeout_pending(&sc->sc_timer))
 			timeout_add(&sc->sc_timer, FAST_POLL_MS);
 	}
