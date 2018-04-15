@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1842 2018/04/03 09:32:32 kettenis Exp 
+ *	OpenBSD: pcidevs,v 1.1843 2018/04/14 20:27:17 jcs Exp 
  */
 
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
@@ -18340,6 +18340,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "PNIC-II",
 	},
 	{
+	    PCI_VENDOR_LITEON2, PCI_PRODUCT_LITEON2_CB1,
+	    "CB1 NVMe",
+	},
+	{
 	    PCI_VENDOR_GLOBALSUN, PCI_PRODUCT_GLOBALSUN_8031,
 	    "8031",
 	},
@@ -28018,6 +28022,10 @@ static const struct pci_known_vendor pci_known_vendors[] = {
 	{
 	    PCI_VENDOR_MSI,
 	    "MSI",
+	},
+	{
+	    PCI_VENDOR_LITEON2,
+	    "Lite-On",
 	},
 	{
 	    PCI_VENDOR_AIRONET,
