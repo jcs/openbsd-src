@@ -93,7 +93,9 @@
 #ifndef HAVE_FONT
 #define HAVE_FONT 1
 
+#if 0
 #define	FONT_SPLEEN8x16
+#endif
 #if defined(__sparc64__)
 #define	FONT_GALLANT12x22
 #elif defined(__alpha__) || defined(__luna88k__) || defined(__macppc__) || \
@@ -103,8 +105,12 @@
 
 #if !defined(SMALL_KERNEL) && (defined(__amd64__) || defined(__i386__) || \
     defined(__arm64__) || defined(__armv7__))
+#if 0
 #define FONT_SPLEEN16x32
 #define FONT_SPLEEN32x64
+#endif
+#define FONT_DOS4378x16
+#define FONT_DOS43716x32
 #endif
 
 #endif	/* HAVE_FONT */
@@ -127,6 +133,14 @@
 
 #ifdef FONT_SPLEEN32x64
 #include <dev/wsfont/spleen32x64.h>
+#endif
+
+#ifdef FONT_DOS4378x16
+#include <dev/wsfont/dos4378x16.h>
+#endif
+
+#ifdef FONT_DOS43716x32
+#include <dev/wsfont/dos43716x32.h>
 #endif
 
 struct font {
@@ -169,6 +183,12 @@ static struct font builtin_fonts[] = {
 #endif
 #ifdef FONT_SPLEEN32x64
 	BUILTIN_FONT(spleen32x64, 9),
+#endif
+#ifdef FONT_DOS4378x16
+	BUILTIN_FONT(dos4378x16, 9),
+#endif
+#ifdef FONT_DOS43716x32
+	BUILTIN_FONT(dos43716x32, 10),
 #endif
 #undef BUILTIN_FONT
 };
