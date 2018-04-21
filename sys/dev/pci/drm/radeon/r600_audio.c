@@ -1,4 +1,4 @@
-/*	$OpenBSD: r600_audio.c,v 1.3 2015/04/06 07:38:49 jsg Exp $	*/
+/*	$OpenBSD: r600_audio.c,v 1.5 2018/04/20 21:12:50 naddy Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

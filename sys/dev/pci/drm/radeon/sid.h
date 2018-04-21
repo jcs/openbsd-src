@@ -1,4 +1,4 @@
-/*	$OpenBSD: sid.h,v 1.4 2014/02/10 01:05:07 jsg Exp $	*/
+/*	$OpenBSD: sid.h,v 1.6 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2011 Advanced Micro Devices, Inc.
  *

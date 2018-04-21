@@ -1,4 +1,4 @@
-/*	$OpenBSD: r520.c,v 1.4 2015/04/06 03:49:47 jsg Exp $	*/
+/*	$OpenBSD: r520.c,v 1.6 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

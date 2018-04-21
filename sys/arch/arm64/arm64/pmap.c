@@ -1,4 +1,4 @@
-/* $OpenBSD: pmap.c,v 1.49 2018/02/20 23:45:24 kettenis Exp $ */
+/* $OpenBSD: pmap.c,v 1.51 2018/04/18 11:41:16 patrick Exp $ */
 /*
  * Copyright (c) 2008-2009,2014-2016 Dale Rahn <drahn@dalerahn.com>
  *
@@ -512,9 +512,9 @@ pmap_enter(pmap_t pm, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 	 */
 	if (pg != NULL &&
 	    ((flags & PROT_MASK) || (pg->pg_flags & PG_PMAP_REF))) {
-		pg->pg_flags |= PG_PMAP_REF;
+		atomic_setbits_int(&pg->pg_flags, PG_PMAP_REF);
 		if ((prot & PROT_WRITE) && (flags & PROT_WRITE)) {
-			pg->pg_flags |= PG_PMAP_MOD;
+			atomic_setbits_int(&pg->pg_flags, PG_PMAP_MOD);
 			atomic_clearbits_int(&pg->pg_flags, PG_PMAP_EXE);
 		}
 	}
@@ -1596,11 +1596,14 @@ pmap_fault_fixup(pmap_t pm, vaddr_t va, vm_prot_t ftype, int user)
 	paddr_t pa;
 	uint64_t *pl3 = NULL;
 	int need_sync = 0;
+	int retcode = 0;
+
+	pmap_lock(pm);
 
 	/* Every VA needs a pted, even unmanaged ones. */
 	pted = pmap_vp_lookup(pm, va, &pl3);
 	if (!pted || !PTED_VALID(pted))
-		return 0;
+		goto done;
 
 	/* There has to be a PA for the VA, get it. */
 	pa = (pted->pted_pte & PTE_RPGN);
@@ -1608,14 +1611,14 @@ pmap_fault_fixup(pmap_t pm, vaddr_t va, vm_prot_t ftype, int user)
 	/* If it's unmanaged, it must not fault. */
 	pg = PHYS_TO_VM_PAGE(pa);
 	if (pg == NULL)
-		return 0;
+		goto done;
 
 	/*
 	 * Check based on fault type for mod/ref emulation.
 	 * if L3 entry is zero, it is not a possible fixup
 	 */
 	if (*pl3 == 0)
-		return 0;
+		goto done;
 
 	/*
 	 * Check the fault types to find out if we were doing
@@ -1630,8 +1633,7 @@ pmap_fault_fixup(pmap_t pm, vaddr_t va, vm_prot_t ftype, int user)
 		 * a reference.  This means that we can enable read and
 		 * exec as well, akin to the page reference emulation.
 		 */
-		pg->pg_flags |= PG_PMAP_MOD;
-		pg->pg_flags |= PG_PMAP_REF;
+		atomic_setbits_int(&pg->pg_flags, PG_PMAP_MOD|PG_PMAP_REF);
 		atomic_clearbits_int(&pg->pg_flags, PG_PMAP_EXE);
 
 		/* Thus, enable read, write and exec. */
@@ -1646,7 +1648,7 @@ pmap_fault_fixup(pmap_t pm, vaddr_t va, vm_prot_t ftype, int user)
 		 * the page has been accesed, we can enable read as well
 		 * if UVM allows it.
 		 */
-		pg->pg_flags |= PG_PMAP_REF;
+		atomic_setbits_int(&pg->pg_flags, PG_PMAP_REF);
 
 		/* Thus, enable read and exec. */
 		pted->pted_pte |= (pted->pted_va & (PROT_READ|PROT_EXEC));
@@ -1659,13 +1661,13 @@ pmap_fault_fixup(pmap_t pm, vaddr_t va, vm_prot_t ftype, int user)
 		 * has been accessed, we can enable exec as well if UVM
 		 * allows it.
 		 */
-		pg->pg_flags |= PG_PMAP_REF;
+		atomic_setbits_int(&pg->pg_flags, PG_PMAP_REF);
 
 		/* Thus, enable read and exec. */
 		pted->pted_pte |= (pted->pted_va & (PROT_READ|PROT_EXEC));
 	} else {
 		/* didn't catch it, so probably broken */
-		return 0;
+		goto done;
 	}
 
 	/* We actually made a change, so flush it and sync. */
@@ -1686,7 +1688,10 @@ pmap_fault_fixup(pmap_t pm, vaddr_t va, vm_prot_t ftype, int user)
 			cpu_icache_sync_range(va & ~PAGE_MASK, PAGE_SIZE);
 	}
 
-	return 1;
+	retcode = 1;
+done:
+	pmap_unlock(pm);
+	return retcode;
 }
 
 void

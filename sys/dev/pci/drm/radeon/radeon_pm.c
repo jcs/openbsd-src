@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_pm.c,v 1.15 2017/07/01 16:14:10 kettenis Exp $	*/
+/*	$OpenBSD: radeon_pm.c,v 1.17 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),

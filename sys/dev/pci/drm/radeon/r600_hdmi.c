@@ -1,4 +1,4 @@
-/*	$OpenBSD: r600_hdmi.c,v 1.2 2014/02/09 13:43:02 jsg Exp $	*/
+/*	$OpenBSD: r600_hdmi.c,v 1.4 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

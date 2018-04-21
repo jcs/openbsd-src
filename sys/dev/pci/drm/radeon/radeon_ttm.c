@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_ttm.c,v 1.12 2015/12/18 03:22:39 mmcc Exp $	*/
+/*	$OpenBSD: radeon_ttm.c,v 1.14 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2009 Jerome Glisse.
  * All Rights Reserved.

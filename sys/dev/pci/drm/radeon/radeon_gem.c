@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_gem.c,v 1.8 2015/11/22 15:35:49 kettenis Exp $	*/
+/*	$OpenBSD: radeon_gem.c,v 1.10 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

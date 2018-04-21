@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_bo_manager.c,v 1.7 2017/07/01 16:14:10 kettenis Exp $	*/
+/*	$OpenBSD: ttm_bo_manager.c,v 1.9 2018/04/20 16:09:37 deraadt Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2007-2010 VMware, Inc., Palo Alto, CA., USA

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ni.c,v 1.10 2015/04/18 14:47:35 jsg Exp $	*/
+/*	$OpenBSD: ni.c,v 1.12 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2010 Advanced Micro Devices, Inc.
  *

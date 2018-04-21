@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_object.h,v 1.3 2017/06/04 15:06:22 kettenis Exp $	*/
+/*	$OpenBSD: radeon_object.h,v 1.5 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

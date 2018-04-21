@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_lock.h,v 1.3 2015/04/18 14:47:35 jsg Exp $	*/
+/*	$OpenBSD: ttm_lock.h,v 1.5 2018/04/20 21:12:50 naddy Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2007-2009 VMware, Inc., Palo Alto, CA., USA

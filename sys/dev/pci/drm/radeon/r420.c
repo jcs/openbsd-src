@@ -1,4 +1,4 @@
-/*	$OpenBSD: r420.c,v 1.5 2015/02/11 07:01:37 jsg Exp $	*/
+/*	$OpenBSD: r420.c,v 1.7 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

@@ -1,4 +1,4 @@
-/*	$OpenBSD: r100.c,v 1.16 2017/07/01 16:14:10 kettenis Exp $	*/
+/*	$OpenBSD: r100.c,v 1.18 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

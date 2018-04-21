@@ -1,4 +1,4 @@
-/*	$OpenBSD: evergreen_blit_kms.c,v 1.3 2015/04/18 14:47:35 jsg Exp $	*/
+/*	$OpenBSD: evergreen_blit_kms.c,v 1.5 2018/04/20 21:12:50 naddy Exp $	*/
 /*
  * Copyright 2010 Advanced Micro Devices, Inc.
  *

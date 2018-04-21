@@ -1,4 +1,4 @@
-/*	$OpenBSD: rs400.c,v 1.7 2015/04/06 03:49:47 jsg Exp $	*/
+/*	$OpenBSD: rs400.c,v 1.9 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

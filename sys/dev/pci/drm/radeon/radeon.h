@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon.h,v 1.18 2017/07/01 16:14:10 kettenis Exp $	*/
+/*	$OpenBSD: radeon.h,v 1.20 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

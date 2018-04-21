@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_memory.h,v 1.5 2015/09/27 11:09:26 jsg Exp $	*/
+/*	$OpenBSD: ttm_memory.h,v 1.7 2018/04/20 16:09:37 deraadt Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2006-2009 VMware, Inc., Palo Alto, CA., USA

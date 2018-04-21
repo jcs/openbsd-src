@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_connectors.c,v 1.7 2017/07/01 16:14:10 kettenis Exp $	*/
+/*	$OpenBSD: radeon_connectors.c,v 1.9 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2007-8 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

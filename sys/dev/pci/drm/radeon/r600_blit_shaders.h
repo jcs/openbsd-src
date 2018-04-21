@@ -1,4 +1,4 @@
-/*	$OpenBSD: r600_blit_shaders.h,v 1.1 2013/08/12 04:11:53 jsg Exp $	*/
+/*	$OpenBSD: r600_blit_shaders.h,v 1.3 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2009 Advanced Micro Devices, Inc.
  * Copyright 2009 Red Hat Inc.

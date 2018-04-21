@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_cursor.c,v 1.3 2013/12/05 13:29:56 kettenis Exp $	*/
+/*	$OpenBSD: radeon_cursor.c,v 1.5 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2007-8 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_execbuf_util.c,v 1.3 2015/04/06 05:35:29 jsg Exp $	*/
+/*	$OpenBSD: ttm_execbuf_util.c,v 1.5 2018/04/20 16:09:37 deraadt Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2006-2009 VMware, Inc., Palo Alto, CA., USA

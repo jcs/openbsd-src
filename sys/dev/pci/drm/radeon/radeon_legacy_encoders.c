@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_legacy_encoders.c,v 1.6 2017/07/05 20:30:13 kettenis Exp $	*/
+/*	$OpenBSD: radeon_legacy_encoders.c,v 1.8 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2007-8 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

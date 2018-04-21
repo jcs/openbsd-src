@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_mode.h,v 1.4 2017/07/01 16:14:10 kettenis Exp $	*/
+/*	$OpenBSD: radeon_mode.h,v 1.6 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2000 ATI Technologies Inc., Markham, Ontario, and
  *                VA Linux Systems Inc., Fremont, California.

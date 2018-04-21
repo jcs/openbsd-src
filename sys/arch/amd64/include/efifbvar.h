@@ -1,4 +1,4 @@
-/*	$OpenBSD: efifbvar.h,v 1.4 2016/06/21 15:24:55 jcs Exp $	*/
+/*	$OpenBSD: efifbvar.h,v 1.6 2018/04/20 16:09:36 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

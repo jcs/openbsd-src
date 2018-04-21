@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_combios.c,v 1.11 2017/10/09 09:30:26 patrick Exp $	*/
+/*	$OpenBSD: radeon_combios.c,v 1.13 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2004 ATI Technologies Inc., Markham, Ontario
  * Copyright 2007-8 Advanced Micro Devices, Inc.

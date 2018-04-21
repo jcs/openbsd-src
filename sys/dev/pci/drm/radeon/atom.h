@@ -1,4 +1,4 @@
-/*	$OpenBSD: atom.h,v 1.2 2015/02/10 06:19:36 jsg Exp $	*/
+/*	$OpenBSD: atom.h,v 1.4 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  *

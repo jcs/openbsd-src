@@ -1,4 +1,4 @@
-/*	$OpenBSD: rs690.c,v 1.6 2016/12/20 21:07:02 kettenis Exp $	*/
+/*	$OpenBSD: rs690.c,v 1.8 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

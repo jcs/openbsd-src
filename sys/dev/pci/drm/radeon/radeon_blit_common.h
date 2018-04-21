@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_blit_common.h,v 1.1 2013/08/12 04:11:53 jsg Exp $	*/
+/*	$OpenBSD: radeon_blit_common.h,v 1.3 2018/04/20 21:12:50 naddy Exp $	*/
 /*
  * Copyright 2009 Advanced Micro Devices, Inc.
  * Copyright 2009 Red Hat Inc.

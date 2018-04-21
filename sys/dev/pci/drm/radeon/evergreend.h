@@ -1,4 +1,4 @@
-/*	$OpenBSD: evergreend.h,v 1.3 2014/02/10 01:05:07 jsg Exp $	*/
+/*	$OpenBSD: evergreend.h,v 1.5 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2010 Advanced Micro Devices, Inc.
  *

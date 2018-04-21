@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_ring.c,v 1.8 2015/07/11 04:00:46 jsg Exp $	*/
+/*	$OpenBSD: radeon_ring.c,v 1.10 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

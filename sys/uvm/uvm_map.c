@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_map.c,v 1.234 2018/04/12 17:13:44 deraadt Exp $	*/
+/*	$OpenBSD: uvm_map.c,v 1.237 2018/04/18 16:05:21 deraadt Exp $	*/
 /*	$NetBSD: uvm_map.c,v 1.86 2000/11/27 08:40:03 chs Exp $	*/
 
 /*
@@ -1816,8 +1816,7 @@ uvm_map_is_stack_remappable(struct vm_map *map, vaddr_t addr, vaddr_t sz)
 	}
 
 	/*
-	 * Check that the address range exists, is contiguous, and
-	 * has the right protection.
+	 * Check that the address range exists and is contiguous.
 	 */
 	for (iter = first; iter != NULL && iter->start < end;
 	    prev = iter, iter = RBT_NEXT(uvm_map_addr, iter)) {
@@ -1840,18 +1839,6 @@ uvm_map_is_stack_remappable(struct vm_map *map, vaddr_t addr, vaddr_t sz)
 		if (iter->start == iter->end || UVM_ET_ISHOLE(iter)) {
 			printf("map stack 0x%lx-0x%lx of map %p failed: "
 			    "hole in range\n", addr, end, map);
-			return FALSE;
-		}
-
-		/*
-		 * Now check the protection.
-		 */
-#if 0
-		printf("iter prot: 0x%x\n", iter->protection);
-#endif
-		if (iter->protection != (PROT_READ | PROT_WRITE)) {
-			printf("map stack 0x%lx-0x%lx of map %p failed: "
-			    "bad protection\n", addr, end, map);
 			return FALSE;
 		}
 	}
@@ -1882,6 +1869,13 @@ uvm_map_remap_as_stack(struct proc *p, vaddr_t addr, vaddr_t sz)
 
 	start = round_page(addr);
 	end = trunc_page(addr + sz);
+#ifdef MACHINE_STACK_GROWS_UP
+	if (end == addr + sz)
+		end -= PAGE_SIZE;
+#else
+	if (start == addr)
+		start += PAGE_SIZE;
+#endif
 
 	if (start < map->min_offset || end >= map->max_offset || end < start)
 		return EINVAL;
@@ -4002,19 +3996,17 @@ uvm_map_hint(struct vmspace *vm, vm_prot_t prot, vaddr_t minaddr,
 #endif
 
 #if defined (__LP64__)
-	spacing = (MIN((4UL * 1024 * 1024 * 1024), BRKSIZ) - 1);
+	spacing = MIN(4UL * 1024 * 1024 * 1024, MAXDSIZ) - 1;
 #else
-	spacing = (MIN((256 * 1024 * 1024), BRKSIZ) - 1);
+	spacing = MIN(1 * 1024 * 1024 * 1024, MAXDSIZ) - 1;
 #endif
 
-	addr = (vaddr_t)vm->vm_daddr;
 	/*
 	 * Start malloc/mmap after the brk.
-	 * If the random spacing area has been used up,
-	 * the brk area becomes fair game for mmap as well.
 	 */
-	if (vm->vm_dused < spacing >> PAGE_SHIFT)
-		addr += BRKSIZ;
+	addr = (vaddr_t)vm->vm_daddr + BRKSIZ;
+	addr = MAX(addr, minaddr);
+
 	if (addr < maxaddr) {
 		while (spacing > maxaddr - addr)
 			spacing >>= 1;

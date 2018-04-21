@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_object.c,v 1.10 2015/04/18 11:41:29 jsg Exp $	*/
+/*	$OpenBSD: radeon_object.c,v 1.12 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2009 Jerome Glisse.
  * All Rights Reserved.

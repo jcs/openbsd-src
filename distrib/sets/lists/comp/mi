@@ -222,6 +222,7 @@
 ./usr/include/dev/ic/bwivar.h
 ./usr/include/dev/ic/cacreg.h
 ./usr/include/dev/ic/cacvar.h
+./usr/include/dev/ic/ccpvar.h
 ./usr/include/dev/ic/cd1190reg.h
 ./usr/include/dev/ic/cd1400reg.h
 ./usr/include/dev/ic/cissreg.h
@@ -1781,9 +1782,12 @@
 ./usr/share/man/man3/ENGINE_ctrl.3
 ./usr/share/man/man3/ENGINE_get_default_RSA.3
 ./usr/share/man/man3/ENGINE_init.3
+./usr/share/man/man3/ENGINE_new.3
 ./usr/share/man/man3/ENGINE_register_RSA.3
 ./usr/share/man/man3/ENGINE_register_all_RSA.3
+./usr/share/man/man3/ENGINE_set_RSA.3
 ./usr/share/man/man3/ENGINE_set_default.3
+./usr/share/man/man3/ENGINE_set_flags.3
 ./usr/share/man/man3/ENGINE_unregister_RSA.3
 ./usr/share/man/man3/ERR.3
 ./usr/share/man/man3/ERR_GET_LIB.3
@@ -2232,7 +2236,6 @@
 ./usr/share/man/man3/ecvt.3
 ./usr/share/man/man3/editline.3
 ./usr/share/man/man3/end.3
-./usr/share/man/man3/engine.3
 ./usr/share/man/man3/erf.3
 ./usr/share/man/man3/err.3
 ./usr/share/man/man3/ethers.3
@@ -2753,6 +2756,7 @@
 ./usr/share/man/man3/wscanf.3
 ./usr/share/man/man3/xdr.3
 ./usr/share/man/man3/ypclnt.3
+./usr/share/man/man9/KASSERT.9
 ./usr/share/man/man9/RBT_INIT.9
 ./usr/share/man/man9/SRPL_EMPTY_LOCKED.9
 ./usr/share/man/man9/SipHash24.9

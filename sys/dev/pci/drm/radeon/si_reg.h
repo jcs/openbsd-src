@@ -1,4 +1,4 @@
-/*	$OpenBSD: si_reg.h,v 1.1 2013/08/12 04:11:53 jsg Exp $	*/
+/*	$OpenBSD: si_reg.h,v 1.3 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2010 Advanced Micro Devices, Inc.
  *

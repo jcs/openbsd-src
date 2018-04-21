@@ -1,4 +1,4 @@
-/* $OpenBSD: radeon_drm.h,v 1.12 2014/04/11 06:09:29 jsg Exp $ */
+/* $OpenBSD: radeon_drm.h,v 1.14 2018/04/20 16:09:36 deraadt Exp $ */
 /* radeon_drm.h -- Public header for the radeon driver -*- linux-c -*-
  *
  * Copyright 2000 Precision Insight, Inc., Cedar Park, Texas.

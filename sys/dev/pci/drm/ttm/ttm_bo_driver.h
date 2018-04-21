@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_bo_driver.h,v 1.8 2017/06/04 14:02:24 kettenis Exp $	*/
+/*	$OpenBSD: ttm_bo_driver.h,v 1.10 2018/04/20 16:09:37 deraadt Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2006-2009 Vmware, Inc., Palo Alto, CA., USA

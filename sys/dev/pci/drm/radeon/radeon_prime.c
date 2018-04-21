@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_prime.c,v 1.4 2015/02/10 06:19:36 jsg Exp $	*/
+/*	$OpenBSD: radeon_prime.c,v 1.6 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2012 Advanced Micro Devices, Inc.
  *

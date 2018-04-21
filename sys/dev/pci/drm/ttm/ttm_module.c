@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_module.c,v 1.1 2013/08/12 04:11:53 jsg Exp $	*/
+/*	$OpenBSD: ttm_module.c,v 1.3 2018/04/20 21:12:50 naddy Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2006-2009 VMware, Inc., Palo Alto, CA., USA

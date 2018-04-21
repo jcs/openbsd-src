@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_kms.c,v 1.52 2017/07/19 22:02:39 kettenis Exp $	*/
+/*	$OpenBSD: radeon_kms.c,v 1.54 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

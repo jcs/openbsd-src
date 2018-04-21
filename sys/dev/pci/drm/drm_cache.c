@@ -1,4 +1,4 @@
-/*	$OpenBSD: drm_cache.c,v 1.3 2017/07/01 16:00:25 kettenis Exp $	*/
+/*	$OpenBSD: drm_cache.c,v 1.5 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright (c) 2017 Mark Kettenis
  *

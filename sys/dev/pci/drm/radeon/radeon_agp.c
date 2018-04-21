@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_agp.c,v 1.5 2015/04/12 12:14:30 jsg Exp $	*/
+/*	$OpenBSD: radeon_agp.c,v 1.7 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Red Hat Inc.
  * Copyright 2009 Jerome Glisse.

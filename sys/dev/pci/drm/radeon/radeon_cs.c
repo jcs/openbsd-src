@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_cs.c,v 1.4 2015/04/06 11:05:54 jsg Exp $	*/
+/*	$OpenBSD: radeon_cs.c,v 1.6 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2008 Jerome Glisse.
  * All Rights Reserved.

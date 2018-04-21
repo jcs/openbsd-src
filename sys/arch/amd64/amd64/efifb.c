@@ -1,4 +1,4 @@
-/*	$OpenBSD: efifb.c,v 1.12 2017/10/28 01:48:03 yasuoka Exp $	*/
+/*	$OpenBSD: efifb.c,v 1.14 2018/04/20 16:09:36 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

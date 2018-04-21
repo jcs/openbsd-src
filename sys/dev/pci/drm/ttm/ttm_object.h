@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_object.h,v 1.3 2015/09/27 11:09:26 jsg Exp $	*/
+/*	$OpenBSD: ttm_object.h,v 1.5 2018/04/20 21:12:50 naddy Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2006-2009 VMware, Inc., Palo Alto, CA., USA

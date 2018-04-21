@@ -1,4 +1,4 @@
-/*	$OpenBSD: evergreen_cs.c,v 1.6 2015/04/18 14:47:35 jsg Exp $	*/
+/*	$OpenBSD: evergreen_cs.c,v 1.8 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2010 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

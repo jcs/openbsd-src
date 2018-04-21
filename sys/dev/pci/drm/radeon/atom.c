@@ -1,4 +1,4 @@
-/*	$OpenBSD: atom.c,v 1.9 2015/09/23 23:12:12 kettenis Exp $	*/
+/*	$OpenBSD: atom.c,v 1.11 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
  *

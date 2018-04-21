@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_tt.c,v 1.4 2015/02/11 07:01:37 jsg Exp $	*/
+/*	$OpenBSD: ttm_tt.c,v 1.6 2018/04/20 16:09:37 deraadt Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2006-2009 VMware, Inc., Palo Alto, CA., USA

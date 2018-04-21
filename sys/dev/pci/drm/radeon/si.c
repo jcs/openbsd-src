@@ -1,4 +1,4 @@
-/*	$OpenBSD: si.c,v 1.23 2017/08/12 14:29:11 mpi Exp $	*/
+/*	$OpenBSD: si.c,v 1.25 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2011 Advanced Micro Devices, Inc.
  *

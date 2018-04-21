@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_trace.h,v 1.2 2015/04/18 11:41:29 jsg Exp $	*/
+/*	$OpenBSD: radeon_trace.h,v 1.4 2018/04/20 16:09:37 deraadt Exp $	*/
 
 #if !defined(_RADEON_TRACE_H) || defined(TRACE_HEADER_MULTI_READ)
 #define _RADEON_TRACE_H_

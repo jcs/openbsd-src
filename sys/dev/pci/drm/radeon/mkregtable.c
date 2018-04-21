@@ -1,4 +1,4 @@
-/*	$OpenBSD: mkregtable.c,v 1.1 2013/08/12 04:11:53 jsg Exp $	*/
+/*	$OpenBSD: mkregtable.c,v 1.3 2018/04/20 16:09:36 deraadt Exp $	*/
 /* utility to create the register check tables
  * this includes inlined list.h safe for userspace.
  *

@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_benchmark.c,v 1.5 2015/07/11 04:00:46 jsg Exp $	*/
+/*	$OpenBSD: radeon_benchmark.c,v 1.7 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2009 Jerome Glisse.
  *

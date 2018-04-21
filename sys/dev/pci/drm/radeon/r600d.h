@@ -1,4 +1,4 @@
-/*	$OpenBSD: r600d.h,v 1.3 2014/03/09 12:32:56 jsg Exp $	*/
+/*	$OpenBSD: r600d.h,v 1.5 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2009 Advanced Micro Devices, Inc.
  * Copyright 2009 Red Hat Inc.

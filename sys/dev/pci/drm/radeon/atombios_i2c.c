@@ -1,4 +1,4 @@
-/*	$OpenBSD: atombios_i2c.c,v 1.7 2017/07/14 11:18:04 kettenis Exp $	*/
+/*	$OpenBSD: atombios_i2c.c,v 1.9 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2011 Advanced Micro Devices, Inc.
  *

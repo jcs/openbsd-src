@@ -1,4 +1,4 @@
-/*	$OpenBSD: atombios_encoders.c,v 1.10 2017/07/05 20:30:13 kettenis Exp $	*/
+/*	$OpenBSD: atombios_encoders.c,v 1.12 2018/04/20 16:09:36 deraadt Exp $	*/
 /*
  * Copyright 2007-11 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.6 2018/04/06 14:44:04 patrick Exp $
+# $OpenBSD: Makefile,v 1.8 2018/04/20 21:12:50 naddy Exp $
 
 LIB=	LLVMX86CodeGen
 NOPIC=

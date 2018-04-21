@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_sa.c,v 1.8 2015/04/12 03:54:10 jsg Exp $	*/
+/*	$OpenBSD: radeon_sa.c,v 1.10 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2011 Red Hat Inc.
  * All Rights Reserved.

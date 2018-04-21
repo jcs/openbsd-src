@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_atombios.c,v 1.7 2015/04/18 14:47:35 jsg Exp $	*/
+/*	$OpenBSD: radeon_atombios.c,v 1.9 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2007-8 Advanced Micro Devices, Inc.
  * Copyright 2008 Red Hat Inc.

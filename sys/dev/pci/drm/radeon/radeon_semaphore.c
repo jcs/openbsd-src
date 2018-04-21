@@ -1,4 +1,4 @@
-/*	$OpenBSD: radeon_semaphore.c,v 1.3 2015/04/18 11:41:29 jsg Exp $	*/
+/*	$OpenBSD: radeon_semaphore.c,v 1.5 2018/04/20 16:09:37 deraadt Exp $	*/
 /*
  * Copyright 2011 Christian König.
  * All Rights Reserved.

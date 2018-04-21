@@ -1,4 +1,4 @@
-/*	$OpenBSD: ttm_agp_backend.c,v 1.3 2014/02/09 10:57:26 jsg Exp $	*/
+/*	$OpenBSD: ttm_agp_backend.c,v 1.5 2018/04/20 16:09:37 deraadt Exp $	*/
 /**************************************************************************
  *
  * Copyright (c) 2006-2009 VMware, Inc., Palo Alto, CA., USA
