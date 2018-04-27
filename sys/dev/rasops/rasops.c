@@ -1377,11 +1377,11 @@ struct rasops_screen {
 	int rs_crow;
 	int rs_ccol;
 
+	int rs_sbscreens;
+#define RS_SCROLLBACK_SCREENS 5
 	int rs_dispoffset;	/* rs_bs index, start of our actual screen */
 	int rs_visibleoffset;	/* rs_bs index, current scrollback screen */
 };
-
-#define RS_SCROLLBACK_SCREENS 5
 
 int
 rasops_alloc_screen(void *v, void **cookiep,
@@ -1395,7 +1395,8 @@ rasops_alloc_screen(void *v, void **cookiep,
 	if (scr == NULL)
 		return (ENOMEM);
 
-	scr->rs_bs = mallocarray(ri->ri_rows * RS_SCROLLBACK_SCREENS,
+	scr->rs_sbscreens = RS_SCROLLBACK_SCREENS;
+	scr->rs_bs = mallocarray(ri->ri_rows * (scr->rs_sbscreens + 1),
 	    ri->ri_cols * sizeof(struct wsdisplay_charcell), M_DEVBUF,
 	    M_NOWAIT);
 	if (scr->rs_bs == NULL) {
@@ -1403,7 +1404,7 @@ rasops_alloc_screen(void *v, void **cookiep,
 		return (ENOMEM);
 	}
 	scr->rs_visibleoffset = scr->rs_dispoffset = ri->ri_rows *
-	    (RS_SCROLLBACK_SCREENS - 1) * ri->ri_cols;
+	    scr->rs_sbscreens * ri->ri_cols;
 
 	*cookiep = scr;
 	*curxp = 0;
@@ -1447,7 +1448,7 @@ rasops_free_screen(void *v, void *cookie)
 	ri->ri_nscreens--;
 
 	free(scr->rs_bs, M_DEVBUF,
-	    ri->ri_rows * RS_SCROLLBACK_SCREENS * ri->ri_cols *
+	    ri->ri_rows * (scr->rs_sbscreens + 1) * ri->ri_cols *
 	    sizeof(struct wsdisplay_charcell));
 	free(scr, M_DEVBUF, sizeof(*scr));
 }
@@ -1612,11 +1613,11 @@ rasops_vcons_copyrows(void *cookie, int src, int dst, int num)
 	int cols = ri->ri_cols;
 	int row, col, rc;
 
-	if (dst == 0 && (src + num == ri->ri_rows))
-		memmove(&scr->rs_bs[dst],
-		    &scr->rs_bs[src * cols],
-		    ((ri->ri_rows * RS_SCROLLBACK_SCREENS * cols) -
-		    (src * cols)) * sizeof(struct wsdisplay_charcell));
+	if (dst == 0 && (src + num == ri->ri_rows) && scr->rs_sbscreens)
+		memmove(&scr->rs_bs[dst], &scr->rs_bs[src * cols],
+		    ((ri->ri_rows * (scr->rs_sbscreens + 1) * cols) -
+		    (src * cols)) *
+		    sizeof(struct wsdisplay_charcell));
 	else
 		memmove(&scr->rs_bs[dst * cols + scr->rs_dispoffset],
 		    &scr->rs_bs[src * cols + scr->rs_dispoffset],
