@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_lock.c,v 1.61 2018/03/27 08:32:29 mpi Exp $	*/
+/*	$OpenBSD: kern_lock.c,v 1.63 2018/04/26 06:51:48 mpi Exp $	*/
 
 /*
  * Copyright (c) 2017 Visa Hankala
@@ -113,22 +113,21 @@ ___mp_lock_init(struct __mp_lock *mpl, struct lock_type *type)
 static __inline void
 __mp_lock_spin(struct __mp_lock *mpl, u_int me)
 {
-#ifndef MP_LOCKDEBUG
-	while (mpl->mpl_ticket != me)
-		CPU_BUSY_CYCLE();
-#else
+#ifdef MP_LOCKDEBUG
 	int nticks = __mp_lock_spinout;
+#endif
 
 	while (mpl->mpl_ticket != me) {
 		CPU_BUSY_CYCLE();
 
+#ifdef MP_LOCKDEBUG
 		if (--nticks <= 0) {
-			db_printf("__mp_lock(%p): lock spun out", mpl);
+			db_printf("%s: %p lock spun out", __func__, mpl);
 			db_enter();
 			nticks = __mp_lock_spinout;
 		}
-	}
 #endif
+	}
 }
 
 void
@@ -262,10 +261,6 @@ __mtx_enter(struct mutex *mtx)
 	int nticks = __mp_lock_spinout;
 #endif
 
-	/* Avoid deadlocks after panic or in DDB */
-	if (panicstr || db_active)
-		return;
-
 	while (__mtx_enter_try(mtx) == 0) {
 		CPU_BUSY_CYCLE();
 
@@ -284,6 +279,10 @@ __mtx_enter_try(struct mutex *mtx)
 {
 	struct cpu_info *owner, *ci = curcpu();
 	int s;
+
+	/* Avoid deadlocks after panic or in DDB */
+	if (panicstr || db_active)
+		return (1);
 
 	if (mtx->mtx_wantipl != IPL_NONE)
 		s = splraise(mtx->mtx_wantipl);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: rasops.h,v 1.21 2018/04/20 16:09:37 deraadt Exp $ */
+/*	$OpenBSD: rasops.h,v 1.22 2018/04/27 21:36:12 jcs Exp $ */
 /* 	$NetBSD: rasops.h,v 1.13 2000/06/13 13:36:54 ad Exp $ */
 
 /*-

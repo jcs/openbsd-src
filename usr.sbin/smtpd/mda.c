@@ -1,4 +1,4 @@
-/*	$OpenBSD: mda.c,v 1.128 2017/11/21 12:20:34 eric Exp $	*/
+/*	$OpenBSD: mda.c,v 1.130 2018/04/28 13:54:03 gilles Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -261,7 +261,7 @@ mda_imsg(struct mproc *p, struct imsg *imsg)
 				 * if any
 				 */
 				n = io_printf(s->io,
-				    "Return-Path: %s\n"
+				    "Return-Path: <%s>\n"
 				    "Delivered-To: %s\n",
 				    e->sender,
 				    e->rcpt ? e->rcpt : e->dest);
@@ -756,7 +756,7 @@ mda_log(const struct mda_envelope *evp, const char *prefix, const char *status)
 
 	rcpt[0] = '\0';
 	if (evp->rcpt)
-		(void)snprintf(rcpt, sizeof rcpt, "rcpt=<%s>, ", evp->rcpt);
+		(void)snprintf(rcpt, sizeof rcpt, "rcpt=<%s> ", evp->rcpt);
 
 	if (evp->method == A_MAILDIR)
 		method = "maildir";

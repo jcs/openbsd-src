@@ -1,4 +1,4 @@
-/*	$OpenBSD: vm.c,v 1.31 2018/01/03 05:39:56 ccardenas Exp $	*/
+/*	$OpenBSD: vm.c,v 1.33 2018/04/27 12:15:10 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -922,6 +922,7 @@ init_emulated_hw(struct vmop_create_params *vmc, int child_cdrom,
 	ioports_map[TIMER_BASE + TIMER_CNTR0] = vcpu_exit_i8253;
 	ioports_map[TIMER_BASE + TIMER_CNTR1] = vcpu_exit_i8253;
 	ioports_map[TIMER_BASE + TIMER_CNTR2] = vcpu_exit_i8253;
+	ioports_map[PCKBC_AUX] = vcpu_exit_i8253_misc;
 
 	/* Init mc146818 RTC */
 	mc146818_init(vcp->vcp_id, memlo, memhi);
@@ -934,6 +935,8 @@ init_emulated_hw(struct vmop_create_params *vmc, int child_cdrom,
 	ioports_map[IO_ICU1 + 1] = vcpu_exit_i8259;
 	ioports_map[IO_ICU2] = vcpu_exit_i8259;
 	ioports_map[IO_ICU2 + 1] = vcpu_exit_i8259;
+	ioports_map[ELCR0] = vcpu_exit_i8259;
+	ioports_map[ELCR1] = vcpu_exit_i8259;
 
 	/* Init ns8250 UART */
 	ns8250_init(con_fd, vcp->vcp_id);

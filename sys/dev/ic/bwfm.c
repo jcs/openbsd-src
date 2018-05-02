@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.41 2018/02/11 05:33:12 patrick Exp $ */
+/* $OpenBSD: bwfm.c,v 1.43 2018/04/28 16:05:56 phessler Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -462,9 +462,6 @@ bwfm_stop(struct ifnet *ifp)
 	ifp->if_timer = 0;
 	ifp->if_flags &= ~IFF_RUNNING;
 	ifq_clr_oactive(&ifp->if_snd);
-
-	/* In case we were scanning, release the scan "lock". */
-	ic->ic_scan_lock = IEEE80211_SCAN_UNLOCKED;
 
 	ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
 
@@ -2297,6 +2294,8 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 			printf("%s: %s -> %s\n", DEVNAME(sc),
 			    ieee80211_state_name[ic->ic_state],
 			    ieee80211_state_name[nstate]);
+		ieee80211_set_link_state(ic, LINK_STATE_DOWN);
+		ieee80211_free_allnodes(ic, 1);
 		ic->ic_state = nstate;
 		splx(s);
 		return 0;

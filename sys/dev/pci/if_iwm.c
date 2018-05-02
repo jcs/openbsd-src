@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.226 2018/02/28 14:39:35 stsp Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.228 2018/04/28 16:05:56 phessler Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>
@@ -5501,6 +5501,10 @@ iwm_scan(struct iwm_softc *sc)
 		printf("%s: %s -> %s\n", ifp->if_xname,
 		    ieee80211_state_name[ic->ic_state],
 		    ieee80211_state_name[IEEE80211_S_SCAN]);
+	if ((sc->sc_flags & IWM_FLAG_BGSCAN) == 0) {
+		ieee80211_set_link_state(ic, LINK_STATE_DOWN);
+		ieee80211_free_allnodes(ic, 1);
+	}
 	ic->ic_state = IEEE80211_S_SCAN;
 	iwm_led_blink_start(sc);
 	wakeup(&ic->ic_state); /* wake iwm_init() */
@@ -6708,9 +6712,6 @@ iwm_stop(struct ifnet *ifp)
 		sc->sc_cmd_resp_pkt[i] = NULL;
 		sc->sc_cmd_resp_len[i] = 0;
 	}
-	if (ic->ic_scan_lock & IEEE80211_SCAN_REQUEST)
-		wakeup(&ic->ic_scan_lock);
-	ic->ic_scan_lock = IEEE80211_SCAN_UNLOCKED;
 	ifp->if_flags &= ~IFF_RUNNING;
 	ifq_clr_oactive(&ifp->if_snd);
 

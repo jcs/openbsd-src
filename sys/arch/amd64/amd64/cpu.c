@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.115 2018/04/20 07:27:54 mlarkin Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.117 2018/04/28 15:44:59 jasper Exp $	*/
 /* $NetBSD: cpu.c,v 1.1 2003/04/26 18:39:26 fvdl Exp $ */
 
 /*-
@@ -522,7 +522,7 @@ cpu_init(struct cpu_info *ci)
 		cr4 |= CR4_SMAP;
 	if (ci->ci_feature_sefflags_ecx & SEFF0ECX_UMIP)
 		cr4 |= CR4_UMIP;
-	if (cpu_ecxfeature & CPUIDECX_XSAVE)
+	if ((cpu_ecxfeature & CPUIDECX_XSAVE) && cpuid_level >= 0xd)
 		cr4 |= CR4_OSXSAVE;
 	lcr4(cr4);
 
@@ -929,8 +929,8 @@ rdrand(void *v)
 
 	if (valid)
 		t.u64 ^= r.u64;
-	add_true_randomness(t.u32[0]);
-	add_true_randomness(t.u32[1]);
+	enqueue_randomness(t.u32[0]);
+	enqueue_randomness(t.u32[1]);
 
 	if (tmo)
 		timeout_add_msec(tmo, 10);

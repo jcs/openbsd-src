@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 # ex:ts=8 sw=4:
-# $OpenBSD: PkgCreate.pm,v 1.132 2018/02/27 22:46:53 espie Exp $
+# $OpenBSD: PkgCreate.pm,v 1.136 2018/04/29 20:38:17 espie Exp $
 #
 # Copyright (c) 2003-2014 Marc Espie <espie@openbsd.org>
 #
@@ -733,7 +733,7 @@ sub new
 {
 	my ($class, $filename) = @_;
 
-	open(my $fh, '<', $filename) or die "Missing file $filename";
+	open(my $fh, '<', $filename) or return undef;
 
 	bless { fh => $fh, name => $filename }, (ref($class) || $class);
 }
@@ -758,7 +758,7 @@ sub close
 
 sub deduce_name
 {
-	my ($self, $frag, $not) = @_;
+	my ($self, $frag, $not, $p, $state) = @_;
 
 	my $o = $self->name;
 	my $noto = $o;
@@ -770,7 +770,8 @@ sub deduce_name
 	$noto =~ s/PFRAG\./PFRAG.no-$frag-/o or
 	    $noto =~ s/PLIST/PFRAG.no-$frag/o;
 	unless (-e $o or -e $noto) {
-		die "Missing fragments for $frag: $o and $noto don't exist";
+		$p->missing_fragments($state, $frag, $o, $noto);
+		return;
 	}
 	if ($not) {
 		return $noto if -e $noto;
@@ -879,7 +880,7 @@ sub to_cache
 
 sub ask_tree
 {
-	my ($self, $state, $dep, $portsdir, @action) = @_;
+	my ($self, $state, $pkgpath, $portsdir, $data, @action) = @_;
 
 	my $make = OpenBSD::Paths->make;
 	my $pid = open(my $fh, "-|");
@@ -892,15 +893,14 @@ sub ask_tree
 		$ENV{FULLPATH} = 'Yes';
 		delete $ENV{FLAVOR};
 		delete $ENV{SUBPACKAGE};
-		$ENV{SUBDIR} = $dep->{pkgpath};
+		$ENV{SUBDIR} = $pkgpath;
 		$ENV{ECHO_MSG} = ':';
 		# XXX we're already running as ${BUILD_USER}
 		# so we can't do this again
 		push(@action, 'PORTS_PRIVSEP=No');
 		exec $make ('make', @action);
 	}
-	my $plist = OpenBSD::PackingList->read($fh,
-	    \&OpenBSD::PackingList::PrelinkStuffOnly);
+	my $plist = OpenBSD::PackingList->read($fh, $data);
 	close($fh);
 	return $plist;
 }
@@ -915,7 +915,8 @@ sub really_solve_from_ports
 	if (defined $diskcache && -f $diskcache) {
 		$plist = OpenBSD::PackingList->fromfile($diskcache);
 	} else {
-		$plist = $self->ask_tree($state, $dep, $portsdir,
+		$plist = $self->ask_tree($state, $dep->{pkgpath}, $portsdir,
+		    \&OpenBSD::PackingList::PrelinkStuffOnly,
 		    'print-plist-libs-with-depends',
 		    'wantlib_args=no-wantlib-args');
 		if ($? != 0 || !defined $plist->pkgname) {
@@ -1053,11 +1054,16 @@ sub handle_fragment
 	} else {
 		return undef unless defined $not;
 	}
-	my $newname = $old->deduce_name($frag, $not);
+	my $newname = $old->deduce_name($frag, $not, $self, $state);
 	if (defined $newname) {
 		$state->set_status("switching to $newname")
 		    unless $state->{silent};
-		return $old->new($newname);
+		my $f = $old->new($newname);
+		if (!defined $f) {
+			$self->cant_read_fragment($state, $newname);
+		} else {
+			return $f;
+		}
 	}
 	return undef;
 }
@@ -1067,13 +1073,25 @@ sub FileClass
 	return "MyFile";
 }
 
+# hook for update-plist, which wants to record fragment positions
+sub record_fragment
+{
+}
+
+# hook for update-plist, which wants to record original file info
+sub annotate
+{
+}
+
 sub read_fragments
 {
 	my ($self, $state, $plist, $filename) = @_;
 
 	my $stack = [];
 	my $subst = $state->{subst};
-	push(@$stack, $self->FileClass->new($filename));
+	my $main = $self->FileClass->new($filename);
+	return undef if !defined $main;
+	push(@$stack, $main);
 	my $fast = $subst->value("LIBS_ONLY");
 
 	return $plist->read($stack,
@@ -1083,10 +1101,14 @@ sub read_fragments
 			while (my $l = $file->readline) {
 				$state->progress->working(2048) 
 				    unless $state->{silent};
+				# strip the actual CVS entry so the
+				# plist is always the same
 				if ($l =~m/^(\@comment\s+\$(?:Open)BSD\$)$/o) {
 					$l = '@comment $'.'OpenBSD: '.basename($file->name).',v$';
 				}
 				if ($l =~ m/^(\!)?\%\%(.*)\%\%$/) {
+					$self->record_fragment($plist, $1, $2, 
+					    $file);
 					if (my $f2 = $self->handle_fragment($state, $file, $1, $2, $l, $cont, $filename)) {
 						push(@$stack, $file);
 						$file = $f2;
@@ -1106,10 +1128,6 @@ sub read_fragments
 			}
 		}
 	    });
-}
-
-sub annotate
-{
 }
 
 sub add_description
@@ -1231,6 +1249,13 @@ sub cant_read_fragment
 {
 	my ($self, $state, $frag) = @_;
 	$state->fatal("can't read packing-list #1", $frag);
+}
+
+sub missing_fragments
+{
+	my ($self, $state, $frag, $o, $noto) = @_;
+	$state->fatal("Missing fragments for #1: #2 and #3 don't exist",
+		$frag, $o, $noto);
 }
 
 sub read_all_fragments

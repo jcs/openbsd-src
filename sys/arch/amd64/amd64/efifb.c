@@ -1,4 +1,4 @@
-/*	$OpenBSD: efifb.c,v 1.14 2018/04/20 16:09:36 deraadt Exp $	*/
+/*	$OpenBSD: efifb.c,v 1.16 2018/04/27 21:36:12 jcs Exp $	*/
 
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>
@@ -496,6 +496,12 @@ void
 efifb_cndetach(void)
 {
 	efifb_console.detached = 1;
+}
+
+void
+efifb_cnreattach(void)
+{
+	efifb_console.detached = 0;
 }
 
 int

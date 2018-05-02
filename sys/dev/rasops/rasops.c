@@ -1,4 +1,4 @@
-/*	$OpenBSD: rasops.c,v 1.52 2018/04/20 16:09:37 deraadt Exp $	*/
+/*	$OpenBSD: rasops.c,v 1.53 2018/04/27 21:36:12 jcs Exp $	*/
 /*	$NetBSD: rasops.c,v 1.35 2001/02/02 06:01:01 marcus Exp $	*/
 
 /*-
@@ -1613,11 +1613,10 @@ rasops_vcons_copyrows(void *cookie, int src, int dst, int num)
 	int cols = ri->ri_cols;
 	int row, col, rc;
 
-	if (dst == 0 && (src + num == ri->ri_rows) && scr->rs_sbscreens)
+	if (dst == 0 && (src + num == ri->ri_rows) && scr->rs_sbscreens > 0)
 		memmove(&scr->rs_bs[dst], &scr->rs_bs[src * cols],
 		    ((ri->ri_rows * (scr->rs_sbscreens + 1) * cols) -
-		    (src * cols)) *
-		    sizeof(struct wsdisplay_charcell));
+		    (src * cols)) * sizeof(struct wsdisplay_charcell));
 	else
 		memmove(&scr->rs_bs[dst * cols + scr->rs_dispoffset],
 		    &scr->rs_bs[src * cols + scr->rs_dispoffset],

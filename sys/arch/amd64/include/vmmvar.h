@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmmvar.h,v 1.51 2018/03/29 02:25:10 mlarkin Exp $	*/
+/*	$OpenBSD: vmmvar.h,v 1.53 2018/04/27 10:26:15 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -320,6 +320,13 @@ enum {
 	VEI_DIR_OUT,
 	VEI_DIR_IN
 };
+
+/*
+ * Port definitions not found elsewhere
+ */
+#define PCKBC_AUX	0x61
+#define ELCR0		0x4D0
+#define ELCR1		0x4D1
 
 /*
  * vm exit data

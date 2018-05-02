@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.279 2018/04/03 09:10:02 mpi Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.281 2018/04/28 03:13:05 visa Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -297,7 +297,7 @@ update:
 		TAILQ_INSERT_TAIL(&mountlist, mp, mnt_list);
 		checkdirs(vp);
 		vfs_unbusy(vp->v_mount);
-		VOP_UNLOCK(vp, p);
+		VOP_UNLOCK(vp);
 		if ((mp->mnt_flag & MNT_RDONLY) == 0)
 			error = vfs_allocate_syncvnode(mp);
 		vfs_unbusy(mp);
@@ -745,7 +745,6 @@ sys_fchdir(struct proc *p, void *v, register_t *retval)
 
 	if ((fp = fd_getfile(fdp, SCARG(uap, fd))) == NULL)
 		return (EBADF);
-	FREF(fp);
 	vp = fp->f_data;
 	if (fp->f_type != DTYPE_VNODE || vp->v_type != VDIR) {
 		FRELE(fp, p);
@@ -770,7 +769,7 @@ sys_fchdir(struct proc *p, void *v, register_t *retval)
 		vput(vp);
 		return (error);
 	}
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 	old_cdir = fdp->fd_cdir;
 	fdp->fd_cdir = vp;
 	vrele(old_cdir);
@@ -857,7 +856,7 @@ change_dir(struct nameidata *ndp, struct proc *p)
 	if (error)
 		vput(vp);
 	else
-		VOP_UNLOCK(vp, p);
+		VOP_UNLOCK(vp);
 	return (error);
 }
 
@@ -967,7 +966,7 @@ doopenat(struct proc *p, int fd, const char *path, int oflags, mode_t mode,
 		type = F_FLOCK;
 		if ((flags & FNONBLOCK) == 0)
 			type |= F_WAIT;
-		VOP_UNLOCK(vp, p);
+		VOP_UNLOCK(vp);
 		error = VOP_ADVLOCK(vp, (caddr_t)fp, F_SETLK, &lf, type);
 		if (error) {
 			/* closef will vn_close the file for us. */
@@ -991,14 +990,14 @@ doopenat(struct proc *p, int fd, const char *path, int oflags, mode_t mode,
 			error = VOP_SETATTR(vp, &vattr, fp->f_cred, p);
 		}
 		if (error) {
-			VOP_UNLOCK(vp, p);
+			VOP_UNLOCK(vp);
 			/* closef will close the file for us. */
 			fdremove(fdp, indx);
 			closef(fp, p);
 			goto out;
 		}
 	}
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 	*retval = indx;
 	FILE_SET_MATURE(fp, p);
 out:
@@ -1150,7 +1149,7 @@ sys_fhopen(struct proc *p, void *v, register_t *retval)
 		type = F_FLOCK;
 		if ((flags & FNONBLOCK) == 0)
 			type |= F_WAIT;
-		VOP_UNLOCK(vp, p);
+		VOP_UNLOCK(vp);
 		error = VOP_ADVLOCK(vp, (caddr_t)fp, F_SETLK, &lf, type);
 		if (error) {
 			vp = NULL;	/* closef will vn_close the file */
@@ -1159,7 +1158,7 @@ sys_fhopen(struct proc *p, void *v, register_t *retval)
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY, p);
 		fp->f_iflags |= FIF_HASLOCK;
 	}
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 	*retval = indx;
 	FILE_SET_MATURE(fp, p);
 
@@ -1616,7 +1615,6 @@ sys_lseek(struct proc *p, void *v, register_t *retval)
 
 	if ((fp = fd_getfile(fdp, SCARG(uap, fd))) == NULL)
 		return (EBADF);
-	FREF(fp);
 	vp = fp->f_data;
 	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO) {
 		error = ESPIPE;
@@ -2108,7 +2106,7 @@ sys_fchmod(struct proc *p, void *v, register_t *retval)
 		vattr.va_mode = mode & ALLPERMS;
 		error = VOP_SETATTR(vp, &vattr, p->p_ucred, p);
 	}
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 	FRELE(fp, p);
 	return (error);
 }
@@ -2289,7 +2287,7 @@ sys_fchown(struct proc *p, void *v, register_t *retval)
 		error = VOP_SETATTR(vp, &vattr, p->p_ucred, p);
 	}
 out:
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 	FRELE(fp, p);
 	return (error);
 }
@@ -2559,7 +2557,7 @@ sys_ftruncate(struct proc *p, void *v, register_t *retval)
 		vattr.va_size = len;
 		error = VOP_SETATTR(vp, &vattr, fp->f_cred, p);
 	}
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 bad:
 	FRELE(fp, p);
 	return (error);
@@ -2588,7 +2586,7 @@ sys_fsync(struct proc *p, void *v, register_t *retval)
 		error = softdep_fsync(vp);
 #endif
 
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 	FRELE(fp, p);
 	return (error);
 }
@@ -2824,7 +2822,7 @@ sys_getdents(struct proc *p, void *v, register_t *retval)
 	auio.uio_offset = fp->f_offset;
 	error = VOP_READDIR(vp, &auio, fp->f_cred, &eofflag);
 	fp->f_offset = auio.uio_offset;
-	VOP_UNLOCK(vp, p);
+	VOP_UNLOCK(vp);
 	if (error)
 		goto bad;
 	*retval = buflen - auio.uio_resid;
@@ -2900,7 +2898,6 @@ getvnode(struct proc *p, int fd, struct file **fpp)
 
 	if ((fp = fd_getfile(p->p_fd, fd)) == NULL)
 		return (EBADF);
-	FREF(fp);
 
 	if (fp->f_type != DTYPE_VNODE) {
 		FRELE(fp, p);
@@ -2943,7 +2940,6 @@ sys_pread(struct proc *p, void *v, register_t *retval)
 
 	if ((fp = fd_getfile_mode(fdp, fd, FREAD)) == NULL)
 		return (EBADF);
-	FREF(fp);
 
 	vp = fp->f_data;
 	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||
@@ -2983,7 +2979,6 @@ sys_preadv(struct proc *p, void *v, register_t *retval)
 
 	if ((fp = fd_getfile_mode(fdp, fd, FREAD)) == NULL)
 		return (EBADF);
-	FREF(fp);
 
 	vp = fp->f_data;
 	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||
@@ -3028,7 +3023,6 @@ sys_pwrite(struct proc *p, void *v, register_t *retval)
 
 	if ((fp = fd_getfile_mode(fdp, fd, FWRITE)) == NULL)
 		return (EBADF);
-	FREF(fp);
 
 	vp = fp->f_data;
 	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||
@@ -3068,7 +3062,6 @@ sys_pwritev(struct proc *p, void *v, register_t *retval)
 
 	if ((fp = fd_getfile_mode(fdp, fd, FWRITE)) == NULL)
 		return (EBADF);
-	FREF(fp);
 
 	vp = fp->f_data;
 	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||

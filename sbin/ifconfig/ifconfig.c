@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.362 2018/02/27 22:32:26 dlg Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.365 2018/04/26 12:50:07 pirofti Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -203,6 +203,7 @@ void	settunnel(const char *, const char *);
 void	settunneladdr(const char *, int);
 void	deletetunnel(const char *, int);
 void	settunnelinst(const char *, int);
+void	unsettunnelinst(const char *, int);
 void	settunnelttl(const char *, int);
 void	setvnetid(const char *, int);
 void	delvnetid(const char *, int);
@@ -459,6 +460,7 @@ const struct	cmd {
 	/* deletetunnel is for backward compat, remove during 6.4-current */
 	{ "deletetunnel",  0,		0,		deletetunnel },
 	{ "tunneldomain", NEXTARG,	0,		settunnelinst },
+	{ "-tunneldomain", 0,		0,		unsettunnelinst },
 	{ "tunnelttl",	NEXTARG,	0,		settunnelttl },
 	{ "tunneldf",	0,		0,		settunneldf },
 	{ "-tunneldf",	0,		0,		settunnelnodf },
@@ -2255,11 +2257,11 @@ ieee80211_listnodes(void)
 	struct ieee80211_nodereq_all na;
 	struct ieee80211_nodereq nr[512];
 	struct ifreq ifr;
-	int i, down = 0;
+	int i;
 
 	if ((flags & IFF_UP) == 0) {
-		down = 1;
-		setifflags("up", IFF_UP);
+		printf("\t\tcannot scan, interface is down\n");
+		return;
 	}
 
 	bzero(&ifr, sizeof(ifr));
@@ -2268,7 +2270,7 @@ ieee80211_listnodes(void)
 	if (ioctl(s, SIOCS80211SCAN, (caddr_t)&ifr) != 0) {
 		if (errno == EPERM)
 			printf("\t\tno permission to scan\n");
-		goto done;
+		return;
 	}
 
 	bzero(&na, sizeof(na));
@@ -2279,7 +2281,7 @@ ieee80211_listnodes(void)
 
 	if (ioctl(s, SIOCG80211ALLNODES, &na) != 0) {
 		warn("SIOCG80211ALLNODES");
-		goto done;
+		return;
 	}
 
 	if (!na.na_nodes)
@@ -2292,10 +2294,6 @@ ieee80211_listnodes(void)
 		ieee80211_printnode(&nr[i]);
 		putchar('\n');
 	}
-
- done:
-	if (down)
-		setifflags("restore", -IFF_UP);
 }
 
 void
@@ -3363,6 +3361,15 @@ settunnelinst(const char *id, int param)
 
 	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 	ifr.ifr_rdomainid = rdomainid;
+	if (ioctl(s, SIOCSLIFPHYRTABLE, (caddr_t)&ifr) < 0)
+		warn("SIOCSLIFPHYRTABLE");
+}
+
+void
+unsettunnelinst(const char *ignored, int alsoignored)
+{
+	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+	ifr.ifr_rdomainid = 0;
 	if (ioctl(s, SIOCSLIFPHYRTABLE, (caddr_t)&ifr) < 0)
 		warn("SIOCSLIFPHYRTABLE");
 }
@@ -5401,7 +5408,6 @@ in_getaddr(const char *s, int which)
 {
 	struct sockaddr_in *sin = sintab[which], tsin;
 	struct hostent *hp;
-	struct netent *np;
 	int bits, l;
 	char p[3];
 
@@ -5421,8 +5427,6 @@ in_getaddr(const char *s, int which)
 	} else if (inet_aton(s, &sin->sin_addr) == 0) {
 		if ((hp = gethostbyname(s)))
 			memcpy(&sin->sin_addr, hp->h_addr, hp->h_length);
-		else if ((np = getnetbyname(s)))
-			sin->sin_addr = inet_makeaddr(np->n_net, INADDR_ANY);
 		else
 			errx(1, "%s: bad value", s);
 	}

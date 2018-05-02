@@ -1,4 +1,4 @@
-/*	$OpenBSD: in6.c,v 1.219 2017/11/23 13:32:25 mpi Exp $	*/
+/*	$OpenBSD: in6.c,v 1.222 2018/04/24 19:53:38 florian Exp $	*/
 /*	$KAME: in6.c,v 1.372 2004/06/14 08:14:21 itojun Exp $	*/
 
 /*
@@ -181,20 +181,27 @@ int
 in6_control(struct socket *so, u_long cmd, caddr_t data, struct ifnet *ifp)
 {
 	int privileged;
+	int error;
 
+	NET_LOCK();
 	privileged = 0;
 	if ((so->so_state & SS_PRIV) != 0)
 		privileged++;
 
-#ifdef MROUTING
 	switch (cmd) {
+#ifdef MROUTING
 	case SIOCGETSGCNT_IN6:
 	case SIOCGETMIFCNT_IN6:
-		return (mrt6_ioctl(so, cmd, data));
-	}
+		error = mrt6_ioctl(so, cmd, data);
+		break;
 #endif /* MROUTING */
+	default:
+		error = in6_ioctl(cmd, data, ifp, privileged);
+		break;
+	}
 
-	return (in6_ioctl(cmd, data, ifp, privileged));
+	NET_UNLOCK();
+	return error;
 }
 
 int
@@ -420,14 +427,14 @@ in6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, int privileged)
 			break;
 		}
 
+		/* Perform DAD, if needed. */
+		if (ia6->ia6_flags & IN6_IFF_TENTATIVE)
+			nd6_dad_start(&ia6->ia_ifa);
+
 		if (!newifaddr) {
 			dohooks(ifp->if_addrhooks, 0);
 			break;
 		}
-
-		/* Perform DAD, if needed. */
-		if (ia6->ia6_flags & IN6_IFF_TENTATIVE)
-			nd6_dad_start(&ia6->ia_ifa);
 
 		plen = in6_mask2len(&ia6->ia_prefixmask.sin6_addr, NULL);
 		if ((ifp->if_flags & IFF_LOOPBACK) || plen == 128) {
@@ -655,6 +662,9 @@ in6_update_ifa(struct ifnet *ifp, struct in6_aliasreq *ifra,
 	if ((error = in6_ifinit(ifp, ia6, hostIsNew)) != 0)
 		goto unlink;
 
+	/* re-run DAD */
+	if (ia6->ia6_flags & (IN6_IFF_TENTATIVE|IN6_IFF_DUPLICATED))
+		ifra->ifra_flags |= IN6_IFF_TENTATIVE;
 	/*
 	 * configure address flags.
 	 */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.c,v 1.15 2018/02/10 05:57:59 florian Exp $	*/
+/*	$OpenBSD: slaacd.c,v 1.17 2018/04/26 17:07:31 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -74,6 +74,7 @@ const char* imsg_type_name[] = {
 	"IMSG_ROUTESOCK",
 	"IMSG_CONTROLFD",
 	"IMSG_STARTUP",
+	"IMSG_STARTUP_DONE",
 	"IMSG_UPDATE_IF",
 	"IMSG_REMOVE_IF",
 	"IMSG_RA",
@@ -283,12 +284,6 @@ main(int argc, char *argv[])
 	if ((ioctl_sock = socket(AF_INET6, SOCK_DGRAM | SOCK_CLOEXEC, 0)) < 0)
 		fatal("socket");
 
-#if 0
-	/* XXX ioctl SIOCAIFADDR_IN6 */
-BROKEN	if (pledge("rpath stdio sendfd cpath", NULL) == -1)
-		fatal("pledge");
-#endif
-
 	if ((icmp6sock = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) < 0)
 		fatal("ICMPv6 socket");
 
@@ -307,8 +302,6 @@ BROKEN	if (pledge("rpath stdio sendfd cpath", NULL) == -1)
 	    sizeof(filt)) == -1)
 		fatal("ICMP6_FILTER");
 
-	main_imsg_compose_frontend_fd(IMSG_ICMP6SOCK, 0, icmp6sock);
-
 	if ((frontend_routesock = socket(PF_ROUTE, SOCK_RAW, 0)) < 0)
 		fatal("route socket");
 
@@ -318,12 +311,22 @@ BROKEN	if (pledge("rpath stdio sendfd cpath", NULL) == -1)
 	    &rtfilter, sizeof(rtfilter)) < 0)
 		fatal("setsockopt(ROUTE_MSGFILTER)");
 
-	main_imsg_compose_frontend_fd(IMSG_ROUTESOCK, 0, frontend_routesock);
-
 #ifndef SMALL
 	if ((control_fd = control_init(csock)) == -1)
 		fatalx("control socket setup failed");
+#endif /* SMALL */
 
+#if 0
+	/* XXX ioctl SIOCAIFADDR_IN6 */
+BROKEN	if (pledge("stdio cpath sendfd", NULL) == -1)
+		fatal("pledge");
+#endif
+
+	main_imsg_compose_frontend_fd(IMSG_ICMP6SOCK, 0, icmp6sock);
+
+	main_imsg_compose_frontend_fd(IMSG_ROUTESOCK, 0, frontend_routesock);
+
+#ifndef SMALL
 	main_imsg_compose_frontend_fd(IMSG_CONTROLFD, 0, control_fd);
 #endif /* SMALL */
 
@@ -449,6 +452,13 @@ main_dispatch_frontend(int fd, short event, void *bula)
 			break;
 
 		switch (imsg.hdr.type) {
+		case IMSG_STARTUP_DONE:
+#if 0
+			/* XXX ioctl SIOCAIFADDR_IN6 */
+BROKEN			if (pledge("stdio cpath", NULL) == -1)
+				fatal("pledge");
+#endif
+			break;
 #ifndef	SMALL
 		case IMSG_CTL_LOG_VERBOSE:
 			/* Already checked by frontend. */

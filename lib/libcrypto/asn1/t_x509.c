@@ -1,4 +1,4 @@
-/* $OpenBSD: t_x509.c,v 1.28 2017/04/03 15:52:59 beck Exp $ */
+/* $OpenBSD: t_x509.c,v 1.30 2018/05/01 19:01:27 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -246,7 +246,8 @@ err:
 	return (ret);
 }
 
-int X509_ocspid_print (BIO *bp, X509 *x)
+int
+X509_ocspid_print(BIO *bp, X509 *x)
 {
 	unsigned char *der = NULL;
 	unsigned char *dertmp;
@@ -320,7 +321,7 @@ X509_signature_dump(BIO *bp, const ASN1_STRING *sig, int indent)
 }
 
 int
-X509_signature_print(BIO *bp, X509_ALGOR *sigalg, ASN1_STRING *sig)
+X509_signature_print(BIO *bp, const X509_ALGOR *sigalg, const ASN1_STRING *sig)
 {
 	int sig_nid;
 	if (BIO_puts(bp, "    Signature Algorithm: ") <= 0)
@@ -387,7 +388,7 @@ ASN1_TIME_print(BIO *bp, const ASN1_TIME *tm)
 }
 
 static const char *mon[12] = {
-	"Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
 	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
 
