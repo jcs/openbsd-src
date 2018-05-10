@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.333 2018/04/25 10:29:16 mpi Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.336 2018/05/08 14:15:30 mpi Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -1067,11 +1067,13 @@ fill_file(struct kinfo_file *kf, struct file *fp, struct filedesc *fdp,
 
 		if (suser(p) == 0 || p->p_ucred->cr_uid == fp->f_cred->cr_uid) {
 			kf->f_offset = fp->f_offset;
+			mtx_enter(&fp->f_mtx);
 			kf->f_rxfer = fp->f_rxfer;
 			kf->f_rwfer = fp->f_wxfer;
 			kf->f_seek = fp->f_seek;
 			kf->f_rbytes = fp->f_rbytes;
 			kf->f_wbytes = fp->f_wbytes;
+			mtx_leave(&fp->f_mtx);
 		} else
 			kf->f_offset = -1;
 	} else if (vp != NULL) {
@@ -1320,9 +1322,7 @@ sysctl_file(int *name, u_int namelen, char *where, size_t *sizep,
 		}
 		fp = NULL;
 		while ((fp = fd_iterfile(fp, p)) != NULL) {
-			if (fp->f_count > 1 && /* 0, +1 for our FREF() */
-			    FILE_IS_USABLE(fp) &&
-			    (arg == 0 || fp->f_type == arg)) {
+			if ((arg == 0 || fp->f_type == arg)) {
 				int af, skip = 0;
 				if (arg == DTYPE_SOCKET && fp->f_type == arg) {
 					af = ((struct socket *)fp->f_data)->
@@ -1364,11 +1364,10 @@ sysctl_file(int *name, u_int namelen, char *where, size_t *sizep,
 			if (pr->ps_tracevp)
 				FILLIT(NULL, NULL, KERN_FILE_TRACE, pr->ps_tracevp, pr);
 			for (i = 0; i < fdp->fd_nfiles; i++) {
-				if ((fp = fdp->fd_ofiles[i]) == NULL)
-					continue;
-				if (!FILE_IS_USABLE(fp))
+				if ((fp = fd_getfile(fdp, i)) == NULL)
 					continue;
 				FILLIT(fp, fdp, i, NULL, pr);
+				FRELE(fp, p);
 			}
 		}
 		if (!matched)
@@ -1394,11 +1393,10 @@ sysctl_file(int *name, u_int namelen, char *where, size_t *sizep,
 			if (pr->ps_tracevp)
 				FILLIT(NULL, NULL, KERN_FILE_TRACE, pr->ps_tracevp, pr);
 			for (i = 0; i < fdp->fd_nfiles; i++) {
-				if ((fp = fdp->fd_ofiles[i]) == NULL)
-					continue;
-				if (!FILE_IS_USABLE(fp))
+				if ((fp = fd_getfile(fdp, i)) == NULL)
 					continue;
 				FILLIT(fp, fdp, i, NULL, pr);
+				FRELE(fp, p);
 			}
 		}
 		break;

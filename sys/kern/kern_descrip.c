@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_descrip.c,v 1.155 2018/04/28 03:13:04 visa Exp $	*/
+/*	$OpenBSD: kern_descrip.c,v 1.158 2018/05/08 09:03:58 mpi Exp $	*/
 /*	$NetBSD: kern_descrip.c,v 1.42 1996/03/30 22:24:38 christos Exp $	*/
 
 /*
@@ -190,7 +190,7 @@ fd_iterfile(struct file *fp, struct proc *p)
 		nfp = LIST_NEXT(fp, f_list);
 
 	/* don't FREF when f_count == 0 to avoid race in fdrop() */
-	while (nfp != NULL && nfp->f_count == 0)
+	while (nfp != NULL && (nfp->f_count == 0 || !FILE_IS_USABLE(nfp)))
 		nfp = LIST_NEXT(nfp, f_list);
 	if (nfp != NULL)
 		FREF(nfp);
@@ -783,7 +783,7 @@ sys_fpathconf(struct proc *p, void *v, register_t *retval)
 
 	case DTYPE_VNODE:
 		vp = fp->f_data;
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY, p);
+		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 		error = VOP_PATHCONF(vp, SCARG(uap, name), retval);
 		VOP_UNLOCK(vp);
 		break;
@@ -957,6 +957,7 @@ restart:
 	 */
 	numfiles++;
 	fp = pool_get(&file_pool, PR_WAITOK|PR_ZERO);
+	mtx_init(&fp->f_mtx, IPL_NONE);
 	fp->f_iflags = FIF_LARVAL;
 	if ((fq = p->p_fd->fd_ofiles[0]) != NULL) {
 		LIST_INSERT_AFTER(fq, fp, f_list);

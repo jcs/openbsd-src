@@ -1,7 +1,7 @@
-/*	$OpenBSD: mdoc_html.c,v 1.172 2018/04/24 00:36:04 schwarze Exp $ */
+/*	$OpenBSD: mdoc_html.c,v 1.175 2018/05/09 00:45:33 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
- * Copyright (c) 2014, 2015, 2016, 2017 Ingo Schwarze <schwarze@openbsd.org>
+ * Copyright (c) 2014,2015,2016,2017,2018 Ingo Schwarze <schwarze@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -550,7 +550,7 @@ mdoc_fl_pre(MDOC_ARGS)
 
 	if ((id = cond_id(n)) != NULL)
 		print_otag(h, TAG_A, "chR", "permalink", id);
-	print_otag(h, TAG_B, "cTi", "Fl", id);
+	print_otag(h, TAG_CODE, "cTi", "Fl", id);
 	free(id);
 
 	print_text(h, "\\-");
@@ -570,7 +570,7 @@ mdoc_cm_pre(MDOC_ARGS)
 
 	if ((id = cond_id(n)) != NULL)
 		print_otag(h, TAG_A, "chR", "permalink", id);
-	print_otag(h, TAG_B, "cTi", "Cm", id);
+	print_otag(h, TAG_CODE, "cTi", "Cm", id);
 	free(id);
 	return 1;
 }
@@ -581,10 +581,9 @@ mdoc_nd_pre(MDOC_ARGS)
 	if (n->type != ROFFT_BODY)
 		return 1;
 
-	/* XXX: this tag in theory can contain block elements. */
-
 	print_text(h, "\\(em");
-	print_otag(h, TAG_SPAN, "cT", "Nd");
+	/* Cannot use TAG_SPAN because it may contain blocks. */
+	print_otag(h, TAG_DIV, "cT", "Nd");
 	return 1;
 }
 
@@ -596,7 +595,7 @@ mdoc_nm_pre(MDOC_ARGS)
 		print_otag(h, TAG_TD, "");
 		/* FALLTHROUGH */
 	case ROFFT_ELEM:
-		print_otag(h, TAG_B, "cT", "Nm");
+		print_otag(h, TAG_CODE, "cT", "Nm");
 		return 1;
 	case ROFFT_BODY:
 		print_otag(h, TAG_TD, "");
@@ -666,49 +665,12 @@ mdoc_it_pre(MDOC_ARGS)
 {
 	const struct roff_node	*bl;
 	struct tag		*t;
-	const char		*cattr;
 	enum mdoc_list		 type;
 
 	bl = n->parent;
 	while (bl->tok != MDOC_Bl)
 		bl = bl->parent;
 	type = bl->norm->Bl.type;
-
-	switch (type) {
-	case LIST_bullet:
-		cattr = "It-bullet";
-		break;
-	case LIST_dash:
-	case LIST_hyphen:
-		cattr = "It-dash";
-		break;
-	case LIST_item:
-		cattr = "It-item";
-		break;
-	case LIST_enum:
-		cattr = "It-enum";
-		break;
-	case LIST_diag:
-		cattr = "It-diag";
-		break;
-	case LIST_hang:
-		cattr = "It-hang";
-		break;
-	case LIST_inset:
-		cattr = "It-inset";
-		break;
-	case LIST_ohang:
-		cattr = "It-ohang";
-		break;
-	case LIST_tag:
-		cattr = "It-tag";
-		break;
-	case LIST_column:
-		cattr = "It-column";
-		break;
-	default:
-		break;
-	}
 
 	switch (type) {
 	case LIST_bullet:
@@ -720,7 +682,7 @@ mdoc_it_pre(MDOC_ARGS)
 		case ROFFT_HEAD:
 			return 0;
 		case ROFFT_BODY:
-			print_otag(h, TAG_LI, "c", cattr);
+			print_otag(h, TAG_LI, "");
 			break;
 		default:
 			break;
@@ -732,13 +694,10 @@ mdoc_it_pre(MDOC_ARGS)
 	case LIST_ohang:
 		switch (n->type) {
 		case ROFFT_HEAD:
-			print_otag(h, TAG_DT, "c", cattr);
-			if (type == LIST_diag)
-				print_otag(h, TAG_B, "c", cattr);
+			print_otag(h, TAG_DT, "");
 			break;
 		case ROFFT_BODY:
-			print_otag(h, TAG_DD, "csw*+l", cattr,
-			    bl->norm->Bl.width);
+			print_otag(h, TAG_DD, "sw*+l", bl->norm->Bl.width);
 			break;
 		default:
 			break;
@@ -751,24 +710,23 @@ mdoc_it_pre(MDOC_ARGS)
 			    (n->parent->prev == NULL ||
 			     n->parent->prev->body == NULL ||
 			     n->parent->prev->body->child != NULL)) {
-				t = print_otag(h, TAG_DT, "csw*+-l",
-				    cattr, bl->norm->Bl.width);
+				t = print_otag(h, TAG_DT, "sw*+-l",
+				    bl->norm->Bl.width);
 				print_text(h, "\\ ");
 				print_tagq(h, t);
-				t = print_otag(h, TAG_DD, "c", cattr);
+				t = print_otag(h, TAG_DD, "");
 				print_text(h, "\\ ");
 				print_tagq(h, t);
 			}
-			print_otag(h, TAG_DT, "csw*+-l", cattr,
-			    bl->norm->Bl.width);
+			print_otag(h, TAG_DT, "sw*+-l", bl->norm->Bl.width);
 			break;
 		case ROFFT_BODY:
 			if (n->child == NULL) {
-				print_otag(h, TAG_DD, "css?", cattr,
+				print_otag(h, TAG_DD, "ss?",
 				    "width", "auto");
 				print_text(h, "\\ ");
 			} else
-				print_otag(h, TAG_DD, "c", cattr);
+				print_otag(h, TAG_DD, "");
 			break;
 		default:
 			break;
@@ -779,10 +737,10 @@ mdoc_it_pre(MDOC_ARGS)
 		case ROFFT_HEAD:
 			break;
 		case ROFFT_BODY:
-			print_otag(h, TAG_TD, "c", cattr);
+			print_otag(h, TAG_TD, "");
 			break;
 		default:
-			print_otag(h, TAG_TR, "c", cattr);
+			print_otag(h, TAG_TR, "");
 		}
 	default:
 		break;
@@ -1058,7 +1016,7 @@ static int
 mdoc_cd_pre(MDOC_ARGS)
 {
 	synopsis_pre(h, n);
-	print_otag(h, TAG_B, "cT", "Cd");
+	print_otag(h, TAG_CODE, "cT", "Cd");
 	return 1;
 }
 
@@ -1147,11 +1105,11 @@ mdoc_fd_pre(MDOC_ARGS)
 	assert(n->type == ROFFT_TEXT);
 
 	if (strcmp(n->string, "#include")) {
-		print_otag(h, TAG_B, "cT", "Fd");
+		print_otag(h, TAG_CODE, "cT", "Fd");
 		return 1;
 	}
 
-	print_otag(h, TAG_B, "cT", "In");
+	print_otag(h, TAG_CODE, "cT", "In");
 	print_text(h, n->string);
 
 	if (NULL != (n = n->next)) {
@@ -1237,7 +1195,7 @@ mdoc_fn_pre(MDOC_ARGS)
 		print_tagq(h, t);
 	}
 
-	t = print_otag(h, TAG_B, "cT", "Fn");
+	t = print_otag(h, TAG_CODE, "cT", "Fn");
 
 	if (sp)
 		print_text(h, sp);
@@ -1380,7 +1338,7 @@ mdoc_fo_pre(MDOC_ARGS)
 		return 0;
 
 	assert(n->child->string);
-	t = print_otag(h, TAG_B, "cT", "Fn");
+	t = print_otag(h, TAG_CODE, "cT", "Fn");
 	print_text(h, n->child->string);
 	print_tagq(h, t);
 	return 0;
@@ -1404,7 +1362,7 @@ mdoc_in_pre(MDOC_ARGS)
 	struct tag	*t;
 
 	synopsis_pre(h, n);
-	print_otag(h, TAG_B, "cT", "In");
+	print_otag(h, TAG_CODE, "cT", "In");
 
 	/*
 	 * The first argument of the `In' gets special treatment as
@@ -1450,7 +1408,7 @@ mdoc_ic_pre(MDOC_ARGS)
 
 	if ((id = cond_id(n)) != NULL)
 		print_otag(h, TAG_A, "chR", "permalink", id);
-	print_otag(h, TAG_B, "cTi", "Ic", id);
+	print_otag(h, TAG_CODE, "cTi", "Ic", id);
 	free(id);
 	return 1;
 }
@@ -1483,20 +1441,16 @@ mdoc_bf_pre(MDOC_ARGS)
 		return 1;
 
 	if (FONT_Em == n->norm->Bf.font)
-		cattr = "Em";
+		cattr = "Bf Em";
 	else if (FONT_Sy == n->norm->Bf.font)
-		cattr = "Sy";
+		cattr = "Bf Sy";
 	else if (FONT_Li == n->norm->Bf.font)
-		cattr = "Li";
+		cattr = "Bf Li";
 	else
-		cattr = "No";
+		cattr = "Bf No";
 
-	/*
-	 * We want this to be inline-formatted, but needs to be div to
-	 * accept block children.
-	 */
-
-	print_otag(h, TAG_DIV, "css?hl", cattr, "display", "inline", 1);
+	/* Cannot use TAG_SPAN because it may contain blocks. */
+	print_otag(h, TAG_DIV, "cshl", cattr, 1);
 	return 1;
 }
 
@@ -1717,7 +1671,8 @@ mdoc_quote_pre(MDOC_ARGS)
 	case MDOC_Op:
 		print_text(h, "\\(lB");
 		h->flags |= HTML_NOSPACE;
-		print_otag(h, TAG_SPAN, "c", "Op");
+		/* Cannot use TAG_SPAN because it may contain blocks. */
+		print_otag(h, TAG_IDIV, "c", "Op");
 		break;
 	case MDOC_En:
 		if (NULL == n->norm->Es ||

@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 # ex:ts=8 sw=4:
-# $OpenBSD: PkgCreate.pm,v 1.136 2018/04/29 20:38:17 espie Exp $
+# $OpenBSD: PkgCreate.pm,v 1.138 2018/05/09 15:02:08 espie Exp $
 #
 # Copyright (c) 2003-2014 Marc Espie <espie@openbsd.org>
 #
@@ -888,6 +888,8 @@ sub ask_tree
 		$state->fatal("cannot fork: $!");
 	}
 	if ($pid == 0) {
+		# make things debuggable because this child doesn't matter
+		$DB::inhibit_exit = 0;
 		chdir $portsdir or exit 2;
 		open STDERR, '>', '/dev/null';
 		$ENV{FULLPATH} = 'Yes';

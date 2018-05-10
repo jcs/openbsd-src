@@ -1,4 +1,4 @@
-/*	$OpenBSD: html.c,v 1.91 2018/04/13 16:27:14 schwarze Exp $ */
+/*	$OpenBSD: html.c,v 1.95 2018/05/09 00:45:33 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2011-2015, 2017, 2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -57,6 +57,7 @@ static	const struct htmldata htmltags[TAG_MAX] = {
 	{"meta",	HTML_NOSTACK | HTML_AUTOCLOSE | HTML_NLALL},
 	{"title",	HTML_NLAROUND},
 	{"div",		HTML_NLAROUND},
+	{"div",		0},
 	{"h1",		HTML_NLAROUND},
 	{"h2",		HTML_NLAROUND},
 	{"span",	0},
@@ -166,9 +167,14 @@ print_gen_head(struct html *h)
 	struct tag	*t;
 
 	print_otag(h, TAG_META, "?", "charset", "utf-8");
+	if (h->style != NULL) {
+		print_otag(h, TAG_LINK, "?h??", "rel", "stylesheet",
+		    h->style, "type", "text/css", "media", "all");
+		return;
+	}
 
 	/*
-	 * Print a default style-sheet.
+	 * Print a minimal embedded style sheet.
 	 */
 
 	t = print_otag(h, TAG_STYLE, "");
@@ -179,11 +185,19 @@ print_gen_head(struct html *h)
 	print_text(h, "td.head-vol { text-align: center; }");
 	print_endline(h);
 	print_text(h, "div.Pp { margin: 1ex 0ex; }");
+	print_endline(h);
+	print_text(h, "div.Nd, div.Bf, div.Op { display: inline; }");
+	print_endline(h);
+	print_text(h, "dl.Bl-diag ");
+	print_byte(h, '>');
+	print_text(h, " dt { font-weight: bold; }");
+	print_endline(h);
+	print_text(h, "code.Nm, code.Fl, code.Cm, code.Ic, "
+	    "code.In, code.Fd, code.Fn,");
+	print_endline(h);
+	print_text(h, "code.Cd { font-weight: bold; "
+	    "font-family: inherit; }");
 	print_tagq(h, t);
-
-	if (h->style)
-		print_otag(h, TAG_LINK, "?h??", "rel", "stylesheet",
-		    h->style, "type", "text/css", "media", "all");
 }
 
 static void
