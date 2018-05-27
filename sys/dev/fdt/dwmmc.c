@@ -1,4 +1,4 @@
-/*	$OpenBSD: dwmmc.c,v 1.8 2018/04/07 15:05:25 kettenis Exp $	*/
+/*	$OpenBSD: dwmmc.c,v 1.10 2018/05/26 21:17:21 kettenis Exp $	*/
 /*
  * Copyright (c) 2017 Mark Kettenis
  *
@@ -16,6 +16,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/systm.h>
 
@@ -33,6 +34,8 @@
 
 #define SDMMC_CTRL		0x0000
 #define  SDMMC_CTRL_USE_INTERNAL_DMAC	(1 << 25)
+#define  SDMMC_CTRL_DMA_ENABLE		(1 << 5)
+#define  SDMMC_CTRL_INT_ENABLE		(1 << 4)
 #define  SDMMC_CTRL_DMA_RESET		(1 << 2)
 #define  SDMMC_CTRL_FIFO_RESET		(1 << 1)
 #define  SDMMC_CTRL_CONTROLLER_RESET	(1 << 0)
@@ -71,6 +74,7 @@
 #define SDMMC_RESP3		0x003c
 #define SDMMC_MINTSTS		0x0040
 #define SDMMC_RINTSTS		0x0044
+#define  SDMMC_RINTSTS_SDIO		(1 << 24)
 #define  SDMMC_RINTSTS_EBE		(1 << 15)
 #define  SDMMC_RINTSTS_ACD		(1 << 14)
 #define  SDMMC_RINTSTS_SBE		(1 << 13)
@@ -107,10 +111,19 @@
 #define SDMMC_UHS_REG		0x0074
 #define SDMMC_RST_n		0x0078
 #define SDMMC_BMOD		0x0080
+#define  SDMMC_BMOD_DE			(1 << 7)
+#define  SDMMC_BMOD_FB			(1 << 1)
+#define  SDMMC_BMOD_SWR			(1 << 0)
 #define SDMMC_PLDMND		0x0084
 #define SDMMC_DBADDR		0x0088
 #define SDMMC_IDSTS		0x008c
+#define  SDMMC_IDSTS_NIS		(1 << 8)
+#define  SDMMC_IDSTS_RI			(1 << 1)
+#define  SDMMC_IDSTS_TI			(1 << 0)
 #define SDMMC_IDINTEN		0x0090
+#define  SDMMC_IDINTEN_NI		(1 << 8)
+#define  SDMMC_IDINTEN_RI		(1 << 1)
+#define  SDMMC_IDINTEN_TI		(1 << 0)
 #define SDMMC_DSCADDR		0x0094
 #define SDMMC_BUFADDR		0x0098
 #define SDMMC_CLKSEL		0x009c
@@ -130,11 +143,31 @@
 #define HCLR4(sc, reg, bits)						\
 	HWRITE4((sc), (reg), HREAD4((sc), (reg)) & ~(bits))
 
+struct dwmmc_desc {
+	uint32_t des[4];
+};
+
+#define DWMMC_NDESC	(PAGE_SIZE / sizeof(struct dwmmc_desc))
+#define DWMMC_MAXSEGSZ	0x1000
+
+#define DES0_OWN	(1U << 31)
+#define DES0_CES	(1 << 30)
+#define DES0_ER		(1 << 5)
+#define DES0_CH		(1 << 4)
+#define DES0_FS		(1 << 3)
+#define DES0_LD		(1 << 2)
+#define DES0_DIC	(1 << 1)
+
+#define DES1_BS2(sz)	(((sz) & 0x1fff) << 13)
+#define DES1_BS1(sz)	(((sz) & 0x1fff) << 0)
+
 struct dwmmc_softc {
 	struct device		sc_dev;
 	bus_space_tag_t		sc_iot;
 	bus_space_handle_t	sc_ioh;
 	bus_size_t		sc_size;
+	bus_dma_tag_t		sc_dmat;
+	bus_dmamap_t		sc_dmap;
 	int			sc_node;
 
 	void			*sc_ih;
@@ -145,7 +178,16 @@ struct dwmmc_softc {
 	void (*sc_read_data)(struct dwmmc_softc *, u_char *, int);
 	void (*sc_write_data)(struct dwmmc_softc *, u_char *, int);
 
+	bus_dmamap_t		sc_desc_map;
+	bus_dma_segment_t	sc_desc_segs[1];
+	caddr_t			sc_desc;
+	int			sc_dmamode;
+	uint32_t		sc_idsts;
+
 	uint32_t		sc_gpio[4];
+	int			sc_sdio_irq;
+	uint32_t		sc_pwrseq;
+	uint32_t		sc_vdd;
 
 	struct device		*sc_sdmmc;
 };
@@ -171,6 +213,8 @@ int	dwmmc_bus_power(sdmmc_chipset_handle_t, uint32_t);
 int	dwmmc_bus_clock(sdmmc_chipset_handle_t, int, int);
 int	dwmmc_bus_width(sdmmc_chipset_handle_t, int);
 void	dwmmc_exec_command(sdmmc_chipset_handle_t, struct sdmmc_command *);
+void	dwmmc_card_intr_mask(sdmmc_chipset_handle_t, int);
+void	dwmmc_card_intr_ack(sdmmc_chipset_handle_t);
 
 struct sdmmc_chip_functions dwmmc_chip_functions = {
 	.host_reset = dwmmc_host_reset,
@@ -181,13 +225,19 @@ struct sdmmc_chip_functions dwmmc_chip_functions = {
 	.bus_clock = dwmmc_bus_clock,
 	.bus_width = dwmmc_bus_width,
 	.exec_command = dwmmc_exec_command,
+	.card_intr_mask = dwmmc_card_intr_mask,
+	.card_intr_ack = dwmmc_card_intr_ack,
 };
 
+int	dwmmc_alloc_descriptors(struct dwmmc_softc *);
+void	dwmmc_init_descriptors(struct dwmmc_softc *);
 void	dwmmc_transfer_data(struct dwmmc_softc *, struct sdmmc_command *);
 void	dwmmc_read_data32(struct dwmmc_softc *, u_char *, int);
 void	dwmmc_write_data32(struct dwmmc_softc *, u_char *, int);
 void	dwmmc_read_data64(struct dwmmc_softc *, u_char *, int);
 void	dwmmc_write_data64(struct dwmmc_softc *, u_char *, int);
+void	dwmmc_pwrseq_pre(uint32_t);
+void	dwmmc_pwrseq_post(uint32_t);
 
 int
 dwmmc_match(struct device *parent, void *match, void *aux)
@@ -205,7 +255,7 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	struct fdt_attach_args *faa = aux;
 	struct sdmmcbus_attach_args saa;
 	uint32_t hcon, ciu_div, width;
-	int timeout;
+	int error, timeout;
 
 	if (faa->fa_nreg < 1) {
 		printf(": no registers\n");
@@ -270,6 +320,9 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	if (sc->sc_gpio[0])
 		gpio_controller_config_pin(sc->sc_gpio, GPIO_CONFIG_INPUT);
 
+	sc->sc_sdio_irq = (OF_getproplen(sc->sc_node, "cap-sdio-irq") == 0);
+	sc->sc_pwrseq = OF_getpropint(sc->sc_node, "mmc-pwrseq", 0);
+
 	printf(": %d MHz base clock\n", sc->sc_clkbase / 1000000);
 
 	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_ALL_RESET);
@@ -281,26 +334,45 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	if (timeout == 0)
 		printf("%s: reset failed\n", sc->sc_dev.dv_xname);
 
-	/* We don't do DMA yet. */
-	HCLR4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC);
+	/* Disable DMA. */
+	HCLR4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
+	    SDMMC_CTRL_DMA_ENABLE);
 
-	/* Set card read threshold to the size of a block. */
-	HWRITE4(sc, SDMMC_CARDTHRCTL,
-	    512 << SDMMC_CARDTHRCTL_RDTHR_SHIFT | SDMMC_CARDTHRCTL_RDTHREN);
+	/* Enable interrupts, but mask them all. */
+	HWRITE4(sc, SDMMC_INTMASK, 0);
+	HWRITE4(sc, SDMMC_RINTSTS, 0xffffffff);
+	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_INT_ENABLE);
 
 	dwmmc_bus_width(sc, 1);
+
+	sc->sc_dmat = faa->fa_dmat;
+	dwmmc_alloc_descriptors(sc);
+	dwmmc_init_descriptors(sc);
+
+	error = bus_dmamap_create(sc->sc_dmat, MAXPHYS, DWMMC_NDESC,
+	    DWMMC_MAXSEGSZ, 0, BUS_DMA_WAITOK|BUS_DMA_ALLOCNOW, &sc->sc_dmap);
+	if (error) {
+		printf(": can't create DMA map\n");
+		goto unmap;
+	}
 
 	memset(&saa, 0, sizeof(saa));
 	saa.saa_busname = "sdmmc";
 	saa.sct = &dwmmc_chip_functions;
 	saa.sch = sc;
+	saa.dmat = sc->sc_dmat;
+	saa.dmap = sc->sc_dmap;
 
 	width = OF_getpropint(faa->fa_node, "bus-width", 1);
 	if (width >= 8)
 		saa.caps |= SMC_CAPS_8BIT_MODE;
 	if (width >= 4)
 		saa.caps |= SMC_CAPS_4BIT_MODE;
-	
+
+	/* XXX DMA doesn't work on Samsung Exynos yet. */
+	if (!OF_is_compatible(faa->fa_node, "samsung,exynos5420-dw-mshc"))
+		saa.caps |= SMC_CAPS_DMA;
+
 	sc->sc_sdmmc = config_found(self, &saa, NULL);
 	return;
 
@@ -309,9 +381,108 @@ unmap:
 }
 
 int
+dwmmc_alloc_descriptors(struct dwmmc_softc *sc)
+{
+	int error, rseg;
+
+	/* Allocate descriptor memory */
+	error = bus_dmamem_alloc(sc->sc_dmat, PAGE_SIZE, PAGE_SIZE,
+	    PAGE_SIZE, sc->sc_desc_segs, 1, &rseg,
+	    BUS_DMA_WAITOK | BUS_DMA_ZERO);
+	if (error)
+		return error;
+	error = bus_dmamem_map(sc->sc_dmat, sc->sc_desc_segs, rseg,
+	    PAGE_SIZE, &sc->sc_desc, BUS_DMA_WAITOK | BUS_DMA_COHERENT);
+	if (error) {
+		bus_dmamem_free(sc->sc_dmat, sc->sc_desc_segs, rseg);
+		return error;
+	}
+	error = bus_dmamap_create(sc->sc_dmat, PAGE_SIZE, 1, PAGE_SIZE,
+	    0, BUS_DMA_WAITOK, &sc->sc_desc_map);
+	if (error) {
+		bus_dmamem_unmap(sc->sc_dmat, sc->sc_desc, PAGE_SIZE);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_desc_segs, rseg);
+		return error;
+	}
+	error = bus_dmamap_load(sc->sc_dmat, sc->sc_desc_map,
+	    sc->sc_desc, PAGE_SIZE, NULL, BUS_DMA_WAITOK | BUS_DMA_WRITE);
+	if (error) {
+		bus_dmamap_destroy(sc->sc_dmat, sc->sc_desc_map);
+		bus_dmamem_unmap(sc->sc_dmat, sc->sc_desc, PAGE_SIZE);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_desc_segs, rseg);
+		return error;
+	}
+
+	return 0;
+}
+
+void
+dwmmc_init_descriptors(struct dwmmc_softc *sc)
+{
+	struct dwmmc_desc *desc;
+	bus_addr_t addr;
+	int i;
+
+	desc = (void *)sc->sc_desc;
+	addr = sc->sc_desc_map->dm_segs[0].ds_addr;
+	for (i = 0; i < DWMMC_NDESC; i++) {
+		addr += sizeof(struct dwmmc_desc);
+		desc[i].des[3] = addr;
+	}
+	desc[DWMMC_NDESC - 1].des[3] = sc->sc_desc_map->dm_segs[0].ds_addr;
+	desc[DWMMC_NDESC - 1].des[0] = DES0_ER;
+	bus_dmamap_sync(sc->sc_dmat, sc->sc_desc_map, 0,
+	    PAGE_SIZE, BUS_DMASYNC_PREWRITE);
+
+	HWRITE4(sc, SDMMC_IDSTS, 0xffffffff);
+	HWRITE4(sc, SDMMC_IDINTEN,
+	    SDMMC_IDINTEN_NI | SDMMC_IDINTEN_RI | SDMMC_IDINTEN_TI);
+	HWRITE4(sc, SDMMC_DBADDR, sc->sc_desc_map->dm_segs[0].ds_addr);
+}
+
+int
 dwmmc_intr(void *arg)
 {
-	return 1;
+	struct dwmmc_softc *sc = arg;
+	uint32_t stat;
+	int handled = 0;
+
+	stat = HREAD4(sc, SDMMC_IDSTS);
+	if (stat) {
+		HWRITE4(sc, SDMMC_IDSTS, stat);
+		sc->sc_idsts |= stat;
+		wakeup(&sc->sc_idsts);
+		handled = 1;
+	}
+
+	stat = HREAD4(sc, SDMMC_MINTSTS);
+	if (stat & SDMMC_RINTSTS_SDIO) {
+		HCLR4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_SDIO);
+		sdmmc_card_intr(sc->sc_sdmmc);
+		handled = 1;
+	}
+		
+	return handled;
+}
+
+void
+dwmmc_card_intr_mask(sdmmc_chipset_handle_t sch, int enable)
+{
+	struct dwmmc_softc *sc = sch;
+
+	if (enable)
+		HSET4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_SDIO);
+	else
+		HCLR4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_SDIO);
+}
+
+void
+dwmmc_card_intr_ack(sdmmc_chipset_handle_t sch)
+{
+	struct dwmmc_softc *sc = sch;
+
+	HWRITE4(sc, SDMMC_RINTSTS, SDMMC_RINTSTS_SDIO);
+	HSET4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_SDIO);
 }
 
 int
@@ -359,12 +530,23 @@ int
 dwmmc_bus_power(sdmmc_chipset_handle_t sch, uint32_t ocr)
 {
 	struct dwmmc_softc *sc = sch;
+	uint32_t vdd = 0;
+
+	if (ISSET(ocr, MMC_OCR_3_2V_3_3V|MMC_OCR_3_3V_3_4V))
+		vdd = 3300000;
+
+	if (sc->sc_vdd == 0 && vdd > 0)
+		dwmmc_pwrseq_pre(sc->sc_pwrseq);
 
 	if (ISSET(ocr, MMC_OCR_3_2V_3_3V|MMC_OCR_3_3V_3_4V))
 		HSET4(sc, SDMMC_PWREN, 1);
 	else
 		HCLR4(sc, SDMMC_PWREN, 0);
 
+	if (sc->sc_vdd == 0 && vdd > 0)
+		dwmmc_pwrseq_post(sc->sc_pwrseq);
+
+	sc->sc_vdd = vdd;
 	return 0;
 }
 
@@ -373,6 +555,7 @@ dwmmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, int timing)
 {
 	struct dwmmc_softc *sc = sch;
 	int div = 0, timeout;
+	uint32_t clkena;
 
 	HWRITE4(sc, SDMMC_CLKENA, 0);
 	HWRITE4(sc, SDMMC_CLKSRC, 0);
@@ -400,9 +583,11 @@ dwmmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, int timing)
 		return ETIMEDOUT;
 	}
 
-	/* Enable clock in low power mode. */
-	HWRITE4(sc, SDMMC_CLKENA,
-	    SDMMC_CLKENA_CCLK_ENABLE | SDMMC_CLKENA_CCLK_LOW_POWER);
+	/* Enable clock; low power mode only for memory mode. */
+	clkena = SDMMC_CLKENA_CCLK_ENABLE;
+	if (!sc->sc_sdio_irq)
+		clkena |= SDMMC_CLKENA_CCLK_LOW_POWER;
+	HWRITE4(sc, SDMMC_CLKENA, clkena);
 
 	/* Update clock again. */
 	HWRITE4(sc, SDMMC_CMD, SDMMC_CMD_START_CMD |
@@ -445,13 +630,44 @@ dwmmc_bus_width(sdmmc_chipset_handle_t sch, int width)
 	return 0;
 }
 
+int
+dwmmc_dma_setup(struct dwmmc_softc *sc, struct sdmmc_command *cmd)
+{
+	struct dwmmc_desc *desc = (void *)sc->sc_desc;
+	uint32_t flags;
+	int seg;
+
+	flags = DES0_OWN | DES0_FS | DES0_CH | DES0_DIC;
+	for (seg = 0; seg < cmd->c_dmamap->dm_nsegs; seg++) {
+		bus_addr_t addr = cmd->c_dmamap->dm_segs[seg].ds_addr;
+		bus_size_t len = cmd->c_dmamap->dm_segs[seg].ds_len;
+
+		if (seg == cmd->c_dmamap->dm_nsegs - 1) {
+			flags |= DES0_LD;
+			flags &= ~DES0_DIC;
+		}
+
+		KASSERT((desc[seg].des[0] & DES0_OWN) == 0);
+		desc[seg].des[0] = flags;
+		desc[seg].des[1] = DES1_BS1(len);
+		desc[seg].des[2] = addr;
+		flags &= ~DES0_FS;
+	}
+
+	bus_dmamap_sync(sc->sc_dmat, sc->sc_desc_map, 0, PAGE_SIZE,
+	    BUS_DMASYNC_PREWRITE);
+
+	sc->sc_idsts = 0;
+	return 0;
+}
+
 void
 dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 {
 	struct dwmmc_softc *sc = sch;
 	uint32_t cmdval = SDMMC_CMD_START_CMD | SDMMC_CMD_USE_HOLD_REG;
 	uint32_t status;
-	int timeout;
+	int error, timeout;
 	int s;
 
 #if 0
@@ -496,6 +712,19 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 		HWRITE4(sc, SDMMC_BYTCNT, cmd->c_datalen);
 		HWRITE4(sc, SDMMC_BLKSIZ, cmd->c_blklen);
 
+		if (ISSET(cmd->c_flags, SCF_CMD_READ)) {
+			/* Set card read threshold to the size of a block. */
+			HWRITE4(sc, SDMMC_CARDTHRCTL, 
+			    cmd->c_blklen << SDMMC_CARDTHRCTL_RDTHR_SHIFT |
+			    SDMMC_CARDTHRCTL_RDTHREN);
+		}
+
+		cmdval |= SDMMC_CMD_DATA_EXPECTED;
+		if (!ISSET(cmd->c_flags, SCF_CMD_READ))
+			cmdval |= SDMMC_CMD_WR;
+	}
+
+	if (cmd->c_datalen > 0 && !cmd->c_dmamap) {
 		HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_FIFO_RESET);
 		for (timeout = 1000; timeout > 0; timeout--) {
 			if ((HREAD4(sc, SDMMC_CTRL) &
@@ -506,12 +735,36 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 		if (timeout == 0)
 			printf("%s: FIFO reset failed\n", sc->sc_dev.dv_xname);
 
-		cmdval |= SDMMC_CMD_DATA_EXPECTED;
-		if (!ISSET(cmd->c_flags, SCF_CMD_READ))
-			cmdval |= SDMMC_CMD_WR;
+		if (sc->sc_dmamode) {
+			HCLR4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
+			    SDMMC_CTRL_DMA_ENABLE);
+			sc->sc_dmamode = 0;
+		}
 	}
 
-	HWRITE4(sc, SDMMC_RINTSTS, 0xffffffff);
+	if (cmd->c_datalen > 0 && cmd->c_dmamap) {
+		dwmmc_dma_setup(sc, cmd);
+
+		if (!sc->sc_dmamode) {
+			HSET4(sc, SDMMC_BMOD, SDMMC_BMOD_SWR);
+			for (timeout = 1000; timeout > 0; timeout--) {
+				if ((HREAD4(sc, SDMMC_BMOD) &
+				    SDMMC_BMOD_SWR) == 0)
+					break;
+				delay(100);
+			}
+			if (timeout == 0)
+				printf("%s: DMA reset failed\n",
+				    sc->sc_dev.dv_xname);
+			
+			HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
+			    SDMMC_CTRL_DMA_ENABLE);
+			HSET4(sc, SDMMC_BMOD, SDMMC_BMOD_FB | SDMMC_BMOD_DE);
+			sc->sc_dmamode = 1;
+		}
+	}
+
+	HWRITE4(sc, SDMMC_RINTSTS, ~SDMMC_RINTSTS_SDIO);
 
 	HWRITE4(sc, SDMMC_CMDARG, cmd->c_arg);
 	HWRITE4(sc, SDMMC_CMD, cmdval | cmd->c_opcode);
@@ -547,8 +800,29 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 		}
 	}
 
-	if (cmd->c_datalen > 0)
+	if (cmd->c_datalen > 0 && !cmd->c_dmamap)
 		dwmmc_transfer_data(sc, cmd);
+	
+	if (cmd->c_datalen > 0 && cmd->c_dmamap) {
+		while (sc->sc_idsts == 0) {
+			error = tsleep(&sc->sc_idsts, PWAIT, "idsts", hz);
+			if (error) {
+				cmd->c_error = error;
+				goto done;
+			}
+		}
+		
+		for (timeout = 10000; timeout > 0; timeout--) {
+			status = HREAD4(sc, SDMMC_RINTSTS);
+			if (status & SDMMC_RINTSTS_DTO)
+				break;
+			delay(100);
+		}
+		if (timeout == 0) {
+			cmd->c_error = ETIMEDOUT;
+			goto done;
+		}
+	}
 
 	if (cmdval & SDMMC_CMD_SEND_AUTO_STOP) {
 		for (timeout = 10000; timeout > 0; timeout--) {
@@ -585,7 +859,7 @@ dwmmc_transfer_data(struct dwmmc_softc *sc, struct sdmmc_command *cmd)
 		fifodr |= SDMMC_RINTSTS_RXDR;
 	else
 		fifodr |= SDMMC_RINTSTS_TXDR;
-		
+
 	while (datalen > 0) {
 		status = HREAD4(sc, SDMMC_RINTSTS);
 		if (status & SDMMC_RINTSTS_DATA_ERR) {
@@ -720,4 +994,69 @@ dwmmc_write_data64(struct dwmmc_softc *sc, u_char *datap, int datalen)
 		HWRITE4(sc, SDMMC_FIFO_BASE + 4, rv);
 	}
 	HWRITE4(sc, SDMMC_RINTSTS, SDMMC_RINTSTS_TXDR);
+}
+
+void
+dwmmc_pwrseq_pre(uint32_t phandle)
+{
+	uint32_t *gpios, *gpio;
+	int node;
+	int len;
+
+	node = OF_getnodebyphandle(phandle);
+	if (node == 0)
+		return;
+
+	if (!OF_is_compatible(node, "mmc-pwrseq-simple"))
+		return;
+
+	pinctrl_byname(node, "default");
+
+	clock_enable(node, "ext_clock");
+
+	len = OF_getproplen(node, "reset-gpios");
+	if (len <= 0)
+		return;
+
+	gpios = malloc(len, M_TEMP, M_WAITOK);
+	OF_getpropintarray(node, "reset-gpios", gpios, len);
+
+	gpio = gpios;
+	while (gpio && gpio < gpios + (len / sizeof(uint32_t))) {
+		gpio_controller_config_pin(gpio, GPIO_CONFIG_OUTPUT);
+		gpio_controller_set_pin(gpio, 1);
+		gpio = gpio_controller_next_pin(gpio);
+	}
+
+	free(gpios, M_TEMP, len);
+}
+
+void
+dwmmc_pwrseq_post(uint32_t phandle)
+{
+	uint32_t *gpios, *gpio;
+	int node;
+	int len;
+
+	node = OF_getnodebyphandle(phandle);
+	if (node == 0)
+		return;
+
+	if (!OF_is_compatible(node, "mmc-pwrseq-simple"))
+		return;
+
+	len = OF_getproplen(node, "reset-gpios");
+	if (len <= 0)
+		return;
+
+	gpios = malloc(len, M_TEMP, M_WAITOK);
+	OF_getpropintarray(node, "reset-gpios", gpios, len);
+
+	gpio = gpios;
+	while (gpio && gpio < gpios + (len / sizeof(uint32_t))) {
+		gpio_controller_set_pin(gpio, 0);
+		gpio = gpio_controller_next_pin(gpio);
+	}
+
+	free(gpios, M_TEMP, len);
 }

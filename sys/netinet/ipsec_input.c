@@ -1,4 +1,4 @@
-/*	$OpenBSD: ipsec_input.c,v 1.161 2017/11/20 10:35:24 mpi Exp $	*/
+/*	$OpenBSD: ipsec_input.c,v 1.163 2018/05/14 15:24:23 bluhm Exp $	*/
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -175,42 +175,18 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto,
 		return EINVAL;
 	}
 
-	if ((sproto == IPPROTO_ESP && !esp_enable) ||
-	    (sproto == IPPROTO_AH && !ah_enable) ||
-#if NPF > 0
-	    (m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) ||
-#endif
-	    (sproto == IPPROTO_IPCOMP && !ipcomp_enable)) {
-		switch (af) {
-		case AF_INET:
-			rip_input(&m, &skip, sproto, af);
-			break;
-#ifdef INET6
-		case AF_INET6:
-			rip6_input(&m, &skip, sproto, af);
-			break;
-#endif /* INET6 */
-		default:
-			DPRINTF(("%s: unsupported protocol family %d\n",
-			    __func__, af));
-			m_freem(m);
-			IPSEC_ISTAT(esps_nopf, ahs_nopf, ipcomps_nopf);
-			return EPFNOSUPPORT;
-		}
-		return 0;
-	}
 	if ((sproto == IPPROTO_IPCOMP) && (m->m_flags & M_COMP)) {
-		m_freem(m);
-		ipcompstat_inc(ipcomps_pdrops);
 		DPRINTF(("%s: repeated decompression\n", __func__));
-		return EINVAL;
+		ipcompstat_inc(ipcomps_pdrops);
+		error = EINVAL;
+		goto drop;
 	}
 
 	if (m->m_pkthdr.len - skip < 2 * sizeof(u_int32_t)) {
-		m_freem(m);
-		IPSEC_ISTAT(esps_hdrops, ahs_hdrops, ipcomps_hdrops);
 		DPRINTF(("%s: packet too small\n", __func__));
-		return EINVAL;
+		IPSEC_ISTAT(esps_hdrops, ahs_hdrops, ipcomps_hdrops);
+		error = EINVAL;
+		goto drop;
 	}
 
 	/* Retrieve the SPI from the relevant IPsec header */
@@ -262,9 +238,9 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto,
 
 	default:
 		DPRINTF(("%s: unsupported protocol family %d\n", __func__, af));
-		m_freem(m);
 		IPSEC_ISTAT(esps_nopf, ahs_nopf, ipcomps_nopf);
-		return EPFNOSUPPORT;
+		error = EPFNOSUPPORT;
+		goto drop;
 	}
 
 	tdbp = gettdb(rtable_l2(m->m_pkthdr.ph_rtableid),
@@ -273,45 +249,45 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto,
 		DPRINTF(("%s: could not find SA for packet to %s, spi %08x\n",
 		    __func__,
 		    ipsp_address(&dst_address, buf, sizeof(buf)), ntohl(spi)));
-		m_freem(m);
 		IPSEC_ISTAT(esps_notdb, ahs_notdb, ipcomps_notdb);
-		return ENOENT;
+		error = ENOENT;
+		goto drop;
 	}
 
 	if (tdbp->tdb_flags & TDBF_INVALID) {
 		DPRINTF(("%s: attempted to use invalid SA %s/%08x/%u\n",
 		    __func__, ipsp_address(&dst_address, buf,
 		    sizeof(buf)), ntohl(spi), tdbp->tdb_sproto));
-		m_freem(m);
 		IPSEC_ISTAT(esps_invalid, ahs_invalid, ipcomps_invalid);
-		return EINVAL;
+		error = EINVAL;
+		goto drop;
 	}
 
 	if (udpencap && !(tdbp->tdb_flags & TDBF_UDPENCAP)) {
 		DPRINTF(("%s: attempted to use non-udpencap SA %s/%08x/%u\n",
 		    __func__, ipsp_address(&dst_address, buf,
 		    sizeof(buf)), ntohl(spi), tdbp->tdb_sproto));
-		m_freem(m);
 		espstat_inc(esps_udpinval);
-		return EINVAL;
+		error = EINVAL;
+		goto drop;
 	}
 
 	if (!udpencap && (tdbp->tdb_flags & TDBF_UDPENCAP)) {
 		DPRINTF(("%s: attempted to use udpencap SA %s/%08x/%u\n",
 		    __func__, ipsp_address(&dst_address, buf,
 		    sizeof(buf)), ntohl(spi), tdbp->tdb_sproto));
-		m_freem(m);
 		espstat_inc(esps_udpneeded);
-		return EINVAL;
+		error = EINVAL;
+		goto drop;
 	}
 
 	if (tdbp->tdb_xform == NULL) {
 		DPRINTF(("%s: attempted to use uninitialized SA %s/%08x/%u\n",
 		    __func__, ipsp_address(&dst_address, buf,
 		    sizeof(buf)), ntohl(spi), tdbp->tdb_sproto));
-		m_freem(m);
 		IPSEC_ISTAT(esps_noxform, ahs_noxform, ipcomps_noxform);
-		return ENXIO;
+		error = ENXIO;
+		goto drop;
 	}
 
 	if (sproto != IPPROTO_IPCOMP) {
@@ -321,10 +297,9 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto,
 			    __func__,
 			    tdbp->tdb_tap, ipsp_address(&dst_address, buf,
 			    sizeof(buf)), ntohl(spi), tdbp->tdb_sproto));
-			m_freem(m);
-
 			IPSEC_ISTAT(esps_pdrops, ahs_pdrops, ipcomps_pdrops);
-			return EACCES;
+			error = EACCES;
+			goto drop;
 		}
 
 		/* XXX This conflicts with the scoped nature of IPv6 */
@@ -347,6 +322,10 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto,
 	 * everything else.
 	 */
 	error = (*(tdbp->tdb_xform->xf_input))(m, tdbp, skip, protoff);
+	return error;
+
+ drop:
+	m_freem(m);
 	return error;
 }
 
@@ -787,6 +766,13 @@ ipcomp_sysctl_ipcompstat(void *oldp, size_t *oldlenp, void *newp)
 int
 ah4_input(struct mbuf **mp, int *offp, int proto, int af)
 {
+	if (
+#if NPF > 0
+	    ((*mp)->m_pkthdr.pf.flags & PF_TAG_DIVERTED) ||
+#endif
+	    !ah_enable)
+		return rip_input(mp, offp, proto, af);
+
 	ipsec_common_input(*mp, *offp, offsetof(struct ip, ip_p), AF_INET,
 	    proto, 0);
 	return IPPROTO_DONE;
@@ -807,6 +793,13 @@ ah4_ctlinput(int cmd, struct sockaddr *sa, u_int rdomain, void *v)
 int
 esp4_input(struct mbuf **mp, int *offp, int proto, int af)
 {
+	if (
+#if NPF > 0
+	    ((*mp)->m_pkthdr.pf.flags & PF_TAG_DIVERTED) ||
+#endif
+	    !esp_enable)
+		return rip_input(mp, offp, proto, af);
+
 	ipsec_common_input(*mp, *offp, offsetof(struct ip, ip_p), AF_INET,
 	    proto, 0);
 	return IPPROTO_DONE;
@@ -816,6 +809,13 @@ esp4_input(struct mbuf **mp, int *offp, int proto, int af)
 int
 ipcomp4_input(struct mbuf **mp, int *offp, int proto, int af)
 {
+	if (
+#if NPF > 0
+	    ((*mp)->m_pkthdr.pf.flags & PF_TAG_DIVERTED) ||
+#endif
+	    !ipcomp_enable)
+		return rip_input(mp, offp, proto, af);
+
 	ipsec_common_input(*mp, *offp, offsetof(struct ip, ip_p), AF_INET,
 	    proto, 0);
 	return IPPROTO_DONE;
@@ -956,6 +956,13 @@ ah6_input(struct mbuf **mp, int *offp, int proto, int af)
 	int protoff, nxt;
 	struct ip6_ext ip6e;
 
+	if (
+#if NPF > 0
+	    ((*mp)->m_pkthdr.pf.flags & PF_TAG_DIVERTED) ||
+#endif
+	    !ah_enable)
+		return rip6_input(mp, offp, proto, af);
+
 	if (*offp < sizeof(struct ip6_hdr)) {
 		DPRINTF(("%s: bad offset\n", __func__));
 		ahstat_inc(ahs_hdrops);
@@ -1005,6 +1012,13 @@ esp6_input(struct mbuf **mp, int *offp, int proto, int af)
 	int l = 0;
 	int protoff, nxt;
 	struct ip6_ext ip6e;
+
+	if (
+#if NPF > 0
+	    ((*mp)->m_pkthdr.pf.flags & PF_TAG_DIVERTED) ||
+#endif
+	    !esp_enable)
+		return rip6_input(mp, offp, proto, af);
 
 	if (*offp < sizeof(struct ip6_hdr)) {
 		DPRINTF(("%s: bad offset\n", __func__));
@@ -1056,6 +1070,13 @@ ipcomp6_input(struct mbuf **mp, int *offp, int proto, int af)
 	int l = 0;
 	int protoff, nxt;
 	struct ip6_ext ip6e;
+
+	if (
+#if NPF > 0
+	    ((*mp)->m_pkthdr.pf.flags & PF_TAG_DIVERTED) ||
+#endif
+	    !ipcomp_enable)
+		return rip6_input(mp, offp, proto, af);
 
 	if (*offp < sizeof(struct ip6_hdr)) {
 		DPRINTF(("%s: bad offset\n", __func__));

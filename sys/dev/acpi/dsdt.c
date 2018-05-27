@@ -1,4 +1,4 @@
-/* $OpenBSD: dsdt.c,v 1.236 2017/11/29 15:22:22 kettenis Exp $ */
+/* $OpenBSD: dsdt.c,v 1.240 2018/05/19 17:38:29 kettenis Exp $ */
 /*
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
  *
@@ -33,6 +33,8 @@
 #include <dev/acpi/amltypes.h>
 #include <dev/acpi/dsdt.h>
 
+#include <dev/i2c/i2cvar.h>
+
 #ifdef SMALL_KERNEL
 #undef ACPI_DEBUG
 #endif
@@ -46,6 +48,9 @@
 #define AML_INTSTRLEN		16
 #define AML_NAMESEG_LEN		4
 
+struct aml_value	*aml_loadtable(struct acpi_softc *, const char *,
+			    const char *, const char *, const char *,
+			    const char *, struct aml_value *);
 struct aml_scope	*aml_load(struct acpi_softc *, struct aml_scope *,
 			    struct aml_value *, struct aml_value *);
 
@@ -2303,6 +2308,7 @@ aml_register_regionspace(struct aml_node *node, int iospace, void *cookie,
 
 void aml_rwgen(struct aml_value *, int, int, struct aml_value *, int, int);
 void aml_rwgpio(struct aml_value *, int, int, struct aml_value *, int, int);
+void aml_rwgsb(struct aml_value *, int, int, int, struct aml_value *, int, int);
 void aml_rwindexfield(struct aml_value *, struct aml_value *val, int);
 void aml_rwfield(struct aml_value *, int, int, struct aml_value *, int);
 
@@ -2526,6 +2532,108 @@ aml_rwgpio(struct aml_value *conn, int bpos, int blen, struct aml_value *val,
 	}
 }
 
+#ifndef SMALL_KERNEL
+
+void
+aml_rwgsb(struct aml_value *conn, int alen, int bpos, int blen,
+    struct aml_value *val, int mode, int flag)
+{
+	union acpi_resource *crs = (union acpi_resource *)conn->v_buffer;
+	struct aml_node *node;
+	i2c_tag_t tag;
+	i2c_op_t op;
+	i2c_addr_t addr;
+	int cmdlen, buflen;
+	uint8_t cmd;
+	uint8_t *buf;
+	int err;
+
+	if (conn->type != AML_OBJTYPE_BUFFER || conn->length < 5 ||
+	    AML_CRSTYPE(crs) != LR_SERBUS || AML_CRSLEN(crs) > conn->length ||
+	    crs->lr_i2cbus.revid != 1 || crs->lr_i2cbus.type != LR_SERBUS_I2C)
+		aml_die("Invalid GenericSerialBus");
+	if (AML_FIELD_ACCESS(flag) != AML_FIELD_BUFFERACC ||
+	    bpos & 0x3 || blen != 8)
+		aml_die("Invalid GenericSerialBus access");
+
+	node = aml_searchname(conn->node,
+	    (char *)&crs->lr_i2cbus.vdata[crs->lr_i2cbus.tlength - 6]);
+
+	if (node == NULL || node->i2c == NULL)
+		aml_die("Could not find GenericSerialBus controller");
+
+	switch (((flag >> 6) & 0x3)) {
+	case 0:			/* Normal */
+		switch (AML_FIELD_ATTR(flag)) {
+		case 0x02:	/* AttribQuick */
+			cmdlen = 0;
+			buflen = 0;
+			break;
+		case 0x04:	/* AttribSendReceive */
+			cmdlen = 0;
+			buflen = 1;
+			break;
+		case 0x06:	/* AttribByte */
+			cmdlen = 1;
+			buflen = 1;
+			break;
+		case 0x08:	/* AttribWord */
+			cmdlen = 1;
+			buflen = 2;
+			break;
+		case 0x0b:	/* AttribBytes */
+			cmdlen = 1;
+			buflen = alen;
+			break;
+		case 0x0e:	/* AttribRawBytes */
+			cmdlen = 0;
+			buflen = alen;
+			break;
+		default:
+			aml_die("unsupported access type 0x%x", flag);
+			break;
+		}
+		break;
+	case 1:			/* AttribBytes */
+		cmdlen = 1;
+		buflen = AML_FIELD_ATTR(flag);
+		break;
+	case 2:			/* AttribRawBytes */
+		cmdlen = 0;
+		buflen = AML_FIELD_ATTR(flag);
+		break;
+	default:
+		aml_die("unsupported access type 0x%x", flag);
+		break;
+	}
+
+	if (mode == ACPI_IOREAD) {
+		_aml_setvalue(val, AML_OBJTYPE_BUFFER, buflen + 2, NULL);
+		op = I2C_OP_READ_WITH_STOP;
+	} else {
+		op = I2C_OP_WRITE_WITH_STOP;
+	}
+
+	tag = node->i2c;
+	addr = crs->lr_i2cbus._adr;
+	cmd = bpos >> 3;
+	buf = val->v_buffer;
+
+	iic_acquire_bus(tag, 0);
+	err = iic_exec(tag, op, addr, &cmd, cmdlen, &buf[2], buflen, 0);
+	iic_release_bus(tag, 0);
+
+	/*
+	 * The ACPI specification doesn't tell us what the status
+	 * codes mean beyond implying that zero means success.  So use
+	 * the error returned from the transfer.  All possible error
+	 * numbers should fit in a single byte.
+	 */
+	buf[0] = err;
+}
+
+#endif
+
 void
 aml_rwindexfield(struct aml_value *fld, struct aml_value *val, int mode)
 {
@@ -2627,6 +2735,13 @@ aml_rwfield(struct aml_value *fld, int bpos, int blen, struct aml_value *val,
 			aml_rwgpio(ref2, bpos, blen, val, mode,
 			    fld->v_field.flags);
 			break;
+#ifndef SMALL_KERNEL
+		case ACPI_OPREG_GSB:
+			aml_rwgsb(ref2, fld->v_field.ref3,
+			    fld->v_field.bitpos + bpos, blen,
+			    val, mode, fld->v_field.flags);
+			break;
+#endif
 		default:
 			aml_rwgen(ref1, fld->v_field.bitpos + bpos, blen,
 			    val, mode, fld->v_field.flags);
@@ -2710,15 +2825,17 @@ aml_parsefieldlist(struct aml_scope *mscope, int opcode, int flags,
 	bpos = 0;
 	while (mscope->pos < mscope->end) {
 		switch (*mscope->pos) {
-		case 0x00: /* reserved, length */
+		case 0x00: /* ReservedField */
 			mscope->pos++;
 			blen = aml_parselength(mscope);
 			break;
-		case 0x01: /* flags */
-			mscope->pos += 3;
+		case 0x01: /* AccessField */
+			mscope->pos++;
 			blen = 0;
+			flags = aml_get8(mscope->pos++);
+			flags |= aml_get8(mscope->pos++) << 8;
 			break;
-		case 0x02: /* connection */
+		case 0x02: /* ConnectionField */
 			mscope->pos++;
 			blen = 0;
 			conn = aml_parse(mscope, 'o', "Connection");
@@ -2726,7 +2843,14 @@ aml_parsefieldlist(struct aml_scope *mscope, int opcode, int flags,
 				aml_die("Could not parse connection");
 			conn->node = mscope->node;
 			break;
-		default: /* 4-byte name, length */
+		case 0x03: /* ExtendedAccessField */
+			mscope->pos++;
+			blen = 0;
+			flags = aml_get8(mscope->pos++);
+			flags |= aml_get8(mscope->pos++) << 8;
+			indexval = aml_get8(mscope->pos++);
+			break;
+		default: /* NamedField */
 			mscope->pos = aml_parsename(mscope->node, mscope->pos,
 			    &rv, 1);
 			blen = aml_parselength(mscope);
@@ -3545,6 +3669,37 @@ aml_seterror(struct aml_scope *scope, const char *fmt, ...)
 	return aml_allocvalue(AML_OBJTYPE_INTEGER, 0, 0);
 }
 
+struct aml_value *
+aml_loadtable(struct acpi_softc *sc, const char *signature,
+     const char *oemid, const char *oemtableid, const char *rootpath,
+     const char *parameterpath, struct aml_value *parameterdata)
+{
+	struct acpi_table_header *hdr;
+	struct acpi_dsdt *p_dsdt;
+	struct acpi_q *entry;
+
+	if (strlen(rootpath) > 0)
+		aml_die("LoadTable: RootPathString unsupported");
+	if (strlen(parameterpath) > 0)
+		aml_die("LoadTable: ParameterPathString unsupported");
+
+	SIMPLEQ_FOREACH(entry, &sc->sc_tables, q_next) {
+		hdr = entry->q_table;
+		if (strncmp(hdr->signature, signature,
+		    sizeof(hdr->signature)) == 0 &&
+		    strncmp(hdr->oemid, oemid, sizeof(hdr->oemid)) == 0 &&
+		    strncmp(hdr->oemtableid, oemtableid,
+		    sizeof(hdr->oemtableid)) == 0) {
+			p_dsdt = entry->q_table;
+			acpi_parse_aml(sc, p_dsdt->aml, p_dsdt->hdr_length -
+			    sizeof(p_dsdt->hdr));
+			return aml_allocvalue(AML_OBJTYPE_DDBHANDLE, 0, 0);
+		}
+	}
+
+	return aml_allocvalue(AML_OBJTYPE_INTEGER, 0, 0);
+}
+
 /* Load new SSDT scope from memory address */
 struct aml_scope *
 aml_load(struct acpi_softc *sc, struct aml_scope *scope,
@@ -4206,7 +4361,9 @@ aml_parse(struct aml_scope *scope, int ret_type, const char *stype)
 	case AMLOP_LOADTABLE:
 		/* LoadTable(Sig:Str, OEMID:Str, OEMTable:Str, [RootPath:Str], [ParmPath:Str],
 		   [ParmData:DataRefObj]) => DDBHandle */
-		aml_die("LoadTable");
+		my_ret = aml_loadtable(acpi_softc, opargs[0]->v_string,
+		    opargs[1]->v_string, opargs[2]->v_string,
+		    opargs[3]->v_string, opargs[4]->v_string, opargs[5]);
 		break;
 	case AMLOP_LOAD:
 		/* Load(Object:NameString, DDBHandle:SuperName) */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: frontend.c,v 1.14 2018/04/26 17:07:31 florian Exp $	*/
+/*	$OpenBSD: frontend.c,v 1.19 2018/05/18 13:21:46 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -141,7 +141,7 @@ frontend(int debug, int verbose)
 	setproctitle("%s", log_procnames[slaacd_process]);
 	log_procinit(log_procnames[slaacd_process]);
 
-	if ((ioctlsock = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	if ((ioctlsock = socket(AF_INET6, SOCK_DGRAM | SOCK_CLOEXEC, 0)) < 0)
 		fatal("socket");
 
 	if (setgroups(1, &pw->pw_gid) ||
@@ -344,6 +344,11 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			event_set(&ev_route, fd, EV_READ | EV_PERSIST,
 			    route_receive, NULL);
 			break;
+		case IMSG_STARTUP:
+			if (pledge("stdio inet route", NULL) == -1)
+				fatal("pledge");
+			frontend_startup();
+			break;
 #ifndef	SMALL
 		case IMSG_CONTROLFD:
 			if ((fd = imsg.fd) == -1)
@@ -354,14 +359,7 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			/* Listen on control socket. */
 			TAILQ_INIT(&ctl_conns);
 			control_listen();
-#endif	/* SMALL */
 			break;
-		case IMSG_STARTUP:
-			if (pledge("stdio inet route", NULL) == -1)
-				fatal("pledge");
-			frontend_startup();
-			break;
-#ifndef	SMALL
 		case IMSG_CTL_END:
 			control_imsg_relay(&imsg);
 			break;
@@ -674,9 +672,11 @@ handle_route_message(struct rt_msghdr *rtm, struct sockaddr **rti_info)
 	struct if_msghdr		*ifm;
 	struct imsg_proposal_ack	 proposal_ack;
 	struct imsg_del_addr		 del_addr;
+	struct imsg_del_route		 del_route;
 	struct sockaddr_rtlabel		*rl;
+	struct in6_addr			*in6;
 	int64_t				 id, pid;
-	int				 flags, xflags, if_index;
+	int				 xflags, if_index;
 	char				 ifnamebuf[IFNAMSIZ];
 	char				*if_name;
 	char				**ap, *argv[4], *p;
@@ -693,7 +693,6 @@ handle_route_message(struct rt_msghdr *rtm, struct sockaddr **rti_info)
 			    &if_index, sizeof(if_index));
 		} else {
 			xflags = get_xflags(if_name);
-			flags = get_flags(if_name);
 			if (!(xflags & IFXF_AUTOCONF6)) {
 				log_debug("RTM_IFINFO: %s(%d) no(longer) "
 				   "autoconf6", if_name, ifm->ifm_index);
@@ -729,6 +728,46 @@ handle_route_message(struct rt_msghdr *rtm, struct sockaddr **rti_info)
 			    ifm->ifm_index);
 		}
 		break;
+	case RTM_DELETE:
+		ifm = (struct if_msghdr *)rtm;
+		if ((rtm->rtm_addrs & (RTA_DST | RTA_GATEWAY | RTA_LABEL)) !=
+		    (RTA_DST | RTA_GATEWAY | RTA_LABEL))
+			break;
+		if (rti_info[RTAX_DST]->sa_family != AF_INET6)
+			break;
+		if (!IN6_IS_ADDR_UNSPECIFIED(&((struct sockaddr_in6 *)
+		    rti_info[RTAX_DST])->sin6_addr))
+			break;
+		if (rti_info[RTAX_GATEWAY]->sa_family != AF_INET6)
+			break;
+		if (rti_info[RTAX_LABEL]->sa_len !=
+		    sizeof(struct sockaddr_rtlabel))
+			break;
+
+		rl = (struct sockaddr_rtlabel *)rti_info[RTAX_LABEL];
+		if (strcmp(rl->sr_label, SLAACD_RTA_LABEL) != 0)
+			break;
+
+		if_name = if_indextoname(ifm->ifm_index, ifnamebuf);
+
+		del_route.if_index = ifm->ifm_index;
+		memcpy(&del_route.gw, rti_info[RTAX_GATEWAY],
+		    sizeof(del_route.gw));
+		in6 = &del_route.gw.sin6_addr;
+		/* XXX from route(8) p_sockaddr() */
+		if (IN6_IS_ADDR_LINKLOCAL(in6) ||
+		    IN6_IS_ADDR_MC_LINKLOCAL(in6) ||
+		    IN6_IS_ADDR_MC_INTFACELOCAL(in6)) {
+			del_route.gw.sin6_scope_id =
+			    (u_int32_t)ntohs(*(u_short *) &in6->s6_addr[2]);
+			*(u_short *)&in6->s6_addr[2] = 0;
+		}
+		frontend_imsg_compose_engine(IMSG_DEL_ROUTE,
+		    0, 0, &del_route, sizeof(del_route));
+		log_debug("RTM_DELETE: %s[%u]", if_name,
+		    ifm->ifm_index);
+
+		break;
 	case RTM_PROPOSAL:
 		ifm = (struct if_msghdr *)rtm;
 		if_name = if_indextoname(ifm->ifm_index, ifnamebuf);
@@ -747,9 +786,10 @@ handle_route_message(struct rt_msghdr *rtm, struct sockaddr **rti_info)
 			}
 			*ap = NULL;
 
-			if (argv[0] != NULL && strncmp(argv[0], "slaacd:",
-			    strlen("slaacd:")) == 0 && argv[1] != NULL &&
-			    argv[2] != NULL && argv[3] == NULL) {
+			if (argv[0] != NULL && strncmp(argv[0],
+			    SLAACD_RTA_LABEL":", strlen(SLAACD_RTA_LABEL":"))
+			    == 0 && argv[1] != NULL && argv[2] != NULL &&
+			    argv[3] == NULL) {
 				id = strtonum(argv[1], 0, INT64_MAX, &errstr);
 				if (errstr != NULL) {
 					log_warn("%s: proposal seq is %s: %s",
@@ -858,9 +898,6 @@ icmp6_receive(int fd, short events, void *arg)
 	ssize_t			 len;
 	int			 if_index = 0, *hlimp = NULL;
 	char			 ntopbuf[INET6_ADDRSTRLEN], ifnamebuf[IFNAMSIZ];
-	uint8_t			*p;
-
-	p = icmp6ev.answer;
 
 	if ((len = recvmsg(fd, &icmp6ev.rcvmhdr, 0)) < 0) {
 		log_warn("recvmsg");

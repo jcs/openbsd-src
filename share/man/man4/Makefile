@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.679 2018/04/22 12:47:53 jsg Exp $
+#	$OpenBSD: Makefile,v 1.681 2018/05/23 22:34:31 kettenis Exp $
 
 MAN=	aac.4 ac97.4 acphy.4 acrtc.4 \
 	acpi.4 acpiac.4 acpials.4 acpiasus.4 acpibat.4 \
@@ -17,7 +17,7 @@ MAN=	aac.4 ac97.4 acphy.4 acrtc.4 \
 	bce.4 bcmaux.4 bcmdog.4  bcmrng.4 bcmtemp.4 berkwdt.4 bge.4 \
 	bgw.4 bio.4 bktr.4 bmtphy.4 bnx.4 \
 	boca.4 bpf.4 brgphy.4 bridge.4 brswphy.4 bwfm.4 bwi.4 bytgpio.4 \
-	cac.4 cas.4 cardbus.4 carp.4 ccp.4 cd.4 cdce.4 cfxga.4 \
+	cac.4 cas.4 cardbus.4 carp.4 ccp.4 ccpmic.4 cd.4 cdce.4 cfxga.4 \
 	ch.4 chvgpio.4 ciphy.4 ciss.4 clcs.4 clct.4 cmpci.4 \
 	com.4 cue.4 cy.4 cz.4 \
 	dc.4 dcphy.4 ddb.4 de.4 diskmap.4 divert.4 dpt.4 drm.4 dwctwo.4 \
@@ -66,7 +66,7 @@ MAN=	aac.4 ac97.4 acphy.4 acrtc.4 \
 	sm.4 smsc.4 softraid.4 spdmem.4 sdtemp.4 speaker.4 sppp.4 sqphy.4 \
 	st.4 ste.4 stge.4 sti.4 stp.4 sv.4 switch.4 sxiccmu.4 sximmc.4 \
 	sxipio.4 sxirsb.4 sxirtc.4 sxitemp.4 sxitwi.4 sym.4 sypwr.4 syscon.4 \
-	tcic.4 tcp.4 termios.4 tht.4 ti.4 tl.4 \
+	tcic.4 tcp.4 termios.4 tht.4 ti.4 tipmic.4 tl.4 \
 	tlphy.4 thmc.4 tpm.4 tqphy.4 trm.4 trunk.4 tsl.4 tty.4 tun.4 tap.4 \
 	twe.4 \
 	txp.4 txphy.4 uaudio.4 uark.4 uath.4 ubcmtp.4 uberry.4 ubsa.4 \

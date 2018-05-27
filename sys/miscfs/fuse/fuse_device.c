@@ -1,4 +1,4 @@
-/* $OpenBSD: fuse_device.c,v 1.24 2018/01/22 13:16:48 helg Exp $ */
+/* $OpenBSD: fuse_device.c,v 1.26 2018/05/17 11:25:11 helg Exp $ */
 /*
  * Copyright (c) 2012-2013 Sylvestre Gallon <ccna.syl@gmail.com>
  *
@@ -101,11 +101,11 @@ fuse_dump_buff(char *buff, int len)
 		return;
 	}
 
-	bzero(text, 17);
+	memset(text, 0, 17);
 	for (i = 0; i < len; i++) {
 		if (i != 0 && (i % 16) == 0) {
 			printf(": %s\n", text);
-			bzero(text, 17);
+			memset(text, 0, 17);
 		}
 
 		printf("%.2x ", buff[i] & 0xff);
@@ -158,7 +158,7 @@ fuse_destroy(dev_t dev, struct fuse_d *fd)
 {
 	LIST_REMOVE(fd, fd_list);
 	fuse_device_cleanup(dev, NULL);
-	free(fd, M_DEVBUF, sizeof *fd);
+	free(fd, M_DEVBUF, sizeof(*fd));
 }
 
 /*
@@ -351,7 +351,7 @@ fuseioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 #endif
 
 		/* Adding fbuf in fd_fbufs_wait */
-		free(fbuf->fb_dat, M_FUSEFS, 0);
+		free(fbuf->fb_dat, M_FUSEFS, fbuf->fb_len);
 		fbuf->fb_dat = NULL;
 		SIMPLEQ_INSERT_TAIL(&fd->fd_fbufs_wait, fbuf, fb_next);
 		stat_fbufs_wait++;
@@ -386,7 +386,7 @@ fuseioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		    ioexch->fbxch_len);
 		if (error) {
 			printf("fuse: Cannot copyin\n");
-			free(fbuf->fb_dat, M_FUSEFS, 0);
+			free(fbuf->fb_dat, M_FUSEFS, fbuf->fb_len);
 			fbuf->fb_dat = NULL;
 			return (error);
 		}
@@ -438,7 +438,7 @@ fuseread(dev_t dev, struct uio *uio, int ioflag)
 
 	/* Do not send kernel pointers */
 	memcpy(&hdr.fh_next, &fbuf->fb_next, sizeof(fbuf->fb_next));
-	bzero(&fbuf->fb_next, sizeof(fbuf->fb_next));
+	memset(&fbuf->fb_next, 0, sizeof(fbuf->fb_next));
 	tmpaddr = fbuf->fb_dat;
 	fbuf->fb_dat = NULL;
 	error = uiomove(fbuf, FUSEBUFSIZE, uio);

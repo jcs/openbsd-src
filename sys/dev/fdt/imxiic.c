@@ -1,4 +1,4 @@
-/* $OpenBSD: imxiic.c,v 1.1 2018/03/30 20:02:28 patrick Exp $ */
+/* $OpenBSD: imxiic.c,v 1.3 2018/05/18 15:58:17 kettenis Exp $ */
 /*
  * Copyright (c) 2013 Patrick Wildt <patrick@blueri.se>
  *

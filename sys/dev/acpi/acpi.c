@@ -1,4 +1,4 @@
-/* $OpenBSD: acpi.c,v 1.341 2018/03/27 21:11:16 kettenis Exp $ */
+/* $OpenBSD: acpi.c,v 1.344 2018/05/20 09:12:35 kettenis Exp $ */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -861,6 +861,7 @@ acpi_gpio_event(void *arg)
 	struct acpi_gpio_event *ev = arg;
 
 	acpi_addtask(acpi_softc, acpi_gpio_event_task, ev->node, ev->pin);
+	acpi_wakeup(acpi_softc);
 	return 1;
 }
 
@@ -918,6 +919,27 @@ acpi_register_gpio(struct acpi_softc *sc, struct aml_node *devnode)
 		return;
 	aml_parse_resource(&res, acpi_gpio_parse_events, devnode);
 }
+
+#ifndef SMALL_KERNEL
+
+void
+acpi_register_gsb(struct acpi_softc *sc, struct aml_node *devnode)
+{
+	struct aml_value arg[2];
+	struct aml_node *node;
+
+	/* Register GenericSerialBus address space. */
+	memset(&arg, 0, sizeof(arg));
+	arg[0].type = AML_OBJTYPE_INTEGER;
+	arg[0].v_integer = ACPI_OPREG_GSB;
+	arg[1].type = AML_OBJTYPE_INTEGER;
+	arg[1].v_integer = 1;
+	node = aml_searchname(devnode, "_REG");
+	if (node && aml_evalnode(sc, node, 2, arg, NULL))
+		printf("%s: _REG failed\n", node->name);
+}
+
+#endif
 
 void
 acpi_attach(struct device *parent, struct device *self, void *aux)

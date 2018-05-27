@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.242 2018/04/26 12:47:02 guenther Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.244 2018/05/26 18:02:01 guenther Exp $	*/
 /*	$NetBSD: machdep.c,v 1.3 2003/05/07 22:58:18 fvdl Exp $	*/
 
 /*-
@@ -212,12 +212,6 @@ struct uvm_constraint_range *uvm_md_constraints[] = {
     NULL,
 };
 
-#ifdef DEBUG
-int sigdebug = 0;
-pid_t sigpid = 0;
-#define SDB_FOLLOW      0x01
-#endif
-
 paddr_t avail_start;
 paddr_t avail_end;
 
@@ -400,20 +394,6 @@ x86_64_proc0_tss_ldt_init(void)
 	ltr(GSYSSEL(GPROC0_SEL, SEL_KPL));
 	lldt(0);
 }
-
-/*       
- * Set up TSS for a new PCB.
- */         
-         
-#ifdef MULTIPROCESSOR
-void    
-x86_64_init_pcb_tss_ldt(struct cpu_info *ci)   
-{
-	struct pcb *pcb = ci->ci_idle_pcb;
- 
-	pcb->pcb_cr0 = rcr0();
-}
-#endif	/* MULTIPROCESSOR */
 
 bios_diskinfo_t *
 bios_getdiskinfo(dev_t dev)

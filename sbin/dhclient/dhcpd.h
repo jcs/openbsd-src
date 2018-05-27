@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.254 2018/02/28 22:16:56 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.256 2018/05/23 12:18:58 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -126,7 +126,7 @@ struct interface_info {
 	size_t			 rbuf_len;
 	int			 errors;
 	uint16_t		 index;
-	int			 linkstat;
+	int			 link_state;
 	int			 rdomain;
 	int			 flags;
 #define	IFI_VALID_LLADDR	0x01
@@ -214,6 +214,7 @@ extern int			 cmd_opts;
 #define		OPT_NOACTION	1
 #define		OPT_VERBOSE	2
 #define		OPT_FOREGROUND	4
+#define		OPT_RELEASE	8
 
 void		 dhcpoffer(struct interface_info *, struct option_data *,
     const char *);

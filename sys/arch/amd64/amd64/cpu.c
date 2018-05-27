@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.117 2018/04/28 15:44:59 jasper Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.120 2018/05/26 23:09:39 guenther Exp $	*/
 /* $NetBSD: cpu.c,v 1.1 2003/04/26 18:39:26 fvdl Exp $ */
 
 /*-
@@ -514,7 +514,6 @@ cpu_init(struct cpu_info *ci)
 	 */
 	patinit(ci);
 
-	lcr0(rcr0() | CR0_WP);
 	cr4 = rcr4() | CR4_DEFAULT;
 	if (ci->ci_feature_sefflags_ebx & SEFF0EBX_SMEP)
 		cr4 |= CR4_SMEP;
@@ -535,7 +534,12 @@ cpu_init(struct cpu_info *ci)
 			xsave_mask |= XCR0_AVX;
 		xsetbv(0, xsave_mask);
 		CPUID_LEAF(0xd, 0, eax, ebx, ecx, edx);
-		fpu_save_len = ebx;
+		if (CPU_IS_PRIMARY(ci)) {
+			fpu_save_len = ebx;
+			KASSERT(fpu_save_len <= sizeof(struct savefpu));
+		} else {
+			KASSERT(ebx == fpu_save_len);
+		}
 	}
 
 #if NVMM > 0
@@ -601,24 +605,6 @@ cpu_boot_secondary_processors(void)
 			continue;
 		ci->ci_randseed = (arc4random() & 0x7fffffff) + 1;
 		cpu_boot_secondary(ci);
-	}
-}
-
-void
-cpu_init_idle_pcbs(void)
-{
-	struct cpu_info *ci;
-	u_long i;
-
-	for (i=0; i < MAXCPUS; i++) {
-		ci = cpu_info[i];
-		if (ci == NULL)
-			continue;
-		if (ci->ci_idle_pcb == NULL)
-			continue;
-		if ((ci->ci_flags & CPUF_PRESENT) == 0)
-			continue;
-		x86_64_init_pcb_tss_ldt(ci);
 	}
 }
 
@@ -742,7 +728,6 @@ cpu_hatch(void *v)
 		panic("%s: already running!?", ci->ci_dev->dv_xname);
 #endif
 
-	lcr0(ci->ci_idle_pcb->pcb_cr0);
 	cpu_init_idt();
 	lapic_set_lvt();
 	gdt_init_cpu(ci);

@@ -1,4 +1,4 @@
-/* $OpenBSD: p_lib.c,v 1.21 2018/04/14 07:09:21 tb Exp $ */
+/* $OpenBSD: p_lib.c,v 1.23 2018/05/13 06:38:46 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -85,7 +85,7 @@
 static void EVP_PKEY_free_it(EVP_PKEY *x);
 
 int
-EVP_PKEY_bits(EVP_PKEY *pkey)
+EVP_PKEY_bits(const EVP_PKEY *pkey)
 {
 	if (pkey && pkey->ameth && pkey->ameth->pkey_bits)
 		return pkey->ameth->pkey_bits(pkey);
@@ -277,7 +277,7 @@ EVP_PKEY_assign(EVP_PKEY *pkey, int type, void *key)
 }
 
 void *
-EVP_PKEY_get0(EVP_PKEY *pkey)
+EVP_PKEY_get0(const EVP_PKEY *pkey)
 {
 	return pkey->pkey.ptr;
 }

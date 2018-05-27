@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.c,v 1.17 2018/04/26 17:07:31 florian Exp $	*/
+/*	$OpenBSD: slaacd.c,v 1.22 2018/05/17 13:39:00 florian Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -82,6 +82,7 @@ const char* imsg_type_name[] = {
 	"IMSG_PROPOSAL_ACK",
 	"IMSG_CONFIGURE_ADDRESS",
 	"IMSG_DEL_ADDRESS",
+	"IMSG_DEL_ROUTE",
 	"IMSG_FAKE_ACK",
 	"IMSG_CONFIGURE_DFR",
 	"IMSG_WITHDRAW_DFR",
@@ -284,7 +285,8 @@ main(int argc, char *argv[])
 	if ((ioctl_sock = socket(AF_INET6, SOCK_DGRAM | SOCK_CLOEXEC, 0)) < 0)
 		fatal("socket");
 
-	if ((icmp6sock = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) < 0)
+	if ((icmp6sock = socket(AF_INET6, SOCK_RAW | SOCK_CLOEXEC,
+	    IPPROTO_ICMPV6)) < 0)
 		fatal("ICMPv6 socket");
 
 	if (setsockopt(icmp6sock, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on,
@@ -302,11 +304,13 @@ main(int argc, char *argv[])
 	    sizeof(filt)) == -1)
 		fatal("ICMP6_FILTER");
 
-	if ((frontend_routesock = socket(PF_ROUTE, SOCK_RAW, 0)) < 0)
+	if ((frontend_routesock = socket(PF_ROUTE, SOCK_RAW | SOCK_CLOEXEC, 0))
+	    < 0)
 		fatal("route socket");
 
 	rtfilter = ROUTE_FILTER(RTM_IFINFO) | ROUTE_FILTER(RTM_NEWADDR) |
-	    ROUTE_FILTER(RTM_DELADDR) | ROUTE_FILTER(RTM_PROPOSAL);
+	    ROUTE_FILTER(RTM_DELADDR) | ROUTE_FILTER(RTM_PROPOSAL) |
+	    ROUTE_FILTER(RTM_DELETE);
 	if (setsockopt(frontend_routesock, PF_ROUTE, ROUTE_MSGFILTER,
 	    &rtfilter, sizeof(rtfilter)) < 0)
 		fatal("setsockopt(ROUTE_MSGFILTER)");
@@ -561,7 +565,7 @@ main_dispatch_engine(int fd, short event, void *bula)
 			break;
 		case IMSG_WITHDRAW_DFR:
 			if (imsg.hdr.len != IMSG_HEADER_SIZE + sizeof(dfr))
-				fatal("%s: IMSG_CONFIGURE_DFR wrong "
+				fatal("%s: IMSG_WITHDRAW_DFR wrong "
 				    "length: %d", __func__, imsg.hdr.len);
 			memcpy(&dfr, imsg.data, sizeof(dfr));
 			delete_gateway(&dfr);
@@ -726,8 +730,8 @@ handle_proposal(struct imsg_proposal *proposal)
 
 	rl.sr_len = sizeof(rl);
 	rl.sr_family = AF_UNSPEC;
-	if (snprintf(rl.sr_label, sizeof(rl.sr_label), "%s: %lld %d", "slaacd",
-	    proposal->id, (int32_t)proposal->pid) >=
+	if (snprintf(rl.sr_label, sizeof(rl.sr_label), "%s: %lld %d",
+	    SLAACD_RTA_LABEL, proposal->id, (int32_t)proposal->pid) >=
 	    (ssize_t)sizeof(rl.sr_label))
 		log_warnx("route label truncated");
 
@@ -829,8 +833,9 @@ configure_gateway(struct imsg_configure_dfr *dfr, uint8_t rtm_type)
 	}
 
 	memcpy(&gw, &dfr->addr, sizeof(gw));
+	/* from route(8) getaddr()*/
 	*(u_int16_t *)& gw.sin6_addr.s6_addr[2] = htons(gw.sin6_scope_id);
-	/* gw.sin6_scope_id = 0; XXX route(8) does this*/
+	gw.sin6_scope_id = 0;
 	iov[iovcnt].iov_base = &gw;
 	iov[iovcnt++].iov_len = sizeof(gw);
 	rtm.rtm_msglen += sizeof(gw);
@@ -857,7 +862,8 @@ configure_gateway(struct imsg_configure_dfr *dfr, uint8_t rtm_type)
 	memset(&rl, 0, sizeof(rl));
 	rl.sr_len = sizeof(rl);
 	rl.sr_family = AF_UNSPEC;
-	(void)snprintf(rl.sr_label, sizeof(rl.sr_label), "%s", "slaacd");
+	(void)snprintf(rl.sr_label, sizeof(rl.sr_label), "%s",
+	    SLAACD_RTA_LABEL);
 	iov[iovcnt].iov_base = &rl;
 	iov[iovcnt++].iov_len = sizeof(rl);
 	rtm.rtm_msglen += sizeof(rl);

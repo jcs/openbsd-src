@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.43 2018/04/28 16:05:56 phessler Exp $ */
+/* $OpenBSD: bwfm.c,v 1.48 2018/05/23 14:12:33 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -90,6 +90,8 @@ int	 bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *, int,
 int	 bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *, int,
 	     int, char *, size_t);
 void	 bwfm_proto_bcdc_rx(struct bwfm_softc *, struct mbuf *);
+int	 bwfm_proto_bcdc_txctl(struct bwfm_softc *, int, char *, size_t *);
+void	 bwfm_proto_bcdc_rxctl(struct bwfm_softc *, char *, size_t);
 
 int	 bwfm_fwvar_cmd_get_data(struct bwfm_softc *, int, void *, size_t);
 int	 bwfm_fwvar_cmd_set_data(struct bwfm_softc *, int, void *, size_t);
@@ -100,6 +102,9 @@ int	 bwfm_fwvar_var_set_data(struct bwfm_softc *, char *, void *, size_t);
 int	 bwfm_fwvar_var_get_int(struct bwfm_softc *, char *, uint32_t *);
 int	 bwfm_fwvar_var_set_int(struct bwfm_softc *, char *, uint32_t);
 
+uint32_t bwfm_chan2spec(struct bwfm_softc *, struct ieee80211_channel *);
+uint32_t bwfm_chan2spec_d11n(struct bwfm_softc *, struct ieee80211_channel *);
+uint32_t bwfm_chan2spec_d11ac(struct bwfm_softc *, struct ieee80211_channel *);
 uint32_t bwfm_spec2chan(struct bwfm_softc *, uint32_t);
 uint32_t bwfm_spec2chan_d11n(struct bwfm_softc *, uint32_t);
 uint32_t bwfm_spec2chan_d11ac(struct bwfm_softc *, uint32_t);
@@ -155,6 +160,7 @@ struct bwfm_proto_ops bwfm_proto_bcdc_ops = {
 	.proto_query_dcmd = bwfm_proto_bcdc_query_dcmd,
 	.proto_set_dcmd = bwfm_proto_bcdc_set_dcmd,
 	.proto_rx = bwfm_proto_bcdc_rx,
+	.proto_rxctl = bwfm_proto_bcdc_rxctl,
 };
 
 struct cfdriver bwfm_cd = {
@@ -166,20 +172,9 @@ bwfm_attach(struct bwfm_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
-	uint32_t bandlist[3], tmp;
-	int i, j, nbands, nmode, vhtmode;
 
-	if (bwfm_fwvar_cmd_get_int(sc, BWFM_C_GET_VERSION, &tmp)) {
-		printf("%s: could not read io type\n", DEVNAME(sc));
-		return;
-	} else
-		sc->sc_io_type = tmp;
-	if (bwfm_fwvar_var_get_data(sc, "cur_etheraddr", ic->ic_myaddr,
-	    sizeof(ic->ic_myaddr))) {
-		printf("%s: could not read mac address\n", DEVNAME(sc));
-		return;
-	}
-	printf("%s: address %s\n", DEVNAME(sc), ether_sprintf(ic->ic_myaddr));
+	TAILQ_INIT(&sc->sc_bcdc_rxctlq);
+	TAILQ_INIT(&sc->sc_bcdc_txctlq);
 
 	/* Init host async commands ring. */
 	sc->sc_cmdq.cur = sc->sc_cmdq.next = sc->sc_cmdq.queued = 0;
@@ -198,6 +193,63 @@ bwfm_attach(struct bwfm_softc *sc)
 	    IEEE80211_C_SCANALL |	/* device scans all channels at once */
 	    IEEE80211_C_SCANALLBAND;	/* device scans all bands at once */
 
+	/* IBSS channel undefined for now. */
+	ic->ic_ibss_chan = &ic->ic_channels[0];
+
+	ifp->if_softc = sc;
+	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
+	ifp->if_ioctl = bwfm_ioctl;
+	ifp->if_start = bwfm_start;
+	ifp->if_watchdog = bwfm_watchdog;
+	memcpy(ifp->if_xname, DEVNAME(sc), IFNAMSIZ);
+
+	if_attach(ifp);
+	ieee80211_ifattach(ifp);
+
+	sc->sc_newstate = ic->ic_newstate;
+	ic->ic_newstate = bwfm_newstate;
+	ic->ic_send_mgmt = bwfm_send_mgmt;
+	ic->ic_set_key = bwfm_set_key;
+	ic->ic_delete_key = bwfm_delete_key;
+
+	ieee80211_media_init(ifp, bwfm_media_change, ieee80211_media_status);
+}
+
+void
+bwfm_attachhook(struct device *self)
+{
+	struct bwfm_softc *sc = (struct bwfm_softc *)self;
+
+	if (sc->sc_bus_ops->bs_preinit != NULL &&
+	    sc->sc_bus_ops->bs_preinit(sc))
+		return;
+	if (bwfm_preinit(sc))
+		return;
+	sc->sc_initialized = 1;
+}
+
+int
+bwfm_preinit(struct bwfm_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	int i, j, nbands, nmode, vhtmode;
+	uint32_t bandlist[3], tmp;
+
+	if (sc->sc_initialized)
+		return 0;
+
+	if (bwfm_fwvar_cmd_get_int(sc, BWFM_C_GET_VERSION, &tmp)) {
+		printf("%s: could not read io type\n", DEVNAME(sc));
+		return 1;
+	} else
+		sc->sc_io_type = tmp;
+	if (bwfm_fwvar_var_get_data(sc, "cur_etheraddr", ic->ic_myaddr,
+	    sizeof(ic->ic_myaddr))) {
+		printf("%s: could not read mac address\n", DEVNAME(sc));
+		return 1;
+	}
+
 	if (bwfm_fwvar_var_get_int(sc, "nmode", &nmode))
 		nmode = 0;
 	if (bwfm_fwvar_var_get_int(sc, "vhtmode", &vhtmode))
@@ -205,7 +257,7 @@ bwfm_attach(struct bwfm_softc *sc)
 	if (bwfm_fwvar_cmd_get_data(sc, BWFM_C_GET_BANDLIST, bandlist,
 	    sizeof(bandlist))) {
 		printf("%s: couldn't get supported band list\n", DEVNAME(sc));
-		return;
+		return 1;
 	}
 	nbands = letoh32(bandlist[0]);
 	for (i = 1; i <= nbands && i < nitems(bandlist); i++) {
@@ -254,26 +306,15 @@ bwfm_attach(struct bwfm_softc *sc)
 		}
 	}
 
-	/* IBSS channel undefined for now. */
-	ic->ic_ibss_chan = &ic->ic_channels[0];
+	/* Configure channel information obtained from firmware. */
+	ieee80211_channel_init(ifp);
 
-	ifp->if_softc = sc;
-	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
-	ifp->if_ioctl = bwfm_ioctl;
-	ifp->if_start = bwfm_start;
-	ifp->if_watchdog = bwfm_watchdog;
-	memcpy(ifp->if_xname, DEVNAME(sc), IFNAMSIZ);
-
-	if_attach(ifp);
-	ieee80211_ifattach(ifp);
-
-	sc->sc_newstate = ic->ic_newstate;
-	ic->ic_newstate = bwfm_newstate;
-	ic->ic_send_mgmt = bwfm_send_mgmt;
-	ic->ic_set_key = bwfm_set_key;
-	ic->ic_delete_key = bwfm_delete_key;
+	/* Configure MAC address. */
+	if (if_setlladdr(ifp, ic->ic_myaddr))
+		printf("%s: could not set MAC address\n", DEVNAME(sc));
 
 	ieee80211_media_init(ifp, bwfm_media_change, ieee80211_media_status);
+	return 0;
 }
 
 int
@@ -335,8 +376,21 @@ bwfm_init(struct ifnet *ifp)
 	struct bwfm_join_pref_params join_pref[2];
 	int pm;
 
-	if (sc->sc_bus_ops->bs_init)
-		sc->sc_bus_ops->bs_init(sc);
+	if (!sc->sc_initialized) {
+		if (sc->sc_bus_ops->bs_preinit != NULL &&
+		    sc->sc_bus_ops->bs_preinit(sc)) {
+			printf("%s: could not init bus\n", DEVNAME(sc));
+			return;
+		}
+		if (bwfm_preinit(sc)) {
+			printf("%s: could not init\n", DEVNAME(sc));
+			return;
+		}
+		sc->sc_initialized = 1;
+	}
+
+	/* Select default channel */
+	ic->ic_bss->ni_chan = ic->ic_ibss_chan;
 
 	if (bwfm_fwvar_var_set_int(sc, "mpc", 1)) {
 		printf("%s: could not set mpc\n", DEVNAME(sc));
@@ -457,6 +511,7 @@ bwfm_stop(struct ifnet *ifp)
 {
 	struct bwfm_softc *sc = ifp->if_softc;
 	struct ieee80211com *ic = &sc->sc_ic;
+	struct bwfm_join_params join;
 
 	sc->sc_tx_timer = 0;
 	ifp->if_timer = 0;
@@ -465,8 +520,13 @@ bwfm_stop(struct ifnet *ifp)
 
 	ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
 
+	memset(&join, 0, sizeof(join));
+	bwfm_fwvar_cmd_set_data(sc, BWFM_C_SET_SSID, &join, sizeof(join));
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_DOWN, 1);
-	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PM, BWFM_PM_CAM);
+	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_AP, 0);
+	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_INFRA, 0);
+	bwfm_fwvar_cmd_set_int(sc, BWFM_C_UP, 1);
+	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PM, BWFM_PM_FAST_PS);
 
 	if (sc->sc_bus_ops->bs_stop)
 		sc->sc_bus_ops->bs_stop(sc);
@@ -1028,10 +1088,10 @@ bwfm_chip_sr_capable(struct bwfm_softc *sc)
 	if (sc->sc_chip.ch_pmurev < 17)
 		return 0;
 
-	core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_CHIPCOMMON);
 	switch (sc->sc_chip.ch_chip) {
 	case BRCM_CC_4354_CHIP_ID:
 	case BRCM_CC_4356_CHIP_ID:
+		core = bwfm_chip_get_pmu(sc);
 		sc->sc_buscore_ops->bc_write(sc, core->co_base +
 		    BWFM_CHIP_REG_CHIPCONTROL_ADDR, 3);
 		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
@@ -1040,16 +1100,19 @@ bwfm_chip_sr_capable(struct bwfm_softc *sc)
 	case BRCM_CC_43241_CHIP_ID:
 	case BRCM_CC_4335_CHIP_ID:
 	case BRCM_CC_4339_CHIP_ID:
+		core = bwfm_chip_get_pmu(sc);
 		sc->sc_buscore_ops->bc_write(sc, core->co_base +
 		    BWFM_CHIP_REG_CHIPCONTROL_ADDR, 3);
 		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
 		    BWFM_CHIP_REG_CHIPCONTROL_DATA);
 		return reg != 0;
 	case BRCM_CC_43430_CHIP_ID:
+		core = bwfm_chip_get_core(sc, BWFM_AGENT_CORE_CHIPCOMMON);
 		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
 		    BWFM_CHIP_REG_SR_CONTROL1);
 		return reg != 0;
 	default:
+		core = bwfm_chip_get_pmu(sc);
 		reg = sc->sc_buscore_ops->bc_read(sc, core->co_base +
 		    BWFM_CHIP_REG_PMUCAPABILITIES_EXT);
 		if ((reg & BWFM_CHIP_REG_PMUCAPABILITIES_SR_SUPP) == 0)
@@ -1216,15 +1279,14 @@ bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *sc, int ifidx,
 {
 	struct bwfm_proto_bcdc_dcmd *dcmd;
 	size_t size = sizeof(dcmd->hdr) + *len;
-	static int reqid = 0;
-	int ret = 1;
+	int ret = 1, reqid;
 
-	reqid++;
+	reqid = sc->sc_bcdc_reqid++;
 
-	dcmd = malloc(sizeof(*dcmd), M_TEMP, M_WAITOK | M_ZERO);
 	if (*len > sizeof(dcmd->buf))
-		goto err;
+		return ret;
 
+	dcmd = malloc(size, M_TEMP, M_WAITOK | M_ZERO);
 	dcmd->hdr.cmd = htole32(cmd);
 	dcmd->hdr.len = htole32(*len);
 	dcmd->hdr.flags |= BWFM_BCDC_DCMD_GET;
@@ -1233,33 +1295,13 @@ bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *sc, int ifidx,
 	dcmd->hdr.flags = htole32(dcmd->hdr.flags);
 	memcpy(&dcmd->buf, buf, *len);
 
-	if (sc->sc_bus_ops->bs_txctl(sc, (void *)dcmd,
-	     sizeof(dcmd->hdr) + *len)) {
+	if (bwfm_proto_bcdc_txctl(sc, reqid, (char *)dcmd, &size)) {
 		DPRINTF(("%s: tx failed\n", DEVNAME(sc)));
-		goto err;
-	}
-
-	do {
-		if (sc->sc_bus_ops->bs_rxctl(sc, (void *)dcmd, &size)) {
-			DPRINTF(("%s: rx failed\n", DEVNAME(sc)));
-			goto err;
-		}
-		dcmd->hdr.cmd = letoh32(dcmd->hdr.cmd);
-		dcmd->hdr.len = letoh32(dcmd->hdr.len);
-		dcmd->hdr.flags = letoh32(dcmd->hdr.flags);
-		dcmd->hdr.status = letoh32(dcmd->hdr.status);
-	} while (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid);
-
-	if (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid) {
-		printf("%s: unexpected request id\n", DEVNAME(sc));
-		goto err;
+		return ret;
 	}
 
 	if (buf) {
-		if (size > *len)
-			size = *len;
-		if (size < *len)
-			*len = size;
+		*len = min(*len, size);
 		memcpy(buf, dcmd->buf, *len);
 	}
 
@@ -1267,8 +1309,7 @@ bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *sc, int ifidx,
 		ret = dcmd->hdr.status;
 	else
 		ret = 0;
-err:
-	free(dcmd, M_TEMP, sizeof(*dcmd));
+	free(dcmd, M_TEMP, size);
 	return ret;
 }
 
@@ -1278,14 +1319,13 @@ bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *sc, int ifidx,
 {
 	struct bwfm_proto_bcdc_dcmd *dcmd;
 	size_t size = sizeof(dcmd->hdr) + len;
-	int reqid = 0;
-	int ret = 1;
+	int ret = 1, reqid;
 
-	reqid++;
+	reqid = sc->sc_bcdc_reqid++;
 
-	dcmd = malloc(sizeof(*dcmd), M_TEMP, M_WAITOK | M_ZERO);
+	dcmd = malloc(size, M_TEMP, M_WAITOK | M_ZERO);
 	if (len > sizeof(dcmd->buf))
-		goto err;
+		return ret;
 
 	dcmd->hdr.cmd = htole32(cmd);
 	dcmd->hdr.len = htole32(len);
@@ -1295,34 +1335,92 @@ bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *sc, int ifidx,
 	dcmd->hdr.flags = htole32(dcmd->hdr.flags);
 	memcpy(&dcmd->buf, buf, len);
 
-	if (sc->sc_bus_ops->bs_txctl(sc, (void *)dcmd, size)) {
-		DPRINTF(("%s: tx failed\n", DEVNAME(sc)));
-		goto err;
-	}
-
-	do {
-		if (sc->sc_bus_ops->bs_rxctl(sc, (void *)dcmd, &size)) {
-			DPRINTF(("%s: rx failed\n", DEVNAME(sc)));
-			goto err;
-		}
-		dcmd->hdr.cmd = letoh32(dcmd->hdr.cmd);
-		dcmd->hdr.len = letoh32(dcmd->hdr.len);
-		dcmd->hdr.flags = letoh32(dcmd->hdr.flags);
-		dcmd->hdr.status = letoh32(dcmd->hdr.status);
-	} while (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid);
-
-	if (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid) {
-		printf("%s: unexpected request id\n", DEVNAME(sc));
-		goto err;
+	if (bwfm_proto_bcdc_txctl(sc, reqid, (char *)dcmd, &size)) {
+		DPRINTF(("%s: txctl failed\n", DEVNAME(sc)));
+		return ret;
 	}
 
 	if (dcmd->hdr.flags & BWFM_BCDC_DCMD_ERROR)
-		return dcmd->hdr.status;
-
-	ret = 0;
-err:
-	free(dcmd, M_TEMP, sizeof(*dcmd));
+		ret = dcmd->hdr.status;
+	else
+		ret = 0;
+	free(dcmd, M_TEMP, size);
 	return ret;
+}
+
+int
+bwfm_proto_bcdc_txctl(struct bwfm_softc *sc, int reqid, char *buf, size_t *len)
+{
+	struct bwfm_proto_bcdc_ctl *ctl, *tmp;
+	int timeout = 0;
+
+	ctl = malloc(sizeof(*ctl), M_TEMP, M_WAITOK|M_ZERO);
+	ctl->reqid = reqid;
+	ctl->buf = buf;
+	ctl->len = *len;
+	TAILQ_INSERT_TAIL(&sc->sc_bcdc_txctlq, ctl, next);
+
+	if (sc->sc_bus_ops->bs_txctl(sc)) {
+		DPRINTF(("%s: tx failed\n", DEVNAME(sc)));
+		return 1;
+	}
+
+	if (tsleep(ctl, PWAIT, "bwfm", hz))
+		timeout = 1;
+
+	TAILQ_FOREACH_SAFE(ctl, &sc->sc_bcdc_rxctlq, next, tmp) {
+		if (ctl->reqid != reqid)
+			continue;
+		if (ctl->done) {
+			TAILQ_REMOVE(&sc->sc_bcdc_rxctlq, ctl, next);
+			*len = ctl->len;
+			free(ctl, M_TEMP, sizeof(*ctl));
+			return 0;
+		}
+		if (timeout) {
+			TAILQ_REMOVE(&sc->sc_bcdc_rxctlq, ctl, next);
+			DPRINTF(("%s: timeout waiting for txctl response\n",
+			    DEVNAME(sc)));
+			free(ctl->buf, M_TEMP, ctl->len);
+			free(ctl, M_TEMP, sizeof(*ctl));
+			return 1;
+		}
+		break;
+	}
+
+	DPRINTF(("%s: did%s find txctl metadata (timeout %d)\n",
+	    DEVNAME(sc), ctl == NULL ? " not": "", timeout));
+	return 1;
+}
+
+void
+bwfm_proto_bcdc_rxctl(struct bwfm_softc *sc, char *buf, size_t len)
+{
+	struct bwfm_proto_bcdc_dcmd *dcmd;
+	struct bwfm_proto_bcdc_ctl *ctl, *tmp;
+
+	if (len < sizeof(dcmd->hdr))
+		return;
+
+	dcmd = (struct bwfm_proto_bcdc_dcmd *)buf;
+	dcmd->hdr.cmd = letoh32(dcmd->hdr.cmd);
+	dcmd->hdr.len = letoh32(dcmd->hdr.len);
+	dcmd->hdr.flags = letoh32(dcmd->hdr.flags);
+	dcmd->hdr.status = letoh32(dcmd->hdr.status);
+
+	TAILQ_FOREACH_SAFE(ctl, &sc->sc_bcdc_rxctlq, next, tmp) {
+		if (ctl->reqid != BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags))
+			continue;
+		if (ctl->len != len) {
+			free(ctl->buf, M_TEMP, ctl->len);
+			free(ctl, M_TEMP, sizeof(*ctl));
+			return;
+		}
+		memcpy(ctl->buf, buf, len);
+		ctl->done = 1;
+		wakeup(ctl);
+		return;
+	}
 }
 
 void
@@ -1349,7 +1447,7 @@ bwfm_proto_bcdc_rx(struct bwfm_softc *sc, struct mbuf *m)
 	/* Remaining data is an ethernet packet, so align. */
 	if ((mtod(m, paddr_t) & 0x3) != ETHER_ALIGN) {
 		struct mbuf *m0;
-		m0 = m_devget(mtod(m, caddr_t), m->m_len, ETHER_ALIGN);
+		m0 = m_dup_pkt(m, ETHER_ALIGN, M_WAITOK);
 		m_freem(m);
 		if (m0 == NULL) {
 			ifp->if_ierrors++;
@@ -1439,6 +1537,47 @@ bwfm_fwvar_var_set_int(struct bwfm_softc *sc, char *name, uint32_t data)
 }
 
 /* Channel parameters */
+uint32_t
+bwfm_chan2spec(struct bwfm_softc *sc, struct ieee80211_channel *c)
+{
+	if (sc->sc_io_type == BWFM_IO_TYPE_D11N)
+		return bwfm_chan2spec_d11n(sc, c);
+	else
+		return bwfm_chan2spec_d11ac(sc, c);
+}
+
+uint32_t
+bwfm_chan2spec_d11n(struct bwfm_softc *sc, struct ieee80211_channel *c)
+{
+	uint32_t chanspec;
+
+	chanspec = ieee80211_mhz2ieee(c->ic_freq, 0) & BWFM_CHANSPEC_CHAN_MASK;
+	chanspec |= BWFM_CHANSPEC_D11N_SB_N;
+	chanspec |= BWFM_CHANSPEC_D11N_BW_20;
+	if (IEEE80211_IS_CHAN_2GHZ(c))
+		chanspec |= BWFM_CHANSPEC_D11N_BND_2G;
+	if (IEEE80211_IS_CHAN_5GHZ(c))
+		chanspec |= BWFM_CHANSPEC_D11N_BND_5G;
+
+	return chanspec;
+}
+
+uint32_t
+bwfm_chan2spec_d11ac(struct bwfm_softc *sc, struct ieee80211_channel *c)
+{
+	uint32_t chanspec;
+
+	chanspec = ieee80211_mhz2ieee(c->ic_freq, 0) & BWFM_CHANSPEC_CHAN_MASK;
+	chanspec |= BWFM_CHANSPEC_D11AC_SB_LLL;
+	chanspec |= BWFM_CHANSPEC_D11AC_BW_20;
+	if (IEEE80211_IS_CHAN_2GHZ(c))
+		chanspec |= BWFM_CHANSPEC_D11AC_BND_2G;
+	if (IEEE80211_IS_CHAN_5GHZ(c))
+		chanspec |= BWFM_CHANSPEC_D11AC_BND_5G;
+
+	return chanspec;
+}
+
 uint32_t
 bwfm_spec2chan(struct bwfm_softc *sc, uint32_t chanspec)
 {
@@ -1658,6 +1797,8 @@ bwfm_hostap(struct bwfm_softc *sc)
 
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_INFRA, 1);
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_AP, 1);
+	bwfm_fwvar_var_set_int(sc, "chanspec",
+	    bwfm_chan2spec(sc, ic->ic_bss->ni_chan));
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_UP, 1);
 
 	memset(&join, 0, sizeof(join));
@@ -1974,13 +2115,14 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, void *arg)
 		struct bwfm_bss_info *bss;
 		size_t reslen;
 		int i;
-		if (ntohl(e->msg.status) != BWFM_E_STATUS_PARTIAL) {
+		if (ntohl(e->msg.status) != BWFM_E_STATUS_PARTIAL &&
+		    ic->ic_state == IEEE80211_S_SCAN) {
 			ieee80211_end_scan(ifp);
 			break;
 		}
 		len -= sizeof(*e);
 		if (len < sizeof(*res)) {
-			printf("%s: results too small\n", DEVNAME(sc));
+			DPRINTF(("%s: results too small\n", DEVNAME(sc)));
 			m_freem(m);
 			return;
 		}
@@ -1988,14 +2130,14 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, void *arg)
 		res = malloc(len, M_TEMP, M_WAITOK);
 		memcpy(res, (void *)&e[1], len);
 		if (len < letoh32(res->buflen)) {
-			printf("%s: results too small\n", DEVNAME(sc));
+			DPRINTF(("%s: results too small\n", DEVNAME(sc)));
 			free(res, M_TEMP, reslen);
 			m_freem(m);
 			return;
 		}
 		len -= sizeof(*res);
 		if (len < letoh16(res->bss_count) * sizeof(struct bwfm_bss_info)) {
-			printf("%s: results too small\n", DEVNAME(sc));
+			DPRINTF(("%s: results too small\n", DEVNAME(sc)));
 			free(res, M_TEMP, reslen);
 			m_freem(m);
 			return;
@@ -2031,14 +2173,16 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, void *arg)
 		break;
 	case BWFM_E_DEAUTH:
 	case BWFM_E_DISASSOC:
-		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+		if (ic->ic_state != IEEE80211_S_INIT)
+			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
 		break;
 	case BWFM_E_LINK:
 		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS &&
 		    ntohl(e->msg.reason) == 0)
 			break;
 		/* Link status has changed */
-		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+		if (ic->ic_state != IEEE80211_S_INIT)
+			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
 		break;
 #ifndef IEEE80211_STA_ONLY
 	case BWFM_E_AUTH_IND:
@@ -2289,6 +2433,14 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 
 	switch (nstate) {
 	case IEEE80211_S_SCAN:
+#ifndef IEEE80211_STA_ONLY
+		/* Don't start a scan if we already have a channel. */
+		if (ic->ic_state == IEEE80211_S_INIT &&
+		    ic->ic_opmode == IEEE80211_M_HOSTAP &&
+		    ic->ic_des_chan != IEEE80211_CHAN_ANYC) {
+			break;
+		}
+#endif
 		bwfm_scan(sc);
 		if (ifp->if_flags & IFF_DEBUG)
 			printf("%s: %s -> %s\n", DEVNAME(sc),

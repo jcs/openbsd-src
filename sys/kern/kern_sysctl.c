@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.336 2018/05/08 14:15:30 mpi Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.340 2018/05/27 08:11:13 ratchov Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -79,6 +79,7 @@
 #include <sys/sched.h>
 #include <sys/mount.h>
 #include <sys/syscallargs.h>
+#include <sys/witness.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -112,6 +113,8 @@
 #include <sys/shm.h>
 #endif
 
+#include "audio.h"
+
 extern struct forkstat forkstat;
 extern struct nchstats nchstats;
 extern int nselcoll, fscale;
@@ -119,6 +122,9 @@ extern struct disklist_head disklist;
 extern fixpt_t ccpu;
 extern  long numvnodes;
 extern u_int net_livelocks;
+#if NAUDIO > 0
+extern int audio_record_enable;
+#endif
 
 int allowkmem;
 
@@ -133,6 +139,9 @@ int sysctl_proc_vmmap(int *, u_int, void *, size_t *, struct proc *);
 int sysctl_intrcnt(int *, u_int, void *, size_t *);
 int sysctl_sensors(int *, u_int, void *, size_t *, void *, size_t);
 int sysctl_cptime2(int *, u_int, void *, size_t *, void *, size_t);
+#if NAUDIO > 0
+int sysctl_audio(int *, u_int, void *, size_t *, void *, size_t);
+#endif
 
 void fill_file(struct kinfo_file *, struct file *, struct filedesc *, int,
     struct vnode *, struct process *, struct proc *, struct socket *, int);
@@ -301,6 +310,7 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		case KERN_TIMECOUNTER:
 		case KERN_CPTIME2:
 		case KERN_FILE:
+		case KERN_AUDIO:
 			break;
 		default:
 			return (ENOTDIR);	/* overloaded */
@@ -650,6 +660,15 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		dnsjackport = port;
 		return 0;
 	}
+#ifdef WITNESS
+	case KERN_WITNESSWATCH:
+		return witness_sysctl_watch(oldp, oldlenp, newp, newlen);
+#endif
+#if NAUDIO > 0
+	case KERN_AUDIO:
+		return (sysctl_audio(name + 1, namelen - 1, oldp, oldlenp,
+		    newp, newlen));
+#endif
 	default:
 		return (EOPNOTSUPP);
 	}
@@ -2336,7 +2355,6 @@ sysctl_sensors(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 	free(us, M_TEMP, sizeof(*us));
 	return (ret);
 }
-
 #endif	/* SMALL_KERNEL */
 
 int
@@ -2363,3 +2381,18 @@ sysctl_cptime2(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 	    &ci->ci_schedstate.spc_cp_time,
 	    sizeof(ci->ci_schedstate.spc_cp_time)));
 }
+
+#if NAUDIO > 0
+int
+sysctl_audio(int *name, u_int namelen, void *oldp, size_t *oldlenp,
+    void *newp, size_t newlen)
+{
+	if (namelen != 1)
+		return (ENOTDIR);
+
+	if (name[0] != KERN_AUDIO_RECORD)
+		return (ENOENT);
+
+	return (sysctl_int(oldp, oldlenp, newp, newlen, &audio_record_enable));
+}
+#endif

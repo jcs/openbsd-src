@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1846 2018/04/27 10:35:28 mlarkin Exp 
+ *	OpenBSD: pcidevs,v 1.1850 2018/05/24 02:53:13 mlarkin Exp 
  */
 
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
@@ -3652,6 +3652,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "SR5690 PCIE",
 	},
 	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_SR5690_IOMMU,
+	    "SR5690 IOMMU",
+	},
+	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RS400_HB,
 	    "RS400 Host",
 	},
@@ -4206,6 +4210,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_TAHITI_5,
 	    "Tahiti",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_PROWX4130,
+	    "Radeon Pro WX 4130/4150",
 	},
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_HD7970M,
@@ -5842,6 +5850,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_HD6400_HDA,
 	    "Radeon HD 6400 Audio",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_PRO_HDA,
+	    "Radeon Pro Audio",
 	},
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RS100_AGP,
@@ -11484,6 +11496,18 @@ static const struct pci_known_product pci_known_products[] = {
 	    "I219-V",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_JHL6340,
+	    "JHL6340 Thunderbolt 3",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_JHL6340_PCIE,
+	    "JHL6340 Thunderbolt 3",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_JHL6340_XHCI,
+	    "JHL6340 Thunderbolt 3",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_I219_LM8,
 	    "I219-LM",
 	},
@@ -16084,6 +16108,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "UHD Graphics 620",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_XEONE3_1200V6_HB,
+	    "Xeon E3-1200 v6/7 Host",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_CORE7G_SRV_GT2,
 	    "HD Graphics P630",
 	},
@@ -17912,6 +17940,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "CM236 LPC",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_CM238_LPC,
+	    "CM238 LPC",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_100SERIES_I2C0,
 	    "100 Series I2C",
 	},
@@ -17938,6 +17970,66 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_100SERIES_HDA,
 	    "100 Series HD Audio",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_CM238_HDA,
+	    "CM238 HD Audio Controller",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_AHCI_1,
+	    "C620 AHCI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_PCIE_1,
+	    "C620 PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_PCIE_2,
+	    "C620 PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_PM,
+	    "C620 Power",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_SMB,
+	    "C620 SMBus",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_SPI,
+	    "C620 SPI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_XHCI,
+	    "C620 xHCI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_THERM,
+	    "C620 Thermal",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_MEI_1,
+	    "C620 MEI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_MEI_2,
+	    "C620 MEI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_MEI_3,
+	    "C620 MEI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C621_LPC,
+	    "C621 LPC",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_AHCI_2,
+	    "C620 AHCI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_C620_MROM0,
+	    "C620 MROM",
 	},
 	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_200SERIES_AHCI_1,
@@ -23342,6 +23434,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_PLX, PCI_PRODUCT_PLX_9080,
 	    "I/O 9080",
+	},
+	{
+	    PCI_VENDOR_PLX, PCI_PRODUCT_PLX_PEX_9733,
+	    "PEX 9733",
 	},
 	{
 	    PCI_VENDOR_PLX, PCI_PRODUCT_PLX_CRONYX_OMEGA,
