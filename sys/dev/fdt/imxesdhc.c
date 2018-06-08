@@ -1,4 +1,4 @@
-/*	$OpenBSD: imxesdhc.c,v 1.5 2018/05/25 00:04:11 patrick Exp $	*/
+/*	$OpenBSD: imxesdhc.c,v 1.7 2018/06/04 10:33:51 patrick Exp $	*/
 /*
  * Copyright (c) 2009 Dale Rahn <drahn@openbsd.org>
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -436,7 +436,7 @@ imxesdhc_attach(struct device *parent, struct device *self, void *aux)
 		saa.caps |= SMC_CAPS_DMA;
 	
 	if (caps & SDHC_HOST_CTRL_CAP_HSS)
-		saa.caps |= SMC_CAPS_MMC_HIGHSPEED;
+		saa.caps |= SMC_CAPS_MMC_HIGHSPEED | SMC_CAPS_SD_HIGHSPEED;
 
 	width = OF_getpropint(sc->sc_node, "bus-width", 1);
 	if (width >= 8)
@@ -966,7 +966,8 @@ imxesdhc_start_command(struct imxesdhc_softc *sc, struct sdmmc_command *cmd)
 
 		HWRITE4(sc, SDHC_ADMA_SYS_ADDR,
 		    sc->adma_map->dm_segs[0].ds_addr);
-	}
+	} else
+		HCLR4(sc, SDHC_PROT_CTRL, SDHC_PROT_CTRL_DMASEL_MASK);
 
 	/*
 	 * Start a CPU data transfer.  Writing to the high order byte

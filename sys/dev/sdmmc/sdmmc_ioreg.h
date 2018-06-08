@@ -1,4 +1,4 @@
-/*	$OpenBSD: sdmmc_ioreg.h,v 1.8 2018/05/25 00:12:53 patrick Exp $	*/
+/*	$OpenBSD: sdmmc_ioreg.h,v 1.10 2018/06/04 13:33:10 patrick Exp $	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -71,8 +71,17 @@
 #define SD_IO_CCCR_BUS_WIDTH		0x07
 #define  CCCR_BUS_WIDTH_1		(0<<0)
 #define  CCCR_BUS_WIDTH_4		(2<<0)
-#define  CCCR_BUS_WIDTH_8		(3<<0)
+#define  CCCR_BUS_WIDTH_MASK		(3<<0)
 #define SD_IO_CCCR_CISPTR		0x09 /* XXX 9-10, 10-11, or 9-12 */
+#define SD_IO_CCCR_SPEED		0x13
+#define  CCCR_SPEED_SHS			(1<<0)
+#define  CCCR_SPEED_EHS			CCCR_SPEED_SDR25
+#define  CCCR_SPEED_SDR12		(0<<1)
+#define  CCCR_SPEED_SDR25		(1<<1)
+#define  CCCR_SPEED_SDR50		(2<<1)
+#define  CCCR_SPEED_SDR104		(3<<1)
+#define  CCCR_SPEED_DDR50		(4<<1)
+#define  CCCR_SPEED_MASK		(0x7<<1)
 
 /* Function Basic Registers (FBR) */
 #define SD_IO_FBR_BASE(f)		((f) * 0x100)

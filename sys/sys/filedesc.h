@@ -1,4 +1,4 @@
-/*	$OpenBSD: filedesc.h,v 1.35 2018/04/25 10:29:17 mpi Exp $	*/
+/*	$OpenBSD: filedesc.h,v 1.37 2018/06/05 09:29:05 mpi Exp $	*/
 /*	$NetBSD: filedesc.h,v 1.14 1996/04/09 20:55:28 cgd Exp $	*/
 
 /*

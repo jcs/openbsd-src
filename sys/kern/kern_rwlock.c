@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_rwlock.c,v 1.35 2018/03/21 12:28:39 bluhm Exp $	*/
+/*	$OpenBSD: kern_rwlock.c,v 1.37 2018/06/08 15:38:15 guenther Exp $	*/
 
 /*
  * Copyright (c) 2002, 2003 Artur Grabowski <art@openbsd.org>
@@ -187,7 +187,7 @@ rw_enter_diag(struct rwlock *rwl, int flags)
 
 static void
 _rw_init_flags_witness(struct rwlock *rwl, const char *name, int lo_flags,
-    struct lock_type *type)
+    const struct lock_type *type)
 {
 	rwl->rwl_owner = 0;
 	rwl->rwl_name = name;
@@ -205,7 +205,7 @@ _rw_init_flags_witness(struct rwlock *rwl, const char *name, int lo_flags,
 
 void
 _rw_init_flags(struct rwlock *rwl, const char *name, int flags,
-    struct lock_type *type)
+    const struct lock_type *type)
 {
 	_rw_init_flags_witness(rwl, name, RWLOCK_LO_FLAGS(flags), type);
 }
@@ -223,6 +223,8 @@ _rw_enter(struct rwlock *rwl, int flags LOCK_FL_VARS)
 	lop_flags = LOP_NEWORDER;
 	if (flags & RW_WRITE)
 		lop_flags |= LOP_EXCLUSIVE;
+	if (flags & RW_DUPOK)
+		lop_flags |= LOP_DUPOK;
 	if ((flags & RW_NOSLEEP) == 0 && (flags & RW_DOWNGRADE) == 0)
 		WITNESS_CHECKORDER(&rwl->rwl_lock_obj, lop_flags, file, line,
 		    NULL);
@@ -381,7 +383,7 @@ rw_assert_unlocked(struct rwlock *rwl)
 /* recursive rwlocks; */
 void
 _rrw_init_flags(struct rrwlock *rrwl, char *name, int flags,
-    struct lock_type *type)
+    const struct lock_type *type)
 {
 	memset(rrwl, 0, sizeof(struct rrwlock));
 	_rw_init_flags_witness(&rrwl->rrwl_lock, name, RRWLOCK_LO_FLAGS(flags),

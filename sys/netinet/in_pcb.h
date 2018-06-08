@@ -1,4 +1,4 @@
-/*	$OpenBSD: in_pcb.h,v 1.107 2018/03/30 17:33:54 dhill Exp $	*/
+/*	$OpenBSD: in_pcb.h,v 1.109 2018/06/03 21:00:15 bluhm Exp $	*/
 /*	$NetBSD: in_pcb.h,v 1.14 1996/02/13 23:42:00 christos Exp $	*/
 
 /*
@@ -151,7 +151,7 @@ struct inpcbtable {
 	TAILQ_HEAD(inpthead, inpcb) inpt_queue;
 	struct inpcbhead *inpt_hashtbl, *inpt_lhashtbl;
 	SIPHASH_KEY inpt_key;
-	u_long	  inpt_hash, inpt_lhash;
+	u_long	  inpt_mask, inpt_lmask;
 	int	  inpt_count, inpt_size;
 };
 
@@ -246,6 +246,7 @@ struct baddynamicports {
 
 #ifdef _KERNEL
 
+extern struct inpcbtable rawcbtable, rawin6pcbtable;
 extern struct baddynamicports baddynamicports;
 extern struct baddynamicports rootonlyports;
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: smtpd.c,v 1.295 2018/05/24 11:38:24 gilles Exp $	*/
+/*	$OpenBSD: smtpd.c,v 1.299 2018/06/03 14:04:06 gilles Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -228,7 +228,7 @@ parent_imsg(struct mproc *p, struct imsg *imsg)
 			return;
 		}
 
-		c->cause = xstrdup(cause, "parent_imsg");
+		c->cause = xstrdup(cause);
 		log_debug("debug: smtpd: kill requested for %u: %s",
 		    c->pid, c->cause);
 		kill(c->pid, SIGTERM);
@@ -1215,12 +1215,10 @@ forkmda(struct mproc *p, uint64_t id, struct deliver *deliver)
 	pid_t		 pid;
 	int		 allout, pipefd[2];
 	struct passwd	*pw;
+	const char	*pw_name;
 	uid_t	pw_uid;
 	gid_t	pw_gid;
 	const char	*pw_dir;
-	char	*mda_environ[3];
-	const char *mda_command;
-	char	mda_exec[LINE_MAX];
 
 	dsp = dict_xget(env->sc_dispatchers, deliver->dispatcher);
 
@@ -1239,17 +1237,20 @@ forkmda(struct mproc *p, uint64_t id, struct deliver *deliver)
 			m_close(p_pony);
 			return;
 		}
+		pw_name = pw->pw_name;
 		pw_uid = pw->pw_uid;
 		pw_gid = pw->pw_gid;
 		pw_dir = pw->pw_dir;
 	}
 	else {
+		pw_name = deliver->userinfo.username;
 		pw_uid = deliver->userinfo.uid;
 		pw_gid = deliver->userinfo.gid;
 		pw_dir = deliver->userinfo.directory;
 	}
 
 	if (pw_uid == 0 && deliver->mda_exec[0]) {
+		pw_name = deliver->userinfo.username;
 		pw_uid = deliver->userinfo.uid;
 		pw_gid = deliver->userinfo.gid;
 		pw_dir = deliver->userinfo.directory;
@@ -1337,29 +1338,7 @@ forkmda(struct mproc *p, uint64_t id, struct deliver *deliver)
 	/* avoid hangs by setting 5m timeout */
 	alarm(300);
 
-	if (deliver->mda_exec[0])
-		mda_command = deliver->mda_exec;
-	else
-		mda_command = dsp->u.local.command;
-
-	if (strlcpy(mda_exec, mda_command, sizeof (mda_exec))
-	    >= sizeof (mda_exec))
-		err(1, "mda command line too long");
-
-	if (! mda_expand_format(mda_exec, sizeof mda_exec, deliver,
-		&deliver->userinfo))
-		err(1, "mda command line could not be expanded");
-
-	mda_environ[0] = "PATH=" _PATH_DEFPATH;
-
-	(void)snprintf(ebuf, sizeof ebuf, "HOME=%s", pw_dir);
-	mda_environ[1] = xstrdup(ebuf, "forkmda");
-
-	mda_environ[2] = (char *)NULL;
-	execle("/bin/sh", "/bin/sh", "-c", mda_exec, (char *)NULL,
-	    mda_environ);
-	perror("execle");
-	_exit(1);
+	mda_unpriv(dsp, deliver, pw_name, pw_dir);
 }
 
 static void

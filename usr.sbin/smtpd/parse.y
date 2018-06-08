@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.202 2018/05/25 14:10:28 gilles Exp $	*/
+/*	$OpenBSD: parse.y,v 1.211 2018/06/04 15:57:46 gilles Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -63,6 +63,10 @@ static struct file {
 	TAILQ_ENTRY(file)	 entry;
 	FILE			*stream;
 	char			*name;
+	size_t			 ungetpos;
+	size_t			 ungetsize;
+	u_char			*ungetbuf;
+	int			 eof_reached;
 	int			 lineno;
 	int			 errors;
 } *file, *topfile;
@@ -73,8 +77,9 @@ int		 yyparse(void);
 int		 yylex(void);
 int		 kw_cmp(const void *, const void *);
 int		 lookup(char *);
+int		 igetc(void);
 int		 lgetc(int);
-int		 lungetc(int);
+void		 lungetc(int);
 int		 findeol(void);
 int		 yyerror(const char *, ...)
     __attribute__((__format__ (printf, 1, 2)))
@@ -178,19 +183,20 @@ typedef struct {
 %token	FILTER FOR FORWARD_ONLY FROM
 %token	HELO HELO_SRC HOST HOSTNAME HOSTNAMES
 %token	INCLUDE INET4 INET6
+%token	JUNK
 %token	KEY
-%token	LIMIT LISTEN LOCAL
+%token	LIMIT LISTEN LMTP LOCAL
 %token	MAIL_FROM MAILDIR MASK_SRC MASQUERADE MATCH MAX_MESSAGE_SIZE MAX_DEFERRED MBOX MDA MTA MX
-%token	NODSN
+%token	NODSN NOVERIFY
 %token	ON
 %token	PKI PORT
 %token	QUEUE
 %token	RCPT_TO RECIPIENT RECEIVEDAUTH RELAY REJECT
-%token	SCHEDULER SENDER SENDERS SET SMTP SMTPS SOCKET SRC SUB_ADDR_DELIM
+%token	SCHEDULER SENDER SENDERS SMTP SMTPS SOCKET SRC SUB_ADDR_DELIM
 %token	TABLE TAG TAGGED TLS TLS_REQUIRE TO TTL
 %token	USER USERBASE
 %token	VERIFY VIRTUAL
-%token	WARN_INTERVAL
+%token	WARN_INTERVAL WRAPPER
 
 %token	<v.string>	STRING
 %token  <v.number>	NUMBER
@@ -203,10 +209,15 @@ grammar		: /* empty */
 		| grammar '\n'
 		| grammar include '\n'
 		| grammar varset '\n'
-		| grammar limit '\n'
+		| grammar bounce '\n'
+		| grammar ca '\n'
+		| grammar mda '\n'
+		| grammar mta '\n'
+		| grammar pki '\n'
+		| grammar queue '\n'
+		| grammar scheduler '\n'
+		| grammar smtp '\n'
 		| grammar listen '\n'
-		| grammar set '\n'
-		| grammar pkica '\n'
 		| grammar table '\n'
 		| grammar dispatcher '\n'
 		| grammar match '\n'
@@ -257,6 +268,225 @@ optnl		: '\n' optnl
 
 nl		: '\n' optnl
 		;
+
+negation	: '!'		{ $$ = 1; }
+		| /* empty */	{ $$ = 0; }
+		;
+
+assign		: '=' | ARROW;
+
+
+keyval		: STRING assign STRING		{
+			table->t_type = T_HASH;
+			table_add(table, $1, $3);
+			free($1);
+			free($3);
+		}
+		;
+
+keyval_list	: keyval
+		| keyval comma keyval_list
+		;
+
+stringel	: STRING			{
+			table->t_type = T_LIST;
+			table_add(table, $1, NULL);
+			free($1);
+		}
+		;
+
+string_list	: stringel
+		| stringel comma string_list
+		;
+
+tableval_list	: string_list			{ }
+		| keyval_list			{ }
+		;
+
+bounce:
+BOUNCE WARN_INTERVAL {
+	memset(conf->sc_bounce_warn, 0, sizeof conf->sc_bounce_warn);
+} bouncedelays
+;
+
+
+ca:
+CA STRING {
+	char buf[HOST_NAME_MAX+1];
+
+	/* if not catchall, check that it is a valid domain */
+	if (strcmp($2, "*") != 0) {
+		if (!res_hnok($2)) {
+			yyerror("not a valid domain name: %s", $2);
+			free($2);
+			YYERROR;
+		}
+	}
+	xlowercase(buf, $2, sizeof(buf));
+	free($2);
+	sca = dict_get(conf->sc_ca_dict, buf);
+	if (sca == NULL) {
+		sca = xcalloc(1, sizeof *sca);
+		(void)strlcpy(sca->ca_name, buf, sizeof(sca->ca_name));
+		dict_set(conf->sc_ca_dict, sca->ca_name, sca);
+	}
+} ca_params
+;
+
+
+ca_params_opt:
+CERT STRING {
+	sca->ca_cert_file = $2;
+}
+;
+
+ca_params:
+ca_params_opt
+;
+
+
+mda:
+MDA LIMIT limits_mda
+| MDA WRAPPER STRING STRING {
+	if (dict_get(conf->sc_mda_wrappers, $3)) {
+		yyerror("mda wrapper already declared with that name: %s", $3);
+		YYERROR;
+	}
+	dict_set(conf->sc_mda_wrappers, $3, $4);
+}
+;
+
+
+mta:
+MTA MAX_DEFERRED NUMBER  {
+	conf->sc_mta_max_deferred = $3;
+}
+| MTA LIMIT FOR DOMAIN STRING {
+	struct mta_limits	*d;
+
+	limits = dict_get(conf->sc_limits_dict, $5);
+	if (limits == NULL) {
+		limits = xcalloc(1, sizeof(*limits));
+		dict_xset(conf->sc_limits_dict, $5, limits);
+		d = dict_xget(conf->sc_limits_dict, "default");
+		memmove(limits, d, sizeof(*limits));
+	}
+	free($5);
+} limits_mta
+| MTA LIMIT {
+	limits = dict_get(conf->sc_limits_dict, "default");
+} limits_mta
+;
+
+
+pki:
+PKI STRING {
+	char buf[HOST_NAME_MAX+1];
+
+	/* if not catchall, check that it is a valid domain */
+	if (strcmp($2, "*") != 0) {
+		if (!res_hnok($2)) {
+			yyerror("not a valid domain name: %s", $2);
+			free($2);
+			YYERROR;
+		}
+	}
+	xlowercase(buf, $2, sizeof(buf));
+	free($2);
+	pki = dict_get(conf->sc_pki_dict, buf);
+	if (pki == NULL) {
+		pki = xcalloc(1, sizeof *pki);
+		(void)strlcpy(pki->pki_name, buf, sizeof(pki->pki_name));
+		dict_set(conf->sc_pki_dict, pki->pki_name, pki);
+	}
+} pki_params
+;
+ 
+pki_params_opt:
+CERT STRING {
+	pki->pki_cert_file = $2;
+}
+| KEY STRING {
+	pki->pki_key_file = $2;
+}
+| DHE STRING {
+	if (strcasecmp($2, "none") == 0)
+		pki->pki_dhe = 0;
+	else if (strcasecmp($2, "auto") == 0)
+		pki->pki_dhe = 1;
+	else if (strcasecmp($2, "legacy") == 0)
+		pki->pki_dhe = 2;
+	else {
+		yyerror("invalid DHE keyword: %s", $2);
+		free($2);
+		YYERROR;
+	}
+	free($2);
+}
+;
+
+
+pki_params:
+pki_params_opt pki_params
+| /* empty */
+;
+
+
+queue:
+QUEUE COMPRESSION {
+	conf->sc_queue_flags |= QUEUE_COMPRESSION;
+}
+| QUEUE ENCRYPTION {
+	conf->sc_queue_flags |= QUEUE_ENCRYPTION;
+}
+| QUEUE ENCRYPTION STRING {
+	if (strcasecmp($3, "stdin") == 0 || strcasecmp($3, "-") == 0) {
+		conf->sc_queue_key = "stdin";
+		free($3);
+	}
+	else
+		conf->sc_queue_key = $3;
+	conf->sc_queue_flags |= QUEUE_ENCRYPTION;
+}
+| QUEUE TTL STRING {
+	conf->sc_ttl = delaytonum($3);
+	if (conf->sc_ttl == -1) {
+		yyerror("invalid ttl delay: %s", $3);
+		free($3);
+		YYERROR;
+	}
+	free($3);
+}
+;
+
+
+scheduler:
+SCHEDULER LIMIT limits_scheduler
+;
+
+
+smtp:
+SMTP LIMIT limits_smtp
+| SMTP CIPHERS STRING {
+	conf->sc_tls_ciphers = $3;
+}
+| SMTP MAX_MESSAGE_SIZE size {
+	conf->sc_maxsize = $3;
+}
+| SMTP SUB_ADDR_DELIM STRING {
+	if (strlen($3) != 1) {
+		yyerror("subaddressing-delimiter must be one character");
+		free($3);
+		YYERROR;
+	}
+	if (isspace((int)*$3) ||  !isprint((int)*$3) || *$3== '@') {
+		yyerror("sub-addr-delim uses invalid character");
+		free($3);
+		YYERROR;
+	}
+	conf->sc_subaddressing_delim = $3;
+}
+;
 
 
 dispatcher_local_option:
@@ -341,6 +571,13 @@ USER STRING {
 
 	dispatcher->u.local.table_userbase = strdup(t->t_name);
 }
+| WRAPPER STRING {
+	if (! dict_get(conf->sc_mda_wrappers, $2)) {
+		yyerror("no mda wrapper with that name: %s", $2);
+		YYERROR;
+	}
+	dispatcher->u.local.mda_wrapper = $2;
+}
 ;
 
 dispatcher_local_options:
@@ -351,20 +588,38 @@ dispatcher_local_option dispatcher_local_options
 dispatcher_local:
 MBOX {
 	dispatcher->u.local.requires_root = 1;
-	dispatcher->u.local.user = xstrdup("root", "dispatcher_mda");
+	dispatcher->u.local.user = xstrdup("root");
 	asprintf(&dispatcher->u.local.command, "/usr/libexec/mail.local -f %%{sender} %%{user.username}");
 } dispatcher_local_options
 | MAILDIR {
-	asprintf(&dispatcher->u.local.command,
-	    "/usr/libexec/mail.maildir -p %%{user.directory}/Maildir -r %%{dest.user}");
+	asprintf(&dispatcher->u.local.command, "/usr/libexec/mail.maildir");
+} dispatcher_local_options
+| MAILDIR JUNK {
+	asprintf(&dispatcher->u.local.command, "/usr/libexec/mail.maildir -j");
 } dispatcher_local_options
 | MAILDIR STRING {
 	if (strncmp($2, "~/", 2) == 0)
 		asprintf(&dispatcher->u.local.command,
-		    "/usr/libexec/mail.maildir -p %%{user.directory}/%s -r %%{dest.user}}", $2+2);
+		    "/usr/libexec/mail.maildir \"%%{user.directory}/%s\"", $2+2);
 	else
 		asprintf(&dispatcher->u.local.command,
-		    "/usr/libexec/mail.maildir -p %s -r %%{dest.user}}", $2);
+		    "/usr/libexec/mail.maildir \"%s\"", $2);
+} dispatcher_local_options
+| MAILDIR STRING JUNK {
+	if (strncmp($2, "~/", 2) == 0)
+		asprintf(&dispatcher->u.local.command,
+		    "/usr/libexec/mail.maildir -j \"%%{user.directory}/%s\"", $2+2);
+	else
+		asprintf(&dispatcher->u.local.command,
+		    "/usr/libexec/mail.maildir -j \"%s\"", $2);
+} dispatcher_local_options
+| LMTP STRING {
+	asprintf(&dispatcher->u.local.command,
+	    "/usr/libexec/mail.lmtp -f %%{sender} -d %s %%{user.username}", $2);
+} dispatcher_local_options
+| LMTP STRING RCPT_TO {
+	asprintf(&dispatcher->u.local.command,
+	    "/usr/libexec/mail.lmtp -f %%{sender} -d %s %%{dest}", $2);
 } dispatcher_local_options
 | MDA STRING {
 	asprintf(&dispatcher->u.local.command,
@@ -488,6 +743,19 @@ HELO STRING {
 
 	dispatcher->u.remote.smarthost = strdup(t->t_name);
 }
+| TLS NOVERIFY {
+	if (dispatcher->u.remote.smarthost == NULL) {
+		yyerror("tls no-verify may not be specified without host on a dispatcher");
+		YYERROR;
+	}
+
+	if (dispatcher->u.remote.tls_noverify == 1) {
+		yyerror("tls no-verify already specified for this dispatcher");
+		YYERROR;
+	}
+
+	dispatcher->u.remote.tls_noverify = 1;
+}
 | AUTH tables {
 	struct table   *t = $2;
 
@@ -557,7 +825,7 @@ ACTION STRING {
 		yyerror("dispatcher already declared with that name: %s", $2);
 		YYERROR;
 	}
-	dispatcher = xcalloc(1, sizeof *dispatcher, "dispatcher");
+	dispatcher = xcalloc(1, sizeof *dispatcher);
 } dispatcher_type dispatcher_options {
 	if (dispatcher->type == DISPATCHER_LOCAL)
 		if (dispatcher->u.local.table_userbase == NULL)
@@ -777,7 +1045,7 @@ REJECT {
 
 match:
 MATCH {
-	rule = xcalloc(1, sizeof *rule, "rule");
+	rule = xcalloc(1, sizeof *rule);
 } match_options action {
 	if (!rule->flag_from) {
 		rule->table_from = strdup("<localhost>");
@@ -931,39 +1199,6 @@ limits_scheduler: opt_limit_scheduler limits_scheduler
 		| /* empty */
 		;
 
-opt_ca		: CERT STRING {
-			sca->ca_cert_file = $2;
-		}
-		;
-
-ca		: opt_ca
-		;
-
-opt_pki		: CERT STRING {
-			pki->pki_cert_file = $2;
-		}
-		| KEY STRING {
-			pki->pki_key_file = $2;
-		}
-		| DHE STRING {
-			if (strcasecmp($2, "none") == 0)
-				pki->pki_dhe = 0;
-			else if (strcasecmp($2, "auto") == 0)
-				pki->pki_dhe = 1;
-			else if (strcasecmp($2, "legacy") == 0)
-				pki->pki_dhe = 2;
-			else {
-				yyerror("invalid DHE keyword: %s", $2);
-				free($2);
-				YYERROR;
-			}
-			free($2);
-		}
-		;
-
-pki		: opt_pki pki
-		| /* empty */
-		;
 
 opt_sock_listen : FILTER STRING {
 			if (config_lo_filter(&listen_opts, $2)) {
@@ -1240,118 +1475,6 @@ if_listen	: opt_if_listen if_listen
 		| /* empty */
 		;
 
-set		: SET BOUNCE WARN_INTERVAL {
-			memset(conf->sc_bounce_warn, 0, sizeof conf->sc_bounce_warn);
-		} bouncedelays
-		| SET MTA MAX_DEFERRED NUMBER  {
-			conf->sc_mta_max_deferred = $4;
-		}
-		| SET QUEUE COMPRESSION {
-			conf->sc_queue_flags |= QUEUE_COMPRESSION;
-		}
-		| SET QUEUE ENCRYPTION {
-			conf->sc_queue_flags |= QUEUE_ENCRYPTION;
-		}
-		| SET QUEUE ENCRYPTION STRING {
-			if (strcasecmp($4, "stdin") == 0 || strcasecmp($4, "-") == 0) {
-				conf->sc_queue_key = "stdin";
-				free($4);
-			}
-			else
-				conf->sc_queue_key = $4;
-			conf->sc_queue_flags |= QUEUE_ENCRYPTION;
-		}
-		| SET QUEUE TTL STRING {
-			conf->sc_ttl = delaytonum($4);
-			if (conf->sc_ttl == -1) {
-				yyerror("invalid ttl delay: %s", $4);
-				free($4);
-				YYERROR;
-			}
-			free($4);
-		}
-		| SET SMTP CIPHERS STRING {
-			conf->sc_tls_ciphers = $4;
-		}
-		| SET SMTP MAX_MESSAGE_SIZE size {
-			conf->sc_maxsize = $4;
-		}
-		| SET SMTP SUB_ADDR_DELIM STRING {
-			if (strlen($4) != 1) {
-				yyerror("subaddressing-delimiter must be one character");
-				free($4);
-				YYERROR;
-			}
-			if (isspace((int)*$4) ||  !isprint((int)*$4) || *$4== '@') {
-				yyerror("sub-addr-delim uses invalid character");
-				free($4);
-				YYERROR;
-			}
-			conf->sc_subaddressing_delim = $4;
-		}
-		;
-
-limit		: LIMIT SMTP limits_smtp
-		| LIMIT MDA limits_mda
-		| LIMIT MTA FOR DOMAIN STRING {
-			struct mta_limits	*d;
-
-			limits = dict_get(conf->sc_limits_dict, $5);
-			if (limits == NULL) {
-				limits = xcalloc(1, sizeof(*limits), "mta_limits");
-				dict_xset(conf->sc_limits_dict, $5, limits);
-				d = dict_xget(conf->sc_limits_dict, "default");
-				memmove(limits, d, sizeof(*limits));
-			}
-			free($5);
-		} limits_mta
-		| LIMIT MTA {
-			limits = dict_get(conf->sc_limits_dict, "default");
-		} limits_mta
-		| LIMIT SCHEDULER limits_scheduler
-		;
-
-pkica		: PKI STRING	{
-			char buf[HOST_NAME_MAX+1];
-
-			/* if not catchall, check that it is a valid domain */
-			if (strcmp($2, "*") != 0) {
-				if (!res_hnok($2)) {
-					yyerror("not a valid domain name: %s", $2);
-					free($2);
-					YYERROR;
-				}
-			}
-			xlowercase(buf, $2, sizeof(buf));
-			free($2);
-			pki = dict_get(conf->sc_pki_dict, buf);
-			if (pki == NULL) {
-				pki = xcalloc(1, sizeof *pki, "parse:pki");
-				(void)strlcpy(pki->pki_name, buf, sizeof(pki->pki_name));
-				dict_set(conf->sc_pki_dict, pki->pki_name, pki);
-			}
-		} pki
-		| CA STRING	{
-			char buf[HOST_NAME_MAX+1];
-
-			/* if not catchall, check that it is a valid domain */
-			if (strcmp($2, "*") != 0) {
-				if (!res_hnok($2)) {
-					yyerror("not a valid domain name: %s", $2);
-					free($2);
-					YYERROR;
-				}
-			}
-			xlowercase(buf, $2, sizeof(buf));
-			free($2);
-			sca = dict_get(conf->sc_ca_dict, buf);
-			if (sca == NULL) {
-				sca = xcalloc(1, sizeof *sca, "parse:ca");
-				(void)strlcpy(sca->ca_name, buf, sizeof(sca->ca_name));
-				dict_set(conf->sc_ca_dict, sca->ca_name, sca);
-			}
-		} ca
-		;
 
 listen		: LISTEN {
 			memset(&listen_opts, 0, sizeof listen_opts);
@@ -1405,35 +1528,6 @@ table		: TABLE STRING STRING	{
 		}
 		;
 
-assign		: '=' | ARROW;
-
-keyval		: STRING assign STRING		{
-			table->t_type = T_HASH;
-			table_add(table, $1, $3);
-			free($1);
-			free($3);
-		}
-		;
-
-keyval_list	: keyval
-		| keyval comma keyval_list
-		;
-
-stringel	: STRING			{
-			table->t_type = T_LIST;
-			table_add(table, $1, NULL);
-			free($1);
-		}
-		;
-
-string_list	: stringel
-		| stringel comma string_list
-		;
-
-tableval_list	: string_list			{ }
-		| keyval_list			{ }
-		;
-
 tablenew	: STRING			{
 			struct table	*t;
 
@@ -1467,9 +1561,6 @@ tables		: tablenew			{ $$ = $1; }
 		| tableref			{ $$ = $1; }
 		;
 
-negation	: '!'		{ $$ = 1; }
-		| /* empty */	{ $$ = 0; }
-		;
 
 %%
 
@@ -1532,9 +1623,11 @@ lookup(char *s)
 		{ "include",		INCLUDE },
 		{ "inet4",		INET4 },
 		{ "inet6",		INET6 },
+		{ "junk",		JUNK },
 		{ "key",		KEY },
 		{ "limit",		LIMIT },
 		{ "listen",		LISTEN },
+		{ "lmtp",		LMTP },
 		{ "local",		LOCAL },
 		{ "mail-from",		MAIL_FROM },
 		{ "maildir",		MAILDIR },
@@ -1548,6 +1641,7 @@ lookup(char *s)
 		{ "mta",		MTA },
 		{ "mx",			MX },
 		{ "no-dsn",		NODSN },
+		{ "no-verify",		NOVERIFY },
 		{ "on",			ON },
 		{ "pki",		PKI },
 		{ "port",		PORT },
@@ -1559,7 +1653,6 @@ lookup(char *s)
 		{ "relay",		RELAY },
 		{ "scheduler",		SCHEDULER },
 		{ "senders",   		SENDERS },
-		{ "set",   		SET },
 		{ "smtp",		SMTP },
 		{ "smtps",		SMTPS },
 		{ "socket",		SOCKET },
@@ -1577,6 +1670,7 @@ lookup(char *s)
 		{ "verify",		VERIFY },
 		{ "virtual",		VIRTUAL },
 		{ "warn-interval",	WARN_INTERVAL },
+		{ "wrapper",		WRAPPER },
 	};
 	const struct keywords	*p;
 
@@ -1589,34 +1683,39 @@ lookup(char *s)
 		return (STRING);
 }
 
-#define MAXPUSHBACK	128
+#define START_EXPAND	1
+#define DONE_EXPAND	2
 
-unsigned char	*parsebuf;
-int		 parseindex;
-unsigned char	 pushback_buffer[MAXPUSHBACK];
-int		 pushback_index = 0;
+static int	expanding;
+
+int
+igetc(void)
+{
+	int	c;
+
+	while (1) {
+		if (file->ungetpos > 0)
+			c = file->ungetbuf[--file->ungetpos];
+		else
+			c = getc(file->stream);
+
+		if (c == START_EXPAND)
+			expanding = 1;
+		else if (c == DONE_EXPAND)
+			expanding = 0;
+		else
+			break;
+	}
+	return (c);
+}
 
 int
 lgetc(int quotec)
 {
 	int		c, next;
 
-	if (parsebuf) {
-		/* Read character from the parsebuffer instead of input. */
-		if (parseindex >= 0) {
-			c = parsebuf[parseindex++];
-			if (c != '\0')
-				return (c);
-			parsebuf = NULL;
-		} else
-			parseindex++;
-	}
-
-	if (pushback_index)
-		return (pushback_buffer[--pushback_index]);
-
 	if (quotec) {
-		if ((c = getc(file->stream)) == EOF) {
+		if ((c = igetc()) == EOF) {
 			yyerror("reached end of file while parsing "
 			    "quoted string");
 			if (file == topfile || popfile() == EOF)
@@ -1626,8 +1725,8 @@ lgetc(int quotec)
 		return (c);
 	}
 
-	while ((c = getc(file->stream)) == '\\') {
-		next = getc(file->stream);
+	while ((c = igetc()) == '\\') {
+		next = igetc();
 		if (next != '\n') {
 			c = next;
 			break;
@@ -1636,37 +1735,45 @@ lgetc(int quotec)
 		file->lineno++;
 	}
 
-	while (c == EOF) {
-		if (file == topfile || popfile() == EOF)
-			return (EOF);
-		c = getc(file->stream);
+	if (c == EOF) {
+		/*
+		 * Fake EOL when hit EOF for the first time. This gets line
+		 * count right if last line in included file is syntactically
+		 * invalid and has no newline.
+		 */
+		if (file->eof_reached == 0) {
+			file->eof_reached = 1;
+			return ('\n');
+		}
+		while (c == EOF) {
+			if (file == topfile || popfile() == EOF)
+				return (EOF);
+			c = igetc();
+		}
 	}
 	return (c);
 }
 
-int
+void
 lungetc(int c)
 {
 	if (c == EOF)
-		return (EOF);
-	if (parsebuf) {
-		parseindex--;
-		if (parseindex >= 0)
-			return (c);
+		return;
+
+	if (file->ungetpos >= file->ungetsize) {
+		void *p = reallocarray(file->ungetbuf, file->ungetsize, 2);
+		if (p == NULL)
+			err(1, "lungetc");
+		file->ungetbuf = p;
+		file->ungetsize *= 2;
 	}
-	if (pushback_index < MAXPUSHBACK-1)
-		return (pushback_buffer[pushback_index++] = c);
-	else
-		return (EOF);
+	file->ungetbuf[file->ungetpos++] = c;
 }
 
 int
 findeol(void)
 {
 	int	c;
-
-	parsebuf = NULL;
-	pushback_index = 0;
 
 	/* skip to either EOF or the first real EOL */
 	while (1) {
@@ -1698,7 +1805,7 @@ top:
 	if (c == '#')
 		while ((c = lgetc(0)) != '\n' && c != EOF)
 			; /* nothing */
-	if (c == '$' && parsebuf == NULL) {
+	if (c == '$' && !expanding) {
 		while (1) {
 			if ((c = lgetc(0)) == EOF)
 				return (0);
@@ -1720,8 +1827,13 @@ top:
 			yyerror("macro '%s' not defined", buf);
 			return (findeol());
 		}
-		parsebuf = val;
-		parseindex = 0;
+		p = val + strlen(val) - 1;
+		lungetc(DONE_EXPAND);
+		while (p >= val) {
+			lungetc(*p);
+			p--;
+		}
+		lungetc(START_EXPAND);
 		goto top;
 	}
 
@@ -1883,7 +1995,16 @@ pushfile(const char *name, int secret)
 		free(nfile);
 		return (NULL);
 	}
-	nfile->lineno = 1;
+	nfile->lineno = TAILQ_EMPTY(&files) ? 1 : 0;
+	nfile->ungetsize = 16;
+	nfile->ungetbuf = malloc(nfile->ungetsize);
+	if (nfile->ungetbuf == NULL) {
+		log_warn("warn: malloc");
+		fclose(nfile->stream);
+		free(nfile->name);
+		free(nfile);
+		return (NULL);
+	}
 	TAILQ_INSERT_TAIL(&files, nfile, entry);
 	return (nfile);
 }
@@ -1899,6 +2020,7 @@ popfile(void)
 	TAILQ_REMOVE(&files, file, entry);
 	fclose(file->stream);
 	free(file->name);
+	free(file->ungetbuf);
 	free(file);
 	file = prev;
 	return (file ? 0 : EOF);
@@ -1931,6 +2053,7 @@ parse_config(struct smtpd *x_conf, const char *filename, int opts)
 	conf->sc_pki_dict = calloc(1, sizeof(*conf->sc_pki_dict));
 	conf->sc_ssl_dict = calloc(1, sizeof(*conf->sc_ssl_dict));
 	conf->sc_limits_dict = calloc(1, sizeof(*conf->sc_limits_dict));
+	conf->sc_mda_wrappers = calloc(1, sizeof(*conf->sc_mda_wrappers));
 
 	/* Report mails delayed for more than 4 hours */
 	conf->sc_bounce_warn[0] = 3600 * 4;
@@ -1942,7 +2065,8 @@ parse_config(struct smtpd *x_conf, const char *filename, int opts)
 	    conf->sc_ca_dict == NULL		||
 	    conf->sc_pki_dict == NULL		||
 	    conf->sc_ssl_dict == NULL		||
-	    conf->sc_limits_dict == NULL) {
+	    conf->sc_limits_dict == NULL        ||
+	    conf->sc_mda_wrappers == NULL) {
 		log_warn("warn: cannot allocate memory");
 		free(conf->sc_tables_dict);
 		free(conf->sc_rules);
@@ -1952,6 +2076,7 @@ parse_config(struct smtpd *x_conf, const char *filename, int opts)
 		free(conf->sc_pki_dict);
 		free(conf->sc_ssl_dict);
 		free(conf->sc_limits_dict);
+		free(conf->sc_mda_wrappers);
 		return (-1);
 	}
 
@@ -1960,13 +2085,14 @@ parse_config(struct smtpd *x_conf, const char *filename, int opts)
 	table = NULL;
 
 	dict_init(conf->sc_dispatchers);
+	dict_init(conf->sc_mda_wrappers);
 	dict_init(conf->sc_ca_dict);
 	dict_init(conf->sc_pki_dict);
 	dict_init(conf->sc_ssl_dict);
 	dict_init(conf->sc_tables_dict);
 
 	dict_init(conf->sc_limits_dict);
-	limits = xcalloc(1, sizeof(*limits), "mta_limits");
+	limits = xcalloc(1, sizeof(*limits));
 	limit_mta_set_defaults(limits);
 	dict_xset(conf->sc_limits_dict, "default", limits);
 
@@ -2016,7 +2142,7 @@ parse_config(struct smtpd *x_conf, const char *filename, int opts)
 	table_create("getpwnam", "<getpwnam>", NULL, NULL);
 
 	/* bounce dispatcher */
-	dispatcher = xcalloc(1, sizeof *dispatcher, "dispatcher");
+	dispatcher = xcalloc(1, sizeof *dispatcher);
 	dispatcher->type = DISPATCHER_BOUNCE;
 	conf->sc_dispatcher_bounce = dispatcher;
 	dispatcher = NULL;
@@ -2141,7 +2267,7 @@ symget(const char *nam)
 static void
 create_sock_listener(struct listen_opts *lo)
 {
-	struct listener *l = xcalloc(1, sizeof(*l), "create_sock_listener");
+	struct listener *l = xcalloc(1, sizeof(*l));
 	lo->tag = "local";
 	lo->hostname = conf->sc_hostname;
 	l->ss.ss_family = AF_LOCAL;
@@ -2271,7 +2397,7 @@ host_v4(struct listen_opts *lo)
 	if (inet_pton(AF_INET, lo->ifx, &ina) != 1)
 		return (0);
 
-	h = xcalloc(1, sizeof(*h), "host_v4");
+	h = xcalloc(1, sizeof(*h));
 	sain = (struct sockaddr_in *)&h->ss;
 	sain->sin_len = sizeof(struct sockaddr_in);
 	sain->sin_family = AF_INET;
@@ -2299,7 +2425,7 @@ host_v6(struct listen_opts *lo)
 	if (inet_pton(AF_INET6, lo->ifx, &ina6) != 1)
 		return (0);
 
-	h = xcalloc(1, sizeof(*h), "host_v6");
+	h = xcalloc(1, sizeof(*h));
 	sin6 = (struct sockaddr_in6 *)&h->ss;
 	sin6->sin6_len = sizeof(struct sockaddr_in6);
 	sin6->sin6_family = AF_INET6;
@@ -2339,7 +2465,7 @@ host_dns(struct listen_opts *lo)
 		if (res->ai_family != AF_INET &&
 		    res->ai_family != AF_INET6)
 			continue;
-		h = xcalloc(1, sizeof(*h), "host_dns");
+		h = xcalloc(1, sizeof(*h));
 
 		h->ss.ss_family = res->ai_family;
 		if (res->ai_family == AF_INET) {
@@ -2390,7 +2516,7 @@ interface(struct listen_opts *lo)
 		if (lo->family != AF_UNSPEC && lo->family != p->ifa_addr->sa_family)
 			continue;
 
-		h = xcalloc(1, sizeof(*h), "interface");
+		h = xcalloc(1, sizeof(*h));
 
 		switch (p->ifa_addr->sa_family) {
 		case AF_INET:
@@ -2560,7 +2686,7 @@ is_if_in_group(const char *ifname, const char *groupname)
 
         len = ifgr.ifgr_len;
         ifgr.ifgr_groups = xcalloc(len/sizeof(struct ifg_req),
-		sizeof(struct ifg_req), "is_if_in_group");
+		sizeof(struct ifg_req));
         if (ioctl(s, SIOCGIFGROUP, (caddr_t)&ifgr) == -1)
                 err(1, "SIOCGIFGROUP");
 

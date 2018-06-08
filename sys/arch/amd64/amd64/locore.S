@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.S,v 1.96 2018/05/20 18:14:01 guenther Exp $	*/
+/*	$OpenBSD: locore.S,v 1.99 2018/06/07 04:09:35 guenther Exp $	*/
 /*	$NetBSD: locore.S,v 1.13 2004/03/25 18:33:17 drochner Exp $	*/
 
 /*
@@ -113,9 +113,11 @@
 #include <sys/syscall.h>
 
 #include <machine/param.h>
+#include <machine/codepatch.h>
 #include <machine/psl.h>
 #include <machine/segments.h>
 #include <machine/specialreg.h>
+#include <machine/trap.h>			/* T_PROTFLT */
 #include <machine/frameasm.h>
 
 #if NLAPIC > 0
@@ -245,8 +247,7 @@ gdt64_end:
 	.section .rodata
 	.globl	_C_LABEL(sigcode)
 _C_LABEL(sigcode):
-	call	*%rax
-
+	call	1f
 	movq	%rsp,%rdi
 	pushq	%rdi			/* fake return address */
 	movq	$SYS_sigreturn,%rax
@@ -255,6 +256,8 @@ _C_LABEL(sigcode):
 _C_LABEL(sigcoderet):
 	movq	$SYS_exit,%rax
 	syscall
+	.align	16,0xcc
+1:	JMP_RETPOLINE(rax)
 	.globl	_C_LABEL(esigcode)
 _C_LABEL(esigcode):
 
@@ -344,7 +347,12 @@ ENTRY(cpu_switchto)
 	movb	$SONPROC,P_STAT(%r12)	# p->p_stat = SONPROC
 	SET_CURPROC(%r12,%rcx)
 
-	movl	CPUVAR(CPUID),%edi
+	movl	CPUVAR(CPUID),%r9d
+
+	/* for the FPU/"extended CPU state" handling below */
+	movq	xsave_mask(%rip),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
 
 	/* If old proc exited, don't bother. */
 	testq	%r13,%r13
@@ -357,7 +365,7 @@ ENTRY(cpu_switchto)
 	 *   %rax, %rcx - scratch
 	 *   %r13 - old proc, then old pcb
 	 *   %r12 - new proc
-	 *   %edi - cpuid
+	 *   %r9d - cpuid
 	 */
 
 	movq	P_ADDR(%r13),%r13
@@ -365,16 +373,46 @@ ENTRY(cpu_switchto)
 	/* clear the old pmap's bit for the cpu */
 	movq	PCB_PMAP(%r13),%rcx
 	lock
-	btrq	%rdi,PM_CPUS(%rcx)
+	btrq	%r9,PM_CPUS(%rcx)
 
 	/* Save stack pointers. */
 	movq	%rsp,PCB_RSP(%r13)
 	movq	%rbp,PCB_RBP(%r13)
 
+	/*
+	 * If the old proc ran in userspace then save the
+	 * floating-point/"extended state" registers
+	 */
+	testl	$CPUF_USERXSTATE,CPUVAR(FLAGS)
+	jz	.Lxstate_reset
+
+	movq	%r13, %rdi
+#if PCB_SAVEFPU != 0
+	addq	$PCB_SAVEFPU,%rdi
+#endif
+	CODEPATCH_START
+	.byte 0x48; fxsave	(%rdi)		/* really fxsave64 */
+	CODEPATCH_END(CPTAG_XSAVE)
+
 switch_exited:
-	/* did old proc run in userspace?  then reset the segment regs */
-	btrl	$CPUF_USERSEGS_BIT, CPUVAR(FLAGS)
-	jnc	restore_saved
+	/* now clear the xstate */
+	movq	proc0paddr(%rip),%rdi
+#if PCB_SAVEFPU != 0
+	addq	$PCB_SAVEFPU,%rdi
+#endif
+	CODEPATCH_START
+	.byte 0x48; fxrstor	(%rdi)		/* really fxrstor64 */
+	CODEPATCH_END(CPTAG_XRSTOR)
+	andl	$~CPUF_USERXSTATE,CPUVAR(FLAGS)
+
+.Lxstate_reset:
+	/*
+	 * If the segment registers haven't been reset since the old proc
+	 * ran in userspace then reset them now
+	 */
+	testl	$CPUF_USERSEGS,CPUVAR(FLAGS)
+	jz	restore_saved
+	andl	$~CPUF_USERSEGS,CPUVAR(FLAGS)
 
 	/* set %ds, %es, %fs, and %gs to expected value to prevent info leak */
 	movw	$(GSEL(GUDATA_SEL, SEL_UPL)),%ax
@@ -431,32 +469,17 @@ restore_saved:
 0:
 
 	/* set the new pmap's bit for the cpu */
-	movl	CPUVAR(CPUID),%edi
 	lock
-	btsq	%rdi,PM_CPUS(%rcx)
+	btsq	%r9,PM_CPUS(%rcx)
 #ifdef DIAGNOSTIC
 	jc	_C_LABEL(switch_pmcpu_set)
 #endif
 
 switch_restored:
-	/* Restore cr0 (including FPU state). */
-	movl	PCB_CR0(%r13),%ecx
-#ifdef MULTIPROCESSOR
-	movq	PCB_FPCPU(%r13),%r8
-	cmpq	CPUVAR(SELF),%r8
-	jz	1f
-	orl	$CR0_TS,%ecx
-1:
-#endif
-	movq	%rcx,%cr0
-
 	SET_CURPCB(%r13)
 
 	/* Interrupts are okay again. */
 	sti
-
-switch_return:
-
 	popq	%r15
 	popq	%r14
 	popq	%r13
@@ -468,28 +491,25 @@ switch_return:
 ENTRY(cpu_idle_enter)
 	movq	_C_LABEL(cpu_idle_enter_fcn),%rax
 	cmpq	$0,%rax
-	je	1f
-	jmpq	*%rax
-1:
-	ret
-
-ENTRY(cpu_idle_cycle)
-	movq	_C_LABEL(cpu_idle_cycle_fcn),%rax
-	cmpq	$0,%rax
-	je	1f
-	call	*%rax
-	ret
-1:
-	sti
-	hlt
+	jne	retpoline_rax
 	ret
 
 ENTRY(cpu_idle_leave)
 	movq	_C_LABEL(cpu_idle_leave_fcn),%rax
 	cmpq	$0,%rax
-	je	1f
-	jmpq	*%rax
-1:
+	jne	retpoline_rax
+	ret
+
+/* placed here for correct static branch prediction in cpu_idle_* */
+NENTRY(retpoline_rax)
+	JMP_RETPOLINE(rax)
+
+ENTRY(cpu_idle_cycle)
+	movq	_C_LABEL(cpu_idle_cycle_fcn),%rax
+	cmpq	$0,%rax
+	jne	retpoline_rax
+	sti
+	hlt
 	ret
 
 	.globl	_C_LABEL(panic)
@@ -528,7 +548,7 @@ IDTVEC(syscall)
 	 * %rip and the original rflags has been copied to %r11.  %cs and
 	 * %ss have been updated to the kernel segments, but %rsp is still
 	 * the user-space value.
-	 * First order of business is to swap to the kernel gs.base so that
+	 * First order of business is to swap to the kernel GS.base so that
 	 * we can access our struct cpu_info and use the scratch space there
 	 * to switch to the kernel page tables (thank you, Intel), then
 	 * switch to our kernel stack.  Once that's in place we can
@@ -589,8 +609,17 @@ NENTRY(Xsyscall_untramp)
 
 	/* Could registers have been changed that require an iretq? */
 	testl	$MDP_IRET, P_MD_FLAGS(%r14)
-	jne	intr_fast_exit
+	jne	intr_user_exit_post_ast
 
+	/* Restore FPU/"extended CPU state" if it's not already in the CPU */
+	testl	$CPUF_USERXSTATE,CPUVAR(FLAGS)
+	jz	.Lsyscall_restore_xstate
+
+	/* Restore FS.base if it's not already in the CPU */
+	testl	$CPUF_USERSEGS,CPUVAR(FLAGS)
+	jz	.Lsyscall_restore_fsbase
+
+.Lsyscall_restore_registers:
 	movq	TF_RDI(%rsp),%rdi
 	movq	TF_RSI(%rsp),%rsi
 	movq	TF_R8(%rsp),%r8
@@ -602,17 +631,6 @@ NENTRY(Xsyscall_untramp)
 	movq	TF_R15(%rsp),%r15
 	movq	TF_RBP(%rsp),%rbp
 	movq	TF_RBX(%rsp),%rbx
-
-	/* Restore FS.base if it's not already in the CPU */
-	btsl	$CPUF_USERSEGS_BIT,CPUVAR(FLAGS)
-	jc	99f
-	movq	CPUVAR(CURPCB),%rdx
-	movq	PCB_FSBASE(%rdx),%rax
-	movq	%rax,%rdx
-	shrq	$32,%rdx
-	movl	$MSR_FSBASE,%ecx
-	wrmsr
-99:
 
 	/*
 	 * We need to finish reading from the trapframe, then switch
@@ -641,6 +659,37 @@ KUENTRY(syscall_trampback)
 	sysretq
 
 	.text
+	.align	16,0xcc
+	/* in this case, need FS.base but not xstate, rarely happens */
+.Lsyscall_restore_fsbase:	/* CPU doesn't have curproc's FS.base */
+	orl	$CPUF_USERSEGS,CPUVAR(FLAGS)
+	movq	CPUVAR(CURPCB),%rdi
+	jmp	.Lsyscall_restore_fsbase_real
+
+	.align	16,0xcc
+.Lsyscall_restore_xstate:	/* CPU doesn't have curproc's xstate */
+	orl	$(CPUF_USERXSTATE|CPUF_USERSEGS),CPUVAR(FLAGS)
+	movq	CPUVAR(CURPCB),%rdi
+	movq	xsave_mask(%rip),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
+#if PCB_SAVEFPU != 0
+	addq	$PCB_SAVEFPU,%rdi
+#endif
+	/* untouched state so can't fault */
+	CODEPATCH_START
+	.byte 0x48; fxrstor	(%rdi)		/* really fxrstor64 */
+	CODEPATCH_END(CPTAG_XRSTOR)
+#if PCB_SAVEFPU != 0
+	subq	$PCB_SAVEFPU,%rdi
+#endif
+.Lsyscall_restore_fsbase_real:
+	movq	PCB_FSBASE(%rdi),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
+	movl	$MSR_FSBASE,%ecx
+	wrmsr
+	jmp	.Lsyscall_restore_registers
 
 #ifdef DIAGNOSTIC
 .Lsyscall_spl_not_lowered:
@@ -669,21 +718,61 @@ NENTRY(proc_trampoline)
 #endif
 	movl	$IPL_NONE,CPUVAR(ILEVEL)
 	movq	%r13,%rdi
-	call	*%r12
+	movq	%r12,%rax
+	call	retpoline_rax
 	movq	CPUVAR(CURPROC),%r14
 	jmp	.Lsyscall_check_asts
 
 
 /*
- * Return via iretq, for real interrupts and signal returns
+ * Returning to userspace via iretq.  We do things in this order:
+ *  - check for ASTs
+ *  - restore FPU/"extended CPU state" if it's not already in the CPU
+ *  - DIAGNOSTIC: no more C calls after this, so check the SPL
+ *  - restore FS.base if it's not already in the CPU
+ *  - restore most registers
+ *  - update the iret frame from the trapframe
+ *  - finish reading from the trapframe
+ *  - switch to the trampoline stack	\
+ *  - jump to the .kutext segment	|-- Meltdown workaround
+ *  - switch to the user page tables	/
+ *  - swapgs
+ *  - iretq
  */
-NENTRY(intr_fast_exit)
+NENTRY(intr_user_exit)
 #ifdef DIAGNOSTIC
 	pushfq
 	popq	%rdx
 	testq	$PSL_I,%rdx
-	jnz	.Lintr_exit_not_blocked
+	jnz	.Lintr_user_exit_not_blocked
 #endif /* DIAGNOSTIC */
+
+	/* Check for ASTs */
+	CHECK_ASTPENDING(%r11)
+	je	intr_user_exit_post_ast
+	CLEAR_ASTPENDING(%r11)
+	sti
+	movq	%rsp,%rdi
+	call	_C_LABEL(ast)
+	cli
+	jmp	intr_user_exit
+
+intr_user_exit_post_ast:
+	/* Restore FPU/"extended CPU state" if it's not already in the CPU */
+	testl	$CPUF_USERXSTATE,CPUVAR(FLAGS)
+	jz	.Lintr_restore_xstate
+
+#ifdef DIAGNOSTIC
+	/* no more C calls after this, so check the SPL */
+	cmpl	$0,CPUVAR(ILEVEL)
+	jne	.Luser_spl_not_lowered
+#endif /* DIAGNOSTIC */
+
+	/* Restore FS.base if it's not already in the CPU */
+	testl	$CPUF_USERSEGS,CPUVAR(FLAGS)
+	jz	.Lintr_restore_fsbase
+
+.Lintr_restore_registers:
 	movq	TF_RDI(%rsp),%rdi
 	movq	TF_RSI(%rsp),%rsi
 	movq	TF_R8(%rsp),%r8
@@ -696,30 +785,7 @@ NENTRY(intr_fast_exit)
 	movq	TF_RBP(%rsp),%rbp
 	movq	TF_RBX(%rsp),%rbx
 
-	testq	$SEL_RPL,TF_CS(%rsp)
-	je	intr_exit_recurse		/* returning back to kernel? */
-
-	/* returning to userspace.  XXX fix up iret frame here */
-
-	/* restore FS.base if it's not already in the CPU */
-	btsl	$CPUF_USERSEGS_BIT,CPUVAR(FLAGS)
-	jc	99f
-	movq	CPUVAR(CURPCB),%rdx		/* for below */
-	movq	PCB_FSBASE(%rdx),%rax
-	movq	%rax,%rdx
-	shrq	$32,%rdx
-	movl	$MSR_FSBASE,%ecx
-	wrmsr
-99:
 	/*
-	 * Returning to userspace.  We need to go things in this order:
-	 *  - update the iret frame from the trapframe
-	 *  - finish reading from the trapframe
-	 *  - switch to the trampoline stack
-	 *  - jump to the .kutext segment
-	 *  - switch to the user page tables
-	 *  - swapgs
-	 *  - iretq
 	 * To get the final value for the register that was used
 	 * for the mov to %cr3, we need access to somewhere accessible
 	 * on the user page tables, so we save it in CPUVAR(SCRATCH)
@@ -757,7 +823,101 @@ KUENTRY(iretq_tramp)
 _C_LABEL(doreti_iret):
 	iretq
 
-NENTRY(intr_exit_recurse)
+	.text
+	.align	16,0xcc
+.Lintr_restore_xstate:		/* CPU doesn't have curproc's xstate */
+	orl	$CPUF_USERXSTATE,CPUVAR(FLAGS)
+	movq	CPUVAR(CURPCB),%rdi
+#if PCB_SAVEFPU != 0
+	addq	$PCB_SAVEFPU,%rdi
+#endif
+	movq	xsave_mask(%rip),%rsi
+	call	xrstor_user
+	testl	%eax,%eax
+	jnz	.Lintr_xrstor_faulted
+.Lintr_restore_fsbase:		/* CPU doesn't have curproc's FS.base */
+	orl	$CPUF_USERSEGS,CPUVAR(FLAGS)
+	movq	CPUVAR(CURPCB),%rdx
+	movq	PCB_FSBASE(%rdx),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
+	movl	$MSR_FSBASE,%ecx
+	wrmsr
+	jmp	.Lintr_restore_registers
+
+.Lintr_xrstor_faulted:
+	/*
+	 * xrstor faulted; we need to reset the FPU state and call trap()
+	 * to post a signal, which requires interrupts be enabled.
+	 */
+	sti
+	movq	proc0paddr(%rip),%rdi
+#if PCB_SAVEFPU != 0
+	addq	$PCB_SAVEFPU,%rdi
+#endif
+	CODEPATCH_START
+	.byte 0x48; fxrstor	(%rdi)		/* really fxrstor64 */
+	CODEPATCH_END(CPTAG_XRSTOR)
+	movq	$T_PROTFLT,TF_TRAPNO(%rsp)
+	jmp	recall_trap
+
+#ifdef DIAGNOSTIC
+.Lintr_user_exit_not_blocked:
+	movl	warn_once(%rip),%edi
+	testl	%edi,%edi
+	jnz	1f
+	incl	%edi
+	movl	%edi,warn_once(%rip)
+	leaq	.Lnot_blocked(%rip),%rdi
+	call	_C_LABEL(printf)
+#ifdef DDB
+	int	$3
+#endif /* DDB */
+1:	cli
+	jmp	intr_user_exit
+
+.Luser_spl_not_lowered:
+	sti
+	leaq	intr_spl_lowered(%rip),%rdi
+	movl	CPUVAR(ILEVEL),%esi
+	xorl	%edx,%edx		/* always SPL zero for userspace */
+	xorl	%eax,%eax
+	call	_C_LABEL(printf)
+#ifdef DDB
+	int	$3
+#endif /* DDB */
+	movl	$0,CPUVAR(ILEVEL)
+	cli
+	jmp	intr_user_exit
+
+	.section .rodata
+intr_spl_lowered:
+	.asciz	"WARNING: SPL NOT LOWERED ON TRAP EXIT %x %x\n"
+	.text
+#endif /* DIAGNOSTIC */
+
+
+/*
+ * Return to supervisor mode from trap or interrupt
+ */
+NENTRY(intr_fast_exit)
+#ifdef DIAGNOSTIC
+	pushfq
+	popq	%rdx
+	testq	$PSL_I,%rdx
+	jnz	.Lintr_exit_not_blocked
+#endif /* DIAGNOSTIC */
+	movq	TF_RDI(%rsp),%rdi
+	movq	TF_RSI(%rsp),%rsi
+	movq	TF_R8(%rsp),%r8
+	movq	TF_R9(%rsp),%r9
+	movq	TF_R10(%rsp),%r10
+	movq	TF_R12(%rsp),%r12
+	movq	TF_R13(%rsp),%r13
+	movq	TF_R14(%rsp),%r14
+	movq	TF_R15(%rsp),%r15
+	movq	TF_RBP(%rsp),%rbp
+	movq	TF_RBX(%rsp),%rbx
 	movq	TF_RDX(%rsp),%rdx
 	movq	TF_RCX(%rsp),%rcx
 	movq	TF_R11(%rsp),%r11
@@ -812,7 +972,6 @@ NENTRY(intr_exit_recurse)
 
 #ifdef DIAGNOSTIC
 .Lintr_exit_not_blocked:
-	xchgw	%bx, %bx
 	movl	warn_once(%rip),%edi
 	testl	%edi,%edi
 	jnz	1f
@@ -836,18 +995,71 @@ warn_once:
 	.text
 #endif
 
+/*
+ * FPU/"extended CPU state" handling
+ * 	int xrstor_user(sfp, mask)
+ *		load given state, returns 0/1 if okay/it trapped
+ *	void fpusave(sfp) 
+ *		save current state, but retain it in the FPU
+ *	void fpusavereset(sfp)
+ *		save current state and reset FPU to initial/kernel state
+ */
+
 ENTRY(xrstor_user)
 	movq	%rsi, %rdx
 	movl	%esi, %eax
 	shrq	$32, %rdx
 	.globl	xrstor_fault
 xrstor_fault:
-	xrstor	(%rdi)
+	CODEPATCH_START
+	.byte 0x48; fxrstor	(%rdi)		/* really fxrstor64 */
+	CODEPATCH_END(CPTAG_XRSTOR)
 	xorl	%eax, %eax
 	ret
 NENTRY(xrstor_resume)
 	movl	$1, %eax
 	ret
+END(xrstor_user)
+
+ENTRY(fpusave)
+	movq	xsave_mask(%rip),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
+	CODEPATCH_START
+	.byte 0x48; fxsave	(%rdi)		/* really fxsave64 */
+	CODEPATCH_END(CPTAG_XSAVE)
+	ret
+END(fpusave)
+
+ENTRY(fpusavereset)
+	movq	xsave_mask(%rip),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
+	CODEPATCH_START
+	.byte 0x48; fxsave	(%rdi)		/* really fxsave64 */
+	CODEPATCH_END(CPTAG_XSAVE)
+	movq	proc0paddr(%rip),%rdi
+#if PCB_SAVEFPU != 0
+	addq	$PCB_SAVEFPU,%rdi
+#endif
+	CODEPATCH_START
+	.byte 0x48; fxrstor	(%rdi)		/* really fxrstor64 */
+	CODEPATCH_END(CPTAG_XRSTOR)
+	ret
+END(fpusavereset)
+
+	.section .rodata
+	.globl	_C_LABEL(_xrstor)
+_C_LABEL(_xrstor):
+	.byte 0x48; xrstor	(%rdi)		/* really xrstor64 */
+
+	.globl	_C_LABEL(_xsave)
+_C_LABEL(_xsave):
+	.byte 0x48; xsave	(%rdi)		/* really xsave64 */
+
+	.globl	_C_LABEL(_xsaveopt)
+_C_LABEL(_xsaveopt):
+	.byte 0x48; xsaveopt	(%rdi)		/* really xsaveopt64 */
 
 ENTRY(pagezero)
 	movq    $-PAGE_SIZE,%rdx

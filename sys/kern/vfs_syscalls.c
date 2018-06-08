@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.283 2018/05/08 08:53:41 mpi Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.287 2018/06/07 13:37:27 visa Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -230,7 +230,7 @@ sys_mount(struct proc *p, void *v, register_t *retval)
 
 update:
 	/* Ensure that the parent mountpoint does not get unmounted. */
-	error = vfs_busy(vp->v_mount, VB_READ|VB_NOWAIT);
+	error = vfs_busy(vp->v_mount, VB_READ|VB_NOWAIT|VB_DUPOK);
 	if (error) {
 		if (mp->mnt_flag & MNT_UPDATE) {
 			mp->mnt_flag = mntflag;
@@ -439,7 +439,7 @@ dounmount(struct mount *mp, int flags, struct proc *p)
 				error = EBUSY;
 				goto err;
 			}
-			error = vfs_busy(mp, VB_WRITE|VB_WAIT);
+			error = vfs_busy(mp, VB_WRITE|VB_WAIT|VB_DUPOK);
 			if (error) {
 				if ((flags & MNT_DOOMED)) {
 					/*
@@ -1337,6 +1337,7 @@ domknodat(struct proc *p, int fd, const char *path, mode_t mode, dev_t dev)
 out:
 	if (!error) {
 		error = VOP_MKNOD(nd.ni_dvp, &nd.ni_vp, &nd.ni_cnd, &vattr);
+		vput(nd.ni_dvp);
 	} else {
 		VOP_ABORTOP(nd.ni_dvp, &nd.ni_cnd);
 		if (nd.ni_dvp == vp)

@@ -1,4 +1,4 @@
-/* $OpenBSD: auth2-pubkey.c,v 1.77 2018/03/03 03:15:51 djm Exp $ */
+/* $OpenBSD: auth2-pubkey.c,v 1.79 2018/06/06 18:29:18 markus Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  *
@@ -316,14 +316,16 @@ static int
 process_principals(struct ssh *ssh, FILE *f, const char *file,
     const struct sshkey_cert *cert, struct sshauthopt **authoptsp)
 {
-	char loc[256], line[SSH_MAX_PUBKEY_BYTES], *cp, *ep;
+	char loc[256], *line = NULL, *cp, *ep;
+	size_t linesize = 0;
 	u_long linenum = 0;
 	u_int found_principal = 0;
 
 	if (authoptsp != NULL)
 		*authoptsp = NULL;
 
-	while (read_keyfile_line(f, file, line, sizeof(line), &linenum) != -1) {
+	while (getline(&line, &linesize, f) != -1) {
+		linenum++;
 		/* Always consume entire input */
 		if (found_principal)
 			continue;
@@ -341,6 +343,7 @@ process_principals(struct ssh *ssh, FILE *f, const char *file,
 		if (check_principals_line(ssh, cp, cert, loc, authoptsp) == 0)
 			found_principal = 1;
 	}
+	free(line);
 	return found_principal;
 }
 
@@ -384,7 +387,7 @@ match_principals_command(struct ssh *ssh, struct passwd *user_pw,
 	pid_t pid;
 	char *tmp, *username = NULL, *command = NULL, **av = NULL;
 	char *ca_fp = NULL, *key_fp = NULL, *catext = NULL, *keytext = NULL;
-	char serial_s[16];
+	char serial_s[16], uidstr[32];
 	void (*osigchld)(int);
 
 	if (authoptsp != NULL)
@@ -444,8 +447,11 @@ match_principals_command(struct ssh *ssh, struct passwd *user_pw,
 	}
 	snprintf(serial_s, sizeof(serial_s), "%llu",
 	    (unsigned long long)cert->serial);
+	snprintf(uidstr, sizeof(uidstr), "%llu",
+	    (unsigned long long)user_pw->pw_uid);
 	for (i = 1; i < ac; i++) {
 		tmp = percent_expand(av[i],
+		    "U", uidstr,
 		    "u", user_pw->pw_name,
 		    "h", user_pw->pw_dir,
 		    "t", sshkey_ssh_name(key),
@@ -681,14 +687,16 @@ static int
 check_authkeys_file(struct ssh *ssh, struct passwd *pw, FILE *f,
     char *file, struct sshkey *key, struct sshauthopt **authoptsp)
 {
-	char *cp, line[SSH_MAX_PUBKEY_BYTES], loc[256];
+	char *cp, *line = NULL, loc[256];
+	size_t linesize = 0;
 	int found_key = 0;
 	u_long linenum = 0;
 
 	if (authoptsp != NULL)
 		*authoptsp = NULL;
 
-	while (read_keyfile_line(f, file, line, sizeof(line), &linenum) != -1) {
+	while (getline(&line, &linesize, f) != -1) {
+		linenum++;
 		/* Always consume entire file */
 		if (found_key)
 			continue;
@@ -702,6 +710,7 @@ check_authkeys_file(struct ssh *ssh, struct passwd *pw, FILE *f,
 		if (check_authkey_line(ssh, pw, key, cp, loc, authoptsp) == 0)
 			found_key = 1;
 	}
+	free(line);
 	return found_key;
 }
 
@@ -849,7 +858,7 @@ user_key_command_allowed2(struct ssh *ssh, struct passwd *user_pw,
 	int i, uid_swapped = 0, ac = 0;
 	pid_t pid;
 	char *username = NULL, *key_fp = NULL, *keytext = NULL;
-	char *tmp, *command = NULL, **av = NULL;
+	char uidstr[32], *tmp, *command = NULL, **av = NULL;
 	void (*osigchld)(int);
 
 	if (authoptsp != NULL)
@@ -899,8 +908,11 @@ user_key_command_allowed2(struct ssh *ssh, struct passwd *user_pw,
 		    command);
 		goto out;
 	}
+	snprintf(uidstr, sizeof(uidstr), "%llu",
+	    (unsigned long long)user_pw->pw_uid);
 	for (i = 1; i < ac; i++) {
 		tmp = percent_expand(av[i],
+		    "U", uidstr,
 		    "u", user_pw->pw_name,
 		    "h", user_pw->pw_dir,
 		    "t", sshkey_ssh_name(key),

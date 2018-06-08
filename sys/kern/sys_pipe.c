@@ -1,4 +1,4 @@
-/*	$OpenBSD: sys_pipe.c,v 1.78 2018/04/10 09:17:45 mpi Exp $	*/
+/*	$OpenBSD: sys_pipe.c,v 1.80 2018/06/05 09:29:05 mpi Exp $	*/
 
 /*
  * Copyright (c) 1996 John S. Dyson

@@ -1,4 +1,4 @@
-/* $OpenBSD: auth.c,v 1.128 2018/05/25 07:11:01 djm Exp $ */
+/* $OpenBSD: auth.c,v 1.130 2018/06/06 18:23:32 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  *
@@ -332,11 +332,13 @@ auth_root_allowed(struct ssh *ssh, const char *method)
 char *
 expand_authorized_keys(const char *filename, struct passwd *pw)
 {
-	char *file, ret[PATH_MAX];
+	char *file, uidstr[32], ret[PATH_MAX];
 	int i;
 
+	snprintf(uidstr, sizeof(uidstr), "%llu",
+	    (unsigned long long)pw->pw_uid);
 	file = percent_expand(filename, "h", pw->pw_dir,
-	    "u", pw->pw_name, (char *)NULL);
+	    "u", pw->pw_name, "U", uidstr, (char *)NULL);
 
 	/*
 	 * Ensure that filename starts anchored. If not, be backward
@@ -869,17 +871,20 @@ auth_log_authopts(const char *loc, const struct sshauthopt *opts, int do_remote)
 	int do_env = options.permit_user_env && opts->nenv > 0;
 	int do_permitopen = opts->npermitopen > 0 &&
 	    (options.allow_tcp_forwarding & FORWARD_LOCAL) != 0;
+	int do_permitlisten = opts->npermitlisten > 0 &&
+	    (options.allow_tcp_forwarding & FORWARD_REMOTE) != 0;
 	size_t i;
 	char msg[1024], buf[64];
 
 	snprintf(buf, sizeof(buf), "%d", opts->force_tun_device);
 	/* Try to keep this alphabetically sorted */
-	snprintf(msg, sizeof(msg), "key options:%s%s%s%s%s%s%s%s%s%s%s%s",
+	snprintf(msg, sizeof(msg), "key options:%s%s%s%s%s%s%s%s%s%s%s%s%s",
 	    opts->permit_agent_forwarding_flag ? " agent-forwarding" : "",
 	    opts->force_command == NULL ? "" : " command",
 	    do_env ?  " environment" : "",
 	    opts->valid_before == 0 ? "" : "expires",
 	    do_permitopen ?  " permitopen" : "",
+	    do_permitlisten ?  " permitlisten" : "",
 	    opts->permit_port_forwarding_flag ? " port-forwarding" : "",
 	    opts->cert_principals == NULL ? "" : " principals",
 	    opts->permit_pty_flag ? " pty" : "",
@@ -913,10 +918,16 @@ auth_log_authopts(const char *loc, const struct sshauthopt *opts, int do_remote)
 	}
 	if (opts->force_command != NULL)
 		debug("%s: forced command: \"%s\"", loc, opts->force_command);
-	if ((options.allow_tcp_forwarding & FORWARD_LOCAL) != 0) {
+	if (do_permitopen) {
 		for (i = 0; i < opts->npermitopen; i++) {
 			debug("%s: permitted open: %s",
 			    loc, opts->permitopen[i]);
+		}
+	}
+	if (do_permitlisten) {
+		for (i = 0; i < opts->npermitlisten; i++) {
+			debug("%s: permitted listen: %s",
+			    loc, opts->permitlisten[i]);
 		}
 	}
 }

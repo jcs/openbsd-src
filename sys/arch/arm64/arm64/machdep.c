@@ -1,4 +1,4 @@
-/* $OpenBSD: machdep.c,v 1.33 2018/05/15 11:12:35 kettenis Exp $ */
+/* $OpenBSD: machdep.c,v 1.35 2018/05/30 11:58:04 kettenis Exp $ */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>
  *
@@ -1135,14 +1135,13 @@ remap_efi_runtime(EFI_PHYSICAL_ADDRESS system_table)
 		printf("SetVirtualAddressMap failed: %lu\n", status);
 }
 
-int comcnspeed = B115200;
-char bootargs[MAX_BOOT_STRING];
+char bootargs[256];
 
 void
 collect_kernel_args(char *args)
 {
 	/* Make a local copy of the bootargs */
-	strncpy(bootargs, args, MAX_BOOT_STRING - sizeof(int));
+	strlcpy(bootargs, args, sizeof(bootargs));
 }
 
 void
@@ -1194,12 +1193,6 @@ process_kernel_args(void)
 			break;
 		case 's':
 			fl |= RB_SINGLE;
-			break;
-		case '1':
-			comcnspeed = B115200;
-			break;
-		case '9':
-			comcnspeed = B9600;
 			break;
 		default:
 			printf("unknown option `%c'\n", *cp);

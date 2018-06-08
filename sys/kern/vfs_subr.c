@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_subr.c,v 1.273 2018/05/27 06:02:14 visa Exp $	*/
+/*	$OpenBSD: vfs_subr.c,v 1.275 2018/06/06 19:02:38 bluhm Exp $	*/
 /*	$NetBSD: vfs_subr.c,v 1.53 1996/04/22 01:39:13 christos Exp $	*/
 
 /*
@@ -187,6 +187,11 @@ vfs_busy(struct mount *mp, int flags)
 		rwflags |= RW_SLEEPFAIL;
 	else
 		rwflags |= RW_NOSLEEP;
+
+#ifdef WITNESS
+	if (flags & VB_DUPOK)
+		rwflags |= RW_DUPOK;
+#endif
 
 	if (rw_enter(&mp->mnt_lock, rwflags))
 		return (EBUSY);
@@ -1598,11 +1603,12 @@ vfs_stall(struct proc *p, int stall)
 
 	/*
 	 * The loop variable mp is protected by vfs_busy() so that it cannot
-	 * be unmounted while VFS_SYNC() sleeps.
+	 * be unmounted while VFS_SYNC() sleeps.  Traverse forward to keep the
+	 * lock order consistent with dounmount().
 	 */
-	TAILQ_FOREACH_REVERSE(mp, &mountlist, mntlist, mnt_list) {
+	TAILQ_FOREACH(mp, &mountlist, mnt_list) {
 		if (stall) {
-			error = vfs_busy(mp, VB_WRITE|VB_WAIT);
+			error = vfs_busy(mp, VB_WRITE|VB_WAIT|VB_DUPOK);
 			if (error) {
 				printf("%s: busy\n", mp->mnt_stat.f_mntonname);
 				allerror = error;

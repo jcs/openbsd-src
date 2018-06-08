@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1065 2018/05/10 08:52:01 bluhm Exp $ */
+/*	$OpenBSD: pf.c,v 1.1067 2018/06/04 12:22:45 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -400,7 +400,8 @@ pf_set_protostate(struct pf_state *s, int which, u_int8_t newstate)
 
 	if (s->src.state == newstate)
 		return;
-	if (s->key[PF_SK_STACK]->proto == IPPROTO_TCP &&
+	if (s->key[PF_SK_STACK] != NULL &&
+	    s->key[PF_SK_STACK]->proto == IPPROTO_TCP &&
 	    !(TCPS_HAVEESTABLISHED(s->src.state) ||
 	    s->src.state == TCPS_CLOSED) &&
 	    (TCPS_HAVEESTABLISHED(newstate) || newstate == TCPS_CLOSED))
@@ -6928,7 +6929,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 			    pf_synflood_check(&pd)) {
 				pf_syncookie_send(&pd);
 				action = PF_DROP;
-				goto done;
+				goto unlock;
 			}
 			if ((pd.hdr.tcp.th_flags & TH_ACK) && pd.p_len == 0)
 				pqid = 1;

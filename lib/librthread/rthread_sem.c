@@ -1,6 +1,7 @@
-/*	$OpenBSD: rthread_sem.c,v 1.28 2018/04/27 06:47:34 guenther Exp $ */
+/*	$OpenBSD: rthread_sem.c,v 1.29 2018/06/08 13:53:01 pirofti Exp $ */
 /*
  * Copyright (c) 2004,2005,2013 Ted Unangst <tedu@openbsd.org>
+ * Copyright (c) 2018 Paul Irofti <pirofti@openbsd.org>
  * All Rights Reserved.
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -19,6 +20,9 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/atomic.h>
+#include <sys/time.h>
+#include <sys/futex.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -33,6 +37,7 @@
 
 #include "rthread.h"
 #include "cancel.h"		/* in libc/include */
+#include "synch.h"
 
 #define SHARED_IDENT ((void *)-1)
 
@@ -56,53 +61,41 @@ int
 _sem_wait(sem_t sem, int can_eintr, const struct timespec *abstime,
     int *delayed_cancel)
 {
-	void *ident = (void *)&sem->waitcount;
-	int r;
+	int r = 0;
+	int v, ov;
 
-	if (sem->shared)
-		ident = SHARED_IDENT;
+	atomic_inc_int(&sem->waitcount);
+	for (;;) {
+		while ((v = sem->value) > 0) {
+			ov = atomic_cas_uint(&sem->value, v, v - 1);
+			if (ov == v) {
+				membar_enter_after_atomic();
+				atomic_dec_int(&sem->waitcount);
+				return 0;
+			}
+		}
+		if (r)
+			break;
 
-	_spinlock(&sem->lock);
-	if (sem->value) {
-		sem->value--;
-		r = 0;
-	} else {
-		sem->waitcount++;
-		do {
-			r = __thrsleep(ident, CLOCK_REALTIME, abstime,
-			    &sem->lock, delayed_cancel);
-			_spinlock(&sem->lock);
-			/* ignore interruptions other than cancelation */
-			if ((r == ECANCELED && *delayed_cancel == 0) ||
-			    (r == EINTR && !can_eintr))
-				r = 0;
-		} while (r == 0 && sem->value == 0);
-		sem->waitcount--;
-		if (r == 0)
-			sem->value--;
+		r = _twait(&sem->value, 0, CLOCK_REALTIME, abstime);
+		/* ignore interruptions other than cancelation */
+		if ((r == ECANCELED && *delayed_cancel == 0) ||
+		    (r == EINTR && !can_eintr) || r == EAGAIN)
+			r = 0;
 	}
-	_spinunlock(&sem->lock);
-	return (r);
+	atomic_dec_int(&sem->waitcount);
+
+	return r;
 }
 
 /* always increment count */
 int
 _sem_post(sem_t sem)
 {
-	void *ident = (void *)&sem->waitcount;
-	int rv = 0;
-
-	if (sem->shared)
-		ident = SHARED_IDENT;
-
-	_spinlock(&sem->lock);
-	sem->value++;
-	if (sem->waitcount) {
-		__thrwakeup(ident, 1);
-		rv = 1;
-	}
-	_spinunlock(&sem->lock);
-	return (rv);
+	membar_exit_before_atomic();
+	atomic_inc_int(&sem->value);
+	_wake(&sem->value, 1);
+	return 0;
 }
 
 /*
@@ -158,7 +151,6 @@ sem_init(sem_t *semp, int pshared, unsigned int value)
 		errno = ENOSPC;
 		return (-1);
 	}
-	sem->lock = _SPINLOCK_UNLOCKED;
 	sem->value = value;
 	*semp = sem;
 
@@ -205,9 +197,7 @@ sem_getvalue(sem_t *semp, int *sval)
 		return (-1);
 	}
 
-	_spinlock(&sem->lock);
 	*sval = sem->value;
-	_spinunlock(&sem->lock);
 
 	return (0);
 }
@@ -251,6 +241,8 @@ sem_wait(sem_t *semp)
 
 	if (r) {
 		errno = r;
+		_rthread_debug(1, "%s: v=%d errno=%d\n", __func__,
+		    sem->value, errno);
 		return (-1);
 	}
 
@@ -267,7 +259,7 @@ sem_timedwait(sem_t *semp, const struct timespec *abstime)
 	PREP_CANCEL_POINT(tib);
 
 	if (!semp || !(sem = *semp) || abstime == NULL ||
-	    abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) {
+	   abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -282,6 +274,8 @@ sem_timedwait(sem_t *semp, const struct timespec *abstime)
 
 	if (r) {
 		errno = r == EWOULDBLOCK ? ETIMEDOUT : r;
+		_rthread_debug(1, "%s: v=%d errno=%d\n", __func__,
+		    sem->value, errno);
 		return (-1);
 	}
 
@@ -292,27 +286,24 @@ int
 sem_trywait(sem_t *semp)
 {
 	sem_t sem;
-	int r;
+	int v, ov;
 
 	if (!semp || !(sem = *semp)) {
 		errno = EINVAL;
 		return (-1);
 	}
 
-	_spinlock(&sem->lock);
-	if (sem->value) {
-		sem->value--;
-		r = 0;
-	} else
-		r = EAGAIN;
-	_spinunlock(&sem->lock);
-
-	if (r) {
-		errno = r;
-		return (-1);
+	while ((v = sem->value) > 0) {
+		ov = atomic_cas_uint(&sem->value, v, v - 1);
+		if (ov == v) {
+			membar_enter_after_atomic();
+			return (0);
+		}
 	}
 
-	return (0);
+	errno = EAGAIN;
+	_rthread_debug(1, "%s: v=%d errno=%d\n", __func__, sem->value, errno);
+	return (-1);
 }
 
 
@@ -403,7 +394,6 @@ sem_open(const char *name, int oflag, ...)
 		return (SEM_FAILED);
 	}
 	if (created) {
-		sem->lock = _SPINLOCK_UNLOCKED;
 		sem->value = value;
 		sem->shared = 1;
 	}

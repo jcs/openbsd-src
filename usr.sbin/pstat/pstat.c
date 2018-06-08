@@ -1,4 +1,4 @@
-/*	$OpenBSD: pstat.c,v 1.114 2018/01/02 06:38:45 guenther Exp $	*/
+/*	$OpenBSD: pstat.c,v 1.116 2018/06/05 09:29:05 mpi Exp $	*/
 /*	$NetBSD: pstat.c,v 1.27 1996/10/23 22:50:06 cgd Exp $	*/
 
 /*-

@@ -1,4 +1,4 @@
-/*	$OpenBSD: html.c,v 1.99 2018/05/25 20:23:39 schwarze Exp $ */
+/*	$OpenBSD: html.c,v 1.101 2018/05/29 02:10:05 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2011-2015, 2017, 2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -285,10 +285,16 @@ html_make_id(const struct roff_node *n, int unique)
 	if (buf == NULL)
 		return NULL;
 
-	/* http://www.w3.org/TR/html5/dom.html#the-id-attribute */
+	/*
+	 * In ID attributes, only use ASCII characters that are
+	 * permitted in URL-fragment strings according to the
+	 * explicit list at:
+	 * https://url.spec.whatwg.org/#url-fragment-string
+	 */
 
 	for (cp = buf; *cp != '\0'; cp++)
-		if (*cp == ' ')
+		if (isalnum((unsigned char)*cp) == 0 &&
+		    strchr("!$&'()*+,-./:;=?@_~", *cp) == NULL)
 			*cp = '_';
 
 	if (unique == 0)
@@ -686,12 +692,6 @@ print_otag(struct html *h, enum htmltag tag, const char *fmt, ...)
 				su = &mysu;
 				a2width(arg2, su);
 			}
-			if (*fmt == '*') {
-				if (su != NULL && su->unit == SCALE_EN &&
-				    su->scale > 5.9 && su->scale < 6.1)
-					su = NULL;
-				fmt++;
-			}
 			if (*fmt == '+') {
 				if (su != NULL) {
 					/* Make even bold text fit. */
@@ -699,11 +699,6 @@ print_otag(struct html *h, enum htmltag tag, const char *fmt, ...)
 					/* Add padding. */
 					su->scale += 3.0;
 				}
-				fmt++;
-			}
-			if (*fmt == '-') {
-				if (su != NULL)
-					su->scale *= -1.0;
 				fmt++;
 			}
 			break;

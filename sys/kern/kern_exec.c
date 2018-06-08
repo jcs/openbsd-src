@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_exec.c,v 1.195 2018/04/28 03:13:04 visa Exp $	*/
+/*	$OpenBSD: kern_exec.c,v 1.197 2018/06/05 09:29:05 mpi Exp $	*/
 /*	$NetBSD: kern_exec.c,v 1.75 1996/02/09 18:59:28 christos Exp $	*/
 
 /*-

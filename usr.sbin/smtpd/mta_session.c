@@ -1,4 +1,4 @@
-/*	$OpenBSD: mta_session.c,v 1.98 2017/05/24 21:27:32 gilles Exp $	*/
+/*	$OpenBSD: mta_session.c,v 1.102 2018/06/07 11:31:51 eric Exp $	*/
 
 /*
  * Copyright (c) 2008 Pierre-Yves Ritschard <pyr@openbsd.org>
@@ -23,6 +23,7 @@
 #include <sys/queue.h>
 #include <sys/tree.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 
 #include <ctype.h>
@@ -99,6 +100,7 @@ enum mta_state {
 #define MTA_EXT_AUTH		0x04
 #define MTA_EXT_AUTH_PLAIN     	0x08
 #define MTA_EXT_AUTH_LOGIN     	0x10
+#define MTA_EXT_SIZE     	0x20
 
 struct mta_session {
 	uint64_t		 id;
@@ -117,6 +119,8 @@ struct mta_session {
 	struct event		 ev;
 	struct io		*io;
 	int			 ext;
+
+	size_t			 ext_size;
 
 	size_t			 msgtried;
 	size_t			 msgcount;
@@ -191,7 +195,7 @@ mta_session(struct mta_relay *relay, struct mta_route *route)
 
 	mta_session_init();
 
-	s = xcalloc(1, sizeof *s, "mta_session");
+	s = xcalloc(1, sizeof *s);
 	s->id = generate_uid();
 	s->relay = relay;
 	s->route = route;
@@ -259,7 +263,8 @@ mta_session_imsg(struct mproc *p, struct imsg *imsg)
 	const char		*name;
 	void			*ssl;
 	int			 dnserror, status;
-
+	struct stat		 sb;
+	
 	switch (imsg->hdr.type) {
 
 	case IMSG_MTA_OPEN_MESSAGE:
@@ -282,6 +287,25 @@ mta_session_imsg(struct mproc *p, struct imsg *imsg)
 			return;
 		}
 
+		if (s->ext & MTA_EXT_SIZE) {
+			if (fstat(imsg->fd, &sb) == -1) {
+				log_debug("debug: mta: failed to stat msg fd");
+				mta_flush_task(s, IMSG_MTA_DELIVERY_TEMPFAIL,
+				    "Could not stat message fd", 0, 0);
+				mta_enter_state(s, MTA_READY);
+				close(imsg->fd);
+				return;
+			}
+			if (sb.st_size > (off_t)s->ext_size) {
+				log_debug("debug: mta: message too large for peer");
+				mta_flush_task(s, IMSG_MTA_DELIVERY_PERMFAIL,
+				    "message too large for peer", 0, 0);
+				mta_enter_state(s, MTA_READY);
+				close(imsg->fd);
+				return;
+			}
+		}
+		
 		s->datafp = fdopen(imsg->fd, "r");
 		if (s->datafp == NULL)
 			fatal("mta: fdopen");
@@ -305,7 +329,7 @@ mta_session_imsg(struct mproc *p, struct imsg *imsg)
 		h = s->route->dst;
 		h->lastptrquery = time(NULL);
 		if (name)
-			h->ptrname = xstrdup(name, "mta: ptr");
+			h->ptrname = xstrdup(name);
 		waitq_run(&h->ptrname, h->ptrname);
 		return;
 
@@ -332,9 +356,9 @@ mta_session_imsg(struct mproc *p, struct imsg *imsg)
 			}
 		}
 
-		resp_ca_cert = xmemdup(imsg->data, sizeof *resp_ca_cert, "mta:ca_cert");
+		resp_ca_cert = xmemdup(imsg->data, sizeof *resp_ca_cert);
 		resp_ca_cert->cert = xstrdup((char *)imsg->data +
-		    sizeof *resp_ca_cert, "mta:ca_cert");
+		    sizeof *resp_ca_cert);
 		ssl = ssl_mta_init(resp_ca_cert->name,
 		    resp_ca_cert->cert, resp_ca_cert->cert_len, env->sc_tls_ciphers);
 		if (ssl == NULL)
@@ -353,7 +377,7 @@ mta_session_imsg(struct mproc *p, struct imsg *imsg)
 
 		if (resp_ca_vrfy->status == CA_OK)
 			s->flags |= MTA_VERIFIED;
-		else if (s->relay->flags & F_TLS_VERIFY) {
+		else if (s->relay->flags & RELAY_TLS_VERIFY) {
 			errno = 0;
 			mta_error(s, "SSL certificate check failed");
 			mta_free(s);
@@ -377,7 +401,7 @@ mta_session_imsg(struct mproc *p, struct imsg *imsg)
 			return;
 
 		if (status == LKA_OK) {
-			s->helo = xstrdup(name, "mta_session_imsg");
+			s->helo = xstrdup(name);
 			mta_connect(s);
 		} else {
 			mta_source_error(s->relay, s->route,
@@ -489,9 +513,9 @@ mta_connect(struct mta_session *s)
 			return;
 		}
 		else if (s->relay->heloname)
-			s->helo = xstrdup(s->relay->heloname, "mta_connect");
+			s->helo = xstrdup(s->relay->heloname);
 		else
-			s->helo = xstrdup(env->sc_hostname, "mta_connect");
+			s->helo = xstrdup(env->sc_hostname);
 	}
 
 	if (s->io) {
@@ -1206,6 +1230,11 @@ mta_io(struct io *io, int evt, void *arg)
 				s->ext |= MTA_EXT_PIPELINING;
 			else if (strcmp(msg, "DSN") == 0)
 				s->ext |= MTA_EXT_DSN;
+			else if (strncmp(msg, "SIZE ", 5) == 0) {
+				s->ext_size = strtonum(msg+5, 0, UINT32_MAX, &error);
+				if (error == NULL)
+					s->ext |= MTA_EXT_SIZE;
+			}
 		}
 
 		/* continuation reply, we parse out the repeating statuses and ESC */

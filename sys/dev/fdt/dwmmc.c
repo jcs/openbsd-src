@@ -1,4 +1,4 @@
-/*	$OpenBSD: dwmmc.c,v 1.10 2018/05/26 21:17:21 kettenis Exp $	*/
+/*	$OpenBSD: dwmmc.c,v 1.15 2018/06/03 17:26:31 kettenis Exp $	*/
 /*
  * Copyright (c) 2017 Mark Kettenis
  *
@@ -31,6 +31,7 @@
 #include <dev/ofw/fdt.h>
 
 #include <dev/sdmmc/sdmmcvar.h>
+#include <dev/sdmmc/sdmmc_ioreg.h>
 
 #define SDMMC_CTRL		0x0000
 #define  SDMMC_CTRL_USE_INTERNAL_DMAC	(1 << 25)
@@ -98,6 +99,9 @@
 #define SDMMC_STATUS_FIFO_COUNT(x)	(((x) >> 17) & 0x1fff)
 #define  SDMMC_STATUS_DATA_BUSY		(1 << 9)
 #define SDMMC_FIFOTH		0x004c
+#define  SDMMC_FIFOTH_MSIZE_SHIFT	28
+#define  SDMMC_FIFOTH_RXWM_SHIFT	16
+#define  SDMMC_FIFOTH_TXWM_SHIFT	0
 #define SDMMC_CDETECT		0x0050
 #define  SDMMC_CDETECT_CARD_DETECT_0	(1 << 0)
 #define SDMMC_WRTPRT		0x0054
@@ -177,6 +181,7 @@ struct dwmmc_softc {
 	uint32_t		sc_fifo_width;
 	void (*sc_read_data)(struct dwmmc_softc *, u_char *, int);
 	void (*sc_write_data)(struct dwmmc_softc *, u_char *, int);
+	int			sc_blklen;
 
 	bus_dmamap_t		sc_desc_map;
 	bus_dma_segment_t	sc_desc_segs[1];
@@ -229,6 +234,7 @@ struct sdmmc_chip_functions dwmmc_chip_functions = {
 	.card_intr_ack = dwmmc_card_intr_ack,
 };
 
+void	dwmmc_pio_mode(struct dwmmc_softc *);
 int	dwmmc_alloc_descriptors(struct dwmmc_softc *);
 void	dwmmc_init_descriptors(struct dwmmc_softc *);
 void	dwmmc_transfer_data(struct dwmmc_softc *, struct sdmmc_command *);
@@ -254,7 +260,8 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	struct dwmmc_softc *sc = (struct dwmmc_softc *)self;
 	struct fdt_attach_args *faa = aux;
 	struct sdmmcbus_attach_args saa;
-	uint32_t hcon, ciu_div, width;
+	uint32_t freq, div = 0;
+	uint32_t hcon, width;
 	int error, timeout;
 
 	if (faa->fa_nreg < 1) {
@@ -304,9 +311,17 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
+	/* Some Rockchip variants pre-divide the clock. */
+	if (OF_is_compatible(faa->fa_node, "rockchip,rk3288-dw-mshc"))
+		div = 1;
+
+	freq = OF_getpropint(faa->fa_node, "clock-frequency", 0);
+	if (freq > 0)
+		clock_set_frequency(faa->fa_node, "ciu", (div + 1) * freq);
+
 	sc->sc_clkbase = clock_get_frequency(faa->fa_node, "ciu");
-	ciu_div = OF_getpropint(faa->fa_node, "samsung,dw-mshc-ciu-div", 0);
-	sc->sc_clkbase /= (ciu_div + 1);
+	div = OF_getpropint(faa->fa_node, "samsung,dw-mshc-ciu-div", div);
+	sc->sc_clkbase /= (div + 1);
 
 	sc->sc_ih = arm_intr_establish_fdt(faa->fa_node, IPL_BIO,
 	    dwmmc_intr, sc, sc->sc_dev.dv_xname);
@@ -334,16 +349,15 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	if (timeout == 0)
 		printf("%s: reset failed\n", sc->sc_dev.dv_xname);
 
-	/* Disable DMA. */
-	HCLR4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
-	    SDMMC_CTRL_DMA_ENABLE);
-
 	/* Enable interrupts, but mask them all. */
 	HWRITE4(sc, SDMMC_INTMASK, 0);
 	HWRITE4(sc, SDMMC_RINTSTS, 0xffffffff);
 	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_INT_ENABLE);
 
 	dwmmc_bus_width(sc, 1);
+
+	/* Start out in non-DMA mode. */
+	dwmmc_pio_mode(sc);
 
 	sc->sc_dmat = faa->fa_dmat;
 	dwmmc_alloc_descriptors(sc);
@@ -363,14 +377,21 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	saa.dmat = sc->sc_dmat;
 	saa.dmap = sc->sc_dmap;
 
+	if (OF_getproplen(sc->sc_node, "cap-mmc-highspeed") == 0)
+		saa.caps |= SMC_CAPS_MMC_HIGHSPEED;
+	if (OF_getproplen(sc->sc_node, "cap-sd-highspeed") == 0)
+		saa.caps |= SMC_CAPS_SD_HIGHSPEED;
+
 	width = OF_getpropint(faa->fa_node, "bus-width", 1);
 	if (width >= 8)
 		saa.caps |= SMC_CAPS_8BIT_MODE;
 	if (width >= 4)
 		saa.caps |= SMC_CAPS_4BIT_MODE;
 
-	/* XXX DMA doesn't work on Samsung Exynos yet. */
-	if (!OF_is_compatible(faa->fa_node, "samsung,exynos5420-dw-mshc"))
+	/* XXX DMA doesn't work on all variants yet. */
+	if (OF_is_compatible(faa->fa_node, "rockchip,rk3328-dw-mshc") ||
+	    OF_is_compatible(faa->fa_node, "rockchip,rk3399-dw-mshc") ||
+	    OF_is_compatible(faa->fa_node, "samsung,exynos5420-dw-mshc"))
 		saa.caps |= SMC_CAPS_DMA;
 
 	sc->sc_sdmmc = config_found(self, &saa, NULL);
@@ -630,7 +651,46 @@ dwmmc_bus_width(sdmmc_chipset_handle_t sch, int width)
 	return 0;
 }
 
-int
+void
+dwmmc_pio_mode(struct dwmmc_softc *sc)
+{
+	/* Disable DMA. */
+	HCLR4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
+	    SDMMC_CTRL_DMA_ENABLE);
+
+	/* Set FIFO thresholds. */
+	HWRITE4(sc, SDMMC_FIFOTH, 2 << SDMMC_FIFOTH_MSIZE_SHIFT |
+	    (sc->sc_fifo_depth / 2 - 1) << SDMMC_FIFOTH_RXWM_SHIFT |
+	    (sc->sc_fifo_depth / 2) << SDMMC_FIFOTH_TXWM_SHIFT);
+
+	sc->sc_dmamode = 0;
+	sc->sc_blklen = 0;
+}
+
+void
+dwmmc_dma_mode(struct dwmmc_softc *sc)
+{
+	int timeout;
+
+	/* Reset DMA. */
+	HSET4(sc, SDMMC_BMOD, SDMMC_BMOD_SWR);
+	for (timeout = 1000; timeout > 0; timeout--) {
+		if ((HREAD4(sc, SDMMC_BMOD) & SDMMC_BMOD_SWR) == 0)
+			break;
+		delay(100);
+	}
+	if (timeout == 0)
+		printf("%s: DMA reset failed\n", sc->sc_dev.dv_xname);
+
+	/* Enable DMA. */
+	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
+	    SDMMC_CTRL_DMA_ENABLE);
+	HSET4(sc, SDMMC_BMOD, SDMMC_BMOD_FB | SDMMC_BMOD_DE);
+
+	sc->sc_dmamode = 1;
+}
+
+void
 dwmmc_dma_setup(struct dwmmc_softc *sc, struct sdmmc_command *cmd)
 {
 	struct dwmmc_desc *desc = (void *)sc->sc_desc;
@@ -658,7 +718,58 @@ dwmmc_dma_setup(struct dwmmc_softc *sc, struct sdmmc_command *cmd)
 	    BUS_DMASYNC_PREWRITE);
 
 	sc->sc_idsts = 0;
-	return 0;
+}
+
+void
+dwmmc_dma_reset(struct dwmmc_softc *sc, struct sdmmc_command *cmd)
+{
+	int timeout;
+
+	/* Reset DMA unit. */
+	HSET4(sc, SDMMC_BMOD, SDMMC_BMOD_SWR);
+	for (timeout = 1000; timeout > 0; timeout--) {
+		if ((HREAD4(sc, SDMMC_BMOD) &
+		    SDMMC_BMOD_SWR) == 0)
+			break;
+		delay(100);
+	}
+
+	dwmmc_pio_mode(sc);
+
+	/* Clear descriptors that were in use, */
+	memset(sc->sc_desc, 0, PAGE_SIZE);
+	dwmmc_init_descriptors(sc);
+}
+
+void
+dwmmc_fifo_setup(struct dwmmc_softc *sc, int blklen)
+{
+	int blkdepth = blklen / sc->sc_fifo_width;
+	int txwm = sc->sc_fifo_depth / 2;
+	int rxwm, msize = 0;
+
+	/*
+	 * Bursting is only possible of the block size is a multiple of
+	 * the FIFO width.
+	 */
+	if (blklen % sc->sc_fifo_width == 0)
+		msize = 7;
+
+	/* Magic to calculate the maximum burst size. */
+	while (msize > 0) {
+		if (blkdepth % (2 << msize) == 0 &&
+		    (sc->sc_fifo_depth - txwm) % (2 << msize) == 0)
+			break;
+		msize--;
+	}
+	rxwm = (2 << msize) - 1;
+
+	HWRITE4(sc, SDMMC_FIFOTH,
+	    msize << SDMMC_FIFOTH_MSIZE_SHIFT |
+	    rxwm << SDMMC_FIFOTH_RXWM_SHIFT |
+	    txwm << SDMMC_FIFOTH_TXWM_SHIFT);
+
+	sc->sc_blklen = blklen;
 }
 
 void
@@ -694,10 +805,6 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 	else if (cmd->c_opcode != MMC_SEND_STATUS)
 		cmdval |= SDMMC_CMD_WAIT_PRVDATA_COMPLETE;
 
-	if (cmd->c_opcode == MMC_READ_BLOCK_MULTIPLE ||
-	    cmd->c_opcode == MMC_WRITE_BLOCK_MULTIPLE)
-		cmdval |= SDMMC_CMD_SEND_AUTO_STOP;
-
 	if (cmd->c_opcode == 0)
 		cmdval |= SDMMC_CMD_SEND_INITIALIZATION;
 	if (cmd->c_flags & SCF_RSP_PRESENT)
@@ -722,6 +829,9 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 		cmdval |= SDMMC_CMD_DATA_EXPECTED;
 		if (!ISSET(cmd->c_flags, SCF_CMD_READ))
 			cmdval |= SDMMC_CMD_WR;
+		if (cmd->c_datalen > cmd->c_blklen &&
+		    cmd->c_opcode != SD_IO_RW_EXTENDED)
+			cmdval |= SDMMC_CMD_SEND_AUTO_STOP;
 	}
 
 	if (cmd->c_datalen > 0 && !cmd->c_dmamap) {
@@ -735,33 +845,22 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 		if (timeout == 0)
 			printf("%s: FIFO reset failed\n", sc->sc_dev.dv_xname);
 
-		if (sc->sc_dmamode) {
-			HCLR4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
-			    SDMMC_CTRL_DMA_ENABLE);
-			sc->sc_dmamode = 0;
-		}
+		/* Disable DMA if we are switching back to PIO. */
+		if (sc->sc_dmamode)
+			dwmmc_pio_mode(sc);
 	}
 
 	if (cmd->c_datalen > 0 && cmd->c_dmamap) {
 		dwmmc_dma_setup(sc, cmd);
+		HWRITE4(sc, SDMMC_PLDMND, 1);
 
-		if (!sc->sc_dmamode) {
-			HSET4(sc, SDMMC_BMOD, SDMMC_BMOD_SWR);
-			for (timeout = 1000; timeout > 0; timeout--) {
-				if ((HREAD4(sc, SDMMC_BMOD) &
-				    SDMMC_BMOD_SWR) == 0)
-					break;
-				delay(100);
-			}
-			if (timeout == 0)
-				printf("%s: DMA reset failed\n",
-				    sc->sc_dev.dv_xname);
-			
-			HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_USE_INTERNAL_DMAC |
-			    SDMMC_CTRL_DMA_ENABLE);
-			HSET4(sc, SDMMC_BMOD, SDMMC_BMOD_FB | SDMMC_BMOD_DE);
-			sc->sc_dmamode = 1;
-		}
+		/* Ennable DMA if we did PIO before. */
+		if (!sc->sc_dmamode)
+			dwmmc_dma_mode(sc);
+
+		/* Reconfigure FIFO thresholds if block size changed. */
+		if (cmd->c_blklen != sc->sc_blklen)
+			dwmmc_fifo_setup(sc, cmd->c_blklen);
 	}
 
 	HWRITE4(sc, SDMMC_RINTSTS, ~SDMMC_RINTSTS_SDIO);
@@ -777,6 +876,7 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 	}
 	if (timeout == 0 || status & SDMMC_RINTSTS_RTO) {
 		cmd->c_error = ETIMEDOUT;
+		dwmmc_dma_reset(sc, cmd);
 		goto done;
 	}
 
@@ -808,6 +908,7 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 			error = tsleep(&sc->sc_idsts, PWAIT, "idsts", hz);
 			if (error) {
 				cmd->c_error = error;
+				dwmmc_dma_reset(sc, cmd);
 				goto done;
 			}
 		}
@@ -820,6 +921,7 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 		}
 		if (timeout == 0) {
 			cmd->c_error = ETIMEDOUT;
+			dwmmc_dma_reset(sc, cmd);
 			goto done;
 		}
 	}
@@ -833,6 +935,7 @@ dwmmc_exec_command(sdmmc_chipset_handle_t sch, struct sdmmc_command *cmd)
 		}
 		if (timeout == 0) {
 			cmd->c_error = ETIMEDOUT;
+			dwmmc_dma_reset(sc, cmd);
 			goto done;
 		}
 	}

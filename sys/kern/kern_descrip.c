@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_descrip.c,v 1.158 2018/05/08 09:03:58 mpi Exp $	*/
+/*	$OpenBSD: kern_descrip.c,v 1.164 2018/06/05 09:29:05 mpi Exp $	*/
 /*	$NetBSD: kern_descrip.c,v 1.42 1996/03/30 22:24:38 christos Exp $	*/
 
 /*
@@ -634,13 +634,14 @@ finishdup(struct proc *p, struct file *fp, int old, int new,
 		return (EDEADLK);
 	}
 
-	/*
-	 * Don't fd_getfile here. We want to closef LARVAL files and
-	 * closef can deal with that.
-	 */
 	oldfp = fdp->fd_ofiles[new];
-	if (oldfp != NULL)
+	if (oldfp != NULL) {
+		if (!FILE_IS_USABLE(oldfp)) {
+			FRELE(fp, p);
+			return (EBUSY);
+		}
 		FREF(oldfp);
+	}
 
 	fdp->fd_ofiles[new] = fp;
 	fdp->fd_ofileflags[new] = fdp->fd_ofileflags[old] & ~UF_EXCLOSE;
@@ -957,7 +958,11 @@ restart:
 	 */
 	numfiles++;
 	fp = pool_get(&file_pool, PR_WAITOK|PR_ZERO);
-	mtx_init(&fp->f_mtx, IPL_NONE);
+	/*
+	 * We need to block interrupts as long as `f_mtx' is being taken
+	 * with and without the KERNEL_LOCK().
+	 */
+	mtx_init(&fp->f_mtx, IPL_MPFLOOR);
 	fp->f_iflags = FIF_LARVAL;
 	if ((fq = p->p_fd->fd_ofiles[0]) != NULL) {
 		LIST_INSERT_AFTER(fq, fp, f_list);

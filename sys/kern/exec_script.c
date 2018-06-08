@@ -1,4 +1,4 @@
-/*	$OpenBSD: exec_script.c,v 1.44 2018/05/02 02:24:56 visa Exp $	*/
+/*	$OpenBSD: exec_script.c,v 1.46 2018/06/05 09:29:05 mpi Exp $	*/
 /*	$NetBSD: exec_script.c,v 1.13 1996/02/04 02:15:06 christos Exp $	*/
 
 /*

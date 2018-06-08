@@ -1,4 +1,4 @@
-/*	$OpenBSD: tty_pty.c,v 1.84 2018/04/28 03:13:04 visa Exp $	*/
+/*	$OpenBSD: tty_pty.c,v 1.86 2018/06/05 09:29:05 mpi Exp $	*/
 /*	$NetBSD: tty_pty.c,v 1.33.4.1 1996/06/02 09:08:11 mrg Exp $	*/
 
 /*

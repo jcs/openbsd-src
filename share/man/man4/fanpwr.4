@@ -1,6 +1,6 @@
-.\"	$OpenBSD: pluart.4,v 1.1 2018/04/04 14:21:26 jsg Exp $
+.\"	$OpenBSD: fanpwr.4,v 1.1 2018/06/02 12:30:37 kettenis Exp $
 .\"
-.\" Copyright (c) 2015 Jonathan Gray <jsg@openbsd.org>
+.\" Copyright (c) 2018 Jonathan Gray <jsg@openbsd.org>
 .\"
 .\" Permission to use, copy, modify, and distribute this software for any
 .\" purpose with or without fee is hereby granted, provided that the above
@@ -14,26 +14,30 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: April 4 2018 $
-.Dt PLUART 4 arm64
+.Dd $Mdocdate: June 2 2018 $
+.Dt FANPWR 4
 .Os
 .Sh NAME
-.Nm pluart
-.Nd ARM PrimeCell PL011 UART
+.Nm fanpwr
+.Nd Fairchild FAN53555 voltage regulator
 .Sh SYNOPSIS
-.Cd "pluart* at fdt?"
+.Cd "fanpwr* at iic?"
 .Sh DESCRIPTION
 The
 .Nm
-driver supports the ARM PrimeCell PL011 UART.
+driver provides support for the Fairchild FAN53555 and Silergy
+SYR827/828 voltage regulators.
 .Sh SEE ALSO
-.Xr tty 4
-.Rs
-.%T ARM PrimeCell UART (PL011) Technical Reference Manual
-.%V ARM DDI 0183
-.Re
+.Xr iic 4 ,
+.Xr intro 4
 .Sh HISTORY
 The
 .Nm
-driver first appeared in
-.Ox 5.8 .
+device driver first appeared in
+.Ox 6.4 .
+.Sh AUTHORS
+.An -nosplit
+The
+.Nm
+driver was written by
+.An Mark Kettenis Aq Mt kettenis@openbsd.org .

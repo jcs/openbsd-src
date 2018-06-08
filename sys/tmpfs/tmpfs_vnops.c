@@ -1,4 +1,4 @@
-/*	$OpenBSD: tmpfs_vnops.c,v 1.30 2018/05/23 14:49:08 reyk Exp $	*/
+/*	$OpenBSD: tmpfs_vnops.c,v 1.32 2018/06/07 13:37:28 visa Exp $	*/
 /*	$NetBSD: tmpfs_vnops.c,v 1.100 2012/11/05 17:27:39 dholland Exp $	*/
 
 /*
@@ -339,19 +339,15 @@ tmpfs_mknod(void *v)
 	enum vtype vt = vap->va_type;
 	int error;
 
-	if (vt != VBLK && vt != VCHR && vt != VFIFO) {
-		vput(dvp);
+	if (vt != VBLK && vt != VCHR && vt != VFIFO)
 		return EINVAL;
-	}
 
-	/* tmpfs_alloc_file() will unlock 'dvp'. */
 	error = tmpfs_alloc_file(dvp, vpp, vap, cnp, NULL);
-	if (error)
-		return error;
 
-	vput(*vpp);
+	if (error == 0)
+		vput(*vpp);
 
-	return 0;
+	return error;
 }
 
 int
@@ -853,9 +849,12 @@ tmpfs_mkdir(void *v)
 	struct vnode **vpp = ap->a_vpp;
 	struct componentname *cnp = ap->a_cnp;
 	struct vattr *vap = ap->a_vap;
+	int error;
 
 	KASSERT(vap->va_type == VDIR);
-	return tmpfs_alloc_file(dvp, vpp, vap, cnp, NULL);
+	error = tmpfs_alloc_file(dvp, vpp, vap, cnp, NULL);
+	vput(dvp);
+	return error;
 }
 
 int
@@ -962,6 +961,7 @@ tmpfs_symlink(void *v)
 	vap->va_type = VLNK;
 
 	error = tmpfs_alloc_file(dvp, vpp, vap, cnp, target);
+	vput(dvp);
 	if (error == 0)
 		vput(*vpp);
 
