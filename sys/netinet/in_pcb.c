@@ -1,4 +1,4 @@
-/*	$OpenBSD: in_pcb.c,v 1.235 2018/06/07 08:46:24 bluhm Exp $	*/
+/*	$OpenBSD: in_pcb.c,v 1.239 2018/06/14 17:16:03 bluhm Exp $	*/
 /*	$NetBSD: in_pcb.c,v 1.25 1996/02/13 23:41:53 christos Exp $	*/
 
 /*
@@ -269,6 +269,18 @@ in_pcballoc(struct socket *so, struct inpcbtable *table)
 	inp->inp_seclevel[SL_ESP_NETWORK] = IPSEC_ESP_NETWORK_LEVEL_DEFAULT;
 	inp->inp_seclevel[SL_IPCOMP] = IPSEC_IPCOMP_LEVEL_DEFAULT;
 	inp->inp_rtableid = curproc->p_p->ps_rtableid;
+	inp->inp_hops = -1;
+#ifdef INET6
+	/*
+	 * Small change in this function to set the INP_IPV6 flag so routines
+	 * outside pcb-specific routines don't need to use sotopf(), and all
+	 * of its pointer chasing, later.
+	 */
+	if (sotopf(so) == PF_INET6)
+		inp->inp_flags = INP_IPV6;
+	inp->inp_cksum6 = -1;
+#endif /* INET6 */
+
 	if (table->inpt_count++ > INPCBHASH_LOADFACTOR(table->inpt_size))
 		(void)in_pcbresize(table, table->inpt_size * 2);
 	TAILQ_INSERT_HEAD(&table->inpt_queue, inp, inp_queue);
@@ -286,18 +298,7 @@ in_pcballoc(struct socket *so, struct inpcbtable *table)
 		    rtable_l2(inp->inp_rtableid));
 	LIST_INSERT_HEAD(head, inp, inp_hash);
 	so->so_pcb = inp;
-	inp->inp_hops = -1;
 
-#ifdef INET6
-	/*
-	 * Small change in this function to set the INP_IPV6 flag so routines
-	 * outside pcb-specific routines don't need to use sotopf(), and all
-	 * of its pointer chasing, later.
-	 */
-	if (sotopf(so) == PF_INET6)
-		inp->inp_flags = INP_IPV6;
-	inp->inp_cksum6 = -1;
-#endif /* INET6 */
 	return (0);
 }
 
@@ -511,8 +512,7 @@ in_pcbconnect(struct inpcb *inp, struct mbuf *nam)
 #ifdef INET6
 	if (sotopf(inp->inp_socket) == PF_INET6)
 		return (in6_pcbconnect(inp, nam));
-	if ((inp->inp_flags & INP_IPV6) != 0)
-		panic("IPv6 pcb passed into in_pcbconnect");
+	KASSERT((inp->inp_flags & INP_IPV6) == 0);
 #endif /* INET6 */
 
 	if ((error = in_nam2sin(nam, &sin)))
@@ -590,7 +590,7 @@ in_pcbdetach(struct inpcb *inp)
 	 * sockets, do not release it to not introduce new sleeping
 	 * points.
 	 */
-	sofree(so, 0);
+	sofree(so, SL_NOUNLOCK);
 	m_freem(inp->inp_options);
 	if (inp->inp_route.ro_rt) {
 		rtfree(inp->inp_route.ro_rt);
@@ -722,10 +722,8 @@ in_losing(struct inpcb *inp)
 		info.rti_info[RTAX_GATEWAY] = rt->rt_gateway;
 		info.rti_info[RTAX_NETMASK] = rt_plen2mask(rt, &sa_mask);
 
-		KERNEL_LOCK();
 		rtm_miss(RTM_LOSING, &info, rt->rt_flags, rt->rt_priority,
 		    rt->rt_ifidx, 0, inp->inp_rtableid);
-		KERNEL_UNLOCK();
 		if (rt->rt_flags & RTF_DYNAMIC) {
 			struct ifnet *ifp;
 

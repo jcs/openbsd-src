@@ -1,4 +1,4 @@
-/*	$OpenBSD: vector.S,v 1.61 2018/06/07 04:09:35 guenther Exp $	*/
+/*	$OpenBSD: vector.S,v 1.66 2018/06/14 19:57:29 guenther Exp $	*/
 /*	$NetBSD: vector.S,v 1.5 2004/06/28 09:13:11 fvdl Exp $	*/
 
 /*
@@ -141,6 +141,7 @@ calltrap_specstk:			# special stack path
 	.text
 	.globl	INTRENTRY_LABEL(calltrap_specstk)
 INTRENTRY_LABEL(calltrap_specstk):
+	INTR_CLEAR_GPRS
 	cld
 	SMAP_CLAC
 	movq	%rsp,%rdi
@@ -171,7 +172,76 @@ KUENTRY(calltrap_specstk_tramp)
 	iretq
 
 IDTVEC(trap03)
+#if defined(GPROF) || !defined(DDBPROF)
 	ZTRAP(T_BPTFLT)
+#else /* !defined(GPROF) && defined(DDBPROF) */
+	pushq	$0
+	pushq	$T_BPTFLT
+	testb	$SEL_RPL,24(%rsp)
+	je	INTRENTRY_LABEL(trap03)
+	jmp	alltraps
+	.text
+	.global	INTRENTRY_LABEL(trap03)
+INTRENTRY_LABEL(trap03):
+	INTR_ENTRY_KERN
+	INTR_SAVE_MOST_GPRS_NO_ADJ
+	sti
+	cld
+	SMAP_CLAC
+	movq	%rsp, %rdi
+	call	_C_LABEL(db_prof_hook)
+	cmpl	$1, %eax
+	jne	.Lreal_kern_trap
+
+	cli
+	movq	TF_RDI(%rsp),%rdi
+	movq	TF_RSI(%rsp),%rsi
+	movq	TF_R8(%rsp),%r8
+	movq	TF_R9(%rsp),%r9
+	movq	TF_R10(%rsp),%r10
+	movq	TF_R12(%rsp),%r12
+	movq	TF_R13(%rsp),%r13
+	movq	TF_R14(%rsp),%r14
+	movq	TF_R15(%rsp),%r15
+	movq	TF_RBP(%rsp),%rbp
+	movq	TF_RBX(%rsp),%rbx
+	movq	TF_RDX(%rsp),%rdx
+	movq	TF_RCX(%rsp),%rcx
+	movq	TF_R11(%rsp),%r11
+	/* %rax restored below, after begin used to shift the stack */
+
+	/*
+	 * We are returning from a probe trap so we need to fix the
+	 * stack layout and emulate the patched instruction.
+	 * Reserve enough room to emulate "pushq %rbp".
+	 */
+	subq	$16, %rsp
+
+	/* Shift hardware-saved registers. */
+	movq	(TF_RIP + 16)(%rsp), %rax
+	movq	%rax, TF_RIP(%rsp)
+	movq	(TF_CS + 16)(%rsp), %rax
+	movq	%rax, TF_CS(%rsp)
+	movq	(TF_RFLAGS + 16)(%rsp), %rax
+	movq	%rax, TF_RFLAGS(%rsp)
+	movq	(TF_RSP + 16)(%rsp), %rax
+	movq	%rax, TF_RSP(%rsp)
+	movq	(TF_SS + 16)(%rsp), %rax
+	movq	%rax, TF_SS(%rsp)
+
+	/* Pull 8 bytes off the stack and store %rbp in the expected location.*/
+	movq	TF_RSP(%rsp), %rax
+	subq	$8, %rax
+	movq	%rax, TF_RSP(%rsp)
+	movq	%rbp, (%rax)
+
+	/* Finally restore %rax */
+	movq	(TF_RAX + 16)(%rsp),%rax
+
+	addq	$TF_RIP,%rsp
+	iretq
+#endif /* !defined(GPROF) && defined(DDBPROF) */
+
 IDTVEC(trap04)
 	ZTRAP(T_OFLOW)	# impossible: INTO instruction invalid in amd64
 IDTVEC(trap05)
@@ -283,46 +353,45 @@ Xexceptions:
 	.quad	_C_LABEL(Xtrap1e), _C_LABEL(Xtrap1f)
 
 /*
- * All traps go through here. Call the generic trap handler, and
- * check for ASTs afterwards.
+ * All traps go through here.  Figure out whether we're
+ * a) coming from usermode and need the Meltdown mitigation before
+ *    jumping to user trap handling followed by AST and
+ *    return-to-userspace handling, or
+ * b) coming from supervisor mode and can directly jump to kernel
+ *    trap handling before returning sans AST or other handling.
  */
 KUENTRY(alltraps)
-	INTRENTRY(alltraps)
+	testb	$SEL_RPL,24(%rsp)
+	je	alltraps_kern
+	swapgs
+	movq	%rax,CPUVAR(SCRATCH)
+	movq	CPUVAR(KERN_CR3),%rax
+	testq	%rax,%rax
+	jz	alltraps_user
+	movq	%rax,%cr3
+	jmp	alltraps_user
+END(alltraps)
+
+/*
+ * Traps from supervisor mode (kernel)
+ */
+NENTRY(alltraps_kern)
+	INTR_ENTRY_KERN
+	INTR_SAVE_MOST_GPRS_NO_ADJ
 	sti
 	cld
 	SMAP_CLAC
+.Lreal_kern_trap:
 #ifdef DIAGNOSTIC
 	movl	CPUVAR(ILEVEL),%ebx
 #endif /* DIAGNOSTIC */
-#if !defined(GPROF) && defined(DDBPROF)
-	cmpl	$T_BPTFLT,TF_TRAPNO(%rsp)
-	jne	.Lreal_trap
-
 	movq	%rsp, %rdi
-	call	_C_LABEL(db_prof_hook)
-	cmpl	$1, %eax
-	jne	.Lreal_trap
-
-	/*
-	 * Abuse the error field to indicate that intr_fast_exit needs
-	 * to emulate the patched instruction.
-	 */
-	movl	$INTR_FAKE_TRAP, TF_ERR(%rsp)
-	jz	2f
-.Lreal_trap:
-#endif /* !defined(GPROF) && defined(DDBPROF) */
-	.globl	recall_trap
-recall_trap:
-	movq	%rsp, %rdi
-	call	_C_LABEL(trap)
-2:	/* Check for ASTs on exit to user mode. */
-	cli
-	testb	$SEL_RPL,TF_CS(%rsp)
-	jnz	intr_user_exit
+	call	_C_LABEL(trap)		/* kerntrap */
+2:	cli
 #ifndef DIAGNOSTIC
-1:	INTRFASTEXIT
+	INTRFASTEXIT
 #else /* DIAGNOSTIC */
-1:	cmpl	CPUVAR(ILEVEL),%ebx
+	cmpl	CPUVAR(ILEVEL),%ebx
 	jne	3f
 	INTRFASTEXIT
 3:	sti
@@ -342,6 +411,25 @@ spl_lowered:
 	.asciz	"WARNING: SPL NOT LOWERED ON TRAP EXIT %x %x\n"
 	.text
 #endif /* DIAGNOSTIC */
+END(alltraps_kern)
+
+/*
+ * Traps from userspace
+ */
+NENTRY(alltraps_user)
+	INTR_ENTRY_USER
+	INTR_SAVE_MOST_GPRS_NO_ADJ
+	INTR_CLEAR_GPRS
+	sti
+	cld
+	SMAP_CLAC
+	.globl	recall_trap
+recall_trap:
+	movq	%rsp, %rdi
+	call	_C_LABEL(trap)		/* usertrap */
+	cli
+	jmp	intr_user_exit
+END(alltraps_user)
 
 
 /*

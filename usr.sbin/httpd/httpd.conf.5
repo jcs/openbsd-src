@@ -1,4 +1,4 @@
-.\"	$OpenBSD: httpd.conf.5,v 1.95 2018/05/23 19:02:50 reyk Exp $
+.\"	$OpenBSD: httpd.conf.5,v 1.99 2018/06/15 17:17:40 reyk Exp $
 .\"
 .\" Copyright (c) 2014, 2015 Reyk Floeter <reyk@openbsd.org>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: May 23 2018 $
+.Dd $Mdocdate: June 15 2018 $
 .Dt HTTPD.CONF 5
 .Os
 .Sh NAME
@@ -206,7 +206,7 @@ may contain predefined macros that will be expanded at runtime:
 .It Ic $DOCUMENT_URI
 The request path.
 .It Ic $QUERY_STRING
-The optional query string of the request.
+The URL encoded query string of the request.
 .It Ic $REMOTE_ADDR
 The IP address of the connected client.
 .It Ic $REMOTE_PORT
@@ -218,7 +218,7 @@ The request path and optional query string.
 .It Ic $SERVER_ADDR
 The configured IP address of the server.
 .It Ic $SERVER_PORT
-The configured TCP server port of the server.
+The configured TCP port of the server.
 .It Ic $SERVER_NAME
 The name of the server.
 .It Ic $HTTP_HOST
@@ -458,12 +458,18 @@ instead of the log files.
 Disable any previous
 .Ic block
 in a location.
-.It Ic root Ar option
-Configure the document root and options for the request path.
+.It Ic request Ar option
+Configure the options for the request path.
 Valid options are:
 .Bl -tag -width Ds
-.It Ar directory
-Set the document root of the server.
+.It Ic strip Ar number
+Strip
+.Ar number
+path components from the beginning of the request path before looking
+up the stripped-down path at the document root.
+.El
+.It Ic root Ar directory
+Configure the document root of the server.
 The
 .Ar directory
 is a pathname within the
@@ -472,12 +478,6 @@ root directory of
 .Nm httpd .
 If not specified, it defaults to
 .Pa /htdocs .
-.It Ic strip Ar number
-Strip
-.Ar number
-path components from the beginning of the request path before looking
-up the stripped-down path at the document root.
-.El
 .It Ic tcp Ar option
 Enable or disable the specified TCP/IP options; see
 .Xr tcp 4

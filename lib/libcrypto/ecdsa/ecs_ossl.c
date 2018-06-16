@@ -1,4 +1,4 @@
-/* $OpenBSD: ecs_ossl.c,v 1.10 2018/04/28 14:17:56 tb Exp $ */
+/* $OpenBSD: ecs_ossl.c,v 1.14 2018/06/15 19:24:13 tb Exp $ */
 /*
  * Written by Nils Larsch for the OpenSSL project
  */
@@ -88,34 +88,30 @@ ECDSA_OpenSSL(void)
 static int
 ecdsa_sign_setup(EC_KEY *eckey, BN_CTX *ctx_in, BIGNUM **kinvp, BIGNUM **rp)
 {
-	BN_CTX   *ctx = NULL;
-	BIGNUM	 *k = NULL, *r = NULL, *order = NULL, *X = NULL;
-	EC_POINT *tmp_point = NULL;
+	BN_CTX *ctx = ctx_in;
+	BIGNUM *k = NULL, *r = NULL, *order = NULL, *X = NULL;
+	EC_POINT *point = NULL;
 	const EC_GROUP *group;
-	int 	 order_bits, ret = 0;
+	int order_bits, ret = 0;
 
 	if (eckey == NULL || (group = EC_KEY_get0_group(eckey)) == NULL) {
 		ECDSAerror(ERR_R_PASSED_NULL_PARAMETER);
 		return 0;
 	}
 
-	if (ctx_in == NULL) {
+	if (ctx == NULL) {
 		if ((ctx = BN_CTX_new()) == NULL) {
 			ECDSAerror(ERR_R_MALLOC_FAILURE);
 			return 0;
 		}
-	} else
-		ctx = ctx_in;
+	}
 
-	k = BN_new();	/* this value is later returned in *kinvp */
-	r = BN_new();	/* this value is later returned in *rp    */
-	order = BN_new();
-	X = BN_new();
-	if (!k || !r || !order || !X) {
+	if ((k = BN_new()) == NULL || (r = BN_new()) == NULL ||
+	    (order = BN_new()) == NULL || (X = BN_new()) == NULL) {
 		ECDSAerror(ERR_R_MALLOC_FAILURE);
 		goto err;
 	}
-	if ((tmp_point = EC_POINT_new(group)) == NULL) {
+	if ((point = EC_POINT_new(group)) == NULL) {
 		ECDSAerror(ERR_R_EC_LIB);
 		goto err;
 	}
@@ -124,7 +120,7 @@ ecdsa_sign_setup(EC_KEY *eckey, BN_CTX *ctx_in, BIGNUM **kinvp, BIGNUM **rp)
 		goto err;
 	}
 
-	/* Preallocate space */
+	/* Preallocate space. */
 	order_bits = BN_num_bits(order);
 	if (!BN_set_bit(k, order_bits) ||
 	    !BN_set_bit(r, order_bits) ||
@@ -132,19 +128,19 @@ ecdsa_sign_setup(EC_KEY *eckey, BN_CTX *ctx_in, BIGNUM **kinvp, BIGNUM **rp)
 		goto err;
 
 	do {
-		/* get random k */
-		do
+		do {
 			if (!BN_rand_range(k, order)) {
-				ECDSAerror(ECDSA_R_RANDOM_NUMBER_GENERATION_FAILED);
+				ECDSAerror(
+				    ECDSA_R_RANDOM_NUMBER_GENERATION_FAILED);
 				goto err;
 			}
-		while (BN_is_zero(k));
+		} while (BN_is_zero(k));
 
 		/*
 		 * We do not want timing information to leak the length of k,
-		 * so we compute G*k using an equivalent scalar of fixed
+		 * so we compute G * k using an equivalent scalar of fixed
 		 * bit-length.
-		 * 
+		 *
 		 * We unconditionally perform both of these additions to prevent
 		 * a small timing information leakage.  We then choose the sum
 		 * that is one bit longer than the order.  This guarantees the
@@ -161,24 +157,23 @@ ecdsa_sign_setup(EC_KEY *eckey, BN_CTX *ctx_in, BIGNUM **kinvp, BIGNUM **rp)
 
 		BN_set_flags(k, BN_FLG_CONSTTIME);
 
-		/* compute r the x-coordinate of generator * k */
-		if (!EC_POINT_mul(group, tmp_point, k, NULL, NULL, ctx)) {
+		/* Compute r, the x-coordinate of G * k. */
+		if (!EC_POINT_mul(group, point, k, NULL, NULL, ctx)) {
 			ECDSAerror(ERR_R_EC_LIB);
 			goto err;
 		}
 		if (EC_METHOD_get_field_type(EC_GROUP_method_of(group)) ==
 		    NID_X9_62_prime_field) {
-			if (!EC_POINT_get_affine_coordinates_GFp(group,
-			    tmp_point, X, NULL, ctx)) {
+			if (!EC_POINT_get_affine_coordinates_GFp(group, point,
+			    X, NULL, ctx)) {
 				ECDSAerror(ERR_R_EC_LIB);
 				goto err;
 			}
 		}
 #ifndef OPENSSL_NO_EC2M
-		else /* NID_X9_62_characteristic_two_field */
-		{
-			if (!EC_POINT_get_affine_coordinates_GF2m(group,
-			    tmp_point, X, NULL, ctx)) {
+		else {	/* NID_X9_62_characteristic_two_field */
+			if (!EC_POINT_get_affine_coordinates_GF2m(group, point,
+			    X, NULL, ctx)) {
 				ECDSAerror(ERR_R_EC_LIB);
 				goto err;
 			}
@@ -190,28 +185,25 @@ ecdsa_sign_setup(EC_KEY *eckey, BN_CTX *ctx_in, BIGNUM **kinvp, BIGNUM **rp)
 		}
 	} while (BN_is_zero(r));
 
-	/* compute the inverse of k */
 	if (!BN_mod_inverse_ct(k, k, order, ctx)) {
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
-	/* clear old values if necessary */
 	BN_clear_free(*rp);
 	BN_clear_free(*kinvp);
-	/* save the pre-computed values  */
 	*rp = r;
 	*kinvp = k;
 	ret = 1;
 
-err:
-	if (!ret) {
+ err:
+	if (ret == 0) {
 		BN_clear_free(k);
 		BN_clear_free(r);
 	}
 	if (ctx_in == NULL)
 		BN_CTX_free(ctx);
 	BN_free(order);
-	EC_POINT_free(tmp_point);
+	EC_POINT_free(point);
 	BN_clear_free(X);
 	return (ret);
 }
@@ -221,14 +213,14 @@ static ECDSA_SIG *
 ecdsa_do_sign(const unsigned char *dgst, int dgst_len,
     const BIGNUM *in_kinv, const BIGNUM *in_r, EC_KEY *eckey)
 {
-	int     ok = 0, i;
-	BIGNUM *kinv = NULL, *s, *m = NULL, *tmp = NULL, *order = NULL;
-	const BIGNUM *ckinv;
-	BN_CTX     *ctx = NULL;
-	const EC_GROUP   *group;
+	BIGNUM *b = NULL, *binv = NULL, *bm = NULL, *bxr = NULL;
+	BIGNUM *kinv = NULL, *m = NULL, *order = NULL, *range = NULL, *s;
+	const BIGNUM *ckinv, *priv_key;
+	BN_CTX *ctx = NULL;
+	const EC_GROUP *group;
 	ECDSA_SIG  *ret;
 	ECDSA_DATA *ecdsa;
-	const BIGNUM *priv_key;
+	int ok = 0, order_bits;
 
 	ecdsa = ecdsa_check(eckey);
 	group = EC_KEY_get0_group(eckey);
@@ -239,15 +231,16 @@ ecdsa_do_sign(const unsigned char *dgst, int dgst_len,
 		return NULL;
 	}
 
-	ret = ECDSA_SIG_new();
-	if (!ret) {
+	if ((ret = ECDSA_SIG_new()) == NULL) {
 		ECDSAerror(ERR_R_MALLOC_FAILURE);
 		return NULL;
 	}
 	s = ret->s;
 
 	if ((ctx = BN_CTX_new()) == NULL || (order = BN_new()) == NULL ||
-	    (tmp = BN_new()) == NULL || (m = BN_new()) == NULL) {
+	    (range = BN_new()) == NULL || (b = BN_new()) == NULL ||
+	    (binv = BN_new()) == NULL || (bm = BN_new()) == NULL ||
+	    (bxr = BN_new()) == NULL || (m = BN_new()) == NULL) {
 		ECDSAerror(ERR_R_MALLOC_FAILURE);
 		goto err;
 	}
@@ -256,21 +249,23 @@ ecdsa_do_sign(const unsigned char *dgst, int dgst_len,
 		ECDSAerror(ERR_R_EC_LIB);
 		goto err;
 	}
-	i = BN_num_bits(order);
-	/* Need to truncate digest if it is too long: first truncate whole
-	 * bytes.
-	 */
-	if (8 * dgst_len > i)
-		dgst_len = (i + 7)/8;
+
+	/* Truncate digest if it is too long: first truncate whole bytes. */
+	order_bits = BN_num_bits(order);
+	if (8 * dgst_len > order_bits)
+		dgst_len = (order_bits + 7) / 8;
 	if (!BN_bin2bn(dgst, dgst_len, m)) {
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
-	/* If still too long truncate remaining bits with a shift */
-	if ((8 * dgst_len > i) && !BN_rshift(m, m, 8 - (i & 0x7))) {
-		ECDSAerror(ERR_R_BN_LIB);
-		goto err;
+	/* If it is still too long, truncate the remaining bits with a shift. */
+	if (8 * dgst_len > order_bits) {
+		if (!BN_rshift(m, m, 8 - (order_bits & 0x7))) {
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
 	}
+
 	do {
 		if (in_kinv == NULL || in_r == NULL) {
 			if (!ECDSA_sign_setup(eckey, ctx, &kinv, &ret->r)) {
@@ -286,11 +281,53 @@ ecdsa_do_sign(const unsigned char *dgst, int dgst_len,
 			}
 		}
 
-		if (!BN_mod_mul(tmp, priv_key, ret->r, order, ctx)) {
+		/*
+		 * Compute s = inv(k)(m + xr) mod order.
+		 *
+		 * In order to reduce the possibility of a side-channel attack,
+		 * the following is calculated using a blinding value:
+		 *
+		 *  s = inv(k)inv(b)(bm + bxr) mod order
+		 *
+		 * where b is a random value in the range [1, order-1].
+		 */
+
+		/* Generate b in range [1, order-1]. */
+		if (!BN_sub(range, order, BN_value_one())) {
 			ECDSAerror(ERR_R_BN_LIB);
 			goto err;
 		}
-		if (!BN_mod_add_quick(s, tmp, m, order)) {
+		if (!BN_rand_range(b, range)) {
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+		if (!BN_add(b, b, BN_value_one())) {
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+
+		if (BN_mod_inverse_ct(binv, b, order, ctx) == NULL) {
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+
+		if (!BN_mod_mul(bxr, b, priv_key, order, ctx)) { /* bx */
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+		if (!BN_mod_mul(bxr, bxr, ret->r, order, ctx)) { /* bxr */
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+		if (!BN_mod_mul(bm, b, m, order, ctx)) { /* bm */
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+		if (!BN_mod_add(s, bm, bxr, order, ctx)) { /* s = bm + bxr */
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+		if (!BN_mod_mul(s, s, binv, order, ctx)) { /* s = m + xr */
 			ECDSAerror(ERR_R_BN_LIB);
 			goto err;
 		}
@@ -298,9 +335,12 @@ ecdsa_do_sign(const unsigned char *dgst, int dgst_len,
 			ECDSAerror(ERR_R_BN_LIB);
 			goto err;
 		}
+
 		if (BN_is_zero(s)) {
-			/* if kinv and r have been supplied by the caller
-			 * don't to generate new kinv and r values */
+			/*
+			 * If kinv and r have been supplied by the caller,
+			 * don't generate new kinv and r values
+			 */
 			if (in_kinv != NULL && in_r != NULL) {
 				ECDSAerror(ECDSA_R_NEED_NEW_SETUP_VALUES);
 				goto err;
@@ -312,16 +352,20 @@ ecdsa_do_sign(const unsigned char *dgst, int dgst_len,
 
 	ok = 1;
 
-err:
-	if (!ok) {
+ err:
+	if (ok == 0) {
 		ECDSA_SIG_free(ret);
 		ret = NULL;
 	}
 	BN_CTX_free(ctx);
-	BN_clear_free(m);
-	BN_clear_free(tmp);
-	BN_free(order);
+	BN_clear_free(b);
+	BN_clear_free(binv);
+	BN_clear_free(bm);
+	BN_clear_free(bxr);
 	BN_clear_free(kinv);
+	BN_clear_free(m);
+	BN_free(order);
+	BN_free(range);
 	return ret;
 }
 
@@ -329,22 +373,20 @@ static int
 ecdsa_do_verify(const unsigned char *dgst, int dgst_len, const ECDSA_SIG *sig,
     EC_KEY *eckey)
 {
-	int ret = -1, i;
-	BN_CTX   *ctx;
-	BIGNUM   *order, *u1, *u2, *m, *X;
+	BN_CTX *ctx;
+	BIGNUM *order, *u1, *u2, *m, *X;
 	EC_POINT *point = NULL;
 	const EC_GROUP *group;
 	const EC_POINT *pub_key;
+	int order_bits, ret = -1;
 
-	/* check input values */
 	if (eckey == NULL || (group = EC_KEY_get0_group(eckey)) == NULL ||
 	    (pub_key = EC_KEY_get0_public_key(eckey)) == NULL || sig == NULL) {
 		ECDSAerror(ECDSA_R_MISSING_PARAMETERS);
 		return -1;
 	}
 
-	ctx = BN_CTX_new();
-	if (!ctx) {
+	if ((ctx = BN_CTX_new()) == NULL) {
 		ECDSAerror(ERR_R_MALLOC_FAILURE);
 		return -1;
 	}
@@ -354,7 +396,7 @@ ecdsa_do_verify(const unsigned char *dgst, int dgst_len, const ECDSA_SIG *sig,
 	u2 = BN_CTX_get(ctx);
 	m = BN_CTX_get(ctx);
 	X = BN_CTX_get(ctx);
-	if (!X) {
+	if (X == NULL) {
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
@@ -364,45 +406,46 @@ ecdsa_do_verify(const unsigned char *dgst, int dgst_len, const ECDSA_SIG *sig,
 		goto err;
 	}
 
-	if (BN_is_zero(sig->r)          || BN_is_negative(sig->r) ||
-	    BN_ucmp(sig->r, order) >= 0 || BN_is_zero(sig->s)  ||
-	    BN_is_negative(sig->s)      || BN_ucmp(sig->s, order) >= 0) {
+	/* Verify that r and s are in the range [1, order-1]. */
+	if (BN_is_zero(sig->r) || BN_is_negative(sig->r) ||
+	    BN_ucmp(sig->r, order) >= 0 ||
+	    BN_is_zero(sig->s) || BN_is_negative(sig->s) ||
+	    BN_ucmp(sig->s, order) >= 0) {
 		ECDSAerror(ECDSA_R_BAD_SIGNATURE);
-		ret = 0;	/* signature is invalid */
+		ret = 0;
 		goto err;
 	}
-	/* calculate tmp1 = inv(S) mod order */
-	if (!BN_mod_inverse_ct(u2, sig->s, order, ctx)) {
-		ECDSAerror(ERR_R_BN_LIB);
-		goto err;
-	}
-	/* digest -> m */
-	i = BN_num_bits(order);
-	/* Need to truncate digest if it is too long: first truncate whole
-	 * bytes.
-	 */
-	if (8 * dgst_len > i)
-		dgst_len = (i + 7)/8;
+
+	/* Truncate digest if it is too long: first truncate whole bytes. */
+	order_bits = BN_num_bits(order);
+	if (8 * dgst_len > order_bits)
+		dgst_len = (order_bits + 7) / 8;
 	if (!BN_bin2bn(dgst, dgst_len, m)) {
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
-	/* If still too long truncate remaining bits with a shift */
-	if ((8 * dgst_len > i) && !BN_rshift(m, m, 8 - (i & 0x7))) {
+	/* If it is still too long, truncate the remaining bits with a shift. */
+	if (8 * dgst_len > order_bits) {
+		if (!BN_rshift(m, m, 8 - (order_bits & 0x7))) {
+			ECDSAerror(ERR_R_BN_LIB);
+			goto err;
+		}
+	}
+
+	if (!BN_mod_inverse_ct(u2, sig->s, order, ctx)) {	/* w = inv(s) */
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
-	/* u1 = m * tmp mod order */
-	if (!BN_mod_mul(u1, m, u2, order, ctx)) {
+	if (!BN_mod_mul(u1, m, u2, order, ctx)) {		/* u1 = mw */
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
-	/* u2 = r * w mod q */
-	if (!BN_mod_mul(u2, sig->r, u2, order, ctx)) {
+	if (!BN_mod_mul(u2, sig->r, u2, order, ctx)) {		/* u2 = rw */
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
 
+	/* Compute the x-coordinate of G * u1 + pub_key * u2. */
 	if ((point = EC_POINT_new(group)) == NULL) {
 		ECDSAerror(ERR_R_MALLOC_FAILURE);
 		goto err;
@@ -413,17 +456,16 @@ ecdsa_do_verify(const unsigned char *dgst, int dgst_len, const ECDSA_SIG *sig,
 	}
 	if (EC_METHOD_get_field_type(EC_GROUP_method_of(group)) ==
 	    NID_X9_62_prime_field) {
-		if (!EC_POINT_get_affine_coordinates_GFp(group,
-		    point, X, NULL, ctx)) {
+		if (!EC_POINT_get_affine_coordinates_GFp(group, point, X, NULL,
+		    ctx)) {
 			ECDSAerror(ERR_R_EC_LIB);
 			goto err;
 		}
 	}
 #ifndef OPENSSL_NO_EC2M
-	else /* NID_X9_62_characteristic_two_field */
-	{
-		if (!EC_POINT_get_affine_coordinates_GF2m(group,
-		    point, X, NULL, ctx)) {
+	else { /* NID_X9_62_characteristic_two_field */
+		if (!EC_POINT_get_affine_coordinates_GF2m(group, point, X, NULL,
+		    ctx)) {
 			ECDSAerror(ERR_R_EC_LIB);
 			goto err;
 		}
@@ -433,10 +475,11 @@ ecdsa_do_verify(const unsigned char *dgst, int dgst_len, const ECDSA_SIG *sig,
 		ECDSAerror(ERR_R_BN_LIB);
 		goto err;
 	}
-	/*  if the signature is correct u1 is equal to sig->r */
+
+	/* If the signature is correct, the x-coordinate is equal to sig->r. */
 	ret = (BN_ucmp(u1, sig->r) == 0);
 
-err:
+ err:
 	BN_CTX_end(ctx);
 	BN_CTX_free(ctx);
 	EC_POINT_free(point);

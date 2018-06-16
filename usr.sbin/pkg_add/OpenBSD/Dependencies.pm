@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: Dependencies.pm,v 1.158 2018/02/13 15:04:54 espie Exp $
+# $OpenBSD: Dependencies.pm,v 1.160 2018/06/15 10:28:21 espie Exp $
 #
 # Copyright (c) 2005-2010 Marc Espie <espie@openbsd.org>
 #
@@ -37,26 +37,58 @@ sub lookup
 	}
 	# lookup through the rest of the tree...
 	my $done = $self->{done};
+
 	while (my $dep = pop @{$self->{todo}}) {
 		require OpenBSD::RequiredBy;
 
 		next if $done->{$dep};
+		# may need to replace older dep with newer ?
+		my $newer = $self->may_adjust($solver, $state, $dep);
+		if (defined $newer) {
+			push(@{$self->{todo}}, $newer);
+			next;
+		}
 		$done->{$dep} = 1;
 		for my $dep2 (OpenBSD::Requiring->new($dep)->list) {
 			push(@{$self->{todo}}, $dep2) unless $done->{$dep2};
 		}
 		$known->{$dep} = 1;
 		if ($self->find_in_new_source($solver, $state, $obj, $dep)) {
-			$dependencies->{$dep} = 1;
+			$dependencies->{$dep} = 2;
 			return 1;
 		}
 	}
 	if (my $r = $self->find_elsewhere($solver, $state, $obj)) {
-		$dependencies->{$r} = 1;
+		$dependencies->{$r} = 3;
 		return 1;
 	}
 
 	return 0;
+}
+
+# While walking the dependency tree, we may loop back to an older package,
+# because we're relying on dep lists on disk, that we haven't adjusted yet
+# since we're just checking. We need to prepare for the update here as well!
+sub may_adjust
+{
+	my ($self, $solver, $state, $dep) = @_;
+	my $h = $solver->{set}{older}{$dep};
+	if (defined $h) {
+		$state->print("Detecting older #1...", $dep) 
+		    if $state->verbose >=3;
+		my $u = $h->{update_found};
+		if (!defined $u) {
+			$state->errsay("NO UPDATE FOUND for #1!", $dep);
+		} elsif ($u->pkgname ne $dep) {
+			$state->say("converting into #1", $u->pkgname) 
+			    if $state->verbose >=3;
+			return $u;
+		} else {
+			$state->say("didn't change") 
+			    if $state->verbose >=3;
+		}	
+	}
+	return undef;
 }
 
 sub new

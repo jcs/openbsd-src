@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_witness.c,v 1.19 2018/06/08 15:38:15 guenther Exp $	*/
+/*	$OpenBSD: subr_witness.c,v 1.21 2018/06/15 14:07:36 visa Exp $	*/
 
 /*-
  * Copyright (c) 2008 Isilon Systems, Inc.
@@ -94,7 +94,9 @@ __FBSDID("$FreeBSD: head/sys/kern/subr_witness.c 313261 2017-02-05 02:27:04Z mar
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
+#ifdef MULTIPROCESSOR
 #include <sys/mplock.h>
+#endif
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/sched.h>
@@ -370,12 +372,6 @@ static int witness_watch = 3;
 static int witness_watch = 2;
 #endif
 
-#ifdef WITNESS_SKIPSPIN
-int	witness_skipspin = 1;
-#else
-int	witness_skipspin = 0;
-#endif
-
 int witness_count = WITNESS_COUNT;
 
 static struct mutex w_mtx;
@@ -569,6 +565,16 @@ witness_init(struct lock_object *lock, const struct lock_type *type)
 			    __func__);
 	} else
 		lock->lo_witness = enroll(type, lock->lo_name, class);
+}
+
+static inline int
+is_kernel_lock(const struct lock_object *lock)
+{
+#ifdef MULTIPROCESSOR
+	return (lock == &kernel_lock.mpl_lock_obj);
+#else
+	return (0);
+#endif
 }
 
 #ifdef DDB
@@ -924,7 +930,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			 * lock, then skip it.
 			 */
 			if ((lock1->li_lock->lo_flags & LO_SLEEPABLE) != 0 &&
-			    lock == &kernel_lock.mpl_lock_obj)
+			    is_kernel_lock(lock))
 				continue;
 
 			/*
@@ -932,7 +938,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			 * is Giant, then skip it.
 			 */
 			if ((lock->lo_flags & LO_SLEEPABLE) != 0 &&
-			    lock1->li_lock == &kernel_lock.mpl_lock_obj)
+			    is_kernel_lock(lock1->li_lock))
 				continue;
 
 			/*
@@ -950,7 +956,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			 * lock, then treat it as a reversal.
 			 */
 			if ((lock1->li_lock->lo_flags & LO_SLEEPABLE) == 0 &&
-			    lock == &kernel_lock.mpl_lock_obj)
+			    is_kernel_lock(lock))
 				goto reversal;
 
 			/*
@@ -994,7 +1000,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 				printf("lock order reversal: "
 				    "(sleepable after non-sleepable)\n");
 			else if ((lock1->li_lock->lo_flags & LO_SLEEPABLE) == 0
-			    && lock == &kernel_lock.mpl_lock_obj)
+			    && is_kernel_lock(lock))
 				printf("lock order reversal: "
 				    "(Giant after non-sleepable)\n");
 			else
@@ -1087,7 +1093,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 	 * always come before Giant.
 	 */
 	if (flags & LOP_NEWORDER &&
-	    !(plock->li_lock == &kernel_lock.mpl_lock_obj &&
+	    !(is_kernel_lock(plock->li_lock) &&
 	    (lock->lo_flags & LO_SLEEPABLE) != 0))
 		itismychild(plock->li_lock->lo_witness, w);
 out:
@@ -1407,7 +1413,7 @@ witness_warn(int flags, struct lock_object *lock, const char *fmt, ...)
 			if (lock1->li_lock == lock)
 				continue;
 			if (flags & WARN_KERNELOK &&
-			    lock1->li_lock == &kernel_lock.mpl_lock_obj)
+			    is_kernel_lock(lock1->li_lock))
 				continue;
 			if (flags & WARN_SLEEPOK &&
 			    (lock1->li_lock->lo_flags & LO_SLEEPABLE) != 0)
@@ -1487,10 +1493,7 @@ enroll(const struct lock_type *type, const char *subtype,
 	if (witness_watch < 0 || panicstr != NULL || db_active)
 		return (NULL);
 	if ((lock_class->lc_flags & LC_SPINLOCK)) {
-		if (witness_skipspin)
-			return (NULL);
-		else
-			typelist = &w_spin;
+		typelist = &w_spin;
 	} else if ((lock_class->lc_flags & LC_SLEEPLOCK)) {
 		typelist = &w_sleep;
 	} else {
@@ -1889,11 +1892,8 @@ witness_save(struct lock_object *lock, const char **filep, int *linep)
 	class = LOCK_CLASS(lock);
 	if (class->lc_flags & LC_SLEEPLOCK)
 		lock_list = curproc->p_sleeplocks;
-	else {
-		if (witness_skipspin)
-			return;
+	else
 		lock_list = witness_cpu[cpu_number()].wc_spinlocks;
-	}
 	instance = find_instance(lock_list, lock);
 	if (instance == NULL) {
 		panic("%s: lock (%s) %s not locked", __func__,
@@ -1918,11 +1918,8 @@ witness_restore(struct lock_object *lock, const char *file, int line)
 	class = LOCK_CLASS(lock);
 	if (class->lc_flags & LC_SLEEPLOCK)
 		lock_list = curproc->p_sleeplocks;
-	else {
-		if (witness_skipspin)
-			return;
+	else
 		lock_list = witness_cpu[cpu_number()].wc_spinlocks;
-	}
 	instance = find_instance(lock_list, lock);
 	if (instance == NULL)
 		panic("%s: lock (%s) %s not locked", __func__,
@@ -2023,11 +2020,8 @@ witness_setflag(struct lock_object *lock, int flag, int set)
 	class = LOCK_CLASS(lock);
 	if (class->lc_flags & LC_SLEEPLOCK)
 		lock_list = curproc->p_sleeplocks;
-	else {
-		if (witness_skipspin)
-			return;
+	else
 		lock_list = witness_cpu[cpu_number()].wc_spinlocks;
-	}
 	instance = find_instance(lock_list, lock);
 	if (instance == NULL) {
 		panic("%s: lock (%s) %s not locked", __func__,
