@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_descrip.c,v 1.164 2018/06/05 09:29:05 mpi Exp $	*/
+/*	$OpenBSD: kern_descrip.c,v 1.167 2018/06/20 10:52:49 mpi Exp $	*/
 /*	$NetBSD: kern_descrip.c,v 1.42 1996/03/30 22:24:38 christos Exp $	*/
 
 /*
@@ -66,13 +66,18 @@
 
 /*
  * Descriptor management.
+ *
+ * We need to block interrupts as long as `fhdlk' is being taken
+ * with and without the KERNEL_LOCK().
  */
+struct mutex fhdlk = MUTEX_INITIALIZER(IPL_MPFLOOR);
 struct filelist filehead;	/* head of list of open files */
 int numfiles;			/* actual number of open files */
 
 static __inline void fd_used(struct filedesc *, int);
 static __inline void fd_unused(struct filedesc *, int);
 static __inline int find_next_zero(u_int *, int, u_int);
+static __inline int fd_inuse(struct filedesc *, int);
 int finishdup(struct proc *, struct file *, int, int, register_t *, int);
 int find_last_set(struct filedesc *, int);
 int dodup3(struct proc *, int, int, int, register_t *);
@@ -125,7 +130,6 @@ int
 find_last_set(struct filedesc *fd, int last)
 {
 	int off, i;
-	struct file **ofiles = fd->fd_ofiles;
 	u_int *bitmap = fd->fd_lomap;
 
 	off = (last - 1) >> NDENTRYSHIFT;
@@ -139,9 +143,20 @@ find_last_set(struct filedesc *fd, int last)
 	if (i >= last)
 		i = last - 1;
 
-	while (i > 0 && ofiles[i] == NULL)
+	while (i > 0 && !fd_inuse(fd, i))
 		i--;
 	return i;
+}
+
+static __inline int
+fd_inuse(struct filedesc *fdp, int fd)
+{
+	u_int off = fd >> NDENTRYSHIFT;
+
+	if (fdp->fd_lomap[off] & (1 << (fd & NDENTRYMASK)))
+		return 1;
+
+	return 0;
 }
 
 static __inline void
@@ -184,16 +199,18 @@ fd_iterfile(struct file *fp, struct proc *p)
 {
 	struct file *nfp;
 
+	mtx_enter(&fhdlk);
 	if (fp == NULL)
 		nfp = LIST_FIRST(&filehead);
 	else
 		nfp = LIST_NEXT(fp, f_list);
 
-	/* don't FREF when f_count == 0 to avoid race in fdrop() */
-	while (nfp != NULL && (nfp->f_count == 0 || !FILE_IS_USABLE(nfp)))
+	/* don't refcount when f_count == 0 to avoid race in fdrop() */
+	while (nfp != NULL && nfp->f_count == 0)
 		nfp = LIST_NEXT(nfp, f_list);
 	if (nfp != NULL)
-		FREF(nfp);
+		nfp->f_count++;
+	mtx_leave(&fhdlk);
 
 	if (fp != NULL)
 		FRELE(fp, p);
@@ -206,13 +223,17 @@ fd_getfile(struct filedesc *fdp, int fd)
 {
 	struct file *fp;
 
-	if ((u_int)fd >= fdp->fd_nfiles || (fp = fdp->fd_ofiles[fd]) == NULL)
+	vfs_stall_barrier();
+
+	if ((u_int)fd >= fdp->fd_nfiles)
 		return (NULL);
 
-	if (!FILE_IS_USABLE(fp))
-		return (NULL);
+	mtx_enter(&fhdlk);
+	fp = fdp->fd_ofiles[fd];
+	if (fp != NULL)
+		fp->f_count++;
+	mtx_leave(&fhdlk);
 
-	FREF(fp);
 	return (fp);
 }
 
@@ -629,33 +650,52 @@ finishdup(struct proc *p, struct file *fp, int old, int new,
 	struct filedesc *fdp = p->p_fd;
 
 	fdpassertlocked(fdp);
+	KASSERT(fp->f_iflags & FIF_INSERTED);
+
 	if (fp->f_count == LONG_MAX-2) {
 		FRELE(fp, p);
 		return (EDEADLK);
 	}
 
-	oldfp = fdp->fd_ofiles[new];
-	if (oldfp != NULL) {
-		if (!FILE_IS_USABLE(oldfp)) {
-			FRELE(fp, p);
-			return (EBUSY);
-		}
-		FREF(oldfp);
-	}
+	oldfp = fd_getfile(fdp, new);
+	if (dup2 && oldfp == NULL) {
+		if (fd_inuse(fdp, new)) {
+ 			FRELE(fp, p);
+ 			return (EBUSY);
+ 		}
+		fd_used(fdp, new);
+ 	}
 
 	fdp->fd_ofiles[new] = fp;
 	fdp->fd_ofileflags[new] = fdp->fd_ofileflags[old] & ~UF_EXCLOSE;
-	if (dup2 && oldfp == NULL)
-		fd_used(fdp, new);
 	*retval = new;
 
 	if (oldfp != NULL) {
-		if (new < fdp->fd_knlistsize)
-			knote_fdclose(p, new);
+		knote_fdclose(p, new);
 		closef(oldfp, p);
 	}
 
 	return (0);
+}
+
+void
+fdinsert(struct filedesc *fdp, int fd, int flags, struct file *fp)
+{
+	struct file *fq;
+
+	fdpassertlocked(fdp);
+
+	mtx_enter(&fhdlk);
+	if ((fq = fdp->fd_ofiles[0]) != NULL) {
+		LIST_INSERT_AFTER(fq, fp, f_list);
+	} else {
+		LIST_INSERT_HEAD(&filehead, fp, f_list);
+	}
+	KASSERT(fdp->fd_ofiles[fd] == NULL);
+	fdp->fd_ofiles[fd] = fp;
+	fdp->fd_ofileflags[fd] |= (flags & UF_EXCLOSE);
+	fp->f_iflags |= FIF_INSERTED;
+	mtx_leave(&fhdlk);
 }
 
 void
@@ -671,23 +711,15 @@ int
 fdrelease(struct proc *p, int fd)
 {
 	struct filedesc *fdp = p->p_fd;
-	struct file **fpp, *fp;
+	struct file *fp;
 
 	fdpassertlocked(fdp);
 
-	/*
-	 * Don't fd_getfile here. We want to closef LARVAL files and closef
-	 * can deal with that.
-	 */
-	fpp = &fdp->fd_ofiles[fd];
-	fp = *fpp;
+	fp = fd_getfile(fdp, fd);
 	if (fp == NULL)
 		return (EBADF);
-	FREF(fp);
-	*fpp = NULL;
-	fd_unused(fdp, fd);
-	if (fd < fdp->fd_knlistsize)
-		knote_fdclose(p, fd);
+	fdremove(fdp, fd);
+	knote_fdclose(p, fd);
 	return (closef(fp, p));
 }
 
@@ -702,12 +734,6 @@ sys_close(struct proc *p, void *v, register_t *retval)
 	} */ *uap = v;
 	int fd = SCARG(uap, fd), error;
 	struct filedesc *fdp = p->p_fd;
-	struct file *fp;
-
-	fp = fd_getfile(fdp, fd);
-	if (fp == NULL)
-		return (EBADF);
-	FRELE(fp, p);
 
 	fdplock(fdp);
 	error = fdrelease(p, fd);
@@ -928,9 +954,9 @@ fdexpand(struct proc *p)
  * a file descriptor for the process that refers to it.
  */
 int
-falloc(struct proc *p, int flags, struct file **resultfp, int *resultfd)
+falloc(struct proc *p, struct file **resultfp, int *resultfd)
 {
-	struct file *fp, *fq;
+	struct file *fp;
 	int error, i;
 
 	KASSERT(resultfp != NULL);
@@ -963,20 +989,16 @@ restart:
 	 * with and without the KERNEL_LOCK().
 	 */
 	mtx_init(&fp->f_mtx, IPL_MPFLOOR);
-	fp->f_iflags = FIF_LARVAL;
-	if ((fq = p->p_fd->fd_ofiles[0]) != NULL) {
-		LIST_INSERT_AFTER(fq, fp, f_list);
-	} else {
-		LIST_INSERT_HEAD(&filehead, fp, f_list);
-	}
-	p->p_fd->fd_ofiles[i] = fp;
-	p->p_fd->fd_ofileflags[i] |= (flags & UF_EXCLOSE);
 	fp->f_count = 1;
 	fp->f_cred = p->p_ucred;
 	crhold(fp->f_cred);
 	*resultfp = fp;
 	*resultfd = i;
-	FREF(fp);
+
+	mtx_enter(&fhdlk);
+	fp->f_count++;
+	mtx_leave(&fhdlk);
+
 	return (0);
 }
 
@@ -999,7 +1021,6 @@ fdinit(void)
 	newfdp->fd_fd.fd_nfiles = NDFILE;
 	newfdp->fd_fd.fd_himap = newfdp->fd_dhimap;
 	newfdp->fd_fd.fd_lomap = newfdp->fd_dlomap;
-	newfdp->fd_fd.fd_knlistsize = -1;
 
 	newfdp->fd_fd.fd_freefile = 0;
 	newfdp->fd_fd.fd_lastfile = 0;
@@ -1068,6 +1089,7 @@ fdcopy(struct process *pr)
 	newfdp->fd_flags = fdp->fd_flags;
 	newfdp->fd_cmask = fdp->fd_cmask;
 
+	mtx_enter(&fhdlk);
 	for (i = 0; i <= fdp->fd_lastfile; i++) {
 		struct file *fp = fdp->fd_ofiles[i];
 
@@ -1084,12 +1106,13 @@ fdcopy(struct process *pr)
 			    fp->f_type == DTYPE_KQUEUE)
 				continue;
 
-			FREF(fp);
+			fp->f_count++;
 			newfdp->fd_ofiles[i] = fp;
 			newfdp->fd_ofileflags[i] = fdp->fd_ofileflags[i];
 			fd_used(newfdp, i);
 		}
 	}
+	mtx_leave(&fhdlk);
 	fdpunlock(fdp);
 
 	return (newfdp);
@@ -1111,8 +1134,9 @@ fdfree(struct proc *p)
 	for (i = fdp->fd_lastfile; i >= 0; i--, fpp++) {
 		fp = *fpp;
 		if (fp != NULL) {
-			FREF(fp);
 			*fpp = NULL;
+			 /* closef() expects a refcount of 2 */
+			FREF(fp);
 			(void) closef(fp, p);
 		}
 	}
@@ -1129,8 +1153,6 @@ fdfree(struct proc *p)
 		vrele(fdp->fd_cdir);
 	if (fdp->fd_rdir)
 		vrele(fdp->fd_rdir);
-	free(fdp->fd_knlist, M_TEMP, fdp->fd_knlistsize * sizeof(struct klist));
-	hashfree(fdp->fd_knhash, KN_HASHSIZE, M_TEMP);
 	pool_put(&fdesc_pool, fdp);
 }
 
@@ -1150,11 +1172,11 @@ closef(struct file *fp, struct proc *p)
 	if (fp == NULL)
 		return (0);
 
-#ifdef DIAGNOSTIC
-	if (fp->f_count < 2)
-		panic("closef: count (%ld) < 2", fp->f_count);
-#endif
+	KASSERTMSG(fp->f_count >= 2, "count (%ld) < 2", fp->f_count);
+
+	mtx_enter(&fhdlk);
 	fp->f_count--;
+	mtx_leave(&fhdlk);
 
 	/*
 	 * POSIX record locking dictates that any close releases ALL
@@ -1186,18 +1208,19 @@ fdrop(struct file *fp, struct proc *p)
 {
 	int error;
 
-#ifdef DIAGNOSTIC
-	if (fp->f_count != 0)
-		panic("fdrop: count (%ld) != 0", fp->f_count);
-#endif
+	MUTEX_ASSERT_LOCKED(&fhdlk);
+
+	KASSERTMSG(fp->f_count == 0, "count (%ld) != 0", fp->f_count);
+
+	if (fp->f_iflags & FIF_INSERTED)
+		LIST_REMOVE(fp, f_list);
+	mtx_leave(&fhdlk);
 
 	if (fp->f_ops)
 		error = (*fp->f_ops->fo_close)(fp, p);
 	else
 		error = 0;
 
-	/* Free fp */
-	LIST_REMOVE(fp, f_list);
 	crfree(fp->f_cred);
 	numfiles--;
 	pool_put(&file_pool, fp);
@@ -1312,7 +1335,7 @@ dupfdopen(struct proc *p, int indx, int mode)
 	 * of file descriptors, or the fd to be dup'd has already been
 	 * closed, reject. Note, there is no need to check for new == old
 	 * because fd_getfile will return NULL if the file at indx is
-	 * newly created by falloc (FIF_LARVAL).
+	 * newly created by falloc.
 	 */
 	if ((wfp = fd_getfile(fdp, dupfd)) == NULL)
 		return (EBADF);

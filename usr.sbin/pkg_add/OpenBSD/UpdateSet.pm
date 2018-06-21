@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: UpdateSet.pm,v 1.77 2018/02/27 22:46:53 espie Exp $
+# $OpenBSD: UpdateSet.pm,v 1.79 2018/06/20 10:23:18 espie Exp $
 #
 # Copyright (c) 2007-2010 Marc Espie <espie@openbsd.org>
 #
@@ -61,6 +61,8 @@ package OpenBSD::hint2;
 our @ISA = qw(OpenBSD::hint);
 
 package OpenBSD::DeleteSet;
+use OpenBSD::Error;
+
 sub new
 {
 	my ($class, $state) = @_;
@@ -89,6 +91,11 @@ sub older_names
 }
 
 sub all_handles
+{
+	&older;
+}
+
+sub changed_handles
 {
 	&older;
 }
@@ -175,6 +182,18 @@ sub merge
 	$tracker->todo($self);
 	return $self;
 }
+
+OpenBSD::Auto::cache(solver,
+    sub {
+    	require OpenBSD::Dependencies;
+	return OpenBSD::Dependencies::Solver->new(shift);
+    });
+
+OpenBSD::Auto::cache(conflict_cache,
+    sub {
+    	require OpenBSD::Dependencies;
+	return OpenBSD::ConflictCache->new;
+    });
 
 package OpenBSD::UpdateSet;
 our @ISA = qw(OpenBSD::DeleteSet);
@@ -318,6 +337,12 @@ sub all_handles
 {
 	my $self = shift;
 	return ($self->older, $self->newer, $self->kept);
+}
+
+sub changed_handles
+{
+	my $self = shift;
+	return ($self->older, $self->newer);
 }
 
 sub hint_names

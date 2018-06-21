@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: Dependencies.pm,v 1.160 2018/06/15 10:28:21 espie Exp $
+# $OpenBSD: Dependencies.pm,v 1.165 2018/06/20 14:56:55 espie Exp $
 #
 # Copyright (c) 2005-2010 Marc Espie <espie@openbsd.org>
 #
@@ -82,7 +82,7 @@ sub may_adjust
 		} elsif ($u->pkgname ne $dep) {
 			$state->say("converting into #1", $u->pkgname) 
 			    if $state->verbose >=3;
-			return $u;
+			return $u->pkgname;
 		} else {
 			$state->say("didn't change") 
 			    if $state->verbose >=3;
@@ -154,7 +154,7 @@ sub find_in_new_source
 {
 	my ($self, $solver, $state, $obj, $dep) = @_;
 
-	if (defined $solver->{set}->{newer}->{$dep}) {
+	if (defined $solver->{set}{newer}{$dep}) {
 		OpenBSD::SharedLibs::add_libs_from_plist($solver->{set}->{newer}->{$dep}->plist, $state);
 	} else {
 		OpenBSD::SharedLibs::add_libs_from_installed_package($dep, $state);
@@ -186,6 +186,18 @@ sub find_elsewhere
 
 package OpenBSD::lookup::tag;
 our @ISA=qw(OpenBSD::lookup);
+sub new
+{
+	my ($class, $solver, $state) = @_;
+
+	# prepare for closure
+	if (!defined $solver->{old_dependencies}) {
+		$solver->solve_old_depends($state);
+	}
+	my @todo = ($solver->dependencies, keys %{$solver->{old_dependencies}});
+	bless { todo => \@todo, done => {}, known => {} }, $class;
+}
+
 sub find_in_extra_sources
 {
 }
@@ -197,9 +209,11 @@ sub find_elsewhere
 sub find_in_already_done
 {
 	my ($self, $solver, $state, $obj) = @_;
-	my $r = $self->{known_tags}->{$obj};
+	my $r = $self->{known_tags}{$obj->name};
 	if (defined $r) {
-		$state->say("Found tag #1 in #2", $obj, $r)
+		my ($dep, $d) = @$r;
+		$obj->{definition_list} = $d;
+		$state->say("Found tag #1 in #2", $obj->stringize, $dep)
 		    if $state->verbose >= 3;
 	}
 	return $r;
@@ -208,9 +222,9 @@ sub find_in_already_done
 sub find_in_plist
 {
 	my ($self, $plist, $dep) = @_;
-	if ($plist->has('define-tag')) {
-		for my $t (@{$plist->{'define-tag'}}) {
-			$self->{known_tags}->{$t->name} = $dep;
+	if (defined $plist->{tags_definitions}) {
+		while (my ($name, $d) = each %{$plist->{tags_definitions}}) {
+			$self->{known_tags}{$name} = [$dep, $d];
 		}
 	}
 }
@@ -328,6 +342,8 @@ sub do
 	return;
 }
 
+# both the solver and the conflict cache inherit from cloner
+# they both want to merge several hashes from extra data.
 package OpenBSD::Cloner;
 sub clone
 {
@@ -340,6 +356,9 @@ sub clone
 	}
 }
 
+# The actual solver derives from SolverBase:
+# there is a specific subclass for pkg_create which does resolve
+# dependencies in a much lighter way than the normal pkg_add code.
 package OpenBSD::Dependencies::SolverBase;
 our @ISA = qw(OpenBSD::Cloner);
 
@@ -426,6 +445,21 @@ sub solve_depends
 	}
 
 	return sort values %{$self->{deplist}};
+}
+
+sub solve_old_depends
+{
+	my ($self, $state) = @_;
+
+	$self->{old_dependencies} = {};
+	for my $package ($self->{set}->older) {
+		for my $dep (@{$package->dependency_info->{depend}}) {
+			my $v = $self->solve_dependency($state, $dep, $package);
+			# XXX
+			next if !defined $v;
+			$self->{old_dependencies}{$v} = $dep;
+		}
+	}
 }
 
 sub solve_wantlibs
@@ -783,26 +817,50 @@ sub errsay_library
 	$state->errsay("Can't install #1 because of libraries", $h->pkgname);
 }
 
+sub find_in_self
+{
+	my ($solver, $plist, $state, $tag) = @_;
+	return 0 unless defined $plist->{tags_definitions};
+	while (my ($name, $d) = each %{$plist->{tags_definitions}}) {
+		next unless $tag->name eq $name;
+		$tag->{definition_list} = $d;
+		$state->say("Found tag #1 in self", $tag->stringize)
+		    if $state->verbose >= 3;
+		return 1;
+	}
+	return 0;
+}
+
+sub solve_handle_tags
+{
+	my ($solver, $h, $state) = @_;
+	my $plist = $h->plist;
+	return 1 if !defined $plist->{tags};
+	$solver->{tag_finder} //= OpenBSD::lookup::tag->new($solver, $state);
+	for my $tag (@{$plist->{tags}}) {
+		next if $solver->{tag_finder}->lookup($solver,
+		    $solver->{to_register}{$h}, $state, $tag);
+		# XXX
+		next if $solver->find_in_self($plist, $state, $tag);
+		$state->errsay("Can't do #1: tag definition not found #2",
+		    $plist->pkgname, $tag->name);
+		return 0;
+	}
+	return 1;
+}
+
 sub solve_tags
 {
 	my ($solver, $state) = @_;
-	my $okay = 1;
 
-	my $tag_finder = OpenBSD::lookup::tag->new($solver);
-	for my $h ($solver->{set}->newer) {
-		for my $tag (keys %{$h->{plist}->{tags}}) {
-			next if $tag_finder->lookup($solver,
-			    $solver->{to_register}->{$h}, $state, $tag);
-			$state->errsay("Can't install #1: tag definition not found #2",
-			    $h->pkgname, $tag);
-			if ($okay) {
-				$solver->dump($state);
-				$tag_finder->dump($state);
-				$okay = 0;
-			}
-	    	}
+	for my $h ($solver->{set}->changed_handles) {
+		if (!$solver->solve_handle_tags($h, $state)) {
+			$solver->dump($state);
+			$solver->{tag_finder}->dump($state);
+			return 0;
+		}
 	}
-	return $okay;
+	return 1;
 }
 
 package OpenBSD::PackingElement;

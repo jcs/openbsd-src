@@ -1,4 +1,4 @@
-/*	$OpenBSD: filedesc.h,v 1.37 2018/06/05 09:29:05 mpi Exp $	*/
+/*	$OpenBSD: filedesc.h,v 1.39 2018/06/18 09:15:05 mpi Exp $	*/
 /*	$NetBSD: filedesc.h,v 1.14 1996/04/09 20:55:28 cgd Exp $	*/
 
 /*
@@ -73,11 +73,6 @@ struct filedesc {
 					/* held when writing to fd_ofiles, */
 					/* fd_ofileflags, or fd_{hi,lo}map */
 
-	int	fd_knlistsize;		/* size of knlist */
-	struct	klist *fd_knlist;	/* list of attached knotes */
-	u_long	fd_knhashmask;		/* size of knhash */
-	struct	klist *fd_knhash;	/* hash table for attached knotes */
-
 	int fd_flags;			/* flags on the file descriptor table */
 };
 
@@ -125,12 +120,13 @@ void	filedesc_init(void);
 int	dupfdopen(struct proc *, int, int);
 int	fdalloc(struct proc *p, int want, int *result);
 void	fdexpand(struct proc *);
-int	falloc(struct proc *_p, int _flags, struct file **_rfp, int *_rfd);
+int	falloc(struct proc *_p, struct file **_rfp, int *_rfd);
 struct	filedesc *fdinit(void);
 struct	filedesc *fdshare(struct process *);
 struct	filedesc *fdcopy(struct process *);
 void	fdfree(struct proc *p);
 int	fdrelease(struct proc *p, int);
+void	fdinsert(struct filedesc *, int, int, struct file *);
 void	fdremove(struct filedesc *, int);
 void	fdcloseexec(struct proc *);
 struct file *fd_iterfile(struct file *, struct proc *);

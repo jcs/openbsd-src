@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_syscalls.c,v 1.175 2018/06/06 06:55:22 mpi Exp $	*/
+/*	$OpenBSD: uipc_syscalls.c,v 1.177 2018/06/20 10:52:49 mpi Exp $	*/
 /*	$NetBSD: uipc_syscalls.c,v 1.19 1996/02/09 19:00:48 christos Exp $	*/
 
 /*
@@ -106,9 +106,9 @@ sys_socket(struct proc *p, void *v, register_t *retval)
 
 	KERNEL_LOCK();
 	fdplock(fdp);
-	error = falloc(p, cloexec, &fp, &fd);
-	fdpunlock(fdp);
+	error = falloc(p, &fp, &fd);
 	if (error) {
+		fdpunlock(fdp);
 		soclose(so);
 	} else {
 		fp->f_flag = fflag;
@@ -118,7 +118,9 @@ sys_socket(struct proc *p, void *v, register_t *retval)
 			so->so_state |= SS_NBIO;
 		so->so_state |= ss;
 		fp->f_data = so;
-		FILE_SET_MATURE(fp, p);
+		fdinsert(fdp, fd, cloexec, fp);
+		fdpunlock(fdp);
+		FRELE(fp, p);
 		*retval = fd;
 	}
 	KERNEL_UNLOCK();
@@ -273,7 +275,9 @@ doaccept(struct proc *p, int sock, struct sockaddr *name, socklen_t *anamelen,
 	socklen_t namelen;
 	int error, s, tmpfd;
 	struct socket *head, *so;
-	int nflag;
+	int cloexec, nflag;
+
+	cloexec = (flags & SOCK_CLOEXEC) ? UF_EXCLOSE : 0;
 
 	if (name && (error = copyin(anamelen, &namelen, sizeof (namelen))))
 		return (error);
@@ -283,7 +287,7 @@ doaccept(struct proc *p, int sock, struct sockaddr *name, socklen_t *anamelen,
 	headfp = fp;
 
 	fdplock(fdp);
-	error = falloc(p, (flags & SOCK_CLOEXEC) ? UF_EXCLOSE : 0, &fp, &tmpfd);
+	error = falloc(p, &fp, &tmpfd);
 	fdpunlock(fdp);
 	if (error) {
 		FRELE(headfp, p);
@@ -348,8 +352,11 @@ out:
 		else
 			so->so_state &= ~SS_NBIO;
 		sounlock(head, s);
+		fdplock(fdp);
 		fp->f_data = so;
-		FILE_SET_MATURE(fp, p);
+		fdinsert(fdp, tmpfd, cloexec, fp);
+		fdpunlock(fdp);
+		FRELE(fp, p);
 		*retval = tmpfd;
 	} else {
 		sounlock(head, s);
@@ -478,13 +485,13 @@ sys_socketpair(struct proc *p, void *v, register_t *retval)
 	}
 	KERNEL_LOCK();
 	fdplock(fdp);
-	if ((error = falloc(p, cloexec, &fp1, &sv[0])) != 0)
+	if ((error = falloc(p, &fp1, &sv[0])) != 0)
 		goto free3;
 	fp1->f_flag = fflag;
 	fp1->f_type = DTYPE_SOCKET;
 	fp1->f_ops = &socketops;
 	fp1->f_data = so1;
-	if ((error = falloc(p, cloexec, &fp2, &sv[1])) != 0)
+	if ((error = falloc(p, &fp2, &sv[1])) != 0)
 		goto free4;
 	fp2->f_flag = fflag;
 	fp2->f_type = DTYPE_SOCKET;
@@ -502,9 +509,11 @@ sys_socketpair(struct proc *p, void *v, register_t *retval)
 			(*fp2->f_ops->fo_ioctl)(fp2, FIONBIO, (caddr_t)&type,
 			    p);
 		}
-		FILE_SET_MATURE(fp1, p);
-		FILE_SET_MATURE(fp2, p);
+		fdinsert(fdp, sv[0], cloexec, fp1);
+		fdinsert(fdp, sv[1], cloexec, fp2);
 		fdpunlock(fdp);
+		FRELE(fp1, p);
+		FRELE(fp2, p);
 		KERNEL_UNLOCK();
 		return (0);
 	}
@@ -682,13 +691,16 @@ sendit(struct proc *p, int s, struct msghdr *mp, int flags, register_t *retsize)
 	}
 #endif
 	len = auio.uio_resid;
-	error = sosend(fp->f_data, to, &auio, NULL, control, flags);
+	error = sosend(so, to, &auio, NULL, control, flags);
 	if (error) {
 		if (auio.uio_resid != len && (error == ERESTART ||
 		    error == EINTR || error == EWOULDBLOCK))
 			error = 0;
-		if (error == EPIPE && (flags & MSG_NOSIGNAL) == 0)
+		if (error == EPIPE && (flags & MSG_NOSIGNAL) == 0) {
+			KERNEL_LOCK();
 			ptsignal(p, SIGPIPE, STHREAD);
+			KERNEL_UNLOCK();
+		}
 	}
 	if (error == 0) {
 		*retsize = len - auio.uio_resid;
@@ -1167,7 +1179,8 @@ getsock(struct proc *p, int fdes, struct file **fpp)
 {
 	struct file *fp;
 
-	if ((fp = fd_getfile(p->p_fd, fdes)) == NULL)
+	fp = fd_getfile(p->p_fd, fdes);
+	if (fp == NULL)
 		return (EBADF);
 	if (fp->f_type != DTYPE_SOCKET) {
 		FRELE(fp, p);

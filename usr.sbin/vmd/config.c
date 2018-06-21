@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.42 2018/03/14 07:29:34 mlarkin Exp $	*/
+/*	$OpenBSD: config.c,v 1.44 2018/06/19 18:15:01 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -80,8 +80,8 @@ config_purge(struct vmd *env, unsigned int reset)
 	struct vmd_switch	*vsw;
 	unsigned int		 what;
 
-	log_debug("%s: purging vms and switches from running config",
-	    __func__);
+	log_debug("%s: %s purging vms and switches",
+	    __func__, ps->ps_title[privsep_process]);
 	/* Reset global configuration (prefix was verified before) */
 	(void)host(VMD_DHCP_PREFIX, &env->vmd_cfg.cfg_localprefix);
 
@@ -121,7 +121,11 @@ config_setconfig(struct vmd *env)
 int
 config_getconfig(struct vmd *env, struct imsg *imsg)
 {
-	log_debug("%s: retrieving config", __func__);
+	struct privsep	*ps = &env->vmd_ps;
+
+	log_debug("%s: %s retrieving config",
+	    __func__, ps->ps_title[privsep_process]);
+
 	IMSG_SIZE_CHECK(imsg, &env->vmd_cfg);
 	memcpy(&env->vmd_cfg, imsg->data, sizeof(env->vmd_cfg));
 
@@ -148,12 +152,14 @@ config_setreset(struct vmd *env, unsigned int reset)
 int
 config_getreset(struct vmd *env, struct imsg *imsg)
 {
+	struct privsep	*ps = &env->vmd_ps;
 	unsigned int	 mode;
 
 	IMSG_SIZE_CHECK(imsg, &mode);
 	memcpy(&mode, imsg->data, sizeof(mode));
 
-	log_debug("%s: resetting state", __func__);
+	log_debug("%s: %s resetting state",
+	    __func__, ps->ps_title[privsep_process]);
 	config_purge(env, mode);
 
 	return (0);
@@ -252,8 +258,8 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid, uid_t uid)
 			goto fail;
 		}
 		if (S_ISREG(stat_buf.st_mode) == 0) {
-			log_warnx("%s: cdrom %s is not a regular file", __func__,
-			    vcp->vcp_cdrom);
+			log_warnx("%s: cdrom %s is not a regular file",
+			    __func__, vcp->vcp_cdrom);
 			errno = VMD_CDROM_INVALID;
 			goto fail;
 		}
@@ -262,9 +268,8 @@ config_setvm(struct privsep *ps, struct vmd_vm *vm, uint32_t peerid, uid_t uid)
 	/* Open disk images for child */
 	for (i = 0 ; i < vcp->vcp_ndisks; i++) {
                 /* Stat disk[i] to ensure it is a regular file */
-		if ((diskfds[i] =
-		    open(vcp->vcp_disks[i], O_RDWR | O_EXLOCK | O_NONBLOCK)) ==
-		        -1) {
+		if ((diskfds[i] = open(vcp->vcp_disks[i],
+		    O_RDWR|O_EXLOCK|O_NONBLOCK)) == -1) {
 			log_warn("%s: can't open disk %s", __func__,
 			    vcp->vcp_disks[i]);
 			errno = VMD_DISK_MISSING;

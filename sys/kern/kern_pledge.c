@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.231 2018/06/03 18:20:28 deraadt Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.233 2018/06/20 10:48:55 mpi Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -394,6 +394,7 @@ static const struct {
 	{ "vminfo",		PLEDGE_VMINFO },
 	{ "vmm",		PLEDGE_VMM },
 	{ "wpath",		PLEDGE_WPATH },
+	{ "wroute",		PLEDGE_WROUTE },
 };
 
 int
@@ -523,6 +524,7 @@ pledge_fail(struct proc *p, int error, uint64_t code)
 	if (p->p_p->ps_pledge & PLEDGE_ERROR)
 		return (ENOSYS);
 
+	KERNEL_LOCK();
 	log(LOG_ERR, "%s[%d]: pledge \"%s\", syscall %d\n",
 	    p->p_p->ps_comm, p->p_p->ps_pid, codes, p->p_pledge_syscall);
 	p->p_p->ps_acflag |= APLEDGE;
@@ -535,6 +537,7 @@ pledge_fail(struct proc *p, int error, uint64_t code)
 	psignal(p, SIGABRT);
 
 	p->p_p->ps_pledge = 0;		/* Disable all PLEDGE_ flags */
+	KERNEL_UNLOCK();
 	return (error);
 }
 
@@ -776,6 +779,13 @@ pledge_sysctl(struct proc *p, int miblen, int *mib, void *new)
 		    mib[2] == 0 &&
 		    (mib[3] == 0 || mib[3] == AF_INET6 || mib[3] == AF_INET) &&
 		    mib[4] == NET_RT_FLAGS && mib[5] == RTF_LLINFO)
+			return (0);
+	}
+
+	if ((p->p_p->ps_pledge & PLEDGE_WROUTE)) {
+		if (miblen == 4 &&
+		    mib[0] == CTL_NET && mib[1] == PF_INET6 &&
+		    mib[2] == IPPROTO_IPV6 && mib[3] == IPV6CTL_SOIIKEY)
 			return (0);
 	}
 
@@ -1185,6 +1195,15 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 		case SIOCGNBRINFO_IN6:
 		case SIOCGIFINFO_IN6:
 		case SIOCGIFMEDIA:
+			if (fp->f_type == DTYPE_SOCKET)
+				return (0);
+			break;
+		}
+	}
+
+	if ((p->p_p->ps_pledge & PLEDGE_WROUTE)) {
+		switch (com) {
+		case SIOCAIFADDR_IN6:
 			if (fp->f_type == DTYPE_SOCKET)
 				return (0);
 			break;

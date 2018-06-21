@@ -1,4 +1,4 @@
-/*	$OpenBSD: file.h,v 1.47 2018/06/05 09:29:05 mpi Exp $	*/
+/*	$OpenBSD: file.h,v 1.49 2018/06/20 10:52:49 mpi Exp $	*/
 /*	$NetBSD: file.h,v 1.11 1995/03/26 20:24:13 jtc Exp $	*/
 
 /*
@@ -65,6 +65,7 @@ struct	fileops {
  *
  *  Locks used to protect struct members in this file:
  *	I	immutable after creation
+ *	F	global `fhdlk' mutex
  *	f	per file `f_mtx'
  *	k	kernel lock
  */
@@ -77,11 +78,11 @@ struct file {
 #define	DTYPE_PIPE	3	/* pipe */
 #define	DTYPE_KQUEUE	4	/* event queue */
 	short	f_type;		/* [I] descriptor type */
-	long	f_count;	/* [k] reference count */
+	long	f_count;	/* [F] reference count */
 	struct	ucred *f_cred;	/* [I] credentials associated with descriptor */
 	struct	fileops *f_ops; /* [I] file operation pointers */
 	off_t	f_offset;	/* [k] */
-	void 	*f_data;	/* [k] private data */
+	void 	*f_data;	/* [I] private data */
 	int	f_iflags;	/* [k] internal flags */
 	uint64_t f_rxfer;	/* [f] total number of read transfers */
 	uint64_t f_wxfer;	/* [f] total number of write transfers */
@@ -91,26 +92,31 @@ struct file {
 };
 
 #define FIF_HASLOCK		0x01	/* descriptor holds advisory lock */
-#define FIF_LARVAL		0x02	/* not fully constructed, don't use */
-
-#define FILE_IS_USABLE(fp) \
-	(((fp)->f_iflags & FIF_LARVAL) == 0)
+#define FIF_INSERTED		0x80	/* present in `filehead' */
 
 #define FREF(fp) \
 	do { \
 		extern void vfs_stall_barrier(void); \
 		vfs_stall_barrier(); \
+		mtx_enter(&fhdlk); \
 		(fp)->f_count++; \
+		mtx_leave(&fhdlk); \
 	} while (0)
-#define FRELE(fp,p)	(--(fp)->f_count == 0 ? fdrop(fp, p) : 0)
 
-#define FILE_SET_MATURE(fp,p) do {				\
-	(fp)->f_iflags &= ~FIF_LARVAL;				\
-	FRELE(fp, p);						\
-} while (0)
+#define FRELE(fp,p) \
+({ \
+	int rv = 0; \
+	mtx_enter(&fhdlk); \
+	if (--(fp)->f_count == 0) \
+		rv = fdrop(fp, p); \
+	else \
+		mtx_leave(&fhdlk); \
+	rv; \
+})
 
 int	fdrop(struct file *, struct proc *);
 
+extern struct mutex fhdlk;		/* protects `filehead' and f_count */
 LIST_HEAD(filelist, file);
 extern int maxfiles;			/* kernel limit on number of open files */
 extern int numfiles;			/* actual number of open files */
