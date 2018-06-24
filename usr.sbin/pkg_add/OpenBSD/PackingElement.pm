@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: PackingElement.pm,v 1.253 2018/06/19 13:23:08 espie Exp $
+# $OpenBSD: PackingElement.pm,v 1.260 2018/06/24 12:38:03 espie Exp $
 #
 # Copyright (c) 2003-2014 Marc Espie <espie@openbsd.org>
 #
@@ -1288,10 +1288,16 @@ use File::Basename;
 use OpenBSD::Error;
 our @ISA=qw(OpenBSD::PackingElement::Action);
 
+sub command
+{
+	my $self = shift;
+	return $self->name;
+}
+
 sub expand
 {
 	my ($self, $state) = @_;
-	my $e = $self->name;
+	my $e = $self->command;
 	if ($e =~ m/\%F/o) {
 		die "Bad expand" unless defined $state->{lastfile};
 		$e =~ s/\%F/$state->{lastfile}->{name}/g;
@@ -1319,13 +1325,12 @@ sub destate
 
 sub run
 {
-	my ($self, $state) = @_;
+	my ($self, $state, $v) = @_;
 
+	$v //= $self->{expanded};
 	$state->ldconfig->ensure;
-	$state->say("#1 #2", $self->keyword, $self->{expanded})
-	    if $state->verbose >= 2;
-	$state->log->system(OpenBSD::Paths->sh, '-c', $self->{expanded})
-	    unless $state->{not};
+	$state->say("#1 #2", $self->keyword, $v) if $state->verbose >= 2;
+	$state->log->system(OpenBSD::Paths->sh, '-c', $v) unless $state->{not};
 }
 
 # so tags are going to get triggered by packages we depend on.
@@ -1335,20 +1340,10 @@ sub run
 package OpenBSD::PackingElement::TagBase;
 our @ISA=qw(OpenBSD::PackingElement::ExeclikeAction);
 
-sub new
-{
-	my ($class, $args) = @_;
-	my ($tag, @params) = split(/\s+/, $args);
-	bless {
-		name => $tag,
-		params => \@params,
-	    }, $class;
-}
-
-sub stringize
+sub command
 {
 	my $self = shift;
-	return join(' ', $self->name, @{$self->{params}});
+	return $self->{params};
 }
 
 package OpenBSD::PackingElement::Tag;
@@ -1356,6 +1351,22 @@ our @ISA=qw(OpenBSD::PackingElement::TagBase);
 sub keyword() { 'tag' }
 
 __PACKAGE__->register_with_factory;
+
+sub new
+{
+	my ($class, $args) = @_;
+	my ($tag, $params) = split(/\s+/, $args, 2);
+	bless {
+		name => $tag,
+		params => $params // '',
+	    }, $class;
+}
+
+sub stringize
+{
+	my $self = shift;
+	return join(' ', $self->name, $self->{params});
+}
 
 # tags are a kind of dependency, we have a special list for them, BUT
 # they're still part of the normal packing-list
@@ -1375,11 +1386,85 @@ sub category() {'define-tag'}
 sub keyword() { 'define-tag' }
 __PACKAGE__->register_with_factory;
 
+# define-tag may be parsed several times, but these objects must be
+# unique for tag accumulation to work correctly
+my $cache = {};
+
+sub new
+{
+	my ($class, $args) = @_;
+	my ($tag, $mode, $params) = split(/\s+/, $args, 3);
+	$cache->{$args} //= bless {
+	    name => $tag,
+	    mode => $mode,
+	    params => $params,
+	    }, $class;
+}
+
+sub stringize
+{
+	my $self = shift;
+	return join(' ', $self->name, $self->{mode}, $self->{params});
+}
+
 sub add_object
 {
 	my ($self, $plist) = @_;
+	if ($self->{mode} ne 'at-end') {
+		die "\@define-tag only has at-end mode so far";
+	}
 	push(@{$plist->{tags_definitions}{$self->name}}, $self);
 	$self->SUPER::add_object($plist);
+}
+
+sub add_tag
+{
+	my ($self, $tag, $mode, $state) = @_;
+	# add the tag contents if they exist
+	# they're stored in a hash because the order doesn't matter
+	if ($tag->{params} ne '') {
+		$self->{list}{$tag->{expanded}} = 1;
+	}
+	# special case: we have to run things *now* if deleting
+	if ($mode eq 'delete' && $tag->{found_in_self}) {
+		$self->run_tag($state);
+		delete $state->{atend}{$self->name};
+	} else {
+		$state->{atend}{$self->name} = $self;
+	}
+}
+
+sub destate
+{
+}
+
+sub run_tag
+{
+	my ($self, $state) = @_;
+	my $command = $self->command;
+	if ($command =~ m/\%D/) {
+		$command =~ s/\%D/$state->{localbase}/g;
+	}
+
+	if ($command =~ m/\%l/) {
+		my $l = join(' ', keys %{$self->{list}});
+		$command =~ s/\%l/$l/g;
+	}
+	if ($command =~ m/\%u/) {
+		for my $p (keys %{$self->{list}}) {
+			my $v = $command;
+			$v =~ s/\%u/$p/g;
+			$self->run($state, $v);
+		}
+	} else {
+		$self->run($state, $command);
+	}
+}
+
+sub need_params
+{
+	my $self = shift;
+	return $self->{params} =~ m/\%[lu]/;
 }
 
 package OpenBSD::PackingElement::Exec;

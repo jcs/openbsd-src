@@ -1,4 +1,4 @@
-/* $OpenBSD: ast.c,v 1.5 2018/04/12 17:13:43 deraadt Exp $ */
+/* $OpenBSD: ast.c,v 1.7 2018/06/22 16:08:12 drahn Exp $ */
 /*
  * Copyright (c) 2015 Dale Rahn <drahn@dalerahn.com>
  *
@@ -39,7 +39,7 @@ ast(struct trapframe *tf)
 {
 	struct proc *p = curcpu()->ci_curproc;
 
-	p->p_md.md_astpending = 0;
+	p->p_addr->u_pcb.pcb_tf = tf;
 
 	refreshcreds(p);
 	uvmexp.softs++;

@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 # ex:ts=8 sw=4:
-# $OpenBSD: PkgCreate.pm,v 1.143 2018/06/18 17:59:36 espie Exp $
+# $OpenBSD: PkgCreate.pm,v 1.150 2018/06/24 12:44:38 espie Exp $
 #
 # Copyright (c) 2003-2014 Marc Espie <espie@openbsd.org>
 #
@@ -20,7 +20,7 @@ use strict;
 use warnings;
 
 use OpenBSD::AddCreateDelete;
-use OpenBSD::Dependencies;
+use OpenBSD::Dependencies::SolverBase;
 use OpenBSD::SharedLibs;
 use OpenBSD::Signer;
 
@@ -867,19 +867,22 @@ our @ISA = qw(OpenBSD::Dependencies::SolverBase);
 sub new
 {
 	my ($class, $plist) = @_;
-	bless { set => OpenBSD::PseudoSet->new($plist), bad => [] }, $class;
+	bless { set => OpenBSD::PseudoSet->new($plist), 
+	    old_dependencies => {}, bad => [] }, $class;
 }
 
 sub solve_all_depends
 {
 	my ($solver, $state) = @_;
 
+	$solver->{tag_finder} = OpenBSD::lookup::tag->new($solver, $state);
 	while (1) {
 		my @todo = $solver->solve_depends($state);
 		if (@todo == 0) {
 			return;
 		}
-		if ($solver->solve_wantlibs($state, 0)) {
+		if ($solver->solve_wantlibs($state, 0) &&
+		    $solver->solve_tags($state, 0)) {
 			return;
 		}
 		$solver->{set}->add_new(@todo);
@@ -892,11 +895,11 @@ sub solve_wantlibs
 
 	my $okay = 1;
 	my $lib_finder = OpenBSD::lookup::library->new($solver);
-	my $h = $solver->{set}->{new}[0];
+	my $h = $solver->{set}{new}[0];
 	for my $lib (@{$h->{plist}{wantlib}}) {
 		$solver->{localbase} = $h->{plist}->localbase;
 		next if $lib_finder->lookup($solver,
-		    $solver->{to_register}->{$h}, $state,
+		    $solver->{to_register}{$h}, $state,
 		    $lib->spec);
 		$okay = 0;
 		OpenBSD::SharedLibs::report_problem($state,
@@ -905,6 +908,29 @@ sub solve_wantlibs
 	if (!$okay && $final) {
 		$solver->dump($state);
 		$lib_finder->dump($state);
+	}
+	return $okay;
+}
+
+sub solve_tags
+{
+	my ($solver, $state, $final) = @_;
+	return 1;
+
+	my $okay = 1;
+	my $h = $solver->{set}{new}[0];
+	my $plist = $h->{plist};
+	return 1 if !defined $plist->{tags};
+	for my $tag (@{$plist->{tags}}) {
+		$solver->{tag_finder}->lookup($solver,
+		    $solver->{to_register}{$h}, $state, $tag) ||
+		    $solver->find_in_self($plist, $state, $tag);
+		if (!$solver->verify_tag($tag, $state, $plist)) {
+			$okay = 0;
+		}
+	}
+	if (!$okay && $final) {
+		$solver->dump($state);
 	}
 	return $okay;
 }
@@ -1007,6 +1033,7 @@ sub really_solve_from_ports
 		}
 	}
 	OpenBSD::SharedLibs::add_libs_from_plist($plist, $state);
+	$self->{tag_finder}->find_in_plist($plist, $dep->{pkgpath});
 	$self->add_dep($plist);
 	return $plist->pkgname;
 }
@@ -1197,7 +1224,7 @@ sub read_fragments
 				}
 				my $s = $subst->do($l);
 				if ($fast) {
-					next unless $s =~ m/^\@(?:cwd|lib|libset|depend|wantlib)\b/o || $s =~ m/lib.*\.a$/o;
+					next unless $s =~ m/^\@(?:cwd|lib|libset|define-tag|depend|wantlib)\b/o || $s =~ m/lib.*\.a$/o;
 				}
 	# XXX some things, like @comment no checksum, don't produce an object
 				my $o = &$cont($s);
@@ -1467,6 +1494,9 @@ sub check_dependencies
 
 	$solver->solve_all_depends($state);
 	if (!$solver->solve_wantlibs($state, 1)) {
+		$state->{bad}++;
+	}
+	if (!$solver->solve_tags($state, 1)) {
 		$state->{bad}++;
 	}
 }
