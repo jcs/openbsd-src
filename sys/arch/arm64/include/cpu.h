@@ -1,4 +1,4 @@
-/* $OpenBSD: cpu.h,v 1.7 2018/01/30 15:46:12 kettenis Exp $ */
+/* $OpenBSD: cpu.h,v 1.9 2018/06/30 10:20:21 kettenis Exp $ */
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
  *
@@ -83,6 +83,7 @@ struct cpu_info {
 
 	u_int32_t		ci_cpuid;
 	uint64_t		ci_mpidr;
+	u_int			ci_acpi_proc_id;
 	int			ci_node;
 	struct cpu_info		*ci_self;
 
@@ -280,6 +281,12 @@ disable_irq_daif_ret()
 
 #define restore_interrupts(old_daif)					\
 	restore_daif(old_daif)
+
+static inline void
+intr_enable(void)
+{
+	enable_irq_daif();
+}
 
 static inline u_long
 intr_disable(void)

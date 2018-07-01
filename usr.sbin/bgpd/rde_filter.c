@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_filter.c,v 1.88 2018/06/21 17:28:02 claudio Exp $ */
+/*	$OpenBSD: rde_filter.c,v 1.94 2018/06/29 11:45:50 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -29,13 +29,13 @@
 #include "rde.h"
 #include "log.h"
 
-int	rde_filter_match(struct filter_rule *, struct rde_aspath *,
-	    struct bgpd_addr *, u_int8_t, struct rde_peer *, struct rde_peer *);
+int	rde_filter_match(struct filter_rule *, struct rde_peer *,
+	    struct rde_aspath *, struct prefix *);
+int	rde_prefix_match(struct filter_prefix *, struct prefix *);
 int	filterset_equal(struct filter_set_head *, struct filter_set_head *);
-int	rde_test_prefix(struct filter_prefix *, struct bgpd_addr *, u_int8_t);
 
 void
-rde_apply_set(struct rde_aspath *asp, struct filter_set_head *sh,
+rde_apply_set(struct filter_set_head *sh, struct rde_aspath *asp,
     u_int8_t aid, struct rde_peer *from, struct rde_peer *peer)
 {
 	struct filter_set	*set;
@@ -48,6 +48,9 @@ rde_apply_set(struct rde_aspath *asp, struct filter_set_head *sh,
 
 	if (asp == NULL)
 		return;
+
+	if (asp->flags & F_ATTR_LINKED)
+		fatalx("rde_apply_set: trying to modify linked asp");
 
 	TAILQ_FOREACH(set, sh, entry) {
 		switch (set->type) {
@@ -130,8 +133,8 @@ rde_apply_set(struct rde_aspath *asp, struct filter_set_head *sh,
 		case ACTION_SET_NEXTHOP_BLACKHOLE:
 		case ACTION_SET_NEXTHOP_NOMODIFY:
 		case ACTION_SET_NEXTHOP_SELF:
-			nexthop_modify(asp, &set->action.nexthop, set->type,
-			    aid);
+			nexthop_modify(set->action.nh, set->type, aid,
+			    &asp->nexthop, &asp->flags);
 			break;
 		case ACTION_SET_COMMUNITY:
 			switch (set->action.community.as) {
@@ -302,8 +305,7 @@ rde_apply_set(struct rde_aspath *asp, struct filter_set_head *sh,
 			/* FALLTHROUGH */
 		case ACTION_PFTABLE_ID:
 			pftable_unref(asp->pftableid);
-			asp->pftableid = set->action.id;
-			pftable_ref(asp->pftableid);
+			asp->pftableid = pftable_ref(set->action.id);
 			break;
 		case ACTION_RTLABEL:
 			/* convert the route label to an id for faster access */
@@ -312,8 +314,7 @@ rde_apply_set(struct rde_aspath *asp, struct filter_set_head *sh,
 			/* FALLTHROUGH */
 		case ACTION_RTLABEL_ID:
 			rtlabel_unref(asp->rtlabelid);
-			asp->rtlabelid = set->action.id;
-			rtlabel_ref(asp->rtlabelid);
+			asp->rtlabelid = rtlabel_ref(set->action.id);
 			break;
 		case ACTION_SET_ORIGIN:
 			asp->origin = set->action.origin;
@@ -331,9 +332,8 @@ rde_apply_set(struct rde_aspath *asp, struct filter_set_head *sh,
 }
 
 int
-rde_filter_match(struct filter_rule *f, struct rde_aspath *asp,
-    struct bgpd_addr *prefix, u_int8_t plen, struct rde_peer *peer,
-    struct rde_peer *from)
+rde_filter_match(struct filter_rule *f, struct rde_peer *peer,
+    struct rde_aspath *asp, struct prefix *p)
 {
 	u_int32_t	pas;
 	int		cas, type;
@@ -454,7 +454,7 @@ rde_filter_match(struct filter_rule *f, struct rde_aspath *asp,
 		if (f->match.nexthop.flags == FILTER_NEXTHOP_ADDR)
 			cmpaddr = &f->match.nexthop.addr;
 		else
-			cmpaddr = &from->remote_addr;
+			cmpaddr = &prefix_peer(p)->remote_addr;
 		if (cmpaddr->aid != nexthop->aid)
 			/* don't use IPv4 rules for IPv6 and vice versa */
 			return (0);
@@ -482,7 +482,7 @@ rde_filter_match(struct filter_rule *f, struct rde_aspath *asp,
 		log_debug("%s: processing filter for prefixset %s",
 		    __func__, f->match.prefixset.name);
 		SIMPLEQ_FOREACH(psi, &f->match.prefixset.ps->psitems, entry) {
-			if (rde_test_prefix(&psi->p, prefix, plen)) {
+			if (rde_prefix_match(&psi->p, p)) {
 				log_debug("%s: prefixset %s matched %s",
 				    __func__, f->match.prefixset.ps->name,
 				    log_addr(&psi->p.addr));
@@ -491,10 +491,53 @@ rde_filter_match(struct filter_rule *f, struct rde_aspath *asp,
 		}
 		return (0);
 	} else if (f->match.prefix.addr.aid != 0)
-		return (rde_test_prefix(&f->match.prefix, prefix, plen));
+		return (rde_prefix_match(&f->match.prefix, p));
 
 	/* matched somewhen or is anymatch rule  */
 	return (1);
+}
+
+/* return 1 when prefix matches filter_prefix, 0 if not */
+int
+rde_prefix_match(struct filter_prefix *fp, struct prefix *p)
+{
+	struct bgpd_addr addr, *prefix = &addr;
+	u_int8_t plen;
+
+	pt_getaddr(p->re->prefix, prefix);
+	plen = p->re->prefix->prefixlen;
+
+	if (fp->addr.aid != prefix->aid)
+		/* don't use IPv4 rules for IPv6 and vice versa */
+		return (0);
+
+	if (prefix_compare(prefix, &fp->addr, fp->len))
+		return (0);
+
+	/* test prefixlen stuff too */
+	switch (fp->op) {
+	case OP_NONE: /* perfect match */
+		return (plen == fp->len);
+	case OP_EQ:
+		return (plen == fp->len_min);
+	case OP_NE:
+		return (plen != fp->len_min);
+	case OP_RANGE:
+		return ((plen >= fp->len_min) &&
+		    (plen <= fp->len_max));
+	case OP_XRANGE:
+		return ((plen < fp->len_min) ||
+		    (plen > fp->len_max));
+	case OP_LE:
+		return (plen <= fp->len_min);
+	case OP_LT:
+		return (plen < fp->len_min);
+	case OP_GE:
+		return (plen >= fp->len_min);
+	case OP_GT:
+		return (plen > fp->len_min);
+	}
+	return (0); /* should not be reached */
 }
 
 int
@@ -607,7 +650,6 @@ void
 filterset_free(struct filter_set_head *sh)
 {
 	struct filter_set	*s;
-	struct nexthop		*nh;
 
 	if (sh == NULL)
 		return;
@@ -619,11 +661,8 @@ filterset_free(struct filter_set_head *sh)
 		else if (s->type == ACTION_PFTABLE_ID)
 			pftable_unref(s->action.id);
 		else if (s->type == ACTION_SET_NEXTHOP &&
-		    bgpd_process == PROC_RDE) {
-			nh = nexthop_get(&s->action.nexthop);
-			--nh->refcnt;
-			(void)nexthop_delete(nh);
-		}
+		    bgpd_process == PROC_RDE)
+			nexthop_put(s->action.nh);
 		free(s);
 	}
 }
@@ -943,11 +982,11 @@ rde_filter_calc_skip_steps(struct filter_head *rules)
 	} while (0)
 
 enum filter_actions
-rde_filter(struct filter_head *rules, struct rde_aspath **new,
-    struct rde_peer *peer, struct rde_aspath *asp, struct bgpd_addr *prefix,
-    u_int8_t prefixlen, struct rde_peer *from)
+rde_filter(struct filter_head *rules, struct rde_peer *peer,
+    struct rde_aspath **new, struct prefix *p)
 {
 	struct filter_rule	*f;
+	struct rde_aspath	*asp = prefix_aspath(p);
 	enum filter_actions	 action = ACTION_DENY; /* default deny */
 
 	if (new != NULL)
@@ -977,16 +1016,17 @@ rde_filter(struct filter_head *rules, struct rde_aspath **new,
 		    (f->peer.peerid &&
 		     f->peer.peerid != peer->conf.id),
 		     f->skip[RDE_FILTER_SKIP_PEERID].ptr);
-		if (rde_filter_match(f, asp, prefix, prefixlen, peer, from)) {
+
+		if (rde_filter_match(f, peer, asp, p)) {
 			if (asp != NULL && new != NULL) {
 				/* asp may get modified so create a copy */
 				if (*new == NULL) {
-					*new = path_copy(asp);
+					*new = path_copy(path_get(), asp);
 					/* ... and use the copy from now on */
 					asp = *new;
 				}
-				rde_apply_set(asp, &f->set, prefix->aid,
-				    from, peer);
+				rde_apply_set(&f->set, asp, p->re->prefix->aid,
+				    prefix_peer(p), peer);
 			}
 			if (f->action != ACTION_NONE)
 				action = f->action;
@@ -997,42 +1037,4 @@ rde_filter(struct filter_head *rules, struct rde_aspath **new,
  nextrule: ;
 	}
 	return (action);
-}
-
-/* return 1 when prefix matches filter_prefix, 0 if not */
-int
-rde_test_prefix(struct filter_prefix *fp, struct bgpd_addr *prefix,
-    u_int8_t plen)
-{
-	if (fp->addr.aid != prefix->aid)
-		/* don't use IPv4 rules for IPv6 and vice versa */
-		return (0);
-
-	if (prefix_compare(prefix, &fp->addr, fp->len))
-		return (0);
-
-	/* test prefixlen stuff too */
-	switch (fp->op) {
-	case OP_NONE: /* perfect match */
-		return (plen == fp->len);
-	case OP_EQ:
-		return (plen == fp->len_min);
-	case OP_NE:
-		return (plen != fp->len_min);
-	case OP_RANGE:
-		return ((plen >= fp->len_min) &&
-		    (plen <= fp->len_max));
-	case OP_XRANGE:
-		return ((plen < fp->len_min) ||
-		    (plen > fp->len_max));
-	case OP_LE:
-		return (plen <= fp->len_min);
-	case OP_LT:
-		return (plen < fp->len_min);
-	case OP_GE:
-		return (plen >= fp->len_min);
-	case OP_GT:
-		return (plen > fp->len_min);
-	}
-	return (0); /* should not be reached */
 }

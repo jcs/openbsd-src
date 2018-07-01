@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.c,v 1.380 2018/06/13 09:33:51 claudio Exp $ */
+/*	$OpenBSD: rde.c,v 1.383 2018/06/28 09:54:48 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -377,7 +377,6 @@ rde_dispatch_imsg_session(struct imsgbuf *ibuf)
 	struct rde_peer		*peer;
 	struct rde_aspath	*asp;
 	struct filter_set	*s;
-	struct nexthop		*nh;
 	u_int8_t		*asdata;
 	ssize_t			 n;
 	int			 verbose;
@@ -570,12 +569,9 @@ badnet:
 			if ((s = malloc(sizeof(struct filter_set))) == NULL)
 				fatal(NULL);
 			memcpy(s, imsg.data, sizeof(struct filter_set));
+			if (s->type == ACTION_SET_NEXTHOP)
+				s->action.nh = nexthop_get(&s->action.nexthop);
 			TAILQ_INSERT_TAIL(session_set, s, entry);
-
-			if (s->type == ACTION_SET_NEXTHOP) {
-				nh = nexthop_get(&s->action.nexthop);
-				nh->refcnt++;
-			}
 			break;
 		case IMSG_CTL_SHOW_NETWORK:
 		case IMSG_CTL_SHOW_RIB:
@@ -668,7 +664,6 @@ rde_dispatch_imsg_parent(struct imsgbuf *ibuf)
 	struct filter_head	*nr;
 	struct filter_rule	*r;
 	struct filter_set	*s;
-	struct nexthop		*nh;
 	struct rib		*rib;
 	struct prefixset	*ps;
 	struct prefixset_item	*psi;
@@ -907,12 +902,9 @@ rde_dispatch_imsg_parent(struct imsgbuf *ibuf)
 			if ((s = malloc(sizeof(struct filter_set))) == NULL)
 				fatal(NULL);
 			memcpy(s, imsg.data, sizeof(struct filter_set));
+			if (s->type == ACTION_SET_NEXTHOP)
+				s->action.nh = nexthop_get(&s->action.nexthop);
 			TAILQ_INSERT_TAIL(parent_set, s, entry);
-
-			if (s->type == ACTION_SET_NEXTHOP) {
-				nh = nexthop_get(&s->action.nexthop);
-				nh->refcnt++;
-			}
 			break;
 		case IMSG_MRT_OPEN:
 		case IMSG_MRT_REOPEN:
@@ -1263,8 +1255,7 @@ rde_update_dispatch(struct imsg *imsg)
 		 * But first unlock the previously locked nexthop.
 		 */
 		if (asp->nexthop) {
-			asp->nexthop->refcnt--;
-			(void)nexthop_delete(asp->nexthop);
+			(void)nexthop_put(asp->nexthop);
 			asp->nexthop = NULL;
 		}
 		if ((pos = rde_get_mp_nexthop(mpp, mplen, aid, asp)) == -1) {
@@ -1361,11 +1352,6 @@ rde_update_dispatch(struct imsg *imsg)
 
 done:
 	if (attrpath_len != 0) {
-		/* unlock the previously locked entry */
-		if (asp->nexthop) {
-			asp->nexthop->refcnt--;
-			(void)nexthop_delete(asp->nexthop);
-		}
 		/* free allocated attribute memory that is no longer used */
 		path_put(asp);
 	}
@@ -1378,6 +1364,7 @@ rde_update_update(struct rde_peer *peer, struct rde_aspath *asp,
     struct bgpd_addr *prefix, u_int8_t prefixlen)
 {
 	struct rde_aspath	*fasp;
+	struct prefix		*p;
 	enum filter_actions	 action;
 	u_int16_t		 i;
 
@@ -1386,12 +1373,15 @@ rde_update_update(struct rde_peer *peer, struct rde_aspath *asp,
 	if (path_update(&ribs[RIB_ADJ_IN].rib, peer, asp, prefix, prefixlen, 0))
 		peer->prefix_cnt++;
 
+	p = prefix_get(&ribs[RIB_ADJ_IN].rib, peer, prefix, prefixlen, 0);
+	if (p == NULL)
+		fatalx("rde_update_update: no prefix in Adj-RIB-In");
+
 	for (i = RIB_LOC_START; i < rib_size; i++) {
 		if (*ribs[i].name == '\0')
 			break;
 		/* input filter */
-		action = rde_filter(ribs[i].in_rules, &fasp, peer, asp, prefix,
-		    prefixlen, peer);
+		action = rde_filter(ribs[i].in_rules, peer, &fasp, p);
 
 		if (fasp == NULL)
 			fasp = asp;
@@ -1569,12 +1559,6 @@ bad_flags:
 			return (-1);
 		}
 		a->nexthop = nexthop_get(&nexthop);
-		/*
-		 * lock the nexthop because it is not yet linked else
-		 * withdraws may remove this nexthop which in turn would
-		 * cause a use after free error.
-		 */
-		a->nexthop->refcnt++;
 		break;
 	case ATTR_MED:
 		if (attr_len != 4)
@@ -1908,12 +1892,6 @@ rde_get_mp_nexthop(u_char *data, u_int16_t len, u_int8_t aid,
 	}
 
 	asp->nexthop = nexthop_get(&nexthop);
-	/*
-	 * lock the nexthop because it is not yet linked else
-	 * withdraws may remove this nexthop which in turn would
-	 * cause a use after free error.
-	 */
-	asp->nexthop->refcnt++;
 
 	/* ignore reserved (old SNPA) field as per RFC4760 */
 	totlen += nhlen + 1;
@@ -2251,10 +2229,10 @@ rde_dump_rib_as(struct prefix *p, struct rde_aspath *asp, pid_t pid, int flags)
 	rib.local_pref = asp->lpref;
 	rib.med = asp->med;
 	rib.weight = asp->weight;
-	strlcpy(rib.descr, asp->peer->conf.descr, sizeof(rib.descr));
-	memcpy(&rib.remote_addr, &asp->peer->remote_addr,
+	strlcpy(rib.descr, prefix_peer(p)->conf.descr, sizeof(rib.descr));
+	memcpy(&rib.remote_addr, &prefix_peer(p)->remote_addr,
 	    sizeof(rib.remote_addr));
-	rib.remote_id = asp->peer->remote_bgpid;
+	rib.remote_id = prefix_peer(p)->remote_bgpid;
 	if (asp->nexthop != NULL) {
 		memcpy(&rib.true_nexthop, &asp->nexthop->true_nexthop,
 		    sizeof(rib.true_nexthop));
@@ -2273,7 +2251,7 @@ rde_dump_rib_as(struct prefix *p, struct rde_aspath *asp, pid_t pid, int flags)
 	rib.flags = 0;
 	if (p->re->active == p)
 		rib.flags |= F_PREF_ACTIVE;
-	if (!asp->peer->conf.ebgp)
+	if (!prefix_peer(p)->conf.ebgp)
 		rib.flags |= F_PREF_INTERNAL;
 	if (asp->flags & F_PREFIX_ANNOUNCED)
 		rib.flags |= F_PREF_ANNOUNCE;
@@ -2281,7 +2259,7 @@ rde_dump_rib_as(struct prefix *p, struct rde_aspath *asp, pid_t pid, int flags)
 		rib.flags |= F_PREF_ELIGIBLE;
 	if (asp->flags & F_ATTR_LOOP)
 		rib.flags &= ~F_PREF_ELIGIBLE;
-	staletime = asp->peer->staletime[p->re->prefix->aid];
+	staletime = prefix_peer(p)->staletime[p->re->prefix->aid];
 	if (staletime && p->lastchange <= staletime)
 		rib.flags |= F_PREF_STALE;
 	rib.aspath_len = aspath_length(asp->aspath);
@@ -2321,25 +2299,21 @@ rde_dump_filterout(struct rde_peer *peer, struct prefix *p,
     struct ctl_show_rib_request *req)
 {
 	struct bgpd_addr	 addr;
-	struct rde_aspath	*asp, *fasp;
+	struct rde_aspath	*fasp;
 	enum filter_actions	 a;
 
 	if (up_test_update(peer, p) != 1)
 		return;
 
 	pt_getaddr(p->re->prefix, &addr);
-	asp = prefix_aspath(p);
-	a = rde_filter(out_rules, &fasp, peer, asp, &addr,
-	    p->re->prefix->prefixlen, asp->peer);
-	if (fasp)
-		fasp->peer = asp->peer;
-	else
-		fasp = asp;
+	a = rde_filter(out_rules, peer, &fasp, p);
+	if (fasp == NULL)
+		fasp = prefix_aspath(p);
 
 	if (a == ACTION_ALLOW)
 		rde_dump_rib_as(p, fasp, req->pid, req->flags);
 
-	if (fasp != asp)
+	if (fasp != prefix_aspath(p))
 		path_put(fasp);
 }
 
@@ -3090,16 +3064,14 @@ rde_softreconfig_in(struct rib_entry *re, void *ptr)
 
 		/* check if prefix changed */
 		if (rib->state == RECONF_RELOAD) {
-			oa = rde_filter(rib->in_rules_tmp, &oasp, peer,
-			    asp, &addr, pt->prefixlen, peer);
+			oa = rde_filter(rib->in_rules_tmp, peer, &oasp, p);
 			oasp = oasp != NULL ? oasp : asp;
 		} else {
 			/* make sure we update everything for RECONF_REINIT */
 			oa = ACTION_DENY;
 			oasp = asp;
 		}
-		na = rde_filter(rib->in_rules, &nasp, peer, asp,
-		    &addr, pt->prefixlen, peer);
+		na = rde_filter(rib->in_rules, peer, &nasp, p);
 		nasp = nasp != NULL ? nasp : asp;
 
 		/* go through all 4 possible combinations */
@@ -3148,10 +3120,8 @@ rde_softreconfig_out(struct rib_entry *re, void *ptr)
 	if (up_test_update(peer, p) != 1)
 		return;
 
-	oa = rde_filter(out_rules_tmp, &oasp, peer, prefix_aspath(p),
-	    &addr, pt->prefixlen, prefix_peer(p));
-	na = rde_filter(out_rules, &nasp, peer, prefix_aspath(p),
-	    &addr, pt->prefixlen, prefix_peer(p));
+	oa = rde_filter(out_rules_tmp, peer, &oasp, p);
+	na = rde_filter(out_rules, peer, &nasp, p);
 	oasp = oasp != NULL ? oasp : prefix_aspath(p);
 	nasp = nasp != NULL ? nasp : prefix_aspath(p);
 
@@ -3193,8 +3163,7 @@ rde_softreconfig_unload_peer(struct rib_entry *re, void *ptr)
 	if (up_test_update(peer, p) != 1)
 		return;
 
-	oa = rde_filter(out_rules_tmp, &oasp, peer, prefix_aspath(p),
-	    &addr, pt->prefixlen, prefix_peer(p));
+	oa = rde_filter(out_rules_tmp, peer, &oasp, p);
 	oasp = oasp != NULL ? oasp : prefix_aspath(p);
 
 	if (oa == ACTION_DENY)
@@ -3674,9 +3643,9 @@ network_add(struct network_config *nc, int flagstatic)
 	}
 	if (!flagstatic)
 		asp->flags |= F_ANN_DYNAMIC;
-	rde_apply_set(asp, &nc->attrset, nc->prefix.aid, peerself, peerself);
+	rde_apply_set(&nc->attrset, asp, nc->prefix.aid, peerself, peerself);
 	if (vpnset)
-		rde_apply_set(asp, vpnset, nc->prefix.aid, peerself, peerself);
+		rde_apply_set(vpnset, asp, nc->prefix.aid, peerself, peerself);
 	for (i = RIB_LOC_START; i < rib_size; i++) {
 		if (*ribs[i].name == '\0')
 			break;

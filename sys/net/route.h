@@ -1,4 +1,4 @@
-/*	$OpenBSD: route.h,v 1.169 2018/04/24 06:19:47 florian Exp $	*/
+/*	$OpenBSD: route.h,v 1.171 2018/07/01 08:53:03 mpi Exp $	*/
 /*	$NetBSD: route.h,v 1.9 1996/02/13 22:00:49 christos Exp $	*/
 
 /*
@@ -231,7 +231,6 @@ struct rt_msghdr {
 #define RTM_LOSING	0x5	/* Kernel Suspects Partitioning */
 #define RTM_REDIRECT	0x6	/* Told to use different route */
 #define RTM_MISS	0x7	/* Lookup failed on this address */
-#define RTM_LOCK	0x8	/* fix specified metrics */
 #define RTM_RESOLVE	0xb	/* req to resolve dst to LL addr */
 #define RTM_NEWADDR	0xc	/* address being added to iface */
 #define RTM_DELADDR	0xd	/* address being removed from iface */
@@ -441,6 +440,9 @@ void			 rt_timer_queue_change(struct rttimer_queue *, long);
 void			 rt_timer_queue_destroy(struct rttimer_queue *);
 unsigned long		 rt_timer_queue_count(struct rttimer_queue *);
 void			 rt_timer_timer(void *);
+
+int	 rt_mpls_set(struct rtentry *, struct sockaddr *, uint8_t);
+void	 rt_mpls_clear(struct rtentry *);
 
 int	 rtisvalid(struct rtentry *);
 int	 rt_hash(struct rtentry *, struct sockaddr *, uint32_t *);

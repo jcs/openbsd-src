@@ -1,4 +1,4 @@
-/*	$OpenBSD: asm.h,v 1.10 2018/06/07 04:09:35 guenther Exp $	*/
+/*	$OpenBSD: asm.h,v 1.13 2018/07/01 16:02:12 guenther Exp $	*/
 /*	$NetBSD: asm.h,v 1.2 2003/05/02 18:05:47 yamt Exp $	*/
 
 /*-
@@ -61,25 +61,26 @@
 
 /* let kernels and others override entrypoint alignment */
 #ifndef _ALIGN_TEXT
-#define _ALIGN_TEXT .align 16, 0x90
+#define _ALIGN_TEXT	.align	16, 0x90
 #endif
+#define _ALIGN_TRAPS	.align	16, 0xcc
 
 #define _ENTRY(x) \
 	.text; _ALIGN_TEXT; .globl x; .type x,@function; x:
 
 #ifdef _KERNEL
 #define	KUTEXT	.section .kutext, "ax"
-/*#define	KUTEXT	.text */
 
-/* XXX Can't use __CONCAT() here, as it would be evaluated incorrectly. */
 #define	IDTVEC(name) \
-	KUTEXT; ALIGN_TEXT; \
+	KUTEXT; _ALIGN_TRAPS; IDTVEC_NOALIGN(name)
+#define	IDTVEC_NOALIGN(name) \
 	.globl X ## name; .type X ## name,@function; X ## name:
 #define	KIDTVEC(name) \
-	.text; ALIGN_TEXT; \
-	.globl X ## name; .type X ## name,@function; X ## name:
+	.text; _ALIGN_TRAPS; IDTVEC_NOALIGN(name)
+#define	KIDTVEC_FALLTHROUGH(name) \
+	_ALIGN_TEXT; IDTVEC_NOALIGN(name)
 #define KUENTRY(x) \
-	KUTEXT; _ALIGN_TEXT; .globl x; .type x,@function; x:
+	KUTEXT; _ALIGN_TRAPS; .globl x; .type x,@function; x:
 
 #endif /* _KERNEL */
 
@@ -95,6 +96,44 @@
 	pushq %rbp; leaq (%rsp),%rbp; call PIC_PLT(__mcount); popq %rbp
 #else
 # define _PROF_PROLOGUE
+#endif
+
+#if defined(_RET_PROTECTOR)
+# define RETGUARD_SETUP_OFF(x, reg, off) \
+	RETGUARD_SYMBOL(x); \
+	movq (__retguard_ ## x)(%rip), %reg; \
+	xorq off(%rsp), %reg
+# define RETGUARD_SETUP(x, reg) \
+	RETGUARD_SETUP_OFF(x, reg, 0)
+# define RETGUARD_CHECK(x, reg) \
+	xorq (%rsp), %reg; \
+	cmpq (__retguard_ ## x)(%rip), %reg; \
+	je 66f; \
+	int3; int3; \
+66:
+# define RETGUARD_PUSH(reg) \
+	pushq %reg
+# define RETGUARD_POP(reg) \
+	popq %reg
+# define RETGUARD_SYMBOL(x) \
+	.ifndef __retguard_ ## x; \
+	.hidden __retguard_ ## x; \
+	.type   __retguard_ ## x,@object; \
+	.pushsection .openbsd.randomdata.retguard,"aw",@progbits; \
+	.weak   __retguard_ ## x; \
+	.p2align 3; \
+	__retguard_ ## x: ; \
+	.quad 0; \
+	.size __retguard_ ## x, 8; \
+	.popsection; \
+	.endif
+#else
+# define RETGUARD_SETUP_OFF(x, reg, off)
+# define RETGUARD_SETUP(x, reg)
+# define RETGUARD_CHECK(x, reg)
+# define RETGUARD_PUSH(reg)
+# define RETGUARD_POP(reg)
+# define RETGUARD_SYMBOL(x)
 #endif
 
 #define	ENTRY(y)	_ENTRY(_C_LABEL(y)); _PROF_PROLOGUE
@@ -125,7 +164,7 @@
 		call	69f		; \
 	68:	pause			; \
 		jmp	68b		; \
-		.align	16,0xcc		; \
+		_ALIGN_TRAPS		; \
 	69:	mov	%reg,(%rsp)	; \
 		ret
 

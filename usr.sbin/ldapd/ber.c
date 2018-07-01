@@ -1,7 +1,7 @@
-/*	$OpenBSD: ber.c,v 1.13 2018/02/08 18:02:06 jca Exp $ */
+/*	$OpenBSD: ber.c,v 1.16 2018/06/29 18:28:42 rob Exp $ */
 
 /*
- * Copyright (c) 2007 Reyk Floeter <reyk@vantronix.net>
+ * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
  * Copyright (c) 2006, 2007 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2006, 2007 Marc Balmer <mbalmer@openbsd.org>
  *
@@ -729,7 +729,7 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
 				goto fail;
 			ber = parent[level--];
 			ret++;
-			continue;
+			break;
 		default:
 			goto fail;
 		}
@@ -874,7 +874,8 @@ ber_calc_len(struct ber_element *root)
 		size += ber_calc_len(root->be_next);
 
 	/* This is an empty element, do not use a minimal size */
-	if (root->be_type == BER_TYPE_EOC && root->be_len == 0)
+	if (root->be_class == BER_CLASS_UNIVERSAL &&
+	    root->be_type == BER_TYPE_EOC && root->be_len == 0)
 		return (0);
 
 	return (root->be_len + size);

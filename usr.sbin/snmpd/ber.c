@@ -1,4 +1,4 @@
-/*	$OpenBSD: ber.c,v 1.32 2018/02/08 18:02:06 jca Exp $ */
+/*	$OpenBSD: ber.c,v 1.36 2018/06/30 14:05:52 sthen Exp $ */
 
 /*
  * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -841,6 +841,19 @@ ber_getpos(struct ber_element *elm)
 }
 
 void
+ber_free_element(struct ber_element *root)
+{
+	if (root->be_sub && (root->be_encoding == BER_TYPE_SEQUENCE ||
+	    root->be_encoding == BER_TYPE_SET))
+		ber_free_elements(root->be_sub);
+	if (root->be_free && (root->be_encoding == BER_TYPE_OCTETSTRING ||
+	    root->be_encoding == BER_TYPE_BITSTRING ||
+	    root->be_encoding == BER_TYPE_OBJECT))
+		free(root->be_val);
+	free(root);
+}
+
+void
 ber_free_elements(struct ber_element *root)
 {
 	if (root->be_sub && (root->be_encoding == BER_TYPE_SEQUENCE ||
@@ -880,7 +893,7 @@ ber_calc_len(struct ber_element *root)
 		size += ber_calc_len(root->be_next);
 
 	/* This is an empty element, do not use a minimal size */
-	if (root->be_class != BER_CLASS_CONTEXT &&
+	if (root->be_class == BER_CLASS_UNIVERSAL &&
 	    root->be_type == BER_TYPE_EOC && root->be_len == 0)
 		return (0);
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.202 2018/06/22 05:21:45 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.204 2018/06/30 19:24:07 guenther Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -1971,7 +1971,7 @@ vcpu_reset_regs_svm(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	ret = vcpu_writeregs_svm(vcpu, VM_RWREGS_ALL, vrs);
 
 	/* xcr0 power on default sets bit 0 (x87 state) */
-	vcpu->vc_gueststate.vg_xcr0 = XCR0_X87;
+	vcpu->vc_gueststate.vg_xcr0 = XCR0_X87 & xsave_mask;
 
 exit:
 	return ret;
@@ -2764,7 +2764,7 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	/* XXX CR4 shadow */
 
 	/* xcr0 power on default sets bit 0 (x87 state) */
-	vcpu->vc_gueststate.vg_xcr0 = XCR0_X87;
+	vcpu->vc_gueststate.vg_xcr0 = XCR0_X87 & xsave_mask;
 
 	/* Flush the VMCS */
 	if (vmclear(&vcpu->vc_control_pa)) {
@@ -3829,8 +3829,9 @@ vmm_fpurestore(struct vcpu *vcpu)
 	if (vcpu->vc_fpuinited) {
 		/* Restore guest XCR0 and FPU context */
 		if (vcpu->vc_gueststate.vg_xcr0 & ~xsave_mask) {
-			DPRINTF("%s: guest attempted to set invalid %s\n",
-			    __func__, "bits in xcr0");
+			DPRINTF("%s: guest attempted to set invalid bits in "
+			    "xcr0 (guest %%xcr0=0x%llx, host mask=0x%llx)\n",
+			    __func__, vcpu->vc_gueststate.vg_xcr0, ~xsave_mask);
 			return EINVAL;
 		}
 

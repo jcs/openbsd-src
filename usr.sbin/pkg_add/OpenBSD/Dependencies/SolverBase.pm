@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: SolverBase.pm,v 1.5 2018/06/24 12:38:41 espie Exp $
+# $OpenBSD: SolverBase.pm,v 1.9 2018/07/01 08:24:20 espie Exp $
 #
 # Copyright (c) 2005-2018 Marc Espie <espie@openbsd.org>
 #
@@ -213,8 +213,9 @@ sub find_in_already_done
 		$obj->{definition_list} = $d;
 		$state->say("Found tag #1 in #2", $obj->stringize, $dep)
 		    if $state->verbose >= 3;
+		return $dep;
 	}
-	return $r;
+	return undef;
 }
 
 sub find_in_plist
@@ -230,8 +231,14 @@ sub find_in_plist
 sub find_in_new_source
 {
 	my ($self, $solver, $state, $obj, $dep) = @_;
-	my $plist = OpenBSD::PackingList->from_installation($dep,
-	    \&OpenBSD::PackingList::DependOnly);
+	my $plist;
+
+	if (defined $solver->{set}{newer}{$dep}) {
+		$plist = $solver->{set}{newer}{$dep}->plist;
+	} else {
+		$plist = OpenBSD::PackingList->from_installation($dep,
+		    \&OpenBSD::PackingList::DependOnly);
+	}
 	if (!defined $plist) {
 		$state->errsay("Can't read plist for #1", $dep);
 	}
@@ -459,12 +466,14 @@ sub add_dep
 
 sub verify_tag
 {
-	my ($self, $tag, $state, $plist) = @_;
-	my $msg = "Error in #1: \@tag #2";
+	my ($self, $tag, $state, $plist, $is_old) = @_;
+	my $bad_return = $is_old ? 1 : 0;
+	my $type = $is_old ? "Warning" : "Error";
+	my $msg = "#1 in #2: \@tag #3";
 	if (!defined $tag->{definition_list}) {
 		$state->errsay("$msg definition not found",
-		    $plist->pkgname, $tag->name);
-		return 0;
+		    $type, $plist->pkgname, $tag->name);
+		return $bad_return;
 	}
 	my $use_params = 0;
 	for my $d (@{$tag->{definition_list}}) {
@@ -473,16 +482,16 @@ sub verify_tag
 			last;
 		}
 	}
-	if ($tag->{params} eq '' && $use_params) {
+	if ($tag->{params} eq '' && $use_params && !$tag->{found_in_self}) {
 		$state->errsay(
 		    "$msg has no parameters but some define wants them",
-		    $plist->pkgname, $tag->name);
-		return 0;
+		    $type, $plist->pkgname, $tag->name);
+		return $bad_return;
 	} elsif ($tag->{params} ne '' && !$use_params) {
 		$state->errsay(
 		    "$msg has parameters but no define uses them",
-		    $plist->pkgname, $tag->name);
-		return 0;
+		    $type, $plist->pkgname, $tag->name);
+		return $bad_return;
 	}
 	return 1;
 }

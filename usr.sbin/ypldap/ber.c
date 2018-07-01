@@ -1,7 +1,7 @@
-/*	$OpenBSD: ber.c,v 1.13 2018/02/08 18:02:06 jca Exp $ */
+/*	$OpenBSD: ber.c,v 1.18 2018/06/29 18:28:42 rob Exp $ */
 
 /*
- * Copyright (c) 2007 Reyk Floeter <reyk@vantronix.net>
+ * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
  * Copyright (c) 2006, 2007 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2006, 2007 Marc Balmer <mbalmer@openbsd.org>
  *
@@ -269,7 +269,7 @@ ber_add_nstring(struct ber_element *prev, const char *string0, size_t len)
 	struct ber_element *elm;
 	char *string;
 
-	if ((string = calloc(1, len)) == NULL)
+	if ((string = calloc(1, len + 1)) == NULL)
 		return NULL;
 	if ((elm = ber_get_element(BER_TYPE_OCTETSTRING)) == NULL) {
 		free(string);
@@ -729,7 +729,7 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
 				goto fail;
 			ber = parent[level--];
 			ret++;
-			continue;
+			break;
 		default:
 			goto fail;
 		}
@@ -822,6 +822,19 @@ ber_read_elements(struct ber *ber, struct ber_element *elm)
 }
 
 void
+ber_free_element(struct ber_element *root)
+{
+	if (root->be_sub && (root->be_encoding == BER_TYPE_SEQUENCE ||
+	    root->be_encoding == BER_TYPE_SET))
+		ber_free_elements(root->be_sub);
+	if (root->be_free && (root->be_encoding == BER_TYPE_OCTETSTRING ||
+	    root->be_encoding == BER_TYPE_BITSTRING ||
+	    root->be_encoding == BER_TYPE_OBJECT))
+		free(root->be_val);
+	free(root);
+}
+
+void
 ber_free_elements(struct ber_element *root)
 {
 	if (root->be_sub && (root->be_encoding == BER_TYPE_SEQUENCE ||
@@ -861,7 +874,8 @@ ber_calc_len(struct ber_element *root)
 		size += ber_calc_len(root->be_next);
 
 	/* This is an empty element, do not use a minimal size */
-	if (root->be_type == BER_TYPE_EOC && root->be_len == 0)
+	if (root->be_class == BER_CLASS_UNIVERSAL &&
+	    root->be_type == BER_TYPE_EOC && root->be_len == 0)
 		return (0);
 
 	return (root->be_len + size);
@@ -1029,6 +1043,12 @@ get_len(struct ber *b, ssize_t *len)
 		return 1;
 	}
 
+	if (u == 0x80) {
+		/* Indefinite length not supported. */
+		errno = EINVAL;
+		return -1;
+	}
+
 	n = u & ~BER_TAG_MORE;
 	if (sizeof(ssize_t) < n) {
 		errno = ERANGE;
@@ -1045,12 +1065,6 @@ get_len(struct ber *b, ssize_t *len)
 	if (s < 0) {
 		/* overflow */
 		errno = ERANGE;
-		return -1;
-	}
-
-	if (s == 0) {
-		/* invalid encoding */
-		errno = EINVAL;
 		return -1;
 	}
 
@@ -1078,8 +1092,8 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 	DPRINTF("ber read element size %zd\n", len);
 	totlen += r + len;
 
-	/* If the total size of the element is larger than external
-	 * buffer don't bother to continue. */
+	/* If the total size of the element is larger than the buffer
+	 * don't bother to continue. */
 	if (len > ber->br_rend - ber->br_rptr) {
 		errno = ECANCELED;
 		return -1;

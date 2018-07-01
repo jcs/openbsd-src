@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.169 2018/06/21 17:26:16 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.175 2018/06/29 11:45:50 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -224,7 +224,7 @@ struct nexthop {
 	 */
 	u_int32_t		costs;
 #endif
-	int			refcnt;	/* filterset reference counter */
+	int			refcnt;
 	enum nexthop_state	state;
 	u_int8_t		nexthop_netlen;
 	u_int8_t		flags;
@@ -310,9 +310,8 @@ struct prefix {
 	LIST_ENTRY(prefix)		 rib_l;
 	TAILQ_ENTRY(prefix)		 path_l;
 	struct rib_entry		*re;
-	union {
-		struct rde_aspath		*_aspath;
-	}				 _p;
+	struct rde_aspath		*aspath;
+	struct rde_peer			*peer;
 	time_t				 lastchange;
 	int				 flags;
 };
@@ -352,7 +351,7 @@ void		 attr_shutdown(void);
 int		 attr_optadd(struct rde_aspath *, u_int8_t, u_int8_t,
 		     void *, u_int16_t);
 struct attr	*attr_optget(const struct rde_aspath *, u_int8_t);
-void		 attr_copy(struct rde_aspath *, struct rde_aspath *);
+void		 attr_copy(struct rde_aspath *, const struct rde_aspath *);
 int		 attr_compare(struct rde_aspath *, struct rde_aspath *);
 void		 attr_freeall(struct rde_aspath *);
 void		 attr_free(struct rde_aspath *, struct attr *);
@@ -403,10 +402,9 @@ u_char		*community_ext_delete_non_trans(u_char *, u_int16_t,
 void		 prefix_evaluate(struct prefix *, struct rib_entry *);
 
 /* rde_filter.c */
-enum filter_actions rde_filter(struct filter_head *, struct rde_aspath **,
-		     struct rde_peer *, struct rde_aspath *,
-		     struct bgpd_addr *, u_int8_t, struct rde_peer *);
-void		 rde_apply_set(struct rde_aspath *, struct filter_set_head *,
+enum filter_actions rde_filter(struct filter_head *, struct rde_peer *,
+		     struct rde_aspath **, struct prefix *);
+void		 rde_apply_set(struct filter_set_head *, struct rde_aspath *,
 		     u_int8_t, struct rde_peer *, struct rde_peer *);
 int		 rde_filter_equal(struct filter_head *, struct filter_head *,
 		     struct rde_peer *, struct prefixset_head *);
@@ -475,11 +473,14 @@ void		 path_remove(struct rde_aspath *);
 u_int32_t	 path_remove_stale(struct rde_aspath *, u_int8_t);
 void		 path_destroy(struct rde_aspath *);
 int		 path_empty(struct rde_aspath *);
-struct rde_aspath *path_copy(struct rde_aspath *);
+struct rde_aspath *path_copy(struct rde_aspath *, const struct rde_aspath *);
+struct rde_aspath *path_prep(struct rde_aspath *);
 struct rde_aspath *path_get(void);
 void		 path_put(struct rde_aspath *);
 
 #define	PREFIX_SIZE(x)	(((x) + 7) / 8 + 1)
+struct prefix	*prefix_get(struct rib *, struct rde_peer *,
+		    struct bgpd_addr *, int, u_int32_t);
 int		 prefix_remove(struct rib *, struct rde_peer *,
 		    struct bgpd_addr *, int, u_int32_t);
 int		 prefix_write(u_char *, int, struct bgpd_addr *, u_int8_t, int);
@@ -495,24 +496,25 @@ void		 prefix_relink(struct prefix *, struct rde_aspath *, int);
 static inline struct rde_aspath *
 prefix_aspath(struct prefix *p)
 {
-	return (p->_p._aspath);
+	return (p->aspath);
 }
 
 static inline struct rde_peer *
 prefix_peer(struct prefix *p)
 {
-	return (p->_p._aspath->peer);
+	return (p->peer);
 }
 
 void		 nexthop_init(u_int32_t);
 void		 nexthop_shutdown(void);
-void		 nexthop_modify(struct rde_aspath *, struct bgpd_addr *,
-		     enum action_types, u_int8_t);
+void		 nexthop_modify(struct nexthop *, enum action_types, u_int8_t,
+		    struct nexthop **, u_int32_t *);
 void		 nexthop_link(struct rde_aspath *);
 void		 nexthop_unlink(struct rde_aspath *);
-int		 nexthop_delete(struct nexthop *);
 void		 nexthop_update(struct kroute_nexthop *);
 struct nexthop	*nexthop_get(struct bgpd_addr *);
+struct nexthop	*nexthop_ref(struct nexthop *);
+int		 nexthop_put(struct nexthop *);
 int		 nexthop_compare(struct nexthop *, struct nexthop *);
 
 /* rde_update.c */

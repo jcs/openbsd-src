@@ -1,4 +1,4 @@
-/*	$OpenBSD: route6d.c,v 1.94 2018/06/14 14:55:10 florian Exp $	*/
+/*	$OpenBSD: route6d.c,v 1.96 2018/07/01 15:42:37 deraadt Exp $	*/
 /*	$KAME: route6d.c,v 1.111 2006/10/25 06:38:13 jinmei Exp $	*/
 
 /*
@@ -1608,7 +1608,6 @@ rtrecv(void)
 	case RTM_MISS:
 	case RTM_RESOLVE:
 	case RTM_GET:
-	case RTM_LOCK:
 		/* nothing to be done here */
 		log_debug("\tnothing to be done, ignored");
 		return;
@@ -1646,7 +1645,6 @@ rtrecv(void)
 	case RTM_MISS:
 	case RTM_RESOLVE:
 	case RTM_GET:
-	case RTM_LOCK:
 		/* should already be handled */
 		fatalx("rtrecv: never reach here");
 		/*NOTREACHED*/
@@ -2261,7 +2259,6 @@ do { \
 	RTTYPE("LOSING", RTM_LOSING);
 	RTTYPE("REDIRECT", RTM_REDIRECT);
 	RTTYPE("MISS", RTM_MISS);
-	RTTYPE("LOCK", RTM_LOCK);
 	RTTYPE("RESOLVE", RTM_RESOLVE);
 	RTTYPE("NEWADDR", RTM_NEWADDR);
 	RTTYPE("DELADDR", RTM_DELADDR);

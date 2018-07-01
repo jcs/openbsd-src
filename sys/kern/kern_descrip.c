@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_descrip.c,v 1.168 2018/06/24 05:58:05 visa Exp $	*/
+/*	$OpenBSD: kern_descrip.c,v 1.172 2018/06/27 16:37:25 visa Exp $	*/
 /*	$NetBSD: kern_descrip.c,v 1.42 1996/03/30 22:24:38 christos Exp $	*/
 
 /*
@@ -88,7 +88,7 @@ struct pool fdesc_pool;
 void
 filedesc_init(void)
 {
-	pool_init(&file_pool, sizeof(struct file), 0, IPL_NONE,
+	pool_init(&file_pool, sizeof(struct file), 0, IPL_MPFLOOR,
 	    PR_WAITOK, "filepl", NULL);
 	pool_init(&fdesc_pool, sizeof(struct filedesc0), 0, IPL_NONE,
 	    PR_WAITOK, "fdescpl", NULL);
@@ -686,15 +686,17 @@ fdinsert(struct filedesc *fdp, int fd, int flags, struct file *fp)
 	fdpassertlocked(fdp);
 
 	mtx_enter(&fhdlk);
-	if ((fq = fdp->fd_ofiles[0]) != NULL) {
-		LIST_INSERT_AFTER(fq, fp, f_list);
-	} else {
-		LIST_INSERT_HEAD(&filehead, fp, f_list);
+	if ((fp->f_iflags & FIF_INSERTED) == 0) {
+		fp->f_iflags |= FIF_INSERTED;
+		if ((fq = fdp->fd_ofiles[0]) != NULL) {
+			LIST_INSERT_AFTER(fq, fp, f_list);
+		} else {
+			LIST_INSERT_HEAD(&filehead, fp, f_list);
+		}
 	}
 	KASSERT(fdp->fd_ofiles[fd] == NULL);
 	fdp->fd_ofiles[fd] = fp;
 	fdp->fd_ofileflags[fd] |= (flags & UF_EXCLOSE);
-	fp->f_iflags |= FIF_INSERTED;
 	mtx_leave(&fhdlk);
 }
 
@@ -712,6 +714,7 @@ fdrelease(struct proc *p, int fd)
 {
 	struct filedesc *fdp = p->p_fd;
 	struct file *fp;
+	int error;
 
 	fdpassertlocked(fdp);
 
@@ -720,7 +723,10 @@ fdrelease(struct proc *p, int fd)
 		return (EBADF);
 	fdremove(fdp, fd);
 	knote_fdclose(p, fd);
-	return (closef(fp, p));
+	fdpunlock(fdp);
+	error = closef(fp, p);
+	fdplock(fdp);
+	return error;
 }
 
 /*
@@ -957,7 +963,7 @@ int
 falloc(struct proc *p, struct file **resultfp, int *resultfd)
 {
 	struct file *fp;
-	int error, i, nfiles;
+	int error, i;
 
 	KASSERT(resultfp != NULL);
 	KASSERT(resultfd != NULL);
@@ -971,13 +977,32 @@ restart:
 		}
 		return (error);
 	}
+
+	fp = fnew(p);
+	if (fp == NULL) {
+		fd_unused(p->p_fd, i);
+		return (ENFILE);
+	}
+
+	*resultfp = fp;
+	*resultfd = i;
+
+	return (0);
+}
+
+struct file *
+fnew(struct proc *p)
+{
+	struct file *fp;
+	int nfiles;
+
 	nfiles = atomic_inc_int_nv(&numfiles);
 	if (nfiles > maxfiles) {
 		atomic_dec_int(&numfiles);
-		fd_unused(p->p_fd, i);
 		tablefull("file");
-		return (ENFILE);
+		return (NULL);
 	}
+
 	/*
 	 * Allocate a new file descriptor.
 	 * If the process has file descriptor zero open, add to the list
@@ -993,14 +1018,12 @@ restart:
 	fp->f_count = 1;
 	fp->f_cred = p->p_ucred;
 	crhold(fp->f_cred);
-	*resultfp = fp;
-	*resultfd = i;
 
 	mtx_enter(&fhdlk);
 	fp->f_count++;
 	mtx_leave(&fhdlk);
 
-	return (0);
+	return (fp);
 }
 
 /*
@@ -1354,10 +1377,11 @@ dupfdopen(struct proc *p, int indx, int mode)
 		return (EDEADLK);
 	}
 
+	KASSERT(wfp->f_iflags & FIF_INSERTED);
 	fdp->fd_ofiles[indx] = wfp;
 	fdp->fd_ofileflags[indx] = (fdp->fd_ofileflags[indx] & UF_EXCLOSE) |
 	    (fdp->fd_ofileflags[dupfd] & ~UF_EXCLOSE);
-	fd_used(fdp, indx);
+
 	return (0);
 }
 

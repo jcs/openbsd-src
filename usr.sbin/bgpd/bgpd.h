@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.318 2018/06/13 09:33:51 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.320 2018/06/29 11:45:50 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -915,20 +915,22 @@ enum action_types {
 	ACTION_SET_ORIGIN
 };
 
+struct nexthop;
 struct filter_set {
 	TAILQ_ENTRY(filter_set)		entry;
 	union {
-		u_int8_t		prepend;
-		u_int16_t		id;
-		u_int32_t		metric;
-		int32_t			relative;
-		struct bgpd_addr	nexthop;
-		struct filter_community	community;
-		struct filter_largecommunity	large_community;
-		struct filter_extcommunity	ext_community;
-		char			pftable[PFTABLE_LEN];
-		char			rtlabel[RTLABEL_LEN];
-		u_int8_t		origin;
+		u_int8_t			 prepend;
+		u_int16_t			 id;
+		u_int32_t			 metric;
+		int32_t				 relative;
+		struct bgpd_addr		 nexthop;
+		struct nexthop			*nh;
+		struct filter_community		 community;
+		struct filter_largecommunity	 large_community;
+		struct filter_extcommunity	 ext_community;
+		char				 pftable[PFTABLE_LEN];
+		char				 rtlabel[RTLABEL_LEN];
+		u_int8_t			 origin;
 	} action;
 	enum action_types		type;
 };
@@ -1108,11 +1110,11 @@ void		 rib_ref(u_int16_t);
 u_int16_t	 rtlabel_name2id(const char *);
 const char	*rtlabel_id2name(u_int16_t);
 void		 rtlabel_unref(u_int16_t);
-void		 rtlabel_ref(u_int16_t);
+u_int16_t	 rtlabel_ref(u_int16_t);
 u_int16_t	 pftable_name2id(const char *);
 const char	*pftable_id2name(u_int16_t);
 void		 pftable_unref(u_int16_t);
-void		 pftable_ref(u_int16_t);
+u_int16_t	 pftable_ref(u_int16_t);
 
 /* parse.y */
 int		 cmdline_symset(char *);

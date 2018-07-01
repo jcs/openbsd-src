@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_html.c,v 1.181 2018/06/10 16:15:40 schwarze Exp $ */
+/*	$OpenBSD: mdoc_html.c,v 1.184 2018/06/25 16:54:55 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2014,2015,2016,2017,2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -717,8 +717,7 @@ mdoc_it_pre(MDOC_ARGS)
 			break;
 		case ROFFT_BODY:
 			if (n->child == NULL) {
-				print_otag(h, TAG_DD, "ss?",
-				    "width", "auto");
+				print_otag(h, TAG_DD, "s", "width", "auto");
 				print_text(h, "\\ ");
 			} else
 				print_otag(h, TAG_DD, "");
@@ -748,39 +747,19 @@ static int
 mdoc_bl_pre(MDOC_ARGS)
 {
 	char		 cattr[28];
-	struct tag	*t;
 	struct mdoc_bl	*bl;
-	size_t		 i;
 	enum htmltag	 elemtype;
-
-	bl = &n->norm->Bl;
 
 	switch (n->type) {
 	case ROFFT_BODY:
 		return 1;
-
 	case ROFFT_HEAD:
-		if (bl->type != LIST_column || bl->ncols == 0)
-			return 0;
-
-		/*
-		 * For each column, print out the <COL> tag with our
-		 * suggested width.  The last column gets min-width, as
-		 * in terminal mode it auto-sizes to the width of the
-		 * screen and we want to preserve that behaviour.
-		 */
-
-		t = print_otag(h, TAG_COLGROUP, "");
-		for (i = 0; i < bl->ncols - 1; i++)
-			print_otag(h, TAG_COL, "sw+w", bl->cols[i]);
-		print_otag(h, TAG_COL, "swW", bl->cols[i]);
-		print_tagq(h, t);
 		return 0;
-
 	default:
 		break;
 	}
 
+	bl = &n->norm->Bl;
 	switch (bl->type) {
 	case LIST_bullet:
 		elemtype = TAG_UL;
@@ -1193,7 +1172,7 @@ mdoc_fn_pre(MDOC_ARGS)
 
 	for (n = n->child->next; n; n = n->next) {
 		if (NODE_SYNPRETTY & n->flags)
-			t = print_otag(h, TAG_VAR, "cTss?", "Fa",
+			t = print_otag(h, TAG_VAR, "cTs", "Fa",
 			    "white-space", "nowrap");
 		else
 			t = print_otag(h, TAG_VAR, "cT", "Fa");
@@ -1434,7 +1413,7 @@ mdoc_bf_pre(MDOC_ARGS)
 		cattr = "Bf No";
 
 	/* Cannot use TAG_SPAN because it may contain blocks. */
-	print_otag(h, TAG_DIV, "cshl", cattr, 1);
+	print_otag(h, TAG_DIV, "c", cattr);
 	return 1;
 }
 
