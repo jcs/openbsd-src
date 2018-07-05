@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1070 2018/06/16 16:08:50 rpe Exp $
+#	$OpenBSD: install.sub,v 1.1076 2018/07/02 20:47:46 rpe Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -71,17 +71,17 @@ usage() {
 	err_exit "usage: ${0##*/} [-a] [-f filename] [-m install | upgrade]"
 }
 
-# Wait for the ftp process to finish, or be killed after the timeout and
-# extract various informations from the ftplist.cgi output.
+# Wait for the ftp(1) process started in start_cgiinfo() to end and extract
+# various informations from the ftplist.cgi output.
 wait_cgiinfo() {
 	local _l _s _key _val
 
-	# Wait for the ftp(1) process started in start_cgiinfo() to end and
-	# ensure, there is actual data to extract info from.
 	wait "$CGIPID" 2>/dev/null
+
+	# Ensure, there is actual data to extract info from.
 	[[ -s $CGI_INFO ]] || return
 
-	# Extract list of mirror servers from the ftplist.cgi output.
+	# Extract the list of mirror servers.
 	sed -En 's,^https?://([[A-Za-z0-9:_][]A-Za-z0-9:._-]*),\1,p' \
 		$CGI_INFO >$HTTP_LIST 2>/dev/null
 
@@ -179,7 +179,8 @@ quote() (
 	echo
 )
 
-# Show a list (passed via ordered arguments) in column output using ls.
+# Show a list of ordered arguments (read line by line from stdin) in column
+# output using ls.
 show_cols() {
 	local _l _cdir=/tmp/i/cdir _clist
 
@@ -316,7 +317,8 @@ get_cddevs() {
 	echo $(scan_disknames "${MDCDDEVS:-/^cd[0-9][0-9]* /s/ .*//p}")
 }
 
-# Return list of disks not yet initialized.
+# Return sorted list of disks not in DISKS_DONE which contains disks already
+# initialized during installation.
 get_dkdevs_uninitialized() {
 	local _disks=$(get_dkdevs) _d
 
@@ -326,13 +328,13 @@ get_dkdevs_uninitialized() {
 	bsort $_disks
 }
 
-# Return list of network devices. Filter out dynamically created network
-# pseudo-devices except vlan.
+# Return list of all network devices, optionally limited by parameters to
+# ifconfig. Filter out dynamically created network pseudo-devices except vlan.
 get_ifs() {
-	local _if _iflist=$(rmel vlan $(ifconfig -C))
+	local _if _if_list=$(rmel vlan $(ifconfig -C))
 
 	for _if in $(ifconfig "$@" 2>/dev/null | sed '/^[a-z]/!d;s/:.*//'); do
-		isin "${_if%%+([0-9])}" $_iflist || echo $_if
+		isin "${_if%%+([0-9])}" $_if_list || echo $_if
 	done
 }
 
@@ -517,29 +519,34 @@ unlock() {
 	rm -df /tmp/i/lock 2>/dev/null
 }
 
-# Add trap to kill the listener process.
+# Add a trap to kill the dmesg listener co-process on exit of the installer.
 retrap() {
 	trap 'kill -KILL $CPPID 2>/dev/null; echo; stty echo; exit 0' \
 		INT EXIT TERM
 }
 
-# Start listener process looking for dmesg changes.
+# Start a listener process looking for dmesg changes which indicates a possible
+# plug-in/-out of devices (e.g. usb disks, cdroms, etc.). This is used to abort
+# and redraw question prompts, especially in ask_which().
 start_dmesg_listener() {
 	local _update=/tmp/i/update
 
-	# Make sure lock is initially released.
+	# Ensure the lock is initially released and that no update files exists.
 	unlock
-
-	# The dmesg listener will check for the existence of this file and sends
-	# a signal to the child process if the dmesg output differs from the
-	# contents of that file.
 	rm -f $_update
 
+	# Do not start the listener if in non-interactive mode.
 	$AUTO && return
 
+	# To ensure that only one dmesg listener instance can be active, run it
+	# in a co-process subshell of which there can always only be one active.
 	(
 	while :; do
 		lock
+		# The dmesg listener will continously check for the existence of
+		# the update file and sends a signal to the parent process (that
+		# is the installer script) if the dmesg output differs from the
+		# contents of that file.
 		if [[ -e $_update && "$(dmesg)" != "$(<$_update)" ]]; then
 			dmesg >$_update
 			kill -TERM 2>/dev/null $$ || exit 1
@@ -548,9 +555,11 @@ start_dmesg_listener() {
 		sleep .5
 	done
 	) |&
-	CPPID=$!
 
-	# Kill the child on exit.
+	# Save the co-process PID in a global variable so it can be used in
+	# the retrap() function which adds a trap to kill the co-process on
+	# exit of the installer script.
+	CPPID=$!
 	retrap
 }
 
@@ -2774,7 +2783,7 @@ finish_up() {
 	# Run syspatch -c on reboot if the arch is supported and if it is a
 	# release system (not -stable or -current). List uninstalled syspatches
 	# on the console and in the rc.firsttime output mail.
-	isin $ARCH $_syspatch_archs && cat <<__EOT >>/mnt/etc/rc.firsttime
+	isin "$ARCH" $_syspatch_archs && cat <<__EOT >>/mnt/etc/rc.firsttime
 set -A _KERNV -- \$(sysctl -n kern.version |
 	sed 's/^OpenBSD \([0-9]\.[0-9]\)\([^ ]*\).*/\1 \2/;q')
 if ((\${#_KERNV[*]} == 1)) && [[ -s /etc/installurl ]] &&

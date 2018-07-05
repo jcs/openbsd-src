@@ -1,4 +1,4 @@
-/*	$OpenBSD: ber.c,v 1.36 2018/06/30 14:05:52 sthen Exp $ */
+/*	$OpenBSD: ber.c,v 1.40 2018/07/04 15:21:24 rob Exp $ */
 
 /*
  * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -229,7 +229,6 @@ ber_get_enumerated(struct ber_element *elm, long long *n)
 	*n = elm->be_numeric;
 	return 0;
 }
-
 
 struct ber_element *
 ber_add_boolean(struct ber_element *prev, int bool)
@@ -768,7 +767,7 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
  *	root	fully populated element tree
  *
  * returns:
- *      >=0     number of bytes written
+ *	>=0	number of bytes written
  *	-1	on failure and sets errno
  */
 int
@@ -1106,7 +1105,7 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 	if ((r = get_id(ber, &type, &class, &cstruct)) == -1)
 		return -1;
 	DPRINTF("ber read got class %d type %lu, %s\n",
-	    class, type, cstruct ? "constructive" : "primitive");
+	    class, type, cstruct ? "constructed" : "primitive");
 	totlen += r;
 	if ((r = get_len(ber, &len)) == -1)
 		return -1;
@@ -1212,8 +1211,7 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 static ssize_t
 ber_readbuf(struct ber *b, void *buf, size_t nbytes)
 {
-	size_t	 sz;
-	size_t	 len;
+	size_t	 sz, len;
 
 	if (b->br_rbuf == NULL)
 		return -1;
@@ -1227,6 +1225,7 @@ ber_readbuf(struct ber *b, void *buf, size_t nbytes)
 
 	bcopy(b->br_rptr, buf, len);
 	b->br_rptr += len;
+	b->br_offs += len;
 
 	return (len);
 }
@@ -1261,7 +1260,6 @@ ber_set_writecallback(struct ber_element *elm, void (*cb)(void *, size_t),
 	elm->be_cbarg = arg;
 }
 
-
 void
 ber_free(struct ber *b)
 {
@@ -1271,7 +1269,7 @@ ber_free(struct ber *b)
 static ssize_t
 ber_getc(struct ber *b, u_char *c)
 {
-	return ber_read(b, c, 1);
+	return ber_readbuf(b, c, 1);
 }
 
 static ssize_t
@@ -1284,14 +1282,10 @@ ber_read(struct ber *ber, void *buf, size_t len)
 		r = ber_readbuf(ber, b, remain);
 		if (r == -1)
 			return -1;
-		if (r == 0)
-			return (b - (u_char *)buf);
 		b += r;
 		remain -= r;
 	}
-	r = b - (u_char *)buf;
-	ber->br_offs += r;
-	return r;
+	return (b - (u_char *)buf);
 }
 
 int
@@ -1308,7 +1302,7 @@ ber_oid_cmp(struct ber_oid *a, struct ber_oid *b)
 			} else {
 				/* b is a predecessor of a */
 				return (-1);
-			}		
+			}
 		} else if (b->bo_id[i] != 0) {
 			/* b is larger, but a child of a */
 			return (2);

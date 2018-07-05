@@ -1,4 +1,4 @@
-/*	$OpenBSD: ber.c,v 1.6 2018/06/29 18:28:41 rob Exp $ */
+/*	$OpenBSD: ber.c,v 1.11 2018/07/04 15:21:24 rob Exp $ */
 
 /*
  * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -229,7 +229,6 @@ ber_get_enumerated(struct ber_element *elm, long long *n)
 	*n = elm->be_numeric;
 	return 0;
 }
-
 
 struct ber_element *
 ber_add_boolean(struct ber_element *prev, int bool)
@@ -631,10 +630,11 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
 	va_list			 ap;
 	int			*d, level = -1;
 	unsigned long		*t;
-	long long		*i;
+	long long		*i, l;
 	void			**ptr;
 	size_t			*len, ret = 0, n = strlen(fmt);
 	char			**s;
+	off_t			*pos;
 	struct ber_oid		*o;
 	struct ber_element	*parent[_MAX_SEQ], **e;
 
@@ -654,6 +654,13 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
 			d = va_arg(ap, int *);
 			if (ber_get_boolean(ber, d) == -1)
 				goto fail;
+			ret++;
+			break;
+		case 'd':
+			d = va_arg(ap, int *);
+			if (ber_get_integer(ber, &l) == -1)
+				goto fail;
+			*d = l;
 			ret++;
 			break;
 		case 'e':
@@ -712,6 +719,11 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
 				goto fail;
 			ret++;
 			break;
+		case 'p':
+			pos = va_arg(ap, off_t *);
+			*pos = ber_getpos(ber);
+			ret++;
+			continue;
 		case '{':
 		case '(':
 			if (ber->be_encoding != BER_TYPE_SEQUENCE &&
@@ -755,7 +767,7 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
  *	root	fully populated element tree
  *
  * returns:
- *      >=0     number of bytes written
+ *	>=0	number of bytes written
  *	-1	on failure and sets errno
  */
 int
@@ -819,6 +831,12 @@ ber_read_elements(struct ber *ber, struct ber_element *elm)
 	}
 
 	return root;
+}
+
+off_t
+ber_getpos(struct ber_element *elm)
+{
+	return elm->be_offs;
 }
 
 void
@@ -893,6 +911,8 @@ ber_dump_element(struct ber *ber, struct ber_element *root)
 	uint8_t u;
 
 	ber_dump_header(ber, root);
+	if (root->be_cb)
+		root->be_cb(root->be_cbarg, ber->br_wptr - ber->br_wbuf);
 
 	switch (root->be_encoding) {
 	case BER_TYPE_BOOLEAN:
@@ -1085,7 +1105,7 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 	if ((r = get_id(ber, &type, &class, &cstruct)) == -1)
 		return -1;
 	DPRINTF("ber read got class %d type %lu, %s\n",
-	    class, type, cstruct ? "constructive" : "primitive");
+	    class, type, cstruct ? "constructed" : "primitive");
 	totlen += r;
 	if ((r = get_len(ber, &len)) == -1)
 		return -1;
@@ -1101,6 +1121,7 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 
 	elm->be_type = type;
 	elm->be_len = len;
+	elm->be_offs = ber->br_offs;	/* element position within stream */
 	elm->be_class = class;
 
 	if (elm->be_encoding == 0) {
@@ -1190,8 +1211,7 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 static ssize_t
 ber_readbuf(struct ber *b, void *buf, size_t nbytes)
 {
-	size_t	 sz;
-	size_t	 len;
+	size_t	 sz, len;
 
 	if (b->br_rbuf == NULL)
 		return -1;
@@ -1205,6 +1225,7 @@ ber_readbuf(struct ber *b, void *buf, size_t nbytes)
 
 	bcopy(b->br_rptr, buf, len);
 	b->br_rptr += len;
+	b->br_offs += len;
 
 	return (len);
 }
@@ -1232,6 +1253,14 @@ ber_set_application(struct ber *b, unsigned long (*cb)(struct ber_element *))
 }
 
 void
+ber_set_writecallback(struct ber_element *elm, void (*cb)(void *, size_t),
+    void *arg)
+{
+	elm->be_cb = cb;
+	elm->be_cbarg = arg;
+}
+
+void
 ber_free(struct ber *b)
 {
 	free(b->br_wbuf);
@@ -1253,10 +1282,34 @@ ber_read(struct ber *ber, void *buf, size_t len)
 		r = ber_readbuf(ber, b, remain);
 		if (r == -1)
 			return -1;
-		if (r == 0)
-			return (b - (u_char *)buf);
 		b += r;
 		remain -= r;
 	}
 	return (b - (u_char *)buf);
+}
+
+int
+ber_oid_cmp(struct ber_oid *a, struct ber_oid *b)
+{
+	size_t	 i;
+	for (i = 0; i < BER_MAX_OID_LEN; i++) {
+		if (a->bo_id[i] != 0) {
+			if (a->bo_id[i] == b->bo_id[i])
+				continue;
+			else if (a->bo_id[i] < b->bo_id[i]) {
+				/* b is a successor of a */
+				return (1);
+			} else {
+				/* b is a predecessor of a */
+				return (-1);
+			}
+		} else if (b->bo_id[i] != 0) {
+			/* b is larger, but a child of a */
+			return (2);
+		} else
+			break;
+	}
+
+	/* b and a are identical */
+	return (0);
 }

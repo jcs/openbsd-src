@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.343 2018/06/20 10:52:49 mpi Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.345 2018/07/02 14:36:33 visa Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -1077,9 +1077,7 @@ fill_file(struct kinfo_file *kf, struct file *fp, struct filedesc *fdp,
 		kf->f_flag = fp->f_flag;
 		kf->f_iflags = fp->f_iflags;
 		kf->f_type = fp->f_type;
-		mtx_enter(&fhdlk);
 		kf->f_count = fp->f_count;
-		mtx_leave(&fhdlk);
 		if (show_pointers)
 			kf->f_ucred = PTRTOINT64(fp->f_cred);
 		kf->f_uid = fp->f_cred->cr_uid;
@@ -1264,8 +1262,11 @@ fill_file(struct kinfo_file *kf, struct file *fp, struct filedesc *fdp,
 		kf->p_tid = -1;
 		strlcpy(kf->p_comm, pr->ps_comm, sizeof(kf->p_comm));
 	}
-	if (fdp != NULL)
+	if (fdp != NULL) {
+		fdplock(fdp);
 		kf->fd_ofileflags = fdp->fd_ofileflags[fd];
+		fdpunlock(fdp);
+	}
 }
 
 /*

@@ -1,4 +1,4 @@
-/* $OpenBSD: kex.h,v 1.83 2017/05/30 14:23:52 markus Exp $ */
+/* $OpenBSD: kex.h,v 1.85 2018/07/04 13:49:31 djm Exp $ */
 
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
@@ -125,7 +125,7 @@ struct kex {
 	int	hostkey_type;
 	int	hostkey_nid;
 	u_int	kex_type;
-	int	rsa_sha2;
+	char	*server_sig_algs;
 	int	ext_info_c;
 	struct sshbuf *my;
 	struct sshbuf *peer;
@@ -155,7 +155,7 @@ struct kex {
 int	 kex_names_valid(const char *);
 char	*kex_alg_list(char);
 char	*kex_names_cat(const char *, const char *);
-int	 kex_assemble_names(const char *, char **);
+int	 kex_assemble_names(char **, const char *, const char *);
 
 int	 kex_new(struct ssh *, char *[PROPOSAL_MAX], struct kex **);
 int	 kex_setup(struct ssh *, char *[PROPOSAL_MAX]);
