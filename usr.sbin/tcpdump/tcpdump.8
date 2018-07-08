@@ -1,4 +1,4 @@
-.\"	$OpenBSD: tcpdump.8,v 1.94 2018/04/28 16:22:08 schwarze Exp $
+.\"	$OpenBSD: tcpdump.8,v 1.99 2018/07/06 09:59:12 jmc Exp $
 .\"
 .\" Copyright (c) 1987, 1988, 1989, 1990, 1991, 1992, 1994, 1995, 1996
 .\"	The Regents of the University of California.  All rights reserved.
@@ -19,7 +19,7 @@
 .\" WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
 .\" MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
 .\"
-.Dd $Mdocdate: April 28 2018 $
+.Dd $Mdocdate: July 6 2018 $
 .Dt TCPDUMP 8
 .Os
 .Sh NAME
@@ -210,26 +210,36 @@ Force packets selected by
 .Ar expression
 to be interpreted as the specified
 .Ar type .
-Currently known types are
-.Cm vrrp
-.Pq Virtual Router Redundancy protocol ,
-.Cm cnfp
-.Pq Cisco NetFlow protocol ,
-.Cm rpc
-.Pq Remote Procedure Call ,
-.Cm rtp
-.Pq Real-Time Applications protocol ,
-.Cm rtcp
-.Pq Real-Time Applications control protocol ,
-.Cm sack
-.Pq RFC 2018 TCP Selective Acknowledgements Options ,
-.Cm tcp
-.Pq Transmission Control Protocol ,
-.Cm vat
-.Pq Visual Audio Tool ,
-and
-.Cm wb
-.Pq distributed White Board .
+Currently known types are:
+.Pp
+.Bl -tag -width "vxlan" -offset indent -compact
+.It Cm cnfp
+Cisco NetFlow protocol
+.It Cm gre
+Generic Routing Encapsulation over UDP
+.It Cm mpls
+Multiprocol Label Switching over UDP
+.It Cm rpc
+Remote Procedure Call
+.It Cm rtcp
+Real-Time Applications control protocol
+.It Cm rtp
+Real-Time Applications protocol
+.It Cm sack
+RFC 2018 TCP Selective Acknowledgements Options
+.It Cm tcp
+Transmission Control Protocol
+.It Cm tftp
+Trivial File Transfer Protocol
+.It Cm vat
+Visual Audio Tool
+.It Cm vrrp
+Virtual Router Redundancy protocol
+.It Cm vxlan
+Virtual eXtensible Local Area Network
+.It Cm wb
+distributed White Board
+.El
 .It Fl t
 Do not print a timestamp on each dump line.
 .It Fl tt

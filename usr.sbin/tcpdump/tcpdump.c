@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcpdump.c,v 1.83 2018/02/06 03:07:51 dlg Exp $	*/
+/*	$OpenBSD: tcpdump.c,v 1.87 2018/07/06 07:13:21 dlg Exp $	*/
 
 /*
  * Copyright (c) 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997
@@ -347,6 +347,14 @@ main(int argc, char **argv)
 				packettype = PT_VRRP;
 			else if (strcasecmp(optarg, "tcp") == 0)
 				packettype = PT_TCP;
+			else if (strcasecmp(optarg, "gre") == 0)
+				packettype = PT_GRE;
+			else if (strcasecmp(optarg, "vxlan") == 0)
+				packettype = PT_VXLAN;
+			else if (strcasecmp(optarg, "mpls") == 0)
+				packettype = PT_MPLS;
+			else if (strcasecmp(optarg, "tftp") == 0)
+				packettype = PT_TFTP;
 			else if (strcasecmp(optarg, "sack") == 0)
 				/*
 				 * kept for compatibility; DEFAULT_SNAPLEN

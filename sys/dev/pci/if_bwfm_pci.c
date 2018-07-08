@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bwfm_pci.c,v 1.23 2018/06/07 11:24:19 patrick Exp $	*/
+/*	$OpenBSD: if_bwfm_pci.c,v 1.25 2018/07/06 12:36:53 patrick Exp $	*/
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2017 Patrick Wildt <patrick@blueri.se>
@@ -183,7 +183,7 @@ struct bwfm_pci_dmamem {
 
 #define BWFM_PCI_DMA_MAP(_bdm)	((_bdm)->bdm_map)
 #define BWFM_PCI_DMA_LEN(_bdm)	((_bdm)->bdm_size)
-#define BWFM_PCI_DMA_DVA(_bdm)	((_bdm)->bdm_map->dm_segs[0].ds_addr)
+#define BWFM_PCI_DMA_DVA(_bdm)	((uint64_t)(_bdm)->bdm_map->dm_segs[0].ds_addr)
 #define BWFM_PCI_DMA_KVA(_bdm)	((void *)(_bdm)->bdm_kva)
 
 int		 bwfm_pci_match(struct device *, void *, void *);
@@ -874,6 +874,9 @@ bwfm_pci_pktid_new(struct bwfm_pci_softc *sc, struct bwfm_pci_pkts *pkts,
 				    pkts->pkts[idx].bb_map, m, BUS_DMA_NOWAIT) != 0)
 					return EFBIG;
 			}
+			bus_dmamap_sync(sc->sc_dmat, pkts->pkts[idx].bb_map,
+			    0, pkts->pkts[idx].bb_map->dm_mapsize,
+			    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 			pkts->last = idx;
 			pkts->pkts[idx].bb_m = m;
 			*pktid = idx;
@@ -893,6 +896,9 @@ bwfm_pci_pktid_free(struct bwfm_pci_softc *sc, struct bwfm_pci_pkts *pkts,
 
 	if (pktid >= pkts->npkt || pkts->pkts[pktid].bb_m == NULL)
 		return NULL;
+	bus_dmamap_sync(sc->sc_dmat, pkts->pkts[pktid].bb_map, 0,
+	    pkts->pkts[pktid].bb_map->dm_mapsize,
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	bus_dmamap_unload(sc->sc_dmat, pkts->pkts[pktid].bb_map);
 	m = pkts->pkts[pktid].bb_m;
 	pkts->pkts[pktid].bb_m = NULL;
@@ -941,7 +947,7 @@ bwfm_pci_fill_rx_ioctl_ring(struct bwfm_pci_softc *sc, struct if_rxring *rxring,
 		req->msg.msgtype = msgtype;
 		req->msg.request_id = htole32(pktid);
 		req->host_buf_len = htole16(MSGBUF_MAX_PKT_SIZE);
-		req->host_buf_addr.high_addr = htole32(paddr >> 32);
+		req->host_buf_addr.high_addr = htole32((uint64_t)paddr >> 32);
 		req->host_buf_addr.low_addr = htole32(paddr & 0xffffffff);
 		bwfm_pci_ring_write_commit(sc, &sc->sc_ctrl_submit);
 	}
@@ -981,7 +987,7 @@ bwfm_pci_fill_rx_buf_ring(struct bwfm_pci_softc *sc)
 		req->msg.msgtype = MSGBUF_TYPE_RXBUF_POST;
 		req->msg.request_id = htole32(pktid);
 		req->data_buf_len = htole16(MSGBUF_MAX_PKT_SIZE);
-		req->data_buf_addr.high_addr = htole32(paddr >> 32);
+		req->data_buf_addr.high_addr = htole32((uint64_t)paddr >> 32);
 		req->data_buf_addr.low_addr = htole32(paddr & 0xffffffff);
 		bwfm_pci_ring_write_commit(sc, &sc->sc_rxpost_submit);
 	}
@@ -1052,6 +1058,9 @@ bwfm_pci_ring_update_rptr(struct bwfm_pci_softc *sc,
 		ring->r_ptr = bus_space_read_2(sc->sc_tcm_iot,
 		    sc->sc_tcm_ioh, ring->r_idx_addr);
 	} else {
+		bus_dmamap_sync(sc->sc_dmat,
+		    BWFM_PCI_DMA_MAP(sc->sc_dma_idx_buf), ring->r_idx_addr,
+		    sizeof(uint16_t), BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		ring->r_ptr = *(uint16_t *)(BWFM_PCI_DMA_KVA(sc->sc_dma_idx_buf)
 		    + ring->r_idx_addr);
 	}
@@ -1065,6 +1074,9 @@ bwfm_pci_ring_update_wptr(struct bwfm_pci_softc *sc,
 		ring->w_ptr = bus_space_read_2(sc->sc_tcm_iot,
 		    sc->sc_tcm_ioh, ring->w_idx_addr);
 	} else {
+		bus_dmamap_sync(sc->sc_dmat,
+		    BWFM_PCI_DMA_MAP(sc->sc_dma_idx_buf), ring->w_idx_addr,
+		    sizeof(uint16_t), BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		ring->w_ptr = *(uint16_t *)(BWFM_PCI_DMA_KVA(sc->sc_dma_idx_buf)
 		    + ring->w_idx_addr);
 	}
@@ -1080,6 +1092,9 @@ bwfm_pci_ring_write_rptr(struct bwfm_pci_softc *sc,
 	} else {
 		*(uint16_t *)(BWFM_PCI_DMA_KVA(sc->sc_dma_idx_buf)
 		    + ring->r_idx_addr) = ring->r_ptr;
+		bus_dmamap_sync(sc->sc_dmat,
+		    BWFM_PCI_DMA_MAP(sc->sc_dma_idx_buf), ring->r_idx_addr,
+		    sizeof(uint16_t), BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	}
 }
 
@@ -1093,6 +1108,9 @@ bwfm_pci_ring_write_wptr(struct bwfm_pci_softc *sc,
 	} else {
 		*(uint16_t *)(BWFM_PCI_DMA_KVA(sc->sc_dma_idx_buf)
 		    + ring->w_idx_addr) = ring->w_ptr;
+		bus_dmamap_sync(sc->sc_dmat,
+		    BWFM_PCI_DMA_MAP(sc->sc_dma_idx_buf), ring->w_idx_addr,
+		    sizeof(uint16_t), BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	}
 }
 
@@ -1169,6 +1187,9 @@ bwfm_pci_ring_read_avail(struct bwfm_pci_softc *sc,
 	if (*avail == 0)
 		return NULL;
 
+	bus_dmamap_sync(sc->sc_dmat, BWFM_PCI_DMA_MAP(ring->ring),
+	    ring->r_ptr * ring->itemsz, *avail * ring->itemsz,
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	return BWFM_PCI_DMA_KVA(ring->ring) + (ring->r_ptr * ring->itemsz);
 }
 
@@ -1192,6 +1213,9 @@ void
 bwfm_pci_ring_write_commit(struct bwfm_pci_softc *sc,
     struct bwfm_pci_msgring *ring)
 {
+	bus_dmamap_sync(sc->sc_dmat, BWFM_PCI_DMA_MAP(ring->ring),
+	    0, BWFM_PCI_DMA_LEN(ring->ring), BUS_DMASYNC_PREREAD |
+	    BUS_DMASYNC_PREWRITE);
 	bwfm_pci_ring_write_wptr(sc, ring);
 	bwfm_pci_ring_bell(sc, ring);
 }
@@ -1789,7 +1813,7 @@ bwfm_pci_txdata(struct bwfm_softc *bwfm, struct mbuf *m)
 
 	tx->msg.request_id = htole32(pktid);
 	tx->data_len = htole16(m->m_len - ETHER_HDR_LEN);
-	tx->data_buf_addr.high_addr = htole32(paddr >> 32);
+	tx->data_buf_addr.high_addr = htole32((uint64_t)paddr >> 32);
 	tx->data_buf_addr.low_addr = htole32(paddr & 0xffffffff);
 
 	bwfm_pci_ring_write_commit(sc, ring);
@@ -1904,6 +1928,9 @@ bwfm_pci_msgbuf_query_dcmd(struct bwfm_softc *bwfm, int ifidx,
 		memcpy(BWFM_PCI_DMA_KVA(sc->sc_ioctl_buf), buf, buflen);
 	else
 		memset(BWFM_PCI_DMA_KVA(sc->sc_ioctl_buf), 0, buflen);
+
+	bus_dmamap_sync(sc->sc_dmat, BWFM_PCI_DMA_MAP(sc->sc_ioctl_buf),
+	    0, buflen, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	bwfm_pci_ring_write_commit(sc, &sc->sc_ctrl_submit);
 	splx(s);
