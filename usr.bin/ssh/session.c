@@ -1,4 +1,4 @@
-/* $OpenBSD: session.c,v 1.301 2018/07/03 10:59:35 djm Exp $ */
+/* $OpenBSD: session.c,v 1.303 2018/07/09 21:26:02 markus Exp $ */
 /*
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
  *                    All rights reserved
@@ -60,7 +60,8 @@
 #include "ssh2.h"
 #include "sshpty.h"
 #include "packet.h"
-#include "buffer.h"
+#include "sshbuf.h"
+#include "ssherr.h"
 #include "match.h"
 #include "uidswap.h"
 #include "compat.h"
@@ -123,7 +124,7 @@ extern int debug_flag;
 extern u_int utmp_len;
 extern int startup_pipe;
 extern void destroy_sensitive_data(void);
-extern Buffer loginmsg;
+extern struct sshbuf *loginmsg;
 extern struct sshauthopt *auth_opts;
 char *tun_fwd_ifnames; /* serverloop.c */
 
@@ -230,11 +231,14 @@ auth_input_request_forwarding(struct ssh *ssh, struct passwd * pw)
 static void
 display_loginmsg(void)
 {
-	if (buffer_len(&loginmsg) > 0) {
-		buffer_append(&loginmsg, "\0", 1);
-		printf("%s", (char *)buffer_ptr(&loginmsg));
-		buffer_clear(&loginmsg);
-	}
+	int r;
+
+	if (sshbuf_len(loginmsg) == 0)
+		return;
+	if ((r = sshbuf_put_u8(loginmsg, 0)) != 0)
+		fatal("%s: buffer error: %s", __func__, ssh_err(r));
+	printf("%s", (char *)sshbuf_ptr(loginmsg));
+	sshbuf_reset(loginmsg);
 }
 
 static void
@@ -689,7 +693,7 @@ do_exec(struct ssh *ssh, Session *s, const char *command)
 	 * it to the user, otherwise multiple sessions may accumulate
 	 * multiple copies of the login messages.
 	 */
-	buffer_clear(&loginmsg);
+	sshbuf_reset(loginmsg);
 
 	return ret;
 }
@@ -1567,7 +1571,6 @@ static int
 session_pty_req(struct ssh *ssh, Session *s)
 {
 	u_int len;
-	int n_bytes;
 
 	if (!auth_opts->permit_pty_flag || !options.permit_tty) {
 		debug("Allocating a pty not permitted for this connection.");
@@ -1602,8 +1605,7 @@ session_pty_req(struct ssh *ssh, Session *s)
 	}
 	debug("session_pty_req: session %d alloc %s", s->self, s->tty);
 
-	n_bytes = packet_remaining();
-	tty_parse_modes(s->ttyfd, &n_bytes);
+	ssh_tty_parse_modes(ssh, s->ttyfd);
 
 	if (!use_privsep)
 		pty_setowner(s->pw, s->tty);

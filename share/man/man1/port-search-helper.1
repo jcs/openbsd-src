@@ -1,4 +1,4 @@
-.\"	$OpenBSD: dolock.1,v 1.1 2018/06/26 05:38:49 espie Exp $
+.\"	$OpenBSD: port-search-helper.1,v 1.1 2018/07/09 13:51:08 espie Exp $
 .\"
 .\" Copyright (c) 2010 Marc Espie <espie@openbsd.org>
 .\"
@@ -14,38 +14,35 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: June 26 2018 $
-.Dt DOLOCK 1
+.Dd $Mdocdate: July 9 2018 $
+.Dt PORT-SEARCH-HELPER 1
 .Os
 .Sh NAME
-.Nm dolock
-.Nd lock port for concurrent builds
+.Nm port-search-helper
+.Nd find index entry in ports index according to selected criteria
 .Sh SYNOPSIS
-.Nm dolock
-.Op Fl g Ar group
-.Op Fl m Ar mode
-.Ar lockname Op comment ...
+.Nm
+.Cm index Ns = Ns Ar file
+.Op Cm category Ns = Ns Ar cat
+.Op Cm maintainer Ns = Ns Ar person
+.Op Cm key Ns = Ns Ar value
 .Sh DESCRIPTION
 .Nm
-creates a lock named
-.Ar lockname
-using
-.Xr open 2 .
-If the lock is already held, it will display one single wait message on
-stderr, sleep and retry until satisfaction.
+scans index file
+.Ar file
+for index entry (or entries) according to selected criteria,
+such as category, maintainer name or actual name.
 .Pp
-If necessary, creates the lock directory, using
-.Fl m Ar mode
-as a mode argument or the default if that option is not specified,
-and
-.Fl g Ar group
-as the group owner if that option is specified.
+Matching is done using perl regular expressions, and corresponding entries
+get printed as a list on a single line on standard output.
+.Nm
+is a helper script used by
+.Pa ${PORTSDIR}/Makefile
+for searches.
 .Pp
-This implements a locking mechanism for ports building, see
-.Sq LOCK INFRASTRUCTURE
-in
+It relies on
+.Pa ${PORTSDIR}/INDEX
+being accurate.
+.Sh SEE ALSO
+.Xr perlre 1 ,
 .Xr ports 7
-for details.
-See also
-.Xr dpb 1
-for a complementary lock infrastructure when using dpb.

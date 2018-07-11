@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.673 2018/05/18 13:39:49 benno Exp $	*/
+/*	$OpenBSD: parse.y,v 1.676 2018/07/09 15:07:06 kn Exp $	*/
 
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -1678,14 +1678,6 @@ pfrule		: action dir logquick interface af proto fromto
 						    "apply to tcp");
 					YYERROR;
 				}
-#if 0
-				if (($8.flags.b1 & parse_flags("S")) == 0 &&
-				    $7.src_os) {
-					yyerror("OS fingerprinting requires "
-					    "the SYN TCP flag (flags S/SA)");
-					YYERROR;
-				}
-#endif
 			}
 
 			r.tos = $8.tos;
@@ -5549,21 +5541,21 @@ pushfile(const char *name, int secret)
 
 	if ((nfile = calloc(1, sizeof(struct file))) == NULL ||
 	    (nfile->name = strdup(name)) == NULL) {
+		warn("%s", __func__);
 		if (nfile)
 			free(nfile);
-		warn("malloc");
 		return (NULL);
 	}
 	if (TAILQ_FIRST(&files) == NULL && strcmp(nfile->name, "-") == 0) {
 		nfile->stream = stdin;
 		free(nfile->name);
 		if ((nfile->name = strdup("stdin")) == NULL) {
-			warn("strdup");
+			warn("%s", __func__);
 			free(nfile);
 			return (NULL);
 		}
 	} else if ((nfile->stream = fopen(nfile->name, "r")) == NULL) {
-		warn("%s", nfile->name);
+		warn("%s: %s", __func__, nfile->name);
 		free(nfile->name);
 		free(nfile);
 		return (NULL);
@@ -5578,7 +5570,7 @@ pushfile(const char *name, int secret)
 	nfile->ungetsize = 16;
 	nfile->ungetbuf = malloc(nfile->ungetsize);
 	if (nfile->ungetbuf == NULL) {
-		warn("malloc");
+		warn("%s", __func__);
 		fclose(nfile->stream);
 		free(nfile->name);
 		free(nfile);

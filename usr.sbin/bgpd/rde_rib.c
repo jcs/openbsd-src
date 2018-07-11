@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_rib.c,v 1.165 2018/06/29 11:45:50 claudio Exp $ */
+/*	$OpenBSD: rde_rib.c,v 1.167 2018/07/09 15:35:59 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org>
@@ -693,6 +693,19 @@ path_get(void)
 	return (path_prep(asp));
 }
 
+void
+path_clean(struct rde_aspath *asp)
+{
+	if (asp->flags & F_ATTR_LINKED)
+		fatalx("path_clean: linked object");
+
+	rtlabel_unref(asp->rtlabelid);
+	pftable_unref(asp->pftableid);
+	aspath_put(asp->aspath);
+	nexthop_put(asp->nexthop);
+	attr_freeall(asp);
+}
+
 /* free an unlinked element */
 void
 path_put(struct rde_aspath *asp)
@@ -700,14 +713,8 @@ path_put(struct rde_aspath *asp)
 	if (asp == NULL)
 		return;
 
-	if (asp->flags & F_ATTR_LINKED)
-		fatalx("path_put: linked object");
+	path_clean(asp);
 
-	rtlabel_unref(asp->rtlabelid);
-	pftable_unref(asp->pftableid);
-	aspath_put(asp->aspath);
-	nexthop_put(asp->nexthop);
-	attr_freeall(asp);
 	rdemem.path_cnt--;
 	free(asp);
 }

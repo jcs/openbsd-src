@@ -1,4 +1,4 @@
-/* $OpenBSD: kex.h,v 1.87 2018/07/06 09:06:14 sf Exp $ */
+/* $OpenBSD: kex.h,v 1.89 2018/07/09 21:56:06 markus Exp $ */
 
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
@@ -27,7 +27,6 @@
 #define KEX_H
 
 #include "mac.h"
-#include "buffer.h" /* XXX for typedef */
 #include "key.h" /* XXX for typedef */
 
 #ifdef WITH_LEAKMALLOC
@@ -51,6 +50,7 @@
 
 #define COMP_NONE	0
 #define COMP_ZLIB	1
+#define COMP_DELAYED	2
 
 #define CURVE25519_SIZE 32
 
