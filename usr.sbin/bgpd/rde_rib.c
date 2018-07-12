@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_rib.c,v 1.167 2018/07/09 15:35:59 claudio Exp $ */
+/*	$OpenBSD: rde_rib.c,v 1.170 2018/07/11 19:05:41 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org>
@@ -19,6 +19,7 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <siphash.h>
@@ -171,7 +172,7 @@ rib_free(struct rib *rib)
 	rd = &ribs[rib->id];
 	filterlist_free(rd->in_rules_tmp);
 	filterlist_free(rd->in_rules);
-	bzero(rib, sizeof(struct rib_desc));
+	bzero(rd, sizeof(struct rib_desc));
 }
 
 int
@@ -347,17 +348,17 @@ rib_restart(struct rib_context *ctx)
 /* path specific functions */
 
 static struct rde_aspath *path_lookup(struct rde_aspath *, struct rde_peer *);
-static void	path_link(struct rde_aspath *, struct rde_peer *);
+static u_int64_t path_hash(struct rde_aspath *);
+static void path_link(struct rde_aspath *, struct rde_peer *);
 
-struct path_table pathtable;
+struct path_table {
+	struct aspath_head	*path_hashtbl;
+	u_int64_t		 path_hashmask;
+} pathtable;
 
 SIPHASH_KEY pathtablekey;
 
-/* XXX the hash should also include communities and the other attrs */
-#define PATH_HASH(x)						\
-	&pathtable.path_hashtbl[x == NULL ? 0 :			\
-	    SipHash24(&pathtablekey, (x)->data, (x)->len) &	\
-	    pathtable.path_hashmask]
+#define PATH_HASH(x)	&pathtable.path_hashtbl[x & pathtable.path_hashmask]
 
 void
 path_init(u_int32_t hashsize)
@@ -387,6 +388,31 @@ path_shutdown(void)
 			log_warnx("path_free: free non-free table");
 
 	free(pathtable.path_hashtbl);
+}
+
+void
+path_hash_stats(struct rde_hashstats *hs)
+{
+	struct rde_aspath	*a;
+	u_int32_t		i;
+	int64_t			n;
+
+	memset(hs, 0, sizeof(*hs));
+	strlcpy(hs->name, "path hash", sizeof(hs->name)); 
+	hs->min = LLONG_MAX;
+	hs->num = pathtable.path_hashmask + 1;
+
+	for (i = 0; i <= pathtable.path_hashmask; i++) {
+		n = 0;
+		LIST_FOREACH(a, &pathtable.path_hashtbl[i], path_l)
+			n++;
+		if (n < hs->min)
+			hs->min = n;
+		if (n > hs->max)
+			hs->max = n;
+		hs->sum += n;
+		hs->sumq += n * n;
+	}
 }
 
 int
@@ -485,16 +511,42 @@ path_compare(struct rde_aspath *a, struct rde_aspath *b)
 	return (attr_compare(a, b));
 }
 
+static u_int64_t
+path_hash(struct rde_aspath *asp)
+{
+	SIPHASH_CTX	ctx;
+	u_int64_t	hash;
+
+	SipHash24_Init(&ctx, &pathtablekey);
+	SipHash24_Update(&ctx, &asp->origin, sizeof(asp->origin));
+	SipHash24_Update(&ctx, &asp->med, sizeof(asp->med));
+	SipHash24_Update(&ctx, &asp->lpref, sizeof(asp->lpref));
+	SipHash24_Update(&ctx, &asp->weight, sizeof(asp->weight));
+	SipHash24_Update(&ctx, &asp->rtlabelid, sizeof(asp->rtlabelid));
+	SipHash24_Update(&ctx, &asp->pftableid, sizeof(asp->pftableid));
+
+	if (asp->aspath)
+		SipHash24_Update(&ctx, asp->aspath->data, asp->aspath->len);
+
+	hash = attr_hash(asp);
+	SipHash24_Update(&ctx, &hash, sizeof(hash));
+
+	return (SipHash24_End(&ctx));
+}
+
 static struct rde_aspath *
 path_lookup(struct rde_aspath *aspath, struct rde_peer *peer)
 {
 	struct aspath_head	*head;
 	struct rde_aspath	*asp;
+	u_int64_t		 hash;
 
-	head = PATH_HASH(aspath->aspath);
+	hash = path_hash(aspath);
+	head = PATH_HASH(hash);
 
 	LIST_FOREACH(asp, head, path_l) {
-		if (peer == asp->peer && path_compare(aspath, asp) == 0)
+		if (asp->hash == hash && peer == asp->peer &&
+		    path_compare(aspath, asp) == 0)
 			return (asp);
 	}
 	return (NULL);
@@ -628,11 +680,13 @@ path_link(struct rde_aspath *asp, struct rde_peer *peer)
 {
 	struct aspath_head	*head;
 
-	head = PATH_HASH(asp->aspath);
+	asp->peer = peer;
+
+	asp->hash = path_hash(asp);
+	head = PATH_HASH(asp->hash);
 
 	LIST_INSERT_HEAD(head, asp, path_l);
-	TAILQ_INSERT_TAIL(&peer->path_h, asp, peer_l);
-	asp->peer = peer;
+	TAILQ_INSERT_HEAD(&peer->path_h, asp, peer_l);
 	nexthop_link(asp);
 	asp->flags |= F_ATTR_LINKED;
 }
@@ -650,6 +704,7 @@ path_copy(struct rde_aspath *dst, const struct rde_aspath *src)
 		rdemem.aspath_refs++;
 	}
 	dst->nexthop = nexthop_ref(src->nexthop);
+	dst->hash = 0;
 	dst->med = src->med;
 	dst->lpref = src->lpref;
 	dst->weight = src->weight;
@@ -672,9 +727,6 @@ path_prep(struct rde_aspath *asp)
 	TAILQ_INIT(&asp->updates);
 	asp->origin = ORIGIN_INCOMPLETE;
 	asp->lpref = DEFAULT_LPREF;
-	/* med = 0 */
-	/* weight = 0 */
-	/* rtlabel = 0 */
 
 	return (asp);
 }

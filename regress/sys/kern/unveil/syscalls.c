@@ -1,4 +1,4 @@
-/*	$OpenBSD: syscalls.c,v 1.3 2018/07/07 23:16:24 beck Exp $	*/
+/*	$OpenBSD: syscalls.c,v 1.8 2018/07/12 12:20:11 beck Exp $	*/
 
 /*
  * Copyright (c) 2017-2018 Bob Beck <beck@openbsd.org>
@@ -72,6 +72,13 @@ do_unveil(void)
 	if (unveil(uv_dir1, uv_flags) == -1)
                 err(1, "%s:%d - unveil", __FILE__, __LINE__);
 	if (unveil(uv_file1, uv_flags) == -1)
+                err(1, "%s:%d - unveil", __FILE__, __LINE__);
+}
+
+static void
+do_unveil2(void)
+{
+	if (unveil(uv_dir1, uv_flags) == -1)
                 err(1, "%s:%d - unveil", __FILE__, __LINE__);
 }
 
@@ -240,8 +247,23 @@ test_opendir(int do_uv)
 	UV_SHOULD_SUCCEED((opendir(filename) == NULL), "opendir");
 	(void) snprintf(filename, sizeof(filename), "/%s/subdir", uv_dir2);
 	UV_SHOULD_ENOENT((opendir(filename) == NULL), "opendir");
-	(void) snprintf(filename, sizeof(filename), "/%s/../../%s/subdir", uv_dir1, uv_dir2);
 	UV_SHOULD_ENOENT((opendir(filename) == NULL), "opendir");
+	(void) snprintf(filename, sizeof(filename), "%s/../..%s/subdir", uv_dir1, uv_dir2);
+	UV_SHOULD_ENOENT((opendir(filename) == NULL), "opendir");
+	return 0;
+}
+
+static int
+test_realpath(int do_uv)
+{
+	char buf[PATH_MAX];
+	if (do_uv) {
+		printf("testing realpath\n");
+		do_unveil();
+	}
+	UV_SHOULD_SUCCEED((realpath(uv_dir1, buf) == NULL), "realpath");
+	return 0;
+	UV_SHOULD_ENOENT((realpath(uv_dir2, buf) == NULL), "realpath");
 	return 0;
 }
 
@@ -408,12 +430,46 @@ test_chdir(int do_uv)
 {
 	if (do_uv) {
 		printf("testing chdir\n");
-		do_unveil();
+		do_unveil2();
 	}
 
 	UV_SHOULD_SUCCEED((pledge("stdio fattr rpath", NULL) == -1), "pledge");
+	UV_SHOULD_ENOENT((chdir(uv_dir2) == -1), "chdir");
 	UV_SHOULD_SUCCEED((chdir(uv_dir1) == -1), "chdir");
 	UV_SHOULD_ENOENT((chdir(uv_dir2) == -1), "chdir");
+
+	return 0;
+}
+static int
+test_parent_dir(int do_uv)
+{
+	char filename[255];
+	if (do_uv) {
+		printf("testing chdir\n");
+		do_unveil2();
+	} else {
+		(void) snprintf(filename, sizeof(filename), "/%s/doof", uv_dir1);
+		UV_SHOULD_SUCCEED((mkdir(filename, 0777) == -1), "mkdir");
+		(void) snprintf(filename, sizeof(filename), "/%s/doof/subdir2", uv_dir1);
+		UV_SHOULD_SUCCEED((mkdir(filename, 0777) == -1), "mkdir");
+		(void) snprintf(filename, sizeof(filename), "/%s/doof/subdir1", uv_dir1);
+		UV_SHOULD_SUCCEED((mkdir(filename, 0777) == -1), "mkdir");
+		(void) snprintf(filename, sizeof(filename), "/%s/doof/subdir1/poop", uv_dir1);
+		UV_SHOULD_SUCCEED((open(filename, O_RDWR|O_CREAT) == -1), "open");
+		(void) snprintf(filename, sizeof(filename), "/%s/doof/subdir1/link", uv_dir1);
+		UV_SHOULD_SUCCEED((symlink("../subdir1/poop", filename) == -1), "symlink");
+	}
+	sleep(1);
+	(void) snprintf(filename, sizeof(filename), "/%s/doof/subdir1/poop", uv_dir1);
+	UV_SHOULD_SUCCEED((access(filename, R_OK) == -1), "access");
+	(void) snprintf(filename, sizeof(filename), "/%s/doof/subdir1/link", uv_dir1);
+	UV_SHOULD_SUCCEED((access(filename, R_OK) == -1), "access");
+	return 0;
+	UV_SHOULD_SUCCEED((chdir(uv_dir1) == -1), "chdir");
+	(void) snprintf(filename, sizeof(filename), "/%s/doof/subdir1", uv_dir1);
+	UV_SHOULD_SUCCEED((chdir(filename) == -1), "chdir");
+	UV_SHOULD_SUCCEED((chdir("../subdir2") == -1), "chdir");
+	UV_SHOULD_SUCCEED((chdir("../subdir1") == -1), "chdir");
 
 	return 0;
 }
@@ -473,11 +529,21 @@ test_access(int do_uv)
 		do_unveil();
 	}
 
+	UV_SHOULD_SUCCEED((access(uv_file1, R_OK) == -1), "access");
+	UV_SHOULD_ENOENT((access(uv_file2, R_OK) == -1), "access");
+	UV_SHOULD_ENOENT((access("/etc/passwd", R_OK) == -1), "access");
+	UV_SHOULD_SUCCEED((access(uv_dir1, R_OK) == -1), "access");
+	UV_SHOULD_ENOENT((access(uv_dir2, R_OK) == -1), "access");
+	UV_SHOULD_SUCCEED((access("/", R_OK) == -1), "access");
+	UV_SHOULD_ENOENT((access("/home", F_OK) == -1), "access");
+
 	UV_SHOULD_SUCCEED((pledge("stdio fattr rpath", NULL) == -1), "pledge");
 	UV_SHOULD_SUCCEED((access(uv_file1, R_OK) == -1), "access");
 	UV_SHOULD_ENOENT((access(uv_file2, R_OK) == -1), "access");
 	UV_SHOULD_SUCCEED((access(uv_dir1, R_OK) == -1), "access");
 	UV_SHOULD_ENOENT((access(uv_dir2, R_OK) == -1), "access");
+	UV_SHOULD_SUCCEED((access("/", R_OK) == -1), "access");
+	UV_SHOULD_ENOENT((access("/home", F_OK) == -1), "access");
 
 	return 0;
 }
@@ -511,6 +577,7 @@ test_stat(int do_uv)
 	UV_SHOULD_ENOENT((stat(uv_file2, &sb) == -1), "stat");
 	UV_SHOULD_SUCCEED((stat(uv_dir1, &sb) == -1), "stat");
 	UV_SHOULD_ENOENT((stat(uv_dir2, &sb) == -1), "stat");
+	UV_SHOULD_SUCCEED((stat("/", &sb) == -1), "stat");
 
 	return 0;
 }
@@ -524,11 +591,18 @@ test_statfs(int do_uv)
 	}
 	struct statfs sb;
 
+
+	UV_SHOULD_SUCCEED((statfs("/home", &sb) == -1), "statfs");
+	UV_SHOULD_SUCCEED((statfs("/", &sb) == -1), "statfs");
+	UV_SHOULD_SUCCEED((statfs(uv_file1, &sb) == -1), "statfs");
+	UV_SHOULD_SUCCEED((statfs(uv_file2, &sb) == -1), "statfs");
+	UV_SHOULD_SUCCEED((statfs(uv_dir1, &sb) == -1), "statfs");
+	UV_SHOULD_SUCCEED((statfs(uv_dir2, &sb) == -1), "statfs");
 	UV_SHOULD_SUCCEED((pledge("stdio fattr rpath", NULL) == -1), "pledge");
 	UV_SHOULD_SUCCEED((statfs(uv_file1, &sb) == -1), "statfs");
-	UV_SHOULD_ENOENT((statfs(uv_file2, &sb) == -1), "statfs");
+	UV_SHOULD_SUCCEED((statfs(uv_file2, &sb) == -1), "statfs");
 	UV_SHOULD_SUCCEED((statfs(uv_dir1, &sb) == -1), "statfs");
-	UV_SHOULD_ENOENT((statfs(uv_dir2, &sb) == -1), "statfs");
+	UV_SHOULD_SUCCEED((statfs(uv_dir2, &sb) == -1), "statfs");
 
 	return 0;
 }
@@ -639,6 +713,7 @@ main (int argc, char *argv[])
 	UV_SHOULD_SUCCEED((mkdir(filename, 0777) == -1), "mkdir");
 	close(fd2);
 
+
 	failures += runcompare(test_open);
 	failures += runcompare(test_opendir);
 	failures += runcompare(test_noflags);
@@ -658,5 +733,7 @@ main (int argc, char *argv[])
 	failures += runcompare(test_chmod);
 	failures += runcompare(test_exec);
 	failures += runcompare(test_exec2);
+	failures += runcompare(test_realpath);
+	failures += runcompare(test_parent_dir);
 	exit(failures);
 }

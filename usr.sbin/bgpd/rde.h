@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.176 2018/07/09 14:08:48 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.178 2018/07/11 19:05:41 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -140,8 +140,8 @@ enum attrtypes {
 struct attr {
 	LIST_ENTRY(attr)		 entry;
 	u_char				*data;
+	u_int64_t			 hash;
 	int				 refcnt;
-	u_int32_t			 hash;
 	u_int16_t			 len;
 	u_int8_t			 flags;
 	u_int8_t			 type;
@@ -152,11 +152,6 @@ struct mpattr {
 	void		*unreach;
 	u_int16_t	 reach_len;
 	u_int16_t	 unreach_len;
-};
-
-struct path_table {
-	struct aspath_head	*path_hashtbl;
-	u_int32_t		 path_hashmask;
 };
 
 #define	F_ATTR_ORIGIN		0x00001
@@ -195,10 +190,11 @@ struct rde_aspath {
 	struct rde_peer			*peer;
 	struct aspath			*aspath;
 	struct nexthop			*nexthop;	/* may be NULL */
+	u_int64_t			 hash;
+	u_int32_t			 flags;		/* internally used */
 	u_int32_t			 med;		/* multi exit disc */
 	u_int32_t			 lpref;		/* local pref */
 	u_int32_t			 weight;	/* low prio lpref */
-	u_int32_t			 flags;		/* internally used */
 	u_int16_t			 rtlabelid;	/* route label id */
 	u_int16_t			 pftableid;	/* pf table id */
 	u_int8_t			 origin;
@@ -352,11 +348,13 @@ int		 attr_writebuf(struct ibuf *, u_int8_t, u_int8_t, void *,
 		     u_int16_t);
 void		 attr_init(u_int32_t);
 void		 attr_shutdown(void);
+void		 attr_hash_stats(struct rde_hashstats *);
 int		 attr_optadd(struct rde_aspath *, u_int8_t, u_int8_t,
 		     void *, u_int16_t);
 struct attr	*attr_optget(const struct rde_aspath *, u_int8_t);
 void		 attr_copy(struct rde_aspath *, const struct rde_aspath *);
 int		 attr_compare(struct rde_aspath *, struct rde_aspath *);
+u_int64_t	 attr_hash(struct rde_aspath *);
 void		 attr_freeall(struct rde_aspath *);
 void		 attr_free(struct rde_aspath *, struct attr *);
 #define		 attr_optlen(x)	\
@@ -369,6 +367,7 @@ int		 aspath_verify(void *, u_int16_t, int);
 #define		 AS_ERR_SOFT	-4
 void		 aspath_init(u_int32_t);
 void		 aspath_shutdown(void);
+void		 aspath_hash_stats(struct rde_hashstats *);
 struct aspath	*aspath_get(void *, u_int16_t);
 void		 aspath_put(struct aspath *);
 u_char		*aspath_inflate(void *, u_int16_t, u_int16_t *);
@@ -472,6 +471,7 @@ re_rib(struct rib_entry *re)
 void		 path_init(u_int32_t);
 void		 path_init(u_int32_t);
 void		 path_shutdown(void);
+void		 path_hash_stats(struct rde_hashstats *);
 int		 path_update(struct rib *, struct rde_peer *,
 		     struct rde_aspath *, struct bgpd_addr *, int, int);
 int		 path_compare(struct rde_aspath *, struct rde_aspath *);

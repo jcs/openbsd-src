@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.325 2018/07/09 12:05:11 krw Exp $ */
+/*	$OpenBSD: parse.y,v 1.328 2018/07/11 14:08:46 benno Exp $ */
 
 /*
  * Copyright (c) 2002, 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -211,7 +211,7 @@ typedef struct {
 %token	COMMUNITY EXTCOMMUNITY LARGECOMMUNITY
 %token	PREFIX PREFIXLEN PREFIXSET SOURCEAS TRANSITAS PEERAS DELETE MAXASLEN
 %token	MAXASSEQ SET LOCALPREF MED METRIC NEXTHOP REJECT BLACKHOLE NOMODIFY SELF
-%token	PREPEND_SELF PREPEND_PEER PFTABLE WEIGHT RTLABEL ORIGIN
+%token	PREPEND_SELF PREPEND_PEER PFTABLE WEIGHT RTLABEL ORIGIN PRIORITY
 %token	ERROR INCLUDE
 %token	IPSEC ESP AH SPI IKE
 %token	IPV4 IPV6
@@ -487,6 +487,11 @@ conf_main	: AS as4number		{
 			free($3);
 		}
 		| RDE RIB STRING RTABLE NUMBER {
+			if ($5 > RT_TABLEID_MAX) {
+				yyerror("rtable %llu too big: max %u", $5,
+				    RT_TABLEID_MAX);
+				YYERROR;
+			}
 			if (add_rib($3, $5, 0)) {
 				free($3);
 				YYERROR;
@@ -495,6 +500,11 @@ conf_main	: AS as4number		{
 		}
 		| RDE RIB STRING RTABLE NUMBER FIBUPDATE yesno {
 			int	flags = 0;
+			if ($5 > RT_TABLEID_MAX) {
+				yyerror("rtable %llu too big: max %u", $5,
+				    RT_TABLEID_MAX);
+				YYERROR;
+			}
 			if ($7 == 0)
 				flags = F_RIB_NOFIBSYNC;
 			if (add_rib($3, $5, flags)) {
@@ -631,6 +641,11 @@ conf_main	: AS as4number		{
 		}
 		| RTABLE NUMBER {
 			struct rde_rib *rr;
+			if ($2 > RT_TABLEID_MAX) {
+				yyerror("rtable %llu too big: max %u", $2,
+				    RT_TABLEID_MAX);
+				YYERROR;
+			}
 			if (ktable_exists($2, NULL) != 1) {
 				yyerror("rtable id %lld does not exist", $2);
 				YYERROR;
@@ -779,6 +794,30 @@ network		: NETWORK prefix filter_set	{
 
 			TAILQ_INSERT_TAIL(netconf, n, entry);
 		}
+		| NETWORK family PRIORITY NUMBER filter_set	{
+			struct network	*n;
+			if ($4 < RTP_LOCAL && $4 > RTP_MAX) {
+				yyerror("priority %lld > max %d or < min %d", $4,
+				    RTP_MAX, RTP_LOCAL);
+				YYERROR;
+			}
+
+			if ((n = calloc(1, sizeof(struct network))) == NULL)
+				fatal("new_network");
+			if (afi2aid($2, SAFI_UNICAST, &n->net.prefix.aid) ==
+			    -1) {
+				yyerror("unknown family");
+				filterset_free($5);
+				free($5);
+				YYERROR;
+			}
+			n->net.type = NETWORK_PRIORITY;
+			n->net.priority = $4;
+			filterset_move($5, &n->net.attrset);
+			free($5);
+
+			TAILQ_INSERT_TAIL(netconf, n, entry);
+		}
 		| NETWORK family nettype filter_set	{
 			struct network	*n;
 
@@ -888,6 +927,11 @@ optnumber	: /* empty */		{ $$ = 0; }
 		;
 
 rdomain		: RDOMAIN NUMBER optnl '{' optnl	{
+			if ($2 > RT_TABLEID_MAX) {
+				yyerror("rtable %llu too big: max %u", $2,
+				    RT_TABLEID_MAX);
+				YYERROR;
+			}
 			if (ktable_exists($2, NULL) != 1) {
 				yyerror("rdomain %lld does not exist", $2);
 				YYERROR;
@@ -2556,6 +2600,7 @@ lookup(char *s)
 		{ "prefixlen",		PREFIXLEN},
 		{ "prepend-neighbor",	PREPEND_PEER},
 		{ "prepend-self",	PREPEND_SELF},
+		{ "priority",		PRIORITY},
 		{ "qualify",		QUALIFY},
 		{ "quick",		QUICK},
 		{ "rd",			RD},
@@ -2952,6 +2997,7 @@ parse_config(char *filename, struct bgpd_config *xconf, struct peer **xpeers)
 	struct sym		*sym, *next;
 	struct peer		*p, *pnext;
 	struct rde_rib		*rr;
+	struct network	       	*n;
 	int			 errors = 0;
 
 	conf = new_config();
@@ -2974,9 +3020,10 @@ parse_config(char *filename, struct bgpd_config *xconf, struct peer **xpeers)
 
 	netconf = &conf->networks;
 
-	/* the Adj-RIB-In/Out have no fib so no need to set the tableid */
-	add_rib("Adj-RIB-In", 0, F_RIB_NOFIB | F_RIB_NOEVALUATE);
-	add_rib("Adj-RIB-Out", 0, F_RIB_NOFIB | F_RIB_NOEVALUATE);
+	add_rib("Adj-RIB-In", conf->default_tableid,
+	    F_RIB_NOFIB | F_RIB_NOEVALUATE);
+	add_rib("Adj-RIB-Out", conf->default_tableid,
+	    F_RIB_NOFIB | F_RIB_NOEVALUATE);
 	add_rib("Loc-RIB", conf->default_tableid, F_RIB_LOCAL);
 
 	if ((file = pushfile(filename, 1)) == NULL) {
@@ -2989,6 +3036,15 @@ parse_config(char *filename, struct bgpd_config *xconf, struct peer **xpeers)
 	errors = file->errors;
 	popfile();
 
+	/* check that we dont try to announce our own routes */
+	TAILQ_FOREACH(n, netconf, entry)
+	    if (n->net.priority == conf->fib_priority) {
+		    errors++;
+		    logit(LOG_CRIT, "network priority %d == fib-priority "
+			"%d is not allowed.",
+			n->net.priority, conf->fib_priority);
+	    }
+	
 	/* Free macros and check which have not been used. */
 	TAILQ_FOREACH_SAFE(sym, &symhead, entry, next) {
 		if ((cmd_opts & BGPD_OPT_VERBOSE2) && !sym->used)
@@ -3566,8 +3622,8 @@ add_rib(char *name, u_int rtableid, u_int16_t flags)
 			free(rr);
 			return (-1);
 		}
-		rr->rtableid = rtableid;
 	}
+	rr->rtableid = rtableid;
 	SIMPLEQ_INSERT_TAIL(&ribnames, rr, entry);
 	return (0);
 }

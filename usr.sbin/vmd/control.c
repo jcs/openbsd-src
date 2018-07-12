@@ -1,4 +1,4 @@
-/*	$OpenBSD: control.c,v 1.24 2018/06/26 10:00:08 reyk Exp $	*/
+/*	$OpenBSD: control.c,v 1.27 2018/07/11 13:19:47 reyk Exp $	*/
 
 /*
  * Copyright (c) 2010-2015 Reyk Floeter <reyk@openbsd.org>
@@ -414,9 +414,6 @@ control_dispatch_imsg(int fd, short event, void *arg)
 				goto fail;
 			memcpy(&vid, imsg.data, sizeof(vid));
 			vid.vid_uid = c->peercred.uid;
-			log_debug("%s id: %d, name: %s, uid: %d",
-			    __func__, vid.vid_id, vid.vid_name,
-			    vid.vid_uid);
 
 			if (proc_compose_imsg(ps, PROC_PARENT, -1,
 			    imsg.hdr.type, fd, -1, &vid, sizeof(vid)) == -1) {

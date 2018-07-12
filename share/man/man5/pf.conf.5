@@ -1,4 +1,4 @@
-.\"	$OpenBSD: pf.conf.5,v 1.574 2018/02/09 07:14:17 jmc Exp $
+.\"	$OpenBSD: pf.conf.5,v 1.577 2018/07/12 05:54:49 jmc Exp $
 .\"
 .\" Copyright (c) 2002, Daniel Hartmeier
 .\" Copyright (c) 2003 - 2013 Henning Brauer <henning@openbsd.org>
@@ -28,7 +28,7 @@
 .\" ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: February 9 2018 $
+.Dd $Mdocdate: July 12 2018 $
 .Dt PF.CONF 5
 .Os
 .Sh NAME
@@ -668,6 +668,10 @@ will match any existing interface except loopback ones.
 .It Cm rtable Ar number
 Used to select an alternate routing table for the routing lookup.
 Only effective before the route lookup happened, i.e. when filtering inbound.
+.Pp
+.It Cm set delay Ar milliseconds
+Packets matching this rule will be delayed at the outbound interface by the
+given number of milliseconds.
 .Pp
 .It Cm set prio Ar priority | Pq Ar priority , priority
 Packets matching this rule will be assigned a specific queueing priority.
@@ -1372,7 +1376,7 @@ seemingly accepting connections that will be dropped later on.
 .Pp
 .Bl -tag -width adaptive -compact
 .It Cm never
-pf will never send syncookie SYNACKs.
+pf will never send syncookie SYNACKs (the default).
 .It Cm always
 pf will always send syncookie SYNACKs.
 .It Cm adaptive
@@ -1481,8 +1485,8 @@ For example:
 .Bd -literal -offset indent
 set timeout tcp.first 120
 set timeout tcp.established 86400
-set timeout { adaptive.start 6000, adaptive.end 12000 }
-set limit states 10000
+set timeout { adaptive.start 60000, adaptive.end 120000 }
+set limit states 100000
 .Ed
 .Pp
 With 9000 state table entries, the timeout values are scaled to 50%
@@ -2737,6 +2741,7 @@ filteropt      = user | group | flags | icmp-type | icmp6-type |
                  "divert-to" host "port" port |
                  "label" string | "tag" string | [ "!" ] "tagged" string |
                  "max-pkt-rate" number "/" seconds |
+                 "set delay" number |
                  "set prio" ( number | "(" number [ [ "," ] number ] ")" ) |
                  "set queue" ( string | "(" string [ [ "," ] string ] ")" ) |
                  "rtable" number | "probability" number"%" | "prio" number |

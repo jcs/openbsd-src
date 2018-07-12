@@ -1,4 +1,4 @@
-/* $OpenBSD: monitor.c,v 1.183 2018/07/09 21:53:45 markus Exp $ */
+/* $OpenBSD: monitor.c,v 1.185 2018/07/11 18:53:29 markus Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
  * Copyright 2002 Markus Friedl <markus@openbsd.org>
@@ -51,7 +51,7 @@
 #include "atomicio.h"
 #include "xmalloc.h"
 #include "ssh.h"
-#include "key.h"
+#include "sshkey.h"
 #include "sshbuf.h"
 #include "hostfile.h"
 #include "auth.h"
@@ -551,14 +551,15 @@ mm_answer_sign(int sock, struct sshbuf *m)
 	char *alg = NULL;
 	size_t datlen, siglen, alglen;
 	int r, is_proof = 0;
-	u_int keyid;
+	u_int keyid, compat;
 	const char proof_req[] = "hostkeys-prove-00@openssh.com";
 
 	debug3("%s", __func__);
 
 	if ((r = sshbuf_get_u32(m, &keyid)) != 0 ||
 	    (r = sshbuf_get_string(m, &p, &datlen)) != 0 ||
-	    (r = sshbuf_get_cstring(m, &alg, &alglen)) != 0)
+	    (r = sshbuf_get_cstring(m, &alg, &alglen)) != 0 ||
+	    (r = sshbuf_get_u32(m, &compat)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 	if (keyid > INT_MAX)
 		fatal("%s: invalid key ID", __func__);
@@ -608,13 +609,13 @@ mm_answer_sign(int sock, struct sshbuf *m)
 
 	if ((key = get_hostkey_by_index(keyid)) != NULL) {
 		if ((r = sshkey_sign(key, &signature, &siglen, p, datlen, alg,
-		    datafellows)) != 0)
+		    compat)) != 0)
 			fatal("%s: sshkey_sign failed: %s",
 			    __func__, ssh_err(r));
 	} else if ((key = get_hostkey_public_by_index(keyid, ssh)) != NULL &&
 	    auth_sock > 0) {
 		if ((r = ssh_agent_sign(auth_sock, key, &signature, &siglen,
-		    p, datlen, alg, datafellows)) != 0) {
+		    p, datlen, alg, compat)) != 0) {
 			fatal("%s: ssh_agent_sign failed: %s",
 			    __func__, ssh_err(r));
 		}
@@ -895,7 +896,7 @@ mm_answer_keyallowed(int sock, struct sshbuf *m)
 
 	if (key != NULL && authctxt->valid) {
 		/* These should not make it past the privsep child */
-		if (key_type_plain(key->type) == KEY_RSA &&
+		if (sshkey_type_plain(key->type) == KEY_RSA &&
 		    (datafellows & SSH_BUG_RSASIGMD5) != 0)
 			fatal("%s: passed a SSH_BUG_RSASIGMD5 key", __func__);
 
@@ -1454,13 +1455,15 @@ mm_answer_gss_setup_ctx(int sock, struct sshbuf *m)
 	gss_OID_desc goid;
 	OM_uint32 major;
 	size_t len;
+	u_char *p;
 	int r;
 
 	if (!options.gss_authentication)
 		fatal("%s: GSSAPI authentication not enabled", __func__);
 
-	if ((r = sshbuf_get_string(m, &goid.elements, &len)) != 0)
+	if ((r = sshbuf_get_string(m, &p, &len)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
+	goid.elements = p;
 	goid.length = len;
 
 	major = ssh_gssapi_server_ctx(&gsscontext, &goid);
@@ -1491,7 +1494,7 @@ mm_answer_gss_accept_ctx(int sock, struct sshbuf *m)
 	if (!options.gss_authentication)
 		fatal("%s: GSSAPI authentication not enabled", __func__);
 
-	if ((r = sshbuf_get_string(m, &in.value, &in.length)) != 0)
+	if ((r = ssh_gssapi_get_buffer_desc(m, &in)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 	major = ssh_gssapi_accept_ctx(gsscontext, &in, &out, &flags);
 	free(in.value);
@@ -1518,12 +1521,13 @@ mm_answer_gss_checkmic(int sock, struct sshbuf *m)
 {
 	gss_buffer_desc gssbuf, mic;
 	OM_uint32 ret;
+	int r;
 
 	if (!options.gss_authentication)
 		fatal("%s: GSSAPI authentication not enabled", __func__);
 
-	if ((r = sshbuf_get_string(m, &gssbuf.value, &gssbuf.length)) != 0 ||
-	    (r = sshbuf_get_string(m, &mic.value, &mic.length)) != 0)
+	if ((r = ssh_gssapi_get_buffer_desc(m, &gssbuf)) != 0 ||
+	    (r = ssh_gssapi_get_buffer_desc(m, &mic)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 
 	ret = ssh_gssapi_checkmic(gsscontext, &gssbuf, &mic);
@@ -1546,7 +1550,7 @@ mm_answer_gss_checkmic(int sock, struct sshbuf *m)
 int
 mm_answer_gss_userok(int sock, struct sshbuf *m)
 {
-	int authenticated;
+	int r, authenticated;
 	const char *displayname;
 
 	if (!options.gss_authentication)

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sig.c,v 1.220 2018/04/28 03:13:04 visa Exp $	*/
+/*	$OpenBSD: kern_sig.c,v 1.222 2018/07/11 19:28:16 bluhm Exp $	*/
 /*	$NetBSD: kern_sig.c,v 1.54 1996/04/22 01:38:32 christos Exp $	*/
 
 /*
@@ -798,17 +798,15 @@ trapsignal(struct proc *p, int signum, u_long trapno, int code,
 	if ((pr->ps_flags & PS_TRACED) == 0 &&
 	    (ps->ps_sigcatch & mask) != 0 &&
 	    (p->p_sigmask & mask) == 0) {
+		siginfo_t si;
+		initsiginfo(&si, signum, trapno, code, sigval);
 #ifdef KTRACE
 		if (KTRPOINT(p, KTR_PSIG)) {
-			siginfo_t si;
-
-			initsiginfo(&si, signum, trapno, code, sigval);
 			ktrpsig(p, signum, ps->ps_sigact[signum],
 			    p->p_sigmask, code, &si);
 		}
 #endif
-		(*pr->ps_emul->e_sendsig)(ps->ps_sigact[signum], signum,
-		    p->p_sigmask, trapno, code, sigval);
+		sendsig(ps->ps_sigact[signum], signum, p->p_sigmask, &si);
 		postsig_done(p, signum, ps);
 	} else {
 		p->p_sisig = signum;
@@ -1155,14 +1153,17 @@ issignal(struct proc *p)
 	int s;
 
 	for (;;) {
-		mask = p->p_siglist & ~p->p_sigmask;
+		mask = SIGPENDING(p);
 		if (pr->ps_flags & PS_PPWAIT)
 			mask &= ~stopsigmask;
 		if (mask == 0)	 	/* no signal to send */
 			return (0);
 		signum = ffs((long)mask);
 		mask = sigmask(signum);
-		atomic_clearbits_int(&p->p_siglist, mask);
+		if (p->p_siglist & mask)
+			atomic_clearbits_int(&p->p_siglist, mask);
+		else
+			atomic_clearbits_int(&pr->ps_mainproc->p_siglist, mask);
 
 		/*
 		 * We should see pending but ignored signals
@@ -1359,6 +1360,7 @@ postsig(struct proc *p, int signum)
 	sig_t action;
 	u_long trapno;
 	int mask, returnmask;
+	siginfo_t si;
 	union sigval sigval;
 	int s, code;
 
@@ -1379,12 +1381,10 @@ postsig(struct proc *p, int signum)
 		code = p->p_sicode;
 		sigval = p->p_sigval;
 	}
+	initsiginfo(&si, signum, trapno, code, sigval);
 
 #ifdef KTRACE
 	if (KTRPOINT(p, KTR_PSIG)) {
-		siginfo_t si;
-
-		initsiginfo(&si, signum, trapno, code, sigval);
 		ktrpsig(p, signum, action, p->p_flag & P_SIGSUSPEND ?
 		    p->p_oldmask : p->p_sigmask, code, &si);
 	}
@@ -1431,8 +1431,7 @@ postsig(struct proc *p, int signum)
 			p->p_sigval.sival_ptr = NULL;
 		}
 
-		(*pr->ps_emul->e_sendsig)(action, signum, returnmask, trapno,
-		    code, sigval);
+		sendsig(action, signum, returnmask, &si);
 		postsig_done(p, signum, ps);
 		splx(s);
 	}
@@ -1840,7 +1839,7 @@ userret(struct proc *p)
 		KERNEL_UNLOCK();
 	}
 
-	if (SIGPENDING(p)) {
+	if (SIGPENDING(p) != 0) {
 		KERNEL_LOCK();
 		while ((signum = CURSIG(p)) != 0)
 			postsig(p, signum);

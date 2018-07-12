@@ -1,4 +1,4 @@
-/* $OpenBSD: sshconnect2.c,v 1.278 2018/07/09 21:03:30 markus Exp $ */
+/* $OpenBSD: sshconnect2.c,v 1.280 2018/07/11 18:55:11 markus Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  * Copyright (c) 2008 Damien Miller.  All rights reserved.
@@ -226,9 +226,9 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 	/* send 1st encrypted/maced/compressed message */
 	if ((r = sshpkt_start(ssh, SSH2_MSG_IGNORE)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, "markus")) != 0 ||
-	    (r = sshpkt_send(ssh)) != 0)
+	    (r = sshpkt_send(ssh)) != 0 ||
+	    (r = ssh_packet_write_wait(ssh)) != 0)
 		fatal("%s: %s", __func__, ssh_err(r));
-	ssh_packet_write_wait(ssh);
 #endif
 }
 
@@ -1053,7 +1053,7 @@ key_sig_algorithm(struct ssh *ssh, const struct sshkey *key)
 	if (ssh == NULL || ssh->kex->server_sig_algs == NULL ||
 	    (key->type != KEY_RSA && key->type != KEY_RSA_CERT)) {
 		/* Filter base key signature alg against our configuration */
-		return match_list(key_ssh_name(key),
+		return match_list(sshkey_ssh_name(key),
 		    options.pubkey_key_types, NULL);
 	}
 
@@ -1602,10 +1602,10 @@ try_identity(Identity *id)
 {
 	if (!id->key)
 		return (0);
-	if (key_type_plain(id->key->type) == KEY_RSA &&
+	if (sshkey_type_plain(id->key->type) == KEY_RSA &&
 	    (datafellows & SSH_BUG_RSASIGMD5) != 0) {
 		debug("Skipped %s key %s for RSA/MD5 server",
-		    key_type(id->key), id->filename);
+		    sshkey_type(id->key), id->filename);
 		return (0);
 	}
 	return 1;
@@ -1971,7 +1971,7 @@ userauth_hostbased(Authctxt *authctxt)
 	    (r = sshbuf_put_cstring(b, authctxt->server_user)) != 0 ||
 	    (r = sshbuf_put_cstring(b, authctxt->service)) != 0 ||
 	    (r = sshbuf_put_cstring(b, authctxt->method->name)) != 0 ||
-	    (r = sshbuf_put_cstring(b, key_ssh_name(private))) != 0 ||
+	    (r = sshbuf_put_cstring(b, sshkey_ssh_name(private))) != 0 ||
 	    (r = sshbuf_put_string(b, keyblob, keylen)) != 0 ||
 	    (r = sshbuf_put_cstring(b, chost)) != 0 ||
 	    (r = sshbuf_put_cstring(b, authctxt->local_user)) != 0) {
@@ -1997,7 +1997,7 @@ userauth_hostbased(Authctxt *authctxt)
 	    (r = sshpkt_put_cstring(ssh, authctxt->server_user)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, authctxt->service)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, authctxt->method->name)) != 0 ||
-	    (r = sshpkt_put_cstring(ssh, key_ssh_name(private))) != 0 ||
+	    (r = sshpkt_put_cstring(ssh, sshkey_ssh_name(private))) != 0 ||
 	    (r = sshpkt_put_string(ssh, keyblob, keylen)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, chost)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, authctxt->local_user)) != 0 ||

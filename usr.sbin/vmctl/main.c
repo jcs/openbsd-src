@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.35 2018/02/24 10:39:35 phessler Exp $	*/
+/*	$OpenBSD: main.c,v 1.38 2018/07/12 12:04:49 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -71,9 +71,9 @@ struct ctl_command ctl_commands[] = {
 	{ "show",	CMD_STATUS,	ctl_status,	"[id]" },
 	{ "start",	CMD_START,	ctl_start,	"\"name\""
 	    " [-Lc] [-b image] [-r image] [-m size]\n"
-	    "\t\t[-n switch] [-i count] [-d disk]*" },
+	    "\t\t[-n switch] [-i count] [-d disk]* [-I name]" },
 	{ "status",	CMD_STATUS,	ctl_status,	"[id]" },
-	{ "stop",	CMD_STOP,	ctl_stop,	"id" },
+	{ "stop",	CMD_STOP,	ctl_stop,	"id [-fw]" },
 	{ "pause",	CMD_PAUSE,	ctl_pause,	"id" },
 	{ "unpause",	CMD_UNPAUSE,	ctl_unpause,	"id" },
 	{ "send",	CMD_SEND,	ctl_send,	"id",	1},
@@ -182,6 +182,7 @@ vmmaction(struct parse_result *res)
 	int			 done = 0;
 	int			 n;
 	int			 ret, action;
+	unsigned int		 flags;
 
 	if (ctl_sock == -1) {
 		if ((ctl_sock = socket(AF_UNIX,
@@ -205,14 +206,14 @@ vmmaction(struct parse_result *res)
 	case CMD_START:
 		ret = vm_start(res->id, res->name, res->size, res->nifs,
 		    res->nets, res->ndisks, res->disks, res->path,
-		    res->isopath);
+		    res->isopath, res->instance);
 		if (ret) {
 			errno = ret;
 			err(1, "start VM operation failed");
 		}
 		break;
 	case CMD_STOP:
-		terminate_vm(res->id, res->name);
+		terminate_vm(res->id, res->name, res->flags);
 		break;
 	case CMD_STATUS:
 		get_info_vm(res->id, res->name, 0);
@@ -254,6 +255,7 @@ vmmaction(struct parse_result *res)
 	}
 
 	action = res->action;
+	flags = res->flags;
 	parse_free(res);
 
 	while (ibuf->w.queued)
@@ -292,7 +294,8 @@ vmmaction(struct parse_result *res)
 				    tty_autoconnect);
 				break;
 			case CMD_STOP:
-				done = terminate_vm_complete(&imsg, &ret);
+				done = terminate_vm_complete(&imsg, &ret,
+				    flags);
 				break;
 			case CMD_CONSOLE:
 			case CMD_STATUS:
@@ -327,6 +330,7 @@ parse_free(struct parse_result *res)
 	free(res->name);
 	free(res->path);
 	free(res->isopath);
+	free(res->instance);
 	for (i = 0; i < res->ndisks; i++)
 		free(res->disks[i]);
 	free(res->disks);
@@ -444,6 +448,20 @@ parse_vmid(struct parse_result *res, char *word, int needname)
 		if ((res->name = strdup(word)) == NULL)
 			errx(1, "strdup");
 	}
+
+	return (0);
+}
+
+int
+parse_instance(struct parse_result *res, char *word)
+{
+	if (strlen(word) >= VMM_MAX_NAME_LEN) {
+		warnx("instance vm name too long");
+		return (-1);
+	}
+	res->id = 0;
+	if ((res->instance = strdup(word)) == NULL)
+		errx(1, "strdup");
 
 	return (0);
 }
@@ -574,7 +592,7 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 	argc--;
 	argv++;
 
-	while ((ch = getopt(argc, argv, "b:r:cLm:n:d:i:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:r:cLm:n:d:I:i:")) != -1) {
 		switch (ch) {
 		case 'b':
 			if (res->path)
@@ -615,6 +633,10 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 			if (parse_disk(res, path) != 0)
 				errx(1, "invalid disk: %s", optarg);
 			break;
+		case 'I':
+			if (parse_instance(res, optarg) == -1)
+				errx(1, "invalid name: %s", optarg);
+			break;
 		case 'i':
 			if (res->nifs != -1)
 				errx(1, "interfaces specified multiple times");
@@ -641,11 +663,30 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 int
 ctl_stop(struct parse_result *res, int argc, char *argv[])
 {
-	if (argc == 2) {
-		if (parse_vmid(res, argv[1], 0) == -1)
-			errx(1, "invalid id: %s", argv[1]);
-	} else if (argc != 2)
+	int		 ch;
+
+	if (argc < 2)
 		ctl_usage(res->ctl);
+
+	if (parse_vmid(res, argv[1], 0) == -1)
+		errx(1, "invalid id: %s", argv[1]);
+
+	argc--;
+	argv++;
+
+	while ((ch = getopt(argc, argv, "fw")) != -1) {
+		switch (ch) {
+		case 'f':
+			res->flags |= VMOP_FORCE;
+			break;
+		case 'w':
+			res->flags |= VMOP_WAIT;
+			break;
+		default:
+			ctl_usage(res->ctl);
+			/* NOTREACHED */
+		}
+	}
 
 	return (vmmaction(res));
 }

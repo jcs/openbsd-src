@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.c,v 1.87 2018/06/26 10:00:08 reyk Exp $	*/
+/*	$OpenBSD: vmd.c,v 1.95 2018/07/12 12:04:49 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -56,7 +56,10 @@ void	 vmd_shutdown(void);
 int	 vmd_control_run(void);
 int	 vmd_dispatch_control(int, struct privsep_proc *, struct imsg *);
 int	 vmd_dispatch_vmm(int, struct privsep_proc *, struct imsg *);
-int	 check_vmh(struct vm_dump_header *);
+int	 vmd_check_vmh(struct vm_dump_header *);
+
+int	 vm_instance(struct privsep *, struct vmd_vm **,
+	    struct vmop_create_params *, uid_t);
 
 struct vmd	*env;
 
@@ -70,16 +73,16 @@ static struct privsep_proc procs[] = {
 /* For the privileged process */
 static struct privsep_proc *proc_priv = &procs[0];
 static struct passwd proc_privpw;
+static const uint8_t zero_mac[ETHER_ADDR_LEN];
 
 int
 vmd_dispatch_control(int fd, struct privsep_proc *p, struct imsg *imsg)
 {
 	struct privsep			*ps = p->p_ps;
 	int				 res = 0, ret = 0, cmd = 0, verbose;
-	unsigned int			 v = 0;
+	unsigned int			 v = 0, flags;
 	struct vmop_create_params	 vmc;
 	struct vmop_id			 vid;
-	struct vm_terminate_params	 vtp;
 	struct vmop_result		 vmr;
 	struct vm_dump_header		 vmh;
 	struct vmd_vm			*vm = NULL;
@@ -113,13 +116,16 @@ vmd_dispatch_control(int fd, struct privsep_proc *p, struct imsg *imsg)
 	case IMSG_VMDOP_TERMINATE_VM_REQUEST:
 		IMSG_SIZE_CHECK(imsg, &vid);
 		memcpy(&vid, imsg->data, sizeof(vid));
+		flags = vid.vid_flags;
+
 		if ((id = vid.vid_id) == 0) {
 			/* Lookup vm (id) by name */
 			if ((vm = vm_getbyname(vid.vid_name)) == NULL) {
 				res = ENOENT;
 				cmd = IMSG_VMDOP_TERMINATE_VM_RESPONSE;
 				break;
-			} else if (vm->vm_shutdown) {
+			} else if (vm->vm_shutdown &&
+			    (flags & VMOP_FORCE) == 0) {
 				res = EALREADY;
 				cmd = IMSG_VMDOP_TERMINATE_VM_RESPONSE;
 				break;
@@ -139,10 +145,12 @@ vmd_dispatch_control(int fd, struct privsep_proc *p, struct imsg *imsg)
 			cmd = IMSG_VMDOP_TERMINATE_VM_RESPONSE;
 			break;
 		}
-		memset(&vtp, 0, sizeof(vtp));
-		vtp.vtp_vm_id = id;
+
+		memset(&vid, 0, sizeof(vid));
+		vid.vid_id = id;
+		vid.vid_flags = flags;
 		if (proc_compose_imsg(ps, PROC_VMM, -1, imsg->hdr.type,
-		    imsg->hdr.peerid, -1, &vtp, sizeof(vtp)) == -1)
+		    imsg->hdr.peerid, -1, &vid, sizeof(vid)) == -1)
 			return (-1);
 		break;
 	case IMSG_VMDOP_GET_INFO_VM_REQUEST:
@@ -243,7 +251,7 @@ vmd_dispatch_control(int fd, struct privsep_proc *p, struct imsg *imsg)
 			break;
 		}
 
-		if (check_vmh(&vmh)) {
+		if (vmd_check_vmh(&vmh)) {
 			res = ENOENT;
 			close(imsg->fd);
 			cmd = IMSG_VMDOP_START_VM_RESPONSE;
@@ -366,7 +374,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 				errno = vmr.vmr_result;
 				log_warn("%s: failed to foward vm result",
 				    vcp->vcp_name);
-				vm_remove(vm);
+				vm_remove(vm, __func__);
 				return (-1);
 			}
 		}
@@ -374,14 +382,14 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 		if (vmr.vmr_result) {
 			errno = vmr.vmr_result;
 			log_warn("%s: failed to start vm", vcp->vcp_name);
-			vm_remove(vm);
+			vm_remove(vm, __func__);
 			break;
 		}
 
 		/* Now configure all the interfaces */
 		if (vm_priv_ifconfig(ps, vm) == -1) {
 			log_warn("%s: failed to configure vm", vcp->vcp_name);
-			vm_remove(vm);
+			vm_remove(vm, __func__);
 			break;
 		}
 
@@ -391,7 +399,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 	case IMSG_VMDOP_TERMINATE_VM_RESPONSE:
 		IMSG_SIZE_CHECK(imsg, &vmr);
 		memcpy(&vmr, imsg->data, sizeof(vmr));
-		log_debug("%s: forwarding TERMINATE VM for vm id %d",
+		DPRINTF("%s: forwarding TERMINATE VM for vm id %d",
 		    __func__, vmr.vmr_id);
 		proc_forward_imsg(ps, imsg, PROC_CONTROL, -1);
 		if ((vm = vm_getbyvmid(vmr.vmr_id)) == NULL)
@@ -413,7 +421,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 	case IMSG_VMDOP_TERMINATE_VM_EVENT:
 		IMSG_SIZE_CHECK(imsg, &vmr);
 		memcpy(&vmr, imsg->data, sizeof(vmr));
-		log_debug("%s: handling TERMINATE_EVENT for vm id %d ret %d",
+		DPRINTF("%s: handling TERMINATE_EVENT for vm id %d ret %d",
 		    __func__, vmr.vmr_id, vmr.vmr_result);
 		if ((vm = vm_getbyvmid(vmr.vmr_id)) == NULL) {
 			log_debug("%s: vm %d is no longer available",
@@ -421,21 +429,25 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 			break;
 		}
 		if (vmr.vmr_result != EAGAIN) {
-			if (vm->vm_from_config) {
-				log_debug("%s: about to stop vm id %d",
-				    __func__, vm->vm_vmid);
-				vm_stop(vm, 0);
-			} else {
-				log_debug("%s: about to remove vm %d",
-				    __func__, vm->vm_vmid);
-				vm_remove(vm);
-			}
+			if (vm->vm_from_config)
+				vm_stop(vm, 0, __func__);
+			else
+				vm_remove(vm, __func__);
 		} else {
 			/* Stop VM instance but keep the tty open */
-			log_debug("%s: about to stop vm id %d with tty open",
-			    __func__, vm->vm_vmid);
-			vm_stop(vm, 1);
+			vm_stop(vm, 1, __func__);
 			config_setvm(ps, vm, (uint32_t)-1, vm->vm_uid);
+		}
+
+		/* Send a response if a control client is waiting for it */
+		if (imsg->hdr.peerid != (uint32_t)-1) {
+			/* the error is meaningless for deferred responses */
+			vmr.vmr_result = 0;
+
+			if (proc_compose_imsg(ps, PROC_CONTROL, -1,
+			    IMSG_VMDOP_TERMINATE_VM_RESPONSE,
+			    imsg->hdr.peerid, -1, &vmr, sizeof(vmr)) == -1)
+				return (-1);
 		}
 		break;
 	case IMSG_VMDOP_GET_INFO_VM_DATA:
@@ -460,7 +472,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 		    imsg->hdr.peerid, -1, &vir, sizeof(vir)) == -1) {
 			log_debug("%s: GET_INFO_VM failed for vm %d, removing",
 			    __func__, vm->vm_vmid);
-			vm_remove(vm);
+			vm_remove(vm, __func__);
 			return (-1);
 		}
 		break;
@@ -491,7 +503,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 				    sizeof(vir)) == -1) {
 					log_debug("%s: GET_INFO_VM_END failed",
 					    __func__);
-					vm_remove(vm);
+					vm_remove(vm, __func__);
 					return (-1);
 				}
 			}
@@ -507,7 +519,7 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 }
 
 int
-check_vmh(struct vm_dump_header *vmh)
+vmd_check_vmh(struct vm_dump_header *vmh)
 {
 	int i;
 	unsigned int code, leaf;
@@ -530,96 +542,101 @@ check_vmh(struct vm_dump_header *vmh)
 
 		switch (code) {
 		case 0x00:
-		CPUID_LEAF(code, leaf, a, b, c, d);
-		if (vmh->vmh_cpuids[i].a > a) {
-			log_debug("%s: incompatible cpuid level", __func__);
-			return (-1);
-		}
-		if (!(vmh->vmh_cpuids[i].b == b &&
-		    vmh->vmh_cpuids[i].c == c &&
-		    vmh->vmh_cpuids[i].d == d)) {
-			log_debug("%s: incompatible cpu brand", __func__);
-			return (-1);
-		}
-		break;
+			CPUID_LEAF(code, leaf, a, b, c, d);
+			if (vmh->vmh_cpuids[i].a > a) {
+				log_debug("%s: incompatible cpuid level",
+				    __func__);
+				return (-1);
+			}
+			if (!(vmh->vmh_cpuids[i].b == b &&
+			    vmh->vmh_cpuids[i].c == c &&
+			    vmh->vmh_cpuids[i].d == d)) {
+				log_debug("%s: incompatible cpu brand",
+				    __func__);
+				return (-1);
+			}
+			break;
 
 		case 0x01:
-		CPUID_LEAF(code, leaf, a, b, c, d);
-		if ((vmh->vmh_cpuids[i].c & c & VMM_CPUIDECX_MASK) !=
-		    (vmh->vmh_cpuids[i].c & VMM_CPUIDECX_MASK)) {
-			log_debug("%s: incompatible cpu features "
-			    "code: 0x%x leaf: 0x%x  reg: c", __func__,
-			    code, leaf);
-			return (-1);
-		}
-		if ((vmh->vmh_cpuids[i].d & d & VMM_CPUIDEDX_MASK) !=
-		    (vmh->vmh_cpuids[i].d & VMM_CPUIDEDX_MASK)) {
-			log_debug("%s: incompatible cpu features "
-			    "code: 0x%x leaf: 0x%x  reg: d", __func__,
-			    code, leaf);
-			return (-1);
-		}
-		break;
+			CPUID_LEAF(code, leaf, a, b, c, d);
+			if ((vmh->vmh_cpuids[i].c & c & VMM_CPUIDECX_MASK) !=
+			    (vmh->vmh_cpuids[i].c & VMM_CPUIDECX_MASK)) {
+				log_debug("%s: incompatible cpu features "
+				    "code: 0x%x leaf: 0x%x  reg: c", __func__,
+				    code, leaf);
+				return (-1);
+			}
+			if ((vmh->vmh_cpuids[i].d & d & VMM_CPUIDEDX_MASK) !=
+			    (vmh->vmh_cpuids[i].d & VMM_CPUIDEDX_MASK)) {
+				log_debug("%s: incompatible cpu features "
+				    "code: 0x%x leaf: 0x%x  reg: d", __func__,
+				    code, leaf);
+				return (-1);
+			}
+			break;
 
 		case 0x07:
-		CPUID_LEAF(code, leaf, a, b, c, d);
-		if ((vmh->vmh_cpuids[i].b & b & VMM_SEFF0EBX_MASK) !=
-		    (vmh->vmh_cpuids[i].b & VMM_SEFF0EBX_MASK)) {
-			log_debug("%s: incompatible cpu features "
-			    "code: 0x%x leaf: 0x%x  reg: c", __func__,
-			    code, leaf);
-			return (-1);
-		}
-		if ((vmh->vmh_cpuids[i].c & c & VMM_SEFF0ECX_MASK) !=
-		    (vmh->vmh_cpuids[i].c & VMM_SEFF0ECX_MASK)) {
-			log_debug("%s: incompatible cpu features "
-			    "code: 0x%x leaf: 0x%x  reg: d", __func__,
-			    code, leaf);
-			return (-1);
-		}
-		break;
+			CPUID_LEAF(code, leaf, a, b, c, d);
+			if ((vmh->vmh_cpuids[i].b & b & VMM_SEFF0EBX_MASK) !=
+			    (vmh->vmh_cpuids[i].b & VMM_SEFF0EBX_MASK)) {
+				log_debug("%s: incompatible cpu features "
+				    "code: 0x%x leaf: 0x%x  reg: c", __func__,
+				    code, leaf);
+				return (-1);
+			}
+			if ((vmh->vmh_cpuids[i].c & c & VMM_SEFF0ECX_MASK) !=
+			    (vmh->vmh_cpuids[i].c & VMM_SEFF0ECX_MASK)) {
+				log_debug("%s: incompatible cpu features "
+				    "code: 0x%x leaf: 0x%x  reg: d", __func__,
+				    code, leaf);
+				return (-1);
+			}
+			break;
 
 		case 0x0d:
-		CPUID_LEAF(code, leaf, a, b, c, d);
-		if (vmh->vmh_cpuids[i].b > b) {
-			log_debug("%s: incompatible cpu: insufficient "
-			    "max save area for enabled XCR0 features",
-			    __func__);
-			return (-1);
-		}
-		if (vmh->vmh_cpuids[i].c > c) {
-			log_debug("%s: incompatible cpu: insufficient "
-			    "max save area for supported XCR0 features",
-			    __func__);
-			return (-1);
-		}
-		break;
+			CPUID_LEAF(code, leaf, a, b, c, d);
+			if (vmh->vmh_cpuids[i].b > b) {
+				log_debug("%s: incompatible cpu: insufficient "
+				    "max save area for enabled XCR0 features",
+				    __func__);
+				return (-1);
+			}
+			if (vmh->vmh_cpuids[i].c > c) {
+				log_debug("%s: incompatible cpu: insufficient "
+				    "max save area for supported XCR0 features",
+				    __func__);
+				return (-1);
+			}
+			break;
 
 		case 0x80000001:
-		CPUID_LEAF(code, leaf, a, b, c, d);
-		if ((vmh->vmh_cpuids[i].a & a) != vmh->vmh_cpuids[i].a) {
-			log_debug("%s: incompatible cpu features "
-			    "code: 0x%x leaf: 0x%x  reg: a", __func__,
-			    code, leaf);
-			return (-1);
-		}
-		if ((vmh->vmh_cpuids[i].c & c) != vmh->vmh_cpuids[i].c) {
-			log_debug("%s: incompatible cpu features "
-			    "code: 0x%x leaf: 0x%x  reg: c", __func__,
-			    code, leaf);
-			return (-1);
-		}
-		if ((vmh->vmh_cpuids[i].d & d) != vmh->vmh_cpuids[i].d) {
-			log_debug("%s: incompatible cpu features "
-			    "code: 0x%x leaf: 0x%x  reg: d", __func__,
-			    code, leaf);
-			return (-1);
-		}
-		break;
+			CPUID_LEAF(code, leaf, a, b, c, d);
+			if ((vmh->vmh_cpuids[i].a & a) !=
+			    vmh->vmh_cpuids[i].a) {
+				log_debug("%s: incompatible cpu features "
+				    "code: 0x%x leaf: 0x%x  reg: a", __func__,
+				    code, leaf);
+				return (-1);
+			}
+			if ((vmh->vmh_cpuids[i].c & c) !=
+			    vmh->vmh_cpuids[i].c) {
+				log_debug("%s: incompatible cpu features "
+				    "code: 0x%x leaf: 0x%x  reg: c", __func__,
+				    code, leaf);
+				return (-1);
+			}
+			if ((vmh->vmh_cpuids[i].d & d) !=
+			    vmh->vmh_cpuids[i].d) {
+				log_debug("%s: incompatible cpu features "
+				    "code: 0x%x leaf: 0x%x  reg: d", __func__,
+				    code, leaf);
+				return (-1);
+			}
+			break;
 
 		default:
-		log_debug("%s: unknown code 0x%x", __func__, code);
-		return (-1);
+			log_debug("%s: unknown code 0x%x", __func__, code);
+			return (-1);
 		}
 	}
 
@@ -905,9 +922,9 @@ vmd_reload(unsigned int reset, const char *filename)
 			TAILQ_FOREACH_SAFE(vm, env->vmd_vms, vm_entry,
 			    next_vm) {
 				if (vm->vm_running == 0) {
-					log_debug("%s: calling vm_remove",
+					DPRINTF("%s: calling vm_remove",
 					    __func__);
-					vm_remove(vm);
+					vm_remove(vm, __func__);
 				}
 			}
 		}
@@ -963,8 +980,9 @@ vmd_shutdown(void)
 	struct vmd_vm *vm, *vm_next;
 
 	log_debug("%s: performing shutdown", __func__);
+
 	TAILQ_FOREACH_SAFE(vm, env->vmd_vms, vm_entry, vm_next) {
-		vm_remove(vm);
+		vm_remove(vm, __func__);
 	}
 
 	proc_kill(&env->vmd_ps);
@@ -1009,7 +1027,7 @@ vm_id2vmid(uint32_t id, struct vmd_vm *vm)
 {
 	if (vm == NULL && (vm = vm_getbyid(id)) == NULL)
 		return (0);
-	dprintf("%s: vmm id %u is vmid %u", __func__,
+	DPRINTF("%s: vmm id %u is vmid %u", __func__,
 	    id, vm->vm_vmid);
 	return (vm->vm_vmid);
 }
@@ -1019,7 +1037,7 @@ vm_vmid2id(uint32_t vmid, struct vmd_vm *vm)
 {
 	if (vm == NULL && (vm = vm_getbyvmid(vmid)) == NULL)
 		return (0);
-	dprintf("%s: vmid %u is vmm id %u", __func__,
+	DPRINTF("%s: vmid %u is vmm id %u", __func__,
 	    vmid, vm->vm_params.vmc_params.vcp_id);
 	return (vm->vm_params.vmc_params.vcp_id);
 }
@@ -1053,14 +1071,18 @@ vm_getbypid(pid_t pid)
 }
 
 void
-vm_stop(struct vmd_vm *vm, int keeptty)
+vm_stop(struct vmd_vm *vm, int keeptty, const char *caller)
 {
+	struct privsep	*ps = &env->vmd_ps;
 	unsigned int	 i;
 
 	if (vm == NULL)
 		return;
 
-	log_debug("%s: stopping vm %d", __func__, vm->vm_vmid);
+	log_debug("%s: %s %s stopping vm %d%s",
+	    __func__, ps->ps_title[privsep_process], caller,
+	    vm->vm_vmid, keeptty ? ", keeping tty open" : "");
+
 	vm->vm_running = 0;
 	vm->vm_shutdown = 0;
 
@@ -1101,16 +1123,20 @@ vm_stop(struct vmd_vm *vm, int keeptty)
 }
 
 void
-vm_remove(struct vmd_vm *vm)
+vm_remove(struct vmd_vm *vm, const char *caller)
 {
+	struct privsep	*ps = &env->vmd_ps;
+
 	if (vm == NULL)
 		return;
 
-	log_debug("%s: removing vm id %d from running config",
-	    __func__, vm->vm_vmid);
+	log_debug("%s: %s %s removing vm %d from running config",
+	    __func__, ps->ps_title[privsep_process], caller,
+	    vm->vm_vmid);
+
 	TAILQ_REMOVE(env->vmd_vms, vm, vm_entry);
-	log_debug("%s: calling vm_stop", __func__);
-	vm_stop(vm, 0);
+
+	vm_stop(vm, 0, caller);
 	free(vm);
 }
 
@@ -1118,13 +1144,16 @@ int
 vm_register(struct privsep *ps, struct vmop_create_params *vmc,
     struct vmd_vm **ret_vm, uint32_t id, uid_t uid)
 {
-	struct vmd_vm		*vm = NULL;
+	struct vmd_vm		*vm = NULL, *vm_parent = NULL;
 	struct vm_create_params	*vcp = &vmc->vmc_params;
-	static const uint8_t	 zero_mac[ETHER_ADDR_LEN];
 	uint32_t		 rng;
 	unsigned int		 i;
 	struct vmd_switch	*sw;
 	char			*s;
+
+	/* Check if this is an instance of another VM */
+	if (vm_instance(ps, &vm_parent, vmc, uid) == -1)
+		return (-1);
 
 	errno = 0;
 	*ret_vm = NULL;
@@ -1140,16 +1169,14 @@ vm_register(struct privsep *ps, struct vmop_create_params *vmc,
 		goto fail;
 	}
 
-	/*
-	 * non-root users can only start existing VMs
-	 * XXX there could be a mechanism to allow overriding some options
-	 */
-	if (vm_checkperm(NULL, uid) != 0) {
+	/* non-root users can only start existing VMs or instances */
+	if (vm_checkperm(vm_parent, uid) != 0) {
 		errno = EPERM;
 		goto fail;
 	}
 	if (vmc->vmc_flags == 0) {
-		errno = ENOENT;
+		log_warnx("invalid configuration, no devices");
+		errno = VMD_DISK_MISSING;
 		goto fail;
 	}
 	if (vcp->vcp_ncpus == 0)
@@ -1243,6 +1270,153 @@ vm_register(struct privsep *ps, struct vmop_create_params *vmc,
 	if (errno == 0)
 		errno = EINVAL;
 	return (-1);
+}
+
+int
+vm_instance(struct privsep *ps, struct vmd_vm **vm_parent,
+    struct vmop_create_params *vmc, uid_t uid)
+{
+	char			*name;
+	struct vm_create_params	*vcp = &vmc->vmc_params;
+	struct vmop_create_params *vmcp;
+	struct vm_create_params	*vcpp;
+	struct vmd_vm		*vm = NULL;
+	unsigned int		 i, j;
+	uint32_t		 id;
+
+	/* return without error if the parent is NULL (nothing to inherit) */
+	if ((vmc->vmc_flags & VMOP_CREATE_INSTANCE) == 0 ||
+	    (*vm_parent = vm_getbyname(vmc->vmc_instance)) == NULL)
+		return (0);
+
+	errno = 0;
+	vmcp = &(*vm_parent)->vm_params;
+	vcpp = &vmcp->vmc_params;
+
+	/*
+	 * Are we allowed to create an instance from this VM?
+	 *
+	 * XXX This is currently allowed for root but will check *vm_parent
+	 * XXX once we defined instance permissions and quota.
+	 */
+	if (vm_checkperm(NULL, uid) != 0) {
+		log_warnx("vm \"%s\" no permission to create vm instance",
+		    vcpp->vcp_name);
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+
+	id = vcp->vcp_id;
+	name = vcp->vcp_name;
+
+	if ((vm = vm_getbyname(vcp->vcp_name)) != NULL ||
+	    (vm = vm_getbyvmid(vcp->vcp_id)) != NULL) {
+		errno = EPROCLIM;
+		return (-1);
+	}
+
+	/* machine options */
+	if (vcp->vcp_ncpus == 0)
+		vcp->vcp_ncpus = vcpp->vcp_ncpus;
+	if (vcp->vcp_memranges[0].vmr_size == 0)
+		vcp->vcp_memranges[0].vmr_size =
+		    vcpp->vcp_memranges[0].vmr_size;
+
+	/* disks cannot be inherited */
+	for (i = 0; i < vcp->vcp_ndisks; i++) {
+		/* Check if this disk is already used in the parent */
+		for (j = 0; j < vcpp->vcp_ndisks; j++) {
+			if (strcmp(vcp->vcp_disks[i],
+			    vcpp->vcp_disks[j]) == 0) {
+				log_warnx("vm \"%s\" disk %s cannot be reused",
+				    name, vcp->vcp_disks[i]);
+				errno = EBUSY;
+				return (-1);
+			}
+		}
+	}
+
+	/* interfaces */
+	for (i = 0; i < vcpp->vcp_nnics; i++) {
+		/* Interface got overwritten */
+		if (i < vcp->vcp_nnics)
+			continue;
+
+		/* Copy interface from parent */
+		vmc->vmc_ifflags[i] = vmcp->vmc_ifflags[i];
+		(void)strlcpy(vmc->vmc_ifnames[i], vmcp->vmc_ifnames[i],
+		    sizeof(vmc->vmc_ifnames[i]));
+		(void)strlcpy(vmc->vmc_ifswitch[i], vmcp->vmc_ifswitch[i],
+		    sizeof(vmc->vmc_ifswitch[i]));
+		(void)strlcpy(vmc->vmc_ifgroup[i], vmcp->vmc_ifgroup[i],
+		    sizeof(vmc->vmc_ifgroup[i]));
+		memcpy(vcp->vcp_macs[i], vcpp->vcp_macs[i],
+		    sizeof(vcp->vcp_macs[i]));
+		vmc->vmc_ifrdomain[i] = vmcp->vmc_ifrdomain[i];
+		vcp->vcp_nnics++;
+	}
+	for (i = 0; i < vcp->vcp_nnics; i++) {
+		for (j = 0; j < vcpp->vcp_nnics; j++) {
+			if (memcmp(zero_mac, vcp->vcp_macs[i],
+			    sizeof(vcp->vcp_macs[i])) != 0 &&
+			    memcmp(vcpp->vcp_macs[i], vcp->vcp_macs[i],
+			    sizeof(vcp->vcp_macs[i])) != 0) {
+				log_warnx("vm \"%s\" lladdr cannot be reused",
+				    name);
+				errno = EBUSY;
+				return (-1);
+			}
+			if (strlen(vmc->vmc_ifnames[i]) &&
+			    strcmp(vmc->vmc_ifnames[i],
+			    vmcp->vmc_ifnames[j]) == 0) {
+				log_warnx("vm \"%s\" %s cannot be reused",
+				    vmc->vmc_ifnames[i], name);
+				errno = EBUSY;
+				return (-1);
+			}
+		}
+	}
+
+	/* kernel */
+	if (strlen(vcp->vcp_kernel) == 0 &&
+	    strlcpy(vcp->vcp_kernel, vcpp->vcp_kernel,
+	    sizeof(vcp->vcp_kernel)) >= sizeof(vcp->vcp_kernel)) {
+		log_warnx("vm \"%s\" kernel name too long", name);
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* cdrom */
+	if (strlen(vcp->vcp_cdrom) == 0 &&
+	    strlcpy(vcp->vcp_cdrom, vcpp->vcp_cdrom,
+	    sizeof(vcp->vcp_cdrom)) >= sizeof(vcp->vcp_cdrom)) {
+		log_warnx("vm \"%s\" cdrom name too long", name);
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* user */
+	if (vmc->vmc_uid == 0)
+		vmc->vmc_uid = vmcp->vmc_uid;
+	else if (vmc->vmc_uid != vmcp->vmc_uid) {
+		log_warnx("vm \"%s\" user mismatch", name);
+		errno = EPERM;
+		return (-1);
+	}
+
+	/* group */
+	if (vmc->vmc_gid == 0)
+		vmc->vmc_gid = vmcp->vmc_gid;
+	else if (vmc->vmc_gid != vmcp->vmc_gid) {
+		log_warnx("vm \"%s\" group mismatch", name);
+		errno = EPERM;
+		return (-1);
+	}
+
+	/* finished, remove instance flags */
+	vmc->vmc_flags &= ~VMOP_CREATE_INSTANCE;
+
+	return (0);
 }
 
 /*

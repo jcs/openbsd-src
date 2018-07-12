@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmctl.c,v 1.50 2018/07/04 02:55:37 anton Exp $	*/
+/*	$OpenBSD: vmctl.c,v 1.54 2018/07/12 12:04:49 reyk Exp $	*/
 
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
@@ -62,6 +62,7 @@ int info_console;
  *  disks: disk image file names
  *  kernel: kernel image to load
  *  iso: iso image file
+ *  instance: create instance from vm
  *
  * Return:
  *  0 if the request to start the VM was sent successfully.
@@ -69,7 +70,8 @@ int info_console;
  */
 int
 vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
-    char **nics, int ndisks, char **disks, char *kernel, char *iso)
+    char **nics, int ndisks, char **disks, char *kernel, char *iso,
+    char *instance)
 {
 	struct vmop_create_params *vmc;
 	struct vm_create_params *vcp;
@@ -87,7 +89,9 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
 		flags |= VMOP_CREATE_KERNEL;
 	if (iso)
 		flags |= VMOP_CREATE_CDROM;
-	if (flags != 0) {
+	if (instance)
+		flags |= VMOP_CREATE_INSTANCE;
+	else if (flags != 0) {
 		if (memsize < 1)
 			memsize = VM_DEFAULT_MEMORY;
 		if (ndisks > VMM_MAX_DISKS_PER_VM)
@@ -104,8 +108,7 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
 			warnx("starting without network interfaces");
 	}
 
-	vmc = calloc(1, sizeof(struct vmop_create_params));
-	if (vmc == NULL)
+	if ((vmc = calloc(1, sizeof(struct vmop_create_params))) == NULL)
 		return (ENOMEM);
 
 	vmc->vmc_flags = flags;
@@ -126,17 +129,24 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
 	vcp->vcp_id = start_id;
 
 	for (i = 0 ; i < ndisks; i++)
-		strlcpy(vcp->vcp_disks[i], disks[i], VMM_MAX_PATH_DISK);
+		if (strlcpy(vcp->vcp_disks[i], disks[i],
+		    sizeof(vcp->vcp_disks[i])) >=
+		    sizeof(vcp->vcp_disks[i]))
+			errx(1, "disk path too long");
 	for (i = 0 ; i < nnics; i++) {
 		vmc->vmc_ifflags[i] = VMIFF_UP;
 
 		if (strcmp(".", nics[i]) == 0) {
 			/* Add a "local" interface */
-			strlcpy(vmc->vmc_ifswitch[i], "", IF_NAMESIZE);
+			(void)strlcpy(vmc->vmc_ifswitch[i], "",
+			    sizeof(vmc->vmc_ifswitch[i]));
 			vmc->vmc_ifflags[i] |= VMIFF_LOCAL;
 		} else {
 			/* Add an interface to a switch */
-			strlcpy(vmc->vmc_ifswitch[i], nics[i], IF_NAMESIZE);
+			if (strlcpy(vmc->vmc_ifswitch[i], nics[i],
+			    sizeof(vmc->vmc_ifswitch[i])) >=
+			    sizeof(vmc->vmc_ifswitch[i]))
+				errx(1, "interface name too long");
 		}
 	}
 	if (name != NULL) {
@@ -154,13 +164,22 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
 				errx(1, "invalid VM name");
 		}
 
-		strlcpy(vcp->vcp_name, name, VMM_MAX_NAME_LEN);
+		if (strlcpy(vcp->vcp_name, name,
+		    sizeof(vcp->vcp_name)) >= sizeof(vcp->vcp_name))
+			errx(1, "vm name too long");
 	}
 	if (kernel != NULL)
-		strlcpy(vcp->vcp_kernel, kernel, VMM_MAX_KERNEL_PATH);
-
+		if (strlcpy(vcp->vcp_kernel, kernel,
+		    sizeof(vcp->vcp_kernel)) >= sizeof(vcp->vcp_kernel))
+			errx(1, "kernel name too long");
 	if (iso != NULL)
-		strlcpy(vcp->vcp_cdrom, iso, VMM_MAX_PATH_CDROM);
+		if (strlcpy(vcp->vcp_cdrom, iso,
+		    sizeof(vcp->vcp_cdrom)) >= sizeof(vcp->vcp_cdrom))
+			errx(1, "cdrom name too long");
+	if (instance != NULL)
+		if (strlcpy(vmc->vmc_instance, instance,
+		    sizeof(vmc->vmc_instance)) >= sizeof(vmc->vmc_instance))
+			errx(1, "instance vm name too long");
 
 	imsg_compose(ibuf, IMSG_VMDOP_START_VM_REQUEST, 0, 0, -1,
 	    vmc, sizeof(struct vmop_create_params));
@@ -208,7 +227,7 @@ vm_start_complete(struct imsg *imsg, int *ret, int autoconnect)
 				*ret = ENOENT;
 				break;
 			case VMD_DISK_MISSING:
-				warnx("could not open specified disk image(s)");
+				warnx("could not open disk image(s)");
 				*ret = ENOENT;
 				break;
 			case VMD_DISK_INVALID:
@@ -410,9 +429,10 @@ unpause_vm_complete(struct imsg *imsg, int *ret)
  * Parameters:
  *  terminate_id: ID of the vm to be terminated
  *  name: optional name of the VM to be terminated
+ *  flags: VMOP_FORCE or VMOP_WAIT flags
  */
 void
-terminate_vm(uint32_t terminate_id, const char *name)
+terminate_vm(uint32_t terminate_id, const char *name, unsigned int flags)
 {
 	struct vmop_id vid;
 
@@ -421,8 +441,10 @@ terminate_vm(uint32_t terminate_id, const char *name)
 	if (name != NULL)
 		(void)strlcpy(vid.vid_name, name, sizeof(vid.vid_name));
 
-	imsg_compose(ibuf, IMSG_VMDOP_TERMINATE_VM_REQUEST, 0, 0, -1,
-	    &vid, sizeof(vid));
+	vid.vid_flags = flags & (VMOP_FORCE|VMOP_WAIT);
+
+	imsg_compose(ibuf, IMSG_VMDOP_TERMINATE_VM_REQUEST,
+	    0, 0, -1, &vid, sizeof(vid));
 }
 
 /*
@@ -435,6 +457,7 @@ terminate_vm(uint32_t terminate_id, const char *name)
  * Parameters:
  *  imsg : response imsg received from vmd
  *  ret  : return value
+ *  flags: VMOP_FORCE or VMOP_WAIT flags
  *
  * Return:
  *  Always 1 to indicate we have processed the return message (even if it
@@ -446,7 +469,7 @@ terminate_vm(uint32_t terminate_id, const char *name)
  *   EIO   : terminate_vm command failed
  */
 int
-terminate_vm_complete(struct imsg *imsg, int *ret)
+terminate_vm_complete(struct imsg *imsg, int *ret, unsigned int flags)
 {
 	struct vmop_result *vmr;
 	int res;
@@ -469,8 +492,12 @@ terminate_vm_complete(struct imsg *imsg, int *ret)
 				warn("terminate vm command failed");
 				*ret = EIO;
 			}
+		} else if (flags & VMOP_WAIT) {
+			warnx("terminated vm %d", vmr->vmr_id);
+		} else if (flags & VMOP_FORCE) {
+			warnx("requested to terminate vm %d", vmr->vmr_id);
 		} else {
-			warnx("sent request to terminate vm %d", vmr->vmr_id);
+			warnx("requested to shutdown vm %d", vmr->vmr_id);
 			*ret = 0;
 		}
 	} else {

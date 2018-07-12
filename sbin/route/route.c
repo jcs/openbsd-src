@@ -1,4 +1,4 @@
-/*	$OpenBSD: route.c,v 1.216 2018/07/01 08:53:03 mpi Exp $	*/
+/*	$OpenBSD: route.c,v 1.218 2018/07/11 15:25:42 kn Exp $	*/
 /*	$NetBSD: route.c,v 1.16 1996/04/15 18:27:05 cgd Exp $	*/
 
 /*
@@ -448,6 +448,7 @@ newroute(int argc, char **argv)
 	int key;
 	uint8_t prio = 0;
 	struct hostent *hp = NULL;
+	int sawdest = 0;
 
 	if (uid)
 		errx(1, "must be root to alter routing table");
@@ -579,6 +580,7 @@ newroute(int argc, char **argv)
 					usage(1+*argv);
 				ishost = getaddr(RTA_DST, af, *++argv, &hp);
 				dest = *argv;
+				sawdest = 1;
 				break;
 			case K_LABEL:
 				if (!--argc)
@@ -586,6 +588,9 @@ newroute(int argc, char **argv)
 				getlabel(*++argv);
 				break;
 			case K_NETMASK:
+				if (!sawdest)
+					errx(1, "-netmask must follow "
+					    "destination parameter");
 				if (!--argc)
 					usage(1+*argv);
 				getaddr(RTA_NETMASK, af, *++argv, NULL);
@@ -594,6 +599,9 @@ newroute(int argc, char **argv)
 				forcenet++;
 				break;
 			case K_PREFIXLEN:
+				if (!sawdest)
+					errx(1, "-prefixlen must follow "
+					    "destination parameter");
 				if (!--argc)
 					usage(1+*argv);
 				ishost = prefixlen(af, *++argv);
@@ -633,6 +641,7 @@ newroute(int argc, char **argv)
 		} else {
 			if ((rtm_addrs & RTA_DST) == 0) {
 				dest = *argv;
+				sawdest = 1;
 				ishost = getaddr(RTA_DST, af, *argv, &hp);
 			} else if ((rtm_addrs & RTA_GATEWAY) == 0) {
 				gateway = *argv;
@@ -844,7 +853,7 @@ getaddr(int which, int af, char *s, struct hostent **hpp)
 	int afamily, bits, irc;
 	in_addr_t addr;
 
-	if (af == 0) {
+	if (af == AF_UNSPEC) {
 		if (strchr(s, ':') != NULL) {
 			af = AF_INET6;
 			aflen = sizeof(struct sockaddr_in6);

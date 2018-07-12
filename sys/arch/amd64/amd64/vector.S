@@ -1,4 +1,4 @@
-/*	$OpenBSD: vector.S,v 1.69 2018/07/06 02:43:01 guenther Exp $	*/
+/*	$OpenBSD: vector.S,v 1.71 2018/07/10 16:01:26 deraadt Exp $	*/
 /*	$NetBSD: vector.S,v 1.5 2004/06/28 09:13:11 fvdl Exp $	*/
 
 /*
@@ -64,8 +64,6 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
-#define ALIGN_TEXT	.align 16,0x90
 
 #include <machine/param.h>
 #include <machine/i8259.h>
@@ -168,7 +166,7 @@ KUENTRY(calltrap_specstk_tramp)
 	popq	%rbp
 	popq	%rbx
 	popq	%rax
-	addq	$48,%rsp		# ignored TF_[DEFG]S
+	addq	$16,%rsp
 	iretq
 
 IDTVEC(trap03)

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.54 2018/02/08 21:37:36 benno Exp $ */
+/*	$OpenBSD: kroute.c,v 1.57 2018/07/12 12:19:05 remi Exp $ */
 
 /*
  * Copyright (c) 2004 Esben Norby <norby@openbsd.org>
@@ -241,9 +241,28 @@ kr_change(struct kroute *kroute, int krcount)
 	kroute->rtlabel = rtlabel_tag2id(kroute->ext_tag);
 
 	kr = kroute_find(&kroute->prefix, kroute->prefixlen, RTP_OSPF);
-	if (kr != NULL && kr->next == NULL && krcount == 1)
-		/* single path OSPF route */
-		action = RTM_CHANGE;
+	if (kr != NULL && kr->next == NULL && krcount == 1) {
+		/*
+		 * single path OSPF route.
+		 * The kernel does not allow to change a gateway route to a
+		 * cloning route or contrary. In this case remove and add the
+		 * route, otherwise change the existing one.
+		 */
+		if ((IN6_IS_ADDR_UNSPECIFIED(&kroute->nexthop) &&
+		    !IN6_IS_ADDR_UNSPECIFIED(&kr->r.nexthop)) ||
+		    (!IN6_IS_ADDR_UNSPECIFIED(&kroute->nexthop) &&
+		    IN6_IS_ADDR_UNSPECIFIED(&kr->r.nexthop))) {
+			if (kr_delete_fib(kr) == 0)
+				kr = NULL;
+			else {
+				log_warn("kr_change: failed to remove route: "
+				    "%s/%d", log_in6addr(&kr->r.prefix),
+				    kr->r.prefixlen);
+				return (-1);
+			}
+		} else
+			action = RTM_CHANGE;
+	}
 
 	return (kr_change_fib(kr, kroute, krcount, action));
 }
@@ -791,13 +810,9 @@ if_change(u_short ifindex, int flags, struct if_data *ifd)
 		return;
 	}
 
-	/* inform engine and rde about state change if interface is used */
-	if (iface->cflags & F_IFACE_CONFIGURED) {
-		main_imsg_compose_ospfe(IMSG_IFINFO, 0, iface,
-		    sizeof(struct iface));
-		main_imsg_compose_rde(IMSG_IFINFO, 0, iface,
-		    sizeof(struct iface));
-	}
+	/* inform engine and rde about state change */
+	main_imsg_compose_rde(IMSG_IFINFO, 0, iface, sizeof(struct iface));
+	main_imsg_compose_ospfe(IMSG_IFINFO, 0, iface, sizeof(struct iface));
 
 	isvalid = (iface->flags & IFF_UP) &&
 	    LINK_STATE_IS_UP(iface->linkstate);
@@ -1507,8 +1522,6 @@ add:
 			if ((kr = kroute_find(&prefix, prefixlen, prio)) ==
 			    NULL)
 				continue;
-			if (!(kr->r.flags & F_KERNEL))
-				continue;
 			/* get the correct route */
 			okr = kr;
 			if (mpath && (kr = kroute_matchgw(kr, &nexthop,
@@ -1517,6 +1530,8 @@ add:
 				    " not found");
 				return (-1);
 			}
+			if (!(kr->r.flags & F_KERNEL))
+				continue;
 			if (kroute_remove(kr) == -1)
 				return (-1);
 			break;

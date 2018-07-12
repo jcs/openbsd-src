@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf_if.c,v 1.93 2018/04/24 20:23:41 bluhm Exp $ */
+/*	$OpenBSD: pf_if.c,v 1.95 2018/07/11 21:18:23 nayden Exp $ */
 
 /*
  * Copyright 2005 Henning Brauer <henning@openbsd.org>
@@ -227,7 +227,7 @@ pfi_attach_ifnet(struct ifnet *ifp)
 	pfi_initialize();
 	pfi_update++;
 	if ((kif = pfi_kif_get(ifp->if_xname)) == NULL)
-		panic("pfi_kif_get failed");
+		panic("%s: pfi_kif_get failed", __func__);
 
 	kif->pfik_ifp = ifp;
 	ifp->if_pf_kif = (caddr_t)kif;
@@ -265,7 +265,7 @@ pfi_attach_ifgroup(struct ifg_group *ifg)
 	pfi_initialize();
 	pfi_update++;
 	if ((kif = pfi_kif_get(ifg->ifg_group)) == NULL)
-		panic("pfi_kif_get failed");
+		panic("%s: pfi_kif_get failed", __func__);
 
 	kif->pfik_group = ifg;
 	ifg->ifg_pf_kif = (caddr_t)kif;
@@ -293,9 +293,22 @@ pfi_group_change(const char *group)
 
 	pfi_update++;
 	if ((kif = pfi_kif_get(group)) == NULL)
-		panic("pfi_kif_get failed");
+		panic("%s: pfi_kif_get failed", __func__);
 
 	pfi_kif_update(kif);
+}
+
+void
+pfi_group_addmember(const char *group, struct ifnet *ifp)
+{
+	struct pfi_kif		*gkif, *ikif;
+
+	if ((gkif = pfi_kif_get(group)) == NULL ||
+	    (ikif = pfi_kif_get(ifp->if_xname)) == NULL)
+		panic("%s: pfi_kif_get failed", __func__);
+	ikif->pfik_flags |= gkif->pfik_flags;
+
+	pfi_group_change(group);	
 }
 
 int

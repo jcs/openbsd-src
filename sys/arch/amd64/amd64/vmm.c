@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.208 2018/07/09 13:33:32 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.216 2018/07/12 10:16:41 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -166,6 +166,7 @@ int vmx_handle_inout(struct vcpu *);
 int svm_handle_hlt(struct vcpu *);
 int vmx_handle_hlt(struct vcpu *);
 int vmm_inject_ud(struct vcpu *);
+int vmm_inject_gp(struct vcpu *);
 int vmm_inject_db(struct vcpu *);
 void vmx_handle_intr(struct vcpu *);
 void vmx_handle_intwin(struct vcpu *);
@@ -652,13 +653,14 @@ vm_intr_pending(struct vm_intr_params *vip)
  *
  * Parameters:
  *   vrwp: Describes the VM and VCPU to get/set the registers from. The
- *   register values are returned here as well.
+ *    register values are returned here as well.
  *   dir: 0 for reading, 1 for writing
  *
  * Return values:
  *  0: if successful
- *  ENOENT: if the VM/VCPU defined by 'vgp' cannot be found
- *  EINVAL: if an error occured reading the registers of the guest
+ *  ENOENT: if the VM/VCPU defined by 'vrwp' cannot be found
+ *  EINVAL: if an error occured accessing the registers of the guest
+ *  EPERM: if the vm cannot be accessed from the calling process
  */
 int
 vm_rwregs(struct vm_rwregs_params *vrwp, int dir)
@@ -699,8 +701,10 @@ vm_rwregs(struct vm_rwregs_params *vrwp, int dir)
 		return (dir == 0) ?
 		    vcpu_readregs_svm(vcpu, vrwp->vrwp_mask, vrs) :
 		    vcpu_writeregs_svm(vcpu, vrwp->vrwp_mask, vrs);
-	else
-		panic("unknown vmm mode");
+	else {
+		DPRINTF("%s: unknown vmm mode", __func__);
+		return (EINVAL);
+	}
 }
 
 /*
@@ -1175,7 +1179,6 @@ vm_impl_init_vmx(struct vm *vm, struct proc *p)
 		}
 	}
 
-	/* Convert the low 512GB of the pmap to EPT */
 	ret = pmap_convert(pmap, PMAP_TYPE_EPT);
 	if (ret) {
 		printf("%s: pmap_convert failed\n", __func__);
@@ -1284,7 +1287,7 @@ vm_impl_init(struct vm *vm, struct proc *p)
 		 vmm_softc->mode == VMM_MODE_RVI)
 		return vm_impl_init_svm(vm, p);
 	else
-		panic("unknown vmm mode");
+		panic("%s: unknown vmm mode: %d", __func__, vmm_softc->mode);
 }
 
 /*
@@ -1333,7 +1336,7 @@ vm_impl_deinit(struct vm *vm)
 		 vmm_softc->mode == VMM_MODE_RVI)
 		vm_impl_deinit_svm(vm);
 	else
-		panic("unknown vmm mode");
+		panic("%s: unknown vmm mode: %d", __func__, vmm_softc->mode);
 }
 
 /*
@@ -3020,7 +3023,7 @@ vcpu_reset_regs(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 		 vmm_softc->mode == VMM_MODE_RVI)
 		ret = vcpu_reset_regs_svm(vcpu, vrs);
 	else
-		panic("unknown vmm mode");
+		panic("%s: unknown vmm mode: %d", __func__, vmm_softc->mode);
 
 	return (ret);
 }
@@ -3166,7 +3169,7 @@ vcpu_init(struct vcpu *vcpu)
 		 vmm_softc->mode == VMM_MODE_RVI)
 		ret = vcpu_init_svm(vcpu);
 	else
-		panic("unknown vmm mode");
+		panic("%s: unknown vmm mode: %d", __func__, vmm_softc->mode);
 
 	return (ret);
 }
@@ -3244,7 +3247,7 @@ vcpu_deinit(struct vcpu *vcpu)
 		 vmm_softc->mode == VMM_MODE_RVI)
 		vcpu_deinit_svm(vcpu);
 	else
-		panic("unknown vmm mode");
+		panic("%s: unknown vmm mode: %d", __func__, vmm_softc->mode);
 }
 
 /*
@@ -3737,7 +3740,7 @@ vm_run(struct vm_run_params *vrp)
 	 */
 	if (vrp->vrp_continue) {
 		if (copyin(vrp->vrp_exit, &vcpu->vc_exit,
-		    sizeof(union vm_exit)) == EFAULT) {
+		    sizeof(struct vm_exit)) == EFAULT) {
 			return (EFAULT);
 		}
 	}
@@ -3770,7 +3773,7 @@ vm_run(struct vm_run_params *vrp)
 		vcpu->vc_state = VCPU_STATE_STOPPED;
 
 		if (copyout(&vcpu->vc_exit, vrp->vrp_exit,
-		    sizeof(union vm_exit)) == EFAULT) {
+		    sizeof(struct vm_exit)) == EFAULT) {
 			ret = EFAULT;
 		} else
 			ret = 0;
@@ -4269,6 +4272,9 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 		}
 	}
 
+	/* Copy the VCPU register state to the exit structure */
+	if (vcpu_readregs_vmx(vcpu, VM_RWREGS_ALL, &vcpu->vc_exit.vrs))
+		ret = EINVAL;
 	/*
 	 * We are heading back to userspace (vmd), either because we need help
 	 * handling an exit, a guest interrupt is pending, or we failed in some
@@ -4648,6 +4654,27 @@ vmx_handle_exit(struct vcpu *vcpu)
 }
 
 /*
+ * vmm_inject_gp
+ *
+ * Injects an #GP exception into the guest VCPU.
+ *
+ * Parameters:
+ *  vcpu: vcpu to inject into
+ *
+ * Return values:
+ *  Always 0
+ */
+int
+vmm_inject_gp(struct vcpu *vcpu)
+{
+	DPRINTF("%s: injecting #GP at guest %%rip 0x%llx\n", __func__,
+	    vcpu->vc_gueststate.vg_rip);
+	vcpu->vc_event = VMM_EX_GP;
+	
+	return (0);
+}
+
+/*
  * vmm_inject_ud
  *
  * Injects an #UD exception into the guest VCPU.
@@ -4738,7 +4765,7 @@ vmm_get_guest_faulttype(void)
 	else if (vmm_softc->mode == VMM_MODE_RVI)
 		return vmx_get_guest_faulttype();
 	else
-		panic("unknown vmm mode");
+		panic("%s: unknown vmm mode: %d", __func__, vmm_softc->mode);
 }
 
 /*
@@ -5075,8 +5102,6 @@ svm_handle_inout(struct vcpu *vcpu)
 	 *
 	 * XXX something better than a hardcoded list here, maybe
 	 * configure via vmd via the device list in vm create params?
-	 *
-	 * XXX handle not eax target
 	 */
 	switch (vcpu->vc_exit.vei.vei_port) {
 	case IO_ICU1 ... IO_ICU1 + 1:
@@ -5095,8 +5120,20 @@ svm_handle_inout(struct vcpu *vcpu)
 	default:
 		/* Read from unsupported ports returns FFs */
 		if (vcpu->vc_exit.vei.vei_dir == 1) {
-			vcpu->vc_gueststate.vg_rax = 0xFFFFFFFF;
-			vmcb->v_rax = 0xFFFFFFFF;
+			switch(vcpu->vc_exit.vei.vei_size) {
+			case 1:
+				vcpu->vc_gueststate.vg_rax |= 0xFF;
+				vmcb->v_rax |= 0xFF;
+				break;
+			case 2:
+				vcpu->vc_gueststate.vg_rax |= 0xFFFF;
+				vmcb->v_rax |= 0xFFFF;
+				break;
+			case 4:
+				vcpu->vc_gueststate.vg_rax |= 0xFFFFFFFF;
+				vmcb->v_rax |= 0xFFFFFFFF;
+				break;
+			}	
 		}
 		ret = 0;
 	}
@@ -5158,8 +5195,6 @@ vmx_handle_inout(struct vcpu *vcpu)
 	 *
 	 * XXX something better than a hardcoded list here, maybe
 	 * configure via vmd via the device list in vm create params?
-	 *
-	 * XXX handle not eax target
 	 */
 	switch (vcpu->vc_exit.vei.vei_port) {
 	case IO_ICU1 ... IO_ICU1 + 1:
@@ -5179,7 +5214,7 @@ vmx_handle_inout(struct vcpu *vcpu)
 		/* Read from unsupported ports returns FFs */
 		if (vcpu->vc_exit.vei.vei_dir == VEI_DIR_IN) {
 			if (vcpu->vc_exit.vei.vei_size == 4)
-				vcpu->vc_gueststate.vg_rax = 0xFFFFFFFF;
+				vcpu->vc_gueststate.vg_rax |= 0xFFFFFFFF;
 			else if (vcpu->vc_exit.vei.vei_size == 2)
 				vcpu->vc_gueststate.vg_rax |= 0xFFFF;
 			else if (vcpu->vc_exit.vei.vei_size == 1)
@@ -5304,12 +5339,32 @@ int
 vmx_handle_cr0_write(struct vcpu *vcpu, uint64_t r)
 {
 	struct vmx_msr_store *msr_store;
-	uint64_t ectls, oldcr0, cr4;
+	uint64_t ectls, oldcr0, cr4, mask;
 	int ret;
 
-	/*
-	 * XXX this is the place to place handling of the must1,must0 bits
-	 */
+	/* Check must-be-0 bits */
+	mask = ~(curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr0_fixed1);
+	if (r & mask) {
+		/* Inject #GP, let the guest handle it */
+		DPRINTF("%s: guest set invalid bits in %%cr0. Zeros "
+		    "mask=0x%llx, data=0x%llx\n", __func__,
+		    curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr0_fixed1,
+		    r);
+		vmm_inject_gp(vcpu);
+		return (0);
+	}
+
+	/* Check must-be-1 bits */
+	mask = curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr0_fixed0;
+	if ((r & mask) != mask) {
+		/* Inject #GP, let the guest handle it */
+		DPRINTF("%s: guest set invalid bits in %%cr0. Ones "
+		    "mask=0x%llx, data=0x%llx\n", __func__,
+		    curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr0_fixed0,
+		    r);
+		vmm_inject_gp(vcpu);
+		return (0);
+	}
 
 	if (vmread(VMCS_GUEST_IA32_CR0, &oldcr0)) {
 		printf("%s: can't read guest cr0\n", __func__);
@@ -5384,9 +5439,31 @@ vmx_handle_cr0_write(struct vcpu *vcpu, uint64_t r)
 int
 vmx_handle_cr4_write(struct vcpu *vcpu, uint64_t r)
 {
-	/*
-	 * XXX this is the place to place handling of the must1,must0 bits
-	 */
+	uint64_t mask;
+
+	/* Check must-be-0 bits */
+	mask = ~(curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr4_fixed1);
+	if (r & mask) {
+		/* Inject #GP, let the guest handle it */
+		DPRINTF("%s: guest set invalid bits in %%cr4. Zeros "
+		    "mask=0x%llx, data=0x%llx\n", __func__,
+		    curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr4_fixed1,
+		    r);
+		vmm_inject_gp(vcpu);
+		return (0);
+	}
+
+	/* Check must-be-1 bits */
+	mask = curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr4_fixed0;
+	if ((r & mask) != mask) {
+		/* Inject #GP, let the guest handle it */
+		DPRINTF("%s: guest set invalid bits in %%cr4. Ones "
+		    "mask=0x%llx, data=0x%llx\n", __func__,
+		    curcpu()->ci_vmm_cap.vcc_vmx.vmx_cr4_fixed0,
+		    r);
+		vmm_inject_gp(vcpu);
+		return (0);
+	}
 
 	/* CR4_VMXE must always be enabled */
 	r |= CR4_VMXE;
@@ -5914,13 +5991,13 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		break;
 	case 0x04: 	/* Deterministic cache info */
 		if (*rcx == 0) {
-			*rax = eax;
+			*rax = eax & VMM_CPUID4_CACHE_TOPOLOGY_MASK;
 			*rbx = ebx;
 			*rcx = ecx;
 			*rdx = edx;
 		} else {
 			CPUID_LEAF(*rax, *rcx, eax, ebx, ecx, edx);
-			*rax = eax;
+			*rax = eax & VMM_CPUID4_CACHE_TOPOLOGY_MASK;
 			*rbx = ebx;
 			*rcx = ecx;
 			*rdx = edx;
@@ -6324,8 +6401,11 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 	/*
 	 * We are heading back to userspace (vmd), either because we need help
 	 * handling an exit, a guest interrupt is pending, or we failed in some
-	 * way to enter the guest.
+	 * way to enter the guest. Copy the guest registers to the exit struct
+	 * and return to vmd.
 	 */
+	if (vcpu_readregs_svm(vcpu, VM_RWREGS_ALL, &vcpu->vc_exit.vrs))
+		ret = EINVAL;
 
 #ifdef VMM_DEBUG
 	KERNEL_ASSERT_LOCKED();
