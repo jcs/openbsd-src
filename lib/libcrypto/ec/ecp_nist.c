@@ -1,4 +1,4 @@
-/* $OpenBSD: ecp_nist.c,v 1.11 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ecp_nist.c,v 1.13 2018/07/15 16:27:39 tb Exp $ */
 /*
  * Written by Nils Larsch for the OpenSSL project.
  */

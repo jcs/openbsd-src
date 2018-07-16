@@ -1,4 +1,4 @@
-.\" $OpenBSD: vm.conf.5,v 1.32 2018/07/12 12:04:49 reyk Exp $
+.\" $OpenBSD: vm.conf.5,v 1.35 2018/07/13 17:48:30 jmc Exp $
 .\"
 .\" Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
 .\" Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: July 12 2018 $
+.Dd $Mdocdate: July 13 2018 $
 .Dt VM.CONF 5
 .Os
 .Sh NAME
@@ -121,20 +121,14 @@ section starts with a declaration of the virtual machine
 The name can be any alphanumeric string along with '.', '-', and '_' characters.
 However, it cannot start with '.', '-', or '_'.
 Typically the name is a hostname.
-.It Ic vm Ar parent Ic instance Ar name Brq ...
-A virtual machine can be created as an instance of any other
-configured VM.
-The new instance will inherit settings from the VM
-.Ar parent ,
-except for exclusive options such as
-.Ic disk ,
-.Ic interface lladdr ,
-or
-.Ic interface name .
 .El
 .Pp
 Followed by a block of parameters that is enclosed in curly brackets:
 .Bl -tag -width Ds
+.It Cm allow instance Op Brq ...
+Set the permissions to create VM instances.
+See
+.Sx VM INSTANCES .
 .It Cm boot Ar path
 Kernel or BIOS image to load when booting the VM.
 If not specified, the default is to boot using the BIOS image in
@@ -229,6 +223,67 @@ Set the owner of the VM to the specified user or group.
 The owner will be allowed to start or stop the VM, pause or unpause the VM,
 and open the VM's console.
 .It Cm owner Pf : Ar group
+Set the owner to the specified group.
+.El
+.Sh VM INSTANCES
+It is possible to use configured or running VMs as a template for
+additional instances of the VM.
+An instance is just like a normal
+.Ic vm
+and is configured with the following declaration of the virtual machine
+.Ar name :
+.Bl -tag -width Ds
+.It Ic vm Ar parent Ic instance Ar name Brq ...
+A virtual machine can be created as an instance of any other configured VM.
+.El
+.Pp
+The new instance will inherit settings from the VM
+.Ar parent ,
+except for exclusive options such as
+.Ic disk ,
+.Ic interface lladdr ,
+or
+.Ic interface name .
+The configuration options are identical to the
+.Sx VM CONFIGURATION ,
+but restricted to the allowed instance options.
+.Pp
+The allowed instance options are configured in the
+.Ar parent
+VM:
+.Bl -tag -width Ds
+.It Cm allow instance Op Brq ...
+Allow users to use this VM as a template for VM instances.
+By default, the root user can always create instances without
+restrictions and users or non-root owners cannot create instances.
+An instance will inherit the configuration from the VM and the user,
+if permitted, will be allowed to configure individual VM options.
+.El
+.Pp
+Valid options are:
+.Bl -tag -width Ds
+.It Cm boot
+Allow user to configure the kernel or BIOS image.
+The user needs read access to the image.
+.It Cm cdrom
+Allow user to configure the ISO file.
+The user needs read access to the file.
+.It Cm disk
+Allow user to configure the disk images.
+The user needs read and write access to image and instances are not
+allowed to reuse disks from the parent VM.
+.It Cm instance
+Allow user to create additional instances from the instances.
+.It Cm interface
+Allow user to change network interface settings.
+.It Cm memory
+Allow user to configure the memory size.
+.It Cm owner Ar user Ns Op : Ns Ar group
+Allow the specified user or group to create the instances.
+The owner will be allowed to create VM instances, start or stop the
+instances, pause or unpause the instances, and open the instances'
+consoles.
+.It Cm owner : Ns Ar group
 Set the owner to the specified group.
 .El
 .Sh SWITCH CONFIGURATION

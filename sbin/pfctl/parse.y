@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.680 2018/07/11 18:06:25 kn Exp $	*/
+/*	$OpenBSD: parse.y,v 1.682 2018/07/16 08:29:08 kn Exp $	*/
 
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -938,12 +938,6 @@ anchorrule	: ANCHOR anchorname dir quick interface af proto fromto
 				YYERROR;
 			}
 
-			if ($9.marker & FOM_ONCE) {
-				yyerror("cannot specify 'once' "
-				    "on anchors");
-				YYERROR;
-			}
-
 			decide_address_family($8.src.host, &r.af);
 			decide_address_family($8.dst.host, &r.af);
 
@@ -1326,20 +1320,21 @@ table_host_list	: tablespec optnl			{ $$ = $1; }
 		}
 		;
 
-queuespec	: QUEUE STRING ON if_item queue_opts		{
+queuespec	: QUEUE STRING interface queue_opts		{
 			struct node_host	*n;
 
-			if ($4 == NULL && $5.parent == NULL) {
+			if ($3 == NULL && $4.parent == NULL) {
 				yyerror("root queue without interface");
 				YYERROR;
 			}
-			if ((n = ifa_exists($4->ifname)) == NULL ||
-			    n->af != AF_LINK) {
+			if ($3 != NULL &&
+			    ((n = ifa_exists($3->ifname)) == NULL ||
+			     n->af != AF_LINK)) {
 				yyerror("not an interface");
 				YYERROR;
 			}
 
-			expand_queue($2, $4, &$5);
+			expand_queue($2, $3, &$4);
 		}
 		;
 
@@ -1558,15 +1553,6 @@ pfrule		: action dir logquick interface af proto fromto
 
 			if (filteropts_to_rule(&r, &$8))
 				YYERROR;
-
-			if ($8.marker & FOM_ONCE) {
-				if (r.action == PF_MATCH) {
-					yyerror("can't specify once for "
-					    "match rules");
-					YYERROR;
-				}
-				r.rule_flag |= PFRULE_ONCE;
-			}
 
 			if ($8.flags.b1 || $8.flags.b2 || $7.src_os) {
 				for (proto = $6; proto != NULL &&
@@ -5878,6 +5864,13 @@ rdomain_exists(u_int rdomain)
 int
 filteropts_to_rule(struct pf_rule *r, struct filter_opts *opts)
 {
+	if (opts->marker & FOM_ONCE) {
+		if (r->action != PF_PASS && r->action != PF_MATCH) {
+			yyerror("'once' only applies to pass/block rules");
+			return (1);
+		}
+		r->rule_flag |= PFRULE_ONCE;
+	}
 
 	r->keep_state = opts->keep.action;
 	r->pktrate.limit = opts->pktrate.limit;
@@ -5928,12 +5921,6 @@ filteropts_to_rule(struct pf_rule *r, struct filter_opts *opts)
 	}
 	if (opts->marker & FOM_SCRUB_TCP)
 		r->scrub_flags |= PFSTATE_SCRUB_TCP;
-	if (opts->marker & FOM_PRIO) {
-		if (opts->prio == 0)
-			r->prio = PF_PRIO_ZERO;
-		else
-			r->prio = opts->prio;
-	}
 	if (opts->marker & FOM_SETDELAY) {
 		r->delay = opts->delay;
 		r->rule_flag |= PFRULE_SETDELAY;
@@ -5947,12 +5934,8 @@ filteropts_to_rule(struct pf_rule *r, struct filter_opts *opts)
 		r->scrub_flags |= PFSTATE_SETTOS;
 		r->set_tos = opts->settos;
 	}
-	if (opts->marker & FOM_PRIO) {
-		if (opts->prio == 0)
-			r->prio = PF_PRIO_ZERO;
-		else
-			r->prio = opts->prio;
-	}
+	if (opts->marker & FOM_PRIO)
+		r->prio = opts->prio ? opts->prio : PF_PRIO_ZERO;
 	if (opts->marker & FOM_SETPRIO) {
 		r->set_prio[0] = opts->set_prio[0];
 		r->set_prio[1] = opts->set_prio[1];
@@ -5982,7 +5965,7 @@ filteropts_to_rule(struct pf_rule *r, struct filter_opts *opts)
 			    "%d chars)", sizeof(r->pqname)-1);
 			return (1);
 		}
-		free(opts->queues.qname);
+		free(opts->queues.pqname);
 	}
 
 	if (opts->fragment)

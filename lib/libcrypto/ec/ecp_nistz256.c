@@ -1,4 +1,4 @@
-/*	$OpenBSD: ecp_nistz256.c,v 1.4 2018/07/10 22:06:14 tb Exp $	*/
+/*	$OpenBSD: ecp_nistz256.c,v 1.6 2018/07/15 16:27:39 tb Exp $	*/
 /* Copyright (c) 2014, Intel Corporation.
  *
  * Permission to use, copy, modify, and/or distribute this software for any

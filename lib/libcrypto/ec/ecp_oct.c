@@ -1,4 +1,4 @@
-/* $OpenBSD: ecp_oct.c,v 1.9 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ecp_oct.c,v 1.11 2018/07/15 16:27:39 tb Exp $ */
 /* Includes code written by Lenka Fibikova <fibikova@exp-math.uni-essen.de>
  * for the OpenSSL project.
  * Includes code written by Bodo Moeller for the OpenSSL project.

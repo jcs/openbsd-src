@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh.c,v 1.483 2018/07/11 18:53:29 markus Exp $ */
+/* $OpenBSD: ssh.c,v 1.485 2018/07/16 11:05:41 dtucker Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -1377,16 +1377,12 @@ main(int ac, char **av)
 		debug3("timeout: %d ms remain after connect", timeout_ms);
 
 	/*
-	 * If we successfully made the connection, load the host private key
-	 * in case we will need it later for hostbased
-	 * authentication. This must be done before releasing extra
-	 * privileges, because the file is only readable by root.
-	 * If we cannot access the private keys, load the public keys
-	 * instead and try to execute the ssh-keysign helper instead.
+	 * If we successfully made the connection and we have hostbased auth
+	 * enabled, load the public keys so we can later use the ssh-keysign
+	 * helper to sign challenges.
 	 */
 	sensitive_data.nkeys = 0;
 	sensitive_data.keys = NULL;
-	sensitive_data.external_keysign = 0;
 	if (options.hostbased_authentication) {
 		sensitive_data.nkeys = 11;
 		sensitive_data.keys = xcalloc(sensitive_data.nkeys,
@@ -1405,27 +1401,7 @@ main(int ac, char **av)
 #define L_CERT(p,o) \
 	check_load(sshkey_load_cert(p, &(sensitive_data.keys[o])), p, "cert")
 
-		PRIV_START;
-		L_KEYCERT(KEY_ECDSA, _PATH_HOST_ECDSA_KEY_FILE, 1);
-		L_KEYCERT(KEY_ED25519, _PATH_HOST_ED25519_KEY_FILE, 2);
-		L_KEYCERT(KEY_RSA, _PATH_HOST_RSA_KEY_FILE, 3);
-		L_KEYCERT(KEY_DSA, _PATH_HOST_DSA_KEY_FILE, 4);
-		L_KEY(KEY_ECDSA, _PATH_HOST_ECDSA_KEY_FILE, 5);
-		L_KEY(KEY_ED25519, _PATH_HOST_ED25519_KEY_FILE, 6);
-		L_KEY(KEY_RSA, _PATH_HOST_RSA_KEY_FILE, 7);
-		L_KEY(KEY_DSA, _PATH_HOST_DSA_KEY_FILE, 8);
-		L_KEYCERT(KEY_XMSS, _PATH_HOST_XMSS_KEY_FILE, 9);
-		L_KEY(KEY_XMSS, _PATH_HOST_XMSS_KEY_FILE, 10);
-		PRIV_END;
-
-		if (options.hostbased_authentication == 1 &&
-		    sensitive_data.keys[0] == NULL &&
-		    sensitive_data.keys[5] == NULL &&
-		    sensitive_data.keys[6] == NULL &&
-		    sensitive_data.keys[7] == NULL &&
-		    sensitive_data.keys[8] == NULL &&
-		    sensitive_data.keys[9] == NULL &&
-		    sensitive_data.keys[10] == NULL) {
+		if (options.hostbased_authentication == 1) {
 			L_CERT(_PATH_HOST_ECDSA_KEY_FILE, 1);
 			L_CERT(_PATH_HOST_ED25519_KEY_FILE, 2);
 			L_CERT(_PATH_HOST_RSA_KEY_FILE, 3);
@@ -1436,7 +1412,6 @@ main(int ac, char **av)
 			L_PUBKEY(_PATH_HOST_DSA_KEY_FILE, 8);
 			L_CERT(_PATH_HOST_XMSS_KEY_FILE, 9);
 			L_PUBKEY(_PATH_HOST_XMSS_KEY_FILE, 10);
-			sensitive_data.external_keysign = 1;
 		}
 	}
 	/*
@@ -1997,8 +1972,10 @@ load_public_identity_files(struct passwd *pw)
 	u_int n_ids, n_certs;
 	char *identity_files[SSH_MAX_IDENTITY_FILES];
 	struct sshkey *identity_keys[SSH_MAX_IDENTITY_FILES];
+	int identity_file_userprovided[SSH_MAX_IDENTITY_FILES];
 	char *certificate_files[SSH_MAX_CERTIFICATE_FILES];
 	struct sshkey *certificates[SSH_MAX_CERTIFICATE_FILES];
+	int certificate_file_userprovided[SSH_MAX_CERTIFICATE_FILES];
 #ifdef ENABLE_PKCS11
 	struct sshkey **keys;
 	int nkeys;
@@ -2007,8 +1984,12 @@ load_public_identity_files(struct passwd *pw)
 	n_ids = n_certs = 0;
 	memset(identity_files, 0, sizeof(identity_files));
 	memset(identity_keys, 0, sizeof(identity_keys));
+	memset(identity_file_userprovided, 0,
+	    sizeof(identity_file_userprovided));
 	memset(certificate_files, 0, sizeof(certificate_files));
 	memset(certificates, 0, sizeof(certificates));
+	memset(certificate_file_userprovided, 0,
+	    sizeof(certificate_file_userprovided));
 
 #ifdef ENABLE_PKCS11
 	if (options.pkcs11_provider != NULL &&
@@ -2051,7 +2032,8 @@ load_public_identity_files(struct passwd *pw)
 		free(options.identity_files[i]);
 		identity_files[n_ids] = filename;
 		identity_keys[n_ids] = public;
-
+		identity_file_userprovided[n_ids] =
+		    options.identity_file_userprovided[i];
 		if (++n_ids >= SSH_MAX_IDENTITY_FILES)
 			continue;
 
@@ -2080,6 +2062,8 @@ load_public_identity_files(struct passwd *pw)
 		/* NB. leave filename pointing to private key */
 		identity_files[n_ids] = xstrdup(filename);
 		identity_keys[n_ids] = public;
+		identity_file_userprovided[n_ids] =
+		    options.identity_file_userprovided[i];
 		n_ids++;
 	}
 
@@ -2117,17 +2101,24 @@ load_public_identity_files(struct passwd *pw)
 		}
 		certificate_files[n_certs] = filename;
 		certificates[n_certs] = public;
+		certificate_file_userprovided[n_certs] =
+		    options.certificate_file_userprovided[i];
 		++n_certs;
 	}
 
 	options.num_identity_files = n_ids;
 	memcpy(options.identity_files, identity_files, sizeof(identity_files));
 	memcpy(options.identity_keys, identity_keys, sizeof(identity_keys));
+	memcpy(options.identity_file_userprovided,
+	    identity_file_userprovided, sizeof(identity_file_userprovided));
 
 	options.num_certificate_files = n_certs;
 	memcpy(options.certificate_files,
 	    certificate_files, sizeof(certificate_files));
 	memcpy(options.certificates, certificates, sizeof(certificates));
+	memcpy(options.certificate_file_userprovided,
+	    certificate_file_userprovided,
+	    sizeof(certificate_file_userprovided));
 }
 
 static void

@@ -1,4 +1,4 @@
-/* $OpenBSD: ec2_smpl.c,v 1.17 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ec2_smpl.c,v 1.19 2018/07/15 16:27:39 tb Exp $ */
 /* ====================================================================
  * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
  *
@@ -107,11 +107,15 @@ EC_GF2m_simple_method(void)
 		.point_cmp = ec_GF2m_simple_cmp,
 		.make_affine = ec_GF2m_simple_make_affine,
 		.points_make_affine = ec_GF2m_simple_points_make_affine,
-		.mul_generator_ct = ec_GFp_simple_mul_generator_ct,
-		.mul_single_ct = ec_GFp_simple_mul_single_ct,
-		.mul_double_nonct = ec_GFp_simple_mul_double_nonct,
+
+		/*
+		 * the following three method functions are defined in
+		 * ec2_mult.c
+		 */
+		.mul = ec_GF2m_simple_mul,
 		.precompute_mult = ec_GF2m_precompute_mult,
 		.have_precompute_mult = ec_GF2m_have_precompute_mult,
+
 		.field_mul = ec_GF2m_simple_field_mul,
 		.field_sqr = ec_GF2m_simple_field_sqr,
 		.field_div = ec_GF2m_simple_field_div,

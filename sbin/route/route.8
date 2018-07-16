@@ -1,4 +1,4 @@
-.\"	$OpenBSD: route.8,v 1.86 2018/07/09 14:11:00 jca Exp $
+.\"	$OpenBSD: route.8,v 1.88 2018/07/14 13:38:48 benno Exp $
 .\"	$NetBSD: route.8,v 1.6 1995/03/18 15:00:13 cgd Exp $
 .\"
 .\" Copyright (c) 1983, 1991, 1993
@@ -30,7 +30,7 @@
 .\"
 .\"	@(#)route.8	8.3 (Berkeley) 3/19/94
 .\"
-.Dd $Mdocdate: July 9 2018 $
+.Dd $Mdocdate: July 14 2018 $
 .Dt ROUTE 8
 .Os
 .Sh NAME
@@ -39,7 +39,7 @@
 .Sh SYNOPSIS
 .Nm route
 .Op Fl dnqtv
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Ar command
 .Oo
 .Op Ar modifiers
@@ -75,7 +75,7 @@ may require correct operation of the network; thus it may be expedient
 to forgo this, especially when attempting to repair networking operations.)
 .It Fl q
 Suppress all output.
-.It Fl T Ar tableid
+.It Fl T Ar rtable
 Select an alternate routing table to modify or query.
 The default is to use the current routing table.
 .It Fl t
@@ -92,18 +92,18 @@ utility provides the following simple commands:
 .Bl -tag -width Fl
 .It Xo
 .Nm route
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Cm exec
 .Op Ar command ...
 .Xc
 Execute a command forcing the process and its children to use the
 routing table and appropriate routing domain as specified with the
-.Fl T Ar tableid
+.Fl T Ar rtable
 option.
 .It Xo
 .Nm route
 .Op Fl nqv
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Cm flush
 .Op Ar modifiers
 .Xc
@@ -121,7 +121,7 @@ modifiers.
 .It Xo
 .Nm route
 .Op Fl nv
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Cm get
 .Op Ar modifiers
 .Ar address
@@ -134,6 +134,7 @@ same address family as the destination are shown.
 .It Xo
 .Nm
 .Op Fl n
+.Op Fl T Ar rtable
 .Cm monitor
 .Op Ar modifiers
 .Xc
@@ -148,10 +149,13 @@ If the
 .Fl iface
 modifier is used only interface specific messages (link state changes)
 are shown.
+If a routing table is supplied with
+.Fl T ,
+only changes in that routing table will be displayed.
 .It Xo
 .Nm route
 .Op Fl nv
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Cm show
 .Op Ar family
 .Op Fl gateway
@@ -185,7 +189,7 @@ have the syntax:
 .It Xo
 .Nm route
 .Op Fl dnqtv
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Cm add
 .Op Ar modifiers
 .Ar destination gateway
@@ -193,7 +197,7 @@ have the syntax:
 .It Xo
 .Nm route
 .Op Fl dnqtv
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Cm change
 .Op Ar modifiers
 .Ar destination gateway
@@ -201,7 +205,7 @@ have the syntax:
 .It Xo
 .Nm route
 .Op Fl dnqtv
-.Op Fl T Ar tableid
+.Op Fl T Ar rtable
 .Cm del Ns Op Cm ete
 .Op Ar modifiers
 .Ar destination gateway

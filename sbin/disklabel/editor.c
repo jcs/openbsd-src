@@ -1,4 +1,4 @@
-/*	$OpenBSD: editor.c,v 1.338 2018/07/07 09:59:34 krw Exp $	*/
+/*	$OpenBSD: editor.c,v 1.340 2018/07/12 16:59:59 krw Exp $	*/
 
 /*
  * Copyright (c) 1997-2000 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -1153,11 +1153,10 @@ u_int64_t
 getuint64(struct disklabel *lp, char *prompt, char *helpstring,
     u_int64_t oval, u_int64_t maxval, int *flags)
 {
-	char buf[BUFSIZ], *endptr, *p, operator = '\0';
+	char buf[21], *p, operator = '\0';
+	char *unit = NULL;
 	u_int64_t rval = oval;
-	int64_t mult = 1;
-	size_t n;
-	double d, percent = 1.0;
+	double d;
 	int rslt;
 
 	rslt = snprintf(buf, sizeof(buf), "%llu", oval);
@@ -1167,113 +1166,59 @@ getuint64(struct disklabel *lp, char *prompt, char *helpstring,
 	p = getstring(prompt, helpstring, buf);
 	if (p == NULL)
 		return (CMD_ABORTED);
-	if (strlcpy(buf, p, sizeof(buf)) >= sizeof(buf))
-		goto invalid;
-	n = strlen(buf);
-
-	if (buf[0] == '*' && buf[1] == '\0') {
+	else if (p[0] == '\0')
+		rval = oval;
+	else if (p[0] == '*' && p[1] == '\0')
 		rval = maxval;
-	} else {
-		/* deal with units */
-		if (buf[0] != '\0' && n > 0) {
-			if (flags != NULL && (*flags & DO_CONVERSIONS)) {
-				switch (tolower((unsigned char)buf[n-1])) {
-
-				case 'c':
-					mult = lp->d_secpercyl;
-					buf[--n] = '\0';
-					break;
-				case 'b':
-					mult = -(int64_t)lp->d_secsize;
-					buf[--n] = '\0';
-					break;
-				case 'k':
-					if (lp->d_secsize > 1024)
-						mult = -(int64_t)lp->d_secsize /
-						    1024LL;
-					else
-						mult = 1024LL / lp->d_secsize;
-					buf[--n] = '\0';
-					break;
-				case 'm':
-					mult = (1024LL * 1024) / lp->d_secsize;
-					buf[--n] = '\0';
-					break;
-				case 'g':
-					mult = (1024LL * 1024 * 1024) /
-					    lp->d_secsize;
-					buf[--n] = '\0';
-					break;
-				case 't':
-					mult = (1024LL * 1024 * 1024 * 1024) /
-					    lp->d_secsize;
-					buf[--n] = '\0';
-					break;
-				case '%':
-					buf[--n] = '\0';
-					p = &buf[0];
-					if (*p == '+' || *p == '-')
-						operator = *p++;
-					percent = strtod(p, NULL) / 100.0;
-					snprintf(buf, sizeof(buf), "%llu",
-					    DL_GETDSIZE(lp));
-					break;
-				case '&':
-					buf[--n] = '\0';
-					p = &buf[0];
-					if (*p == '+' || *p == '-')
-						operator = *p++;
-					percent = strtod(p, NULL) / 100.0;
-					snprintf(buf, sizeof(buf), "%llu",
-					    maxval);
-					break;
-				}
-			}
-
-			/* Did they give us an operator? */
-			p = &buf[0];
-			if (*p == '+' || *p == '-')
-				operator = *p++;
-
-			endptr = p;
-			errno = 0;
-			d = strtod(p, &endptr);
-			if (errno == ERANGE || d < 0)
-				goto invalid;	/* too big/small */
-			else if (*endptr != '\0') {
-				goto invalid;	/* non-numbers in str */
-			} else {
-				if (mult > 0)
-					d = d * mult * percent;
-				else
-					d = d / (-mult) * percent;
-
-				if (d < CMD_ABORTED) {
-					rval = d;
-				} else {
+	else {
+		if (*p == '+' || *p == '-')
+			operator = *p++;
+		if (parse_sizespec(p, &d, &unit) == -1)
+			goto invalid;
+		if (unit == NULL)
+			rval = d;
+		else if (flags != NULL && (*flags & DO_CONVERSIONS) == 0)
+			goto invalid;
+		else {
+			switch (tolower((unsigned char)*unit)) {
+			case 'b':
+				rval = d / lp->d_secsize;
+				break;
+			case 'c':
+				rval = d * lp->d_secpercyl;
+				break;
+			case '%':
+				rval = DL_GETDSIZE(lp) * (d / 100.0);
+				break;
+			case '&':
+				rval = maxval * (d / 100.0);
+				break;
+			default:
+				if (apply_unit(d, *unit, &rval) == -1)
 					goto invalid;
-				}
+				rval = DL_BLKTOSEC(lp, rval);
+				break;
+			}
+		}
 
-				/* Range check then apply [+-] operator */
-				if (operator == '+') {
-					if (CMD_ABORTED - oval > rval)
-						rval += oval;
-					else {
-						goto invalid;
-					}
-				} else if (operator == '-') {
-					if (oval >= rval)
-						rval = oval - rval;
-					else {
-						goto invalid;
-					}
-				}
+		/* Range check then apply [+-] operator */
+		if (operator == '+') {
+			if (CMD_ABORTED - oval > rval)
+				rval += oval;
+			else {
+				goto invalid;
+			}
+		} else if (operator == '-') {
+			if (oval >= rval)
+				rval = oval - rval;
+			else {
+				goto invalid;
 			}
 		}
 	}
 
 	if (flags != NULL) {
-		if (mult != 1)
+		if (unit != NULL)
 			*flags |= DO_ROUNDING;
 #ifdef SUN_CYLCHECK
 		if (lp->d_flags & D_VENDOR)
@@ -1296,56 +1241,46 @@ int
 has_overlap(struct disklabel *lp)
 {
 	struct partition **spp;
-	int c, i, j;
-	char buf[BUFSIZ];
+	int i, p1, p2;
+	char *line = NULL;
+	size_t linesize = 0;
+	ssize_t linelen;
 
-	/* Get a sorted list of the in-use partitions. */
-	spp = sort_partitions(lp);
-
-	/* If there are less than two partitions in use, there is no overlap. */
-	if (spp[1] == NULL)
-		return (0);
-
-	/* Now that we have things sorted by starting sector check overlap */
-	for (i = 0; spp[i] != NULL; i++) {
-		for (j = i + 1; spp[j] != NULL; j++) {
-			/* `if last_sec_in_part + 1 > first_sec_in_next_part' */
+	for (;;) {
+		spp = sort_partitions(lp);
+		for (i = 0; spp[i+1] != NULL; i++) {
 			if (DL_GETPOFFSET(spp[i]) + DL_GETPSIZE(spp[i]) >
-			    DL_GETPOFFSET(spp[j])) {
-				/* Overlap!  Convert to real part numbers. */
-				i = ((char *)spp[i] - (char *)lp->d_partitions)
-				    / sizeof(**spp);
-				j = ((char *)spp[j] - (char *)lp->d_partitions)
-				    / sizeof(**spp);
-				printf("\nError, partitions %c and %c overlap:"
-				    "\n", 'a' + i, 'a' + j);
-				printf("#    %16.16s %16.16s  fstype "
-				    "[fsize bsize    cpg]\n", "size", "offset");
-				display_partition(stdout, lp, i, 0);
-				display_partition(stdout, lp, j, 0);
-
-				/* Get partition to disable or ^D */
-				do {
-					printf("Disable which one? "
-					    "(^D to abort) [%c %c] ",
-					    'a' + i, 'a' + j);
-					buf[0] = '\0';
-					if (!fgets(buf, sizeof(buf), stdin)) {
-						putchar('\n');
-						return (1);	/* ^D */
-					}
-					c = buf[0] - 'a';
-				} while (buf[1] != '\n' && buf[1] != '\0' &&
-				    c != i && c != j);
-
-				/* Mark the selected one as unused */
-				lp->d_partitions[c].p_fstype = FS_UNUSED;
-				return (has_overlap(lp));
-			}
+			    DL_GETPOFFSET(spp[i+1]))
+				break;
 		}
+		if (spp[i+1] == NULL) {
+			free(line);
+			return (0);
+		}
+
+		p1 = 'a' + (spp[i] - lp->d_partitions);
+		p2 = 'a' + (spp[i+1] - lp->d_partitions);
+		printf("\nError, partitions %c and %c overlap:\n", p1, p2);
+		printf("#    %16.16s %16.16s  fstype [fsize bsize    cpg]\n",
+		    "size", "offset");
+		display_partition(stdout, lp, p1 - 'a', 0);
+		display_partition(stdout, lp, p2 - 'a', 0);
+
+		for (;;) {
+			printf("Disable which one? (%c %c) ", p1, p2);
+			linelen = getline(&line, &linesize, stdin);
+			if (linelen == -1)
+				goto done;
+			if (linelen == 2 && (line[0] == p1 || line[0] == p2))
+				break;
+		}
+		lp->d_partitions[line[0] - 'a'].p_fstype = FS_UNUSED;
 	}
 
-	return (0);
+done:
+	putchar('\n');
+	free(line);
+	return (1);
 }
 
 void
@@ -1514,7 +1449,7 @@ sort_partitions(struct disklabel *lp)
 	 * This is safe because we guarantee no overlap.
 	 */
 	if (npartitions > 1)
-		if (heapsort((void *)spp, npartitions, sizeof(spp[0]),
+		if (mergesort((void *)spp, npartitions, sizeof(spp[0]),
 		    partition_cmp))
 			err(4, "failed to sort partition table");
 

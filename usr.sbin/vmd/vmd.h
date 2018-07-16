@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.h,v 1.75 2018/07/12 12:04:49 reyk Exp $	*/
+/*	$OpenBSD: vmd.h,v 1.78 2018/07/15 14:36:54 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -53,6 +53,11 @@
 #define NR_BACKLOG		5
 #define VMD_SWITCH_TYPE		"bridge"
 #define VM_DEFAULT_MEMORY	512
+
+/* default user instance limits */
+#define VM_DEFAULT_USER_MAXCPU	4
+#define VM_DEFAULT_USER_MAXMEM	2048
+#define VM_DEFAULT_USER_MAXIFS	8
 
 /* vmd -> vmctl error codes */
 #define VMD_BIOS_MISSING	1001
@@ -133,15 +138,24 @@ struct vmop_ifreq {
 	struct ifaliasreq	 vfr_ifra;
 };
 
+struct vmop_owner {
+	uid_t			 uid;
+	int64_t			 gid;
+};
+
 struct vmop_create_params {
 	struct vm_create_params	 vmc_params;
 	unsigned int		 vmc_flags;
-#define VMOP_CREATE_KERNEL	0x01
-#define VMOP_CREATE_MEMORY	0x02
-#define VMOP_CREATE_NETWORK	0x04
-#define VMOP_CREATE_DISK	0x08
-#define VMOP_CREATE_CDROM	0x10
-#define VMOP_CREATE_INSTANCE	0x20
+#define VMOP_CREATE_CPU		0x01
+#define VMOP_CREATE_KERNEL	0x02
+#define VMOP_CREATE_MEMORY	0x04
+#define VMOP_CREATE_NETWORK	0x08
+#define VMOP_CREATE_DISK	0x10
+#define VMOP_CREATE_CDROM	0x20
+#define VMOP_CREATE_INSTANCE	0x40
+
+	/* same flags; check for access to these resources */
+	unsigned int		 vmc_checkaccess;
 
 	/* userland-only part of the create params */
 	unsigned int		 vmc_ifflags[VMM_MAX_NICS_PER_VM];
@@ -154,9 +168,12 @@ struct vmop_create_params {
 	char			 vmc_ifswitch[VMM_MAX_NICS_PER_VM][VM_NAME_MAX];
 	char			 vmc_ifgroup[VMM_MAX_NICS_PER_VM][IF_NAMESIZE];
 	unsigned int		 vmc_ifrdomain[VMM_MAX_NICS_PER_VM];
+	struct vmop_owner	 vmc_owner;
+
+	/* instance template params */
 	char			 vmc_instance[VMM_MAX_NAME_LEN];
-	uid_t			 vmc_uid;
-	int64_t			 vmc_gid;
+	struct vmop_owner	 vmc_insowner;
+	unsigned int		 vmc_insflags;
 };
 
 struct vm_dump_header_cpuid {
@@ -231,10 +248,22 @@ struct vmd_vm {
 	int			 vm_received;
 	int			 vm_paused;
 	int			 vm_receive_fd;
+	struct vmd_user		*vm_user;
 
 	TAILQ_ENTRY(vmd_vm)	 vm_entry;
 };
 TAILQ_HEAD(vmlist, vmd_vm);
+
+struct vmd_user {
+	struct vmop_owner	 usr_id;
+	uint64_t		 usr_maxcpu;
+	uint64_t		 usr_maxmem;
+	uint64_t		 usr_maxifs;
+	int			 usr_refcnt;
+
+	TAILQ_ENTRY(vmd_user)	 usr_entry;
+};
+TAILQ_HEAD(userlist, vmd_user);
 
 struct address {
 	struct sockaddr_storage	 ss;
@@ -262,6 +291,7 @@ struct vmd {
 	struct vmlist		*vmd_vms;
 	uint32_t		 vmd_nswitches;
 	struct switchlist	*vmd_switches;
+	struct userlist		*vmd_users;
 
 	int			 vmd_fd;
 	int			 vmd_ptmfd;
@@ -311,11 +341,16 @@ void	 vm_stop(struct vmd_vm *, int, const char *);
 void	 vm_remove(struct vmd_vm *, const char *);
 int	 vm_register(struct privsep *, struct vmop_create_params *,
 	    struct vmd_vm **, uint32_t, uid_t);
-int	 vm_checkperm(struct vmd_vm *, uid_t);
+int	 vm_checkperm(struct vmd_vm *, struct vmop_owner *, uid_t);
+int	 vm_checkaccess(int, unsigned int, uid_t, int);
 int	 vm_opentty(struct vmd_vm *);
 void	 vm_closetty(struct vmd_vm *);
 void	 switch_remove(struct vmd_switch *);
 struct vmd_switch *switch_getbyname(const char *);
+struct vmd_user *user_get(uid_t);
+void	 user_put(struct vmd_user *);
+void	 user_inc(struct vm_create_params *, struct vmd_user *, int);
+int	 user_checklimit(struct vmd_user *, struct vm_create_params *);
 char	*get_string(uint8_t *, size_t);
 uint32_t prefixlen2mask(uint8_t);
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_node.c,v 1.130 2018/07/11 20:18:09 phessler Exp $	*/
+/*	$OpenBSD: ieee80211_node.c,v 1.133 2018/07/16 12:42:22 phessler Exp $	*/
 /*	$NetBSD: ieee80211_node.c,v 1.14 2004/05/09 09:18:47 dyoung Exp $	*/
 
 /*-
@@ -201,6 +201,10 @@ ieee80211_add_ess(struct ieee80211com *ic, char *nwid, int wpa, int wep)
 	struct ieee80211_ess *ess;
 	int i = 0, new = 0, ness = 0;
 
+	/* only valid for station (aka, client) mode */
+	if (ic->ic_opmode != IEEE80211_M_STA)
+		return (0);
+
 	/* Don't save an empty nwid */
 	if (strnlen(nwid, IEEE80211_NWID_LEN) == 0)
 		return (0);
@@ -371,6 +375,28 @@ ieee80211_match_ess(struct ieee80211com *ic)
 			if (memcmp(ess->essid, ni->ni_essid,
 			    IEEE80211_NWID_LEN) != 0 ||
 			    ni->ni_fails != 0)
+				continue;
+
+			/* make sure encryptions match */
+			if (ess->flags &
+			    (IEEE80211_F_PSK | IEEE80211_F_RSNON)) {
+				if ((ni->ni_capinfo &
+				    IEEE80211_CAPINFO_PRIVACY) == 0)
+					continue;
+			} else {
+				if (ni->ni_capinfo & IEEE80211_CAPINFO_PRIVACY)
+					continue;
+			}
+
+			if ((ess->rsnprotos & ni->ni_rsnprotos) == 0)
+				continue;
+			if ((ess->rsnakms & ni->ni_rsnakms) == 0)
+				continue;
+			if ((ess->rsnciphers & ni->ni_rsnciphers) == 0)
+				continue;
+
+			if ((ic->ic_flags & IEEE80211_F_DESBSSID) &&
+			    !IEEE80211_ADDR_EQ(ic->ic_des_bssid, ni->ni_bssid))
 				continue;
 
 			if (selni == NULL ||
@@ -1070,7 +1096,7 @@ ieee80211_end_scan(struct ifnet *ifp)
 	}
 
 	/* Possibly switch which ssid we are associated with */
-	if (!bgscan)
+	if (!bgscan && ic->ic_opmode == IEEE80211_M_STA)
 		ieee80211_match_ess(ic);
 
 	for (; ni != NULL; ni = nextbs) {

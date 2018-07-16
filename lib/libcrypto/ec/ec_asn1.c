@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_asn1.c,v 1.28 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ec_asn1.c,v 1.30 2018/07/15 16:27:39 tb Exp $ */
 /*
  * Written by Nils Larsch for the OpenSSL project.
  */

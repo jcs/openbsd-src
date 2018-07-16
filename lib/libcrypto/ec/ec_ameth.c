@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_ameth.c,v 1.21 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ec_ameth.c,v 1.23 2018/07/15 16:27:39 tb Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2006.
  */

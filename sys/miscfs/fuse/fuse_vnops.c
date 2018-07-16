@@ -1,4 +1,4 @@
-/* $OpenBSD: fuse_vnops.c,v 1.49 2018/06/21 14:17:23 visa Exp $ */
+/* $OpenBSD: fuse_vnops.c,v 1.51 2018/07/16 16:44:09 helg Exp $ */
 /*
  * Copyright (c) 2012-2013 Sylvestre Gallon <ccna.syl@gmail.com>
  *
@@ -66,6 +66,7 @@ int	fusefs_lock(void *);
 int	fusefs_unlock(void *);
 int	fusefs_islocked(void *);
 int	fusefs_advlock(void *);
+int	fusefs_fsync(void *);
 
 /* Prototypes for fusefs kqfilter */
 int	filt_fusefsread(struct knote *, long);
@@ -87,7 +88,7 @@ struct vops fusefs_vops = {
 	.vop_ioctl	= fusefs_ioctl,
 	.vop_poll	= fusefs_poll,
 	.vop_kqfilter	= fusefs_kqfilter,
-	.vop_fsync	= nullop,
+	.vop_fsync	= fusefs_fsync,
 	.vop_remove	= fusefs_remove,
 	.vop_link	= fusefs_link,
 	.vop_rename	= fusefs_rename,
@@ -220,26 +221,38 @@ fusefs_open(void *v)
 	struct vop_open_args *ap;
 	struct fusefs_node *ip;
 	struct fusefs_mnt *fmp;
+	struct vnode *vp;
 	enum fufh_type fufh_type = FUFH_RDONLY;
 	int flags;
 	int error;
 	int isdir;
 
 	ap = v;
-	ip = VTOI(ap->a_vp);
+	vp = ap->a_vp;
+	ip = VTOI(vp);
 	fmp = (struct fusefs_mnt *)ip->ufs_ino.i_ump;
 
 	if (!fmp->sess_init)
 		return (ENXIO);
 
 	isdir = 0;
-	if (ap->a_vp->v_type == VDIR)
+	if (vp->v_type == VDIR)
 		isdir = 1;
 	else {
 		if ((ap->a_mode & FREAD) && (ap->a_mode & FWRITE))
 			fufh_type = FUFH_RDWR;
 		else if (ap->a_mode & (FWRITE))
 			fufh_type = FUFH_WRONLY;
+
+		/*
+		 * Due to possible attribute caching, there is no
+		 * reliable way to determine if the file was modified
+		 * externally (e.g. network file system) so clear the
+		 * UVM cache to ensure that it is not stale. The file
+		 * can still become stale later on read but this will
+		 * satisfy most situations.
+		 */
+		uvm_vnp_uncache(vp);
 	}
 
 	/* already open i think all is ok */
@@ -567,6 +580,12 @@ fusefs_setattr(void *v)
 		if (error == ENOSYS)
 			fmp->undef_op |= UNDEF_SETATTR;
 		goto out;
+	}
+
+	/* truncate was successful, let uvm know */
+	if (vap->va_size != VNOVAL && vap->va_size != ip->filesize) {
+		ip->filesize = vap->va_size;
+		uvm_vnp_setsize(vp, vap->va_size);
 	}
 
 	VN_KNOTE(ap->a_vp, NOTE_ATTRIB);
@@ -1167,6 +1186,12 @@ fusefs_write(void *v)
 		uio->uio_resid += diff;
 		uio->uio_offset -= diff;
 
+		if (uio->uio_offset > ip->filesize) {
+			ip->filesize = uio->uio_offset;
+			uvm_vnp_setsize(vp, uio->uio_offset);
+		}
+		uvm_vnp_uncache(vp);
+
 		fb_delete(fbuf);
 		fbuf = NULL;
 	}
@@ -1525,4 +1550,60 @@ fusefs_advlock(void *v)
 
 	return (lf_advlock(&ip->ufs_ino.i_lockf, ip->filesize, ap->a_id,
 	    ap->a_op, ap->a_fl, ap->a_flags));
+}
+
+int
+fusefs_fsync(void *v)
+{
+	struct vop_fsync_args *ap = v;
+	struct vnode *vp = ap->a_vp;
+	struct proc *p = ap->a_p;
+	struct fusefs_node *ip;
+	struct fusefs_mnt *fmp;
+	struct fusefs_filehandle *fufh;
+	struct fusebuf *fbuf;
+	int type, error = 0;
+
+	/*
+	 * Can't write to directory file handles so no need to fsync.
+	 * FUSE has fsyncdir but it doesn't make sense on OpenBSD.
+	 */
+	if (vp->v_type == VDIR)
+		return (0);
+
+	ip = VTOI(vp);
+	fmp = (struct fusefs_mnt *)ip->ufs_ino.i_ump;
+
+	if (!fmp->sess_init)
+		return (ENXIO);
+
+	/* Implementing fsync is optional so don't error. */
+	if (fmp->undef_op & UNDEF_FSYNC)
+		return (0);
+
+	/* Sync all writeable file descriptors. */
+	for (type = 0; type < FUFH_MAXTYPE; type++) {
+		fufh = &(ip->fufh[type]);
+		if (fufh->fh_type == FUFH_WRONLY ||
+		    fufh->fh_type == FUFH_RDWR) {
+
+			fbuf = fb_setup(0, ip->ufs_ino.i_number, FBT_FSYNC, p);
+			fbuf->fb_io_fd = fufh->fh_id;
+
+			/* Always behave as if ap->a_waitfor = MNT_WAIT. */
+			error = fb_queue(fmp->dev, fbuf);
+			fb_delete(fbuf);
+			if (error)
+				break;
+		}
+	}
+
+	if (error == ENOSYS) {
+		fmp->undef_op |= UNDEF_FSYNC;
+
+		/* Implementing fsync is optional so don't error. */
+		return (0);
+	}
+
+	return (error);
 }

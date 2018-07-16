@@ -1,4 +1,4 @@
-/* $OpenBSD: ec_check.c,v 1.7 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ec_check.c,v 1.9 2018/07/15 16:27:39 tb Exp $ */
 /* ====================================================================
  * Copyright (c) 1998-2002 The OpenSSL Project.  All rights reserved.
  *

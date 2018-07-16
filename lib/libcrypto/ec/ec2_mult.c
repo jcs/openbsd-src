@@ -1,4 +1,4 @@
-/* $OpenBSD: ec2_mult.c,v 1.10 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ec2_mult.c,v 1.12 2018/07/15 16:27:39 tb Exp $ */
 /* ====================================================================
  * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
  *

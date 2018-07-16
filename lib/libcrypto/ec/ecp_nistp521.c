@@ -1,4 +1,4 @@
-/* $OpenBSD: ecp_nistp521.c,v 1.20 2018/07/10 22:06:14 tb Exp $ */
+/* $OpenBSD: ecp_nistp521.c,v 1.22 2018/07/15 16:27:39 tb Exp $ */
 /*
  * Written by Adam Langley (Google) for the OpenSSL project
  */

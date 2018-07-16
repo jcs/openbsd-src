@@ -1,9 +1,9 @@
-#	$OpenBSD: GENERIC.MP,v 1.12 2018/06/01 14:16:25 visa Exp $
+#	$OpenBSD: GENERIC.MP,v 1.14 2018/07/13 05:25:24 tb Exp $
 
 include "arch/amd64/conf/GENERIC"
 
 option	MULTIPROCESSOR
 #option	MP_LOCKDEBUG
-option	WITNESS
+#option	WITNESS
 
 cpu*		at mainbus?

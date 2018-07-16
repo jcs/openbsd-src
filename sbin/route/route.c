@@ -1,4 +1,4 @@
-/*	$OpenBSD: route.c,v 1.218 2018/07/11 15:25:42 kn Exp $	*/
+/*	$OpenBSD: route.c,v 1.222 2018/07/14 13:37:44 benno Exp $	*/
 /*	$NetBSD: route.c,v 1.16 1996/04/15 18:27:05 cgd Exp $	*/
 
 /*
@@ -130,7 +130,7 @@ usage(char *cp)
 	if (cp)
 		warnx("botched keyword: %s", cp);
 	fprintf(stderr,
-	    "usage: %s [-dnqtv] [-T tableid] command [[modifiers] args]\n",
+	    "usage: %s [-dnqtv] [-T rtable] command [[modifiers] args]\n",
 	    __progname);
 	fprintf(stderr,
 	    "commands: add, change, delete, exec, flush, get, monitor, show\n");
@@ -150,6 +150,7 @@ main(int argc, char **argv)
 	int kw;
 	int Terr = 0;
 	int af = AF_UNSPEC;
+	u_int rtable_any = RTABLE_ANY;
 
 	if (argc < 2)
 		usage(NULL);
@@ -231,10 +232,15 @@ main(int argc, char **argv)
 	}
 
 	/* force socket onto table user requested */
-	if (Tflag == 1 && Terr == 0 &&
-	    setsockopt(s, AF_ROUTE, ROUTE_TABLEFILTER,
-	    &tableid, sizeof(tableid)) == -1)
-		err(1, "setsockopt(ROUTE_TABLEFILTER)");
+	if (Tflag == 1 && Terr == 0) {
+		if (setsockopt(s, AF_ROUTE, ROUTE_TABLEFILTER,
+		    &tableid, sizeof(tableid)) == -1)
+			err(1, "setsockopt(ROUTE_TABLEFILTER)");
+	} else {
+		if (setsockopt(s, AF_ROUTE, ROUTE_TABLEFILTER,
+		    &rtable_any, sizeof(tableid)) == -1)
+			err(1, "setsockopt(ROUTE_TABLEFILTER)");
+	}
 
 	if (pledge("stdio dns route", NULL) == -1)
 		err(1, "pledge");
@@ -763,15 +769,6 @@ inet_makenetandmask(u_int32_t net, struct sockaddr_in *sin, int bits)
 	else if (bits) {
 		addr = net;
 		mask = 0xffffffff << (32 - bits);
-	} else if (net < IN_CLASSA_MAX) {
-		addr = net << IN_CLASSA_NSHIFT;
-		mask = IN_CLASSA_NET;
-	} else if (net < IN_CLASSB_MAX) {
-		addr = net << IN_CLASSB_NSHIFT;
-		mask = IN_CLASSB_NET;
-	} else if (net < (1 << 24)) {
-		addr = net << IN_CLASSC_NSHIFT;
-		mask = IN_CLASSC_NET;
 	} else {
 		addr = net;
 		if ((addr & IN_CLASSA_HOST) == 0)
@@ -1226,7 +1223,8 @@ char *msgtypes[] = {
 	"RTM_DESYNC: route socket overflow",
 	"RTM_INVALIDATE: invalidate cache of L2 route",
 	"RTM_BFD: bidirectional forwarding detection",
-	"RTM_PROPOSAL: config proposal"
+	"RTM_PROPOSAL: config proposal",
+	"RTM_CHGADDRATTR: address attributes being changed"
 };
 
 char metricnames[] =
@@ -1297,6 +1295,7 @@ print_rtmsg(struct rt_msghdr *rtm, int msglen)
 		break;
 	case RTM_NEWADDR:
 	case RTM_DELADDR:
+	case RTM_CHGADDRATTR:
 		ifam = (struct ifa_msghdr *)rtm;
 		printf(", metric %d, flags:", ifam->ifam_metric);
 		bprintf(stdout, ifam->ifam_flags, routeflags);

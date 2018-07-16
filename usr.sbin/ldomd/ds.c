@@ -1,4 +1,4 @@
-/*	$OpenBSD: ds.c,v 1.6 2018/07/09 14:46:08 kettenis Exp $	*/
+/*	$OpenBSD: ds.c,v 1.8 2018/07/13 08:46:07 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2012 Mark Kettenis
@@ -444,20 +444,29 @@ ds_rx_msg(struct ldc_conn *lc, void *data, size_t len)
 	{
 		struct ds_reg_req *dr = data;
 		struct ds_conn_svc *dcs;
+		uint16_t major = 0;
 
 		DPRINTF(("DS_REG_REQ %s %d.%d 0x%016llx\n", dr->svc_id,
 		    dr->major_vers, dr->minor_vers, dr->svc_handle));
 		TAILQ_FOREACH(dcs, &dc->services, link) {
-			if (strcmp(dr->svc_id, dcs->service->ds_svc_id) == 0) {
+			if (strcmp(dr->svc_id, dcs->service->ds_svc_id) == 0 &&
+			    dr->major_vers == dcs->service->ds_major_vers) {
 				dcs->svc_handle = dr->svc_handle;
 				dcs->ackid = lc->lc_tx_seqid;
-				ds_reg_ack(lc, dcs->svc_handle);
+				ds_reg_ack(lc, dcs->svc_handle,
+				    dcs->service->ds_minor_vers);
 				dcs->service->ds_start(lc, dcs->svc_handle);
 				return;
 			}
 		}
 
-		ds_reg_nack(lc, dr->svc_handle);
+		TAILQ_FOREACH(dcs, &dc->services, link) {
+			if (strcmp(dr->svc_id, dcs->service->ds_svc_id) == 0 &&
+			    dcs->service->ds_major_vers > major)
+				major = dcs->service->ds_major_vers;
+		}
+
+		ds_reg_nack(lc, dr->svc_handle, major);
 		break;
 	}
 
@@ -505,7 +514,7 @@ ds_init_ack(struct ldc_conn *lc)
 }
 
 void
-ds_reg_ack(struct ldc_conn *lc, uint64_t svc_handle)
+ds_reg_ack(struct ldc_conn *lc, uint64_t svc_handle, uint16_t minor)
 {
 	struct ds_reg_ack da;
 
@@ -514,12 +523,12 @@ ds_reg_ack(struct ldc_conn *lc, uint64_t svc_handle)
 	da.msg_type = DS_REG_ACK;
 	da.payload_len = sizeof(da) - 8;
 	da.svc_handle = svc_handle;
-	da.minor_vers = 0;
+	da.minor_vers = minor;
 	ds_send_msg(lc, &da, sizeof(da));
 }
 
 void
-ds_reg_nack(struct ldc_conn *lc, uint64_t svc_handle)
+ds_reg_nack(struct ldc_conn *lc, uint64_t svc_handle, uint16_t major)
 {
 	struct ds_reg_nack dn;
 
@@ -529,7 +538,7 @@ ds_reg_nack(struct ldc_conn *lc, uint64_t svc_handle)
 	dn.payload_len = sizeof(dn) - 8;
 	dn.svc_handle = svc_handle;
 	dn.result = DS_REG_VER_NACK;
-	dn.major_vers = 0;
+	dn.major_vers = major;
 	ds_send_msg(lc, &dn, sizeof(dn));
 }
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.219 2018/07/11 14:08:46 benno Exp $ */
+/*	$OpenBSD: kroute.c,v 1.221 2018/07/14 12:32:35 benno Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -135,8 +135,8 @@ void			 knexthop_clear(struct ktable *);
 
 struct kif_node		*kif_find(int);
 int			 kif_insert(struct kif_node *);
-int			 kif_remove(struct kif_node *);
-void			 kif_clear(void);
+int			 kif_remove(struct kif_node *, u_int);
+void			 kif_clear(u_int);
 
 int			 kif_kr_insert(struct kroute_node *);
 int			 kif_kr_remove(struct kroute_node *);
@@ -161,14 +161,14 @@ u_int8_t	prefixlen_classful(in_addr_t);
 u_int8_t	mask2prefixlen(in_addr_t);
 u_int8_t	mask2prefixlen6(struct sockaddr_in6 *);
 void		get_rtaddrs(int, struct sockaddr *, struct sockaddr **);
-void		if_change(u_short, int, struct if_data *);
-void		if_announce(void *);
+void		if_change(u_short, int, struct if_data *, u_int);
+void		if_announce(void *, u_int);
 
 int		send_rtmsg(int, int, struct ktable *, struct kroute *,
 		    u_int8_t);
 int		send_rt6msg(int, int, struct ktable *, struct kroute6 *,
 		    u_int8_t);
-int		dispatch_rtmsg(void);
+int		dispatch_rtmsg(u_int);
 int		fetchtable(struct ktable *, u_int8_t);
 int		fetchifs(int);
 int		dispatch_rtmsg_addr(struct rt_msghdr *,
@@ -759,13 +759,13 @@ krVPN4_delete(struct ktable *kt, struct kroute_full *kl, u_int8_t fib_prio)
 }
 
 void
-kr_shutdown(u_int8_t fib_prio)
+kr_shutdown(u_int8_t fib_prio, u_int rdomain)
 {
 	u_int	i;
 
 	for (i = krt_size; i > 0; i--)
 		ktable_free(i - 1, fib_prio);
-	kif_clear();
+	kif_clear(rdomain);
 }
 
 void
@@ -870,9 +870,9 @@ kr_fib_update_prio_all(u_int8_t fib_prio)
 }
 
 int
-kr_dispatch_msg(void)
+kr_dispatch_msg(u_int rdomain)
 {
-	return (dispatch_rtmsg());
+	return (dispatch_rtmsg(rdomain));
 }
 
 int
@@ -1923,7 +1923,7 @@ kif_insert(struct kif_node *kif)
 }
 
 int
-kif_remove(struct kif_node *kif)
+kif_remove(struct kif_node *kif, u_int rdomain)
 {
 	struct ktable	*kt;
 	struct kif_kr	*kkr;
@@ -1934,7 +1934,7 @@ kif_remove(struct kif_node *kif)
 		return (-1);
 	}
 
-	if ((kt = ktable_get(/* XXX */ 0)) == NULL)
+	if ((kt = ktable_get(rdomain)) == NULL)
 		goto done;
 
 	while ((kkr = LIST_FIRST(&kif->kroute_l)) != NULL) {
@@ -1956,12 +1956,12 @@ done:
 }
 
 void
-kif_clear(void)
+kif_clear(u_int rdomain)
 {
 	struct kif_node	*kif;
 
 	while ((kif = RB_MIN(kif_tree, &kit)) != NULL)
-		kif_remove(kif);
+		kif_remove(kif, rdomain);
 }
 
 int
@@ -2474,7 +2474,8 @@ get_rtaddrs(int addrs, struct sockaddr *sa, struct sockaddr **rti_info)
 }
 
 void
-if_change(u_short ifindex, int flags, struct if_data *ifd)
+if_change(u_short ifindex, int flags, struct if_data *ifd,
+    u_int rdomain)
 {
 	struct ktable		*kt;
 	struct kif_node		*kif;
@@ -2488,9 +2489,13 @@ if_change(u_short ifindex, int flags, struct if_data *ifd)
 		return;
 	}
 
+	log_info("%s: ifindex %u, ifi_rdomain %u", __func__, ifindex,
+	    ifd->ifi_rdomain);
+
 	kif->k.flags = flags;
 	kif->k.link_state = ifd->ifi_link_state;
 	kif->k.if_type = ifd->ifi_type;
+	kif->k.rdomain = ifd->ifi_rdomain;
 	kif->k.baudrate = ifd->ifi_baudrate;
 
 	send_imsg_session(IMSG_IFINFO, 0, &kif->k, sizeof(kif->k));
@@ -2500,7 +2505,7 @@ if_change(u_short ifindex, int flags, struct if_data *ifd)
 
 	kif->k.nh_reachable = reachable;
 
-	kt = ktable_get(/* XXX */ 0);
+	kt = ktable_get(rdomain);
 
 	LIST_FOREACH(kkr, &kif->kroute_l, entry) {
 		if (reachable)
@@ -2527,7 +2532,7 @@ if_change(u_short ifindex, int flags, struct if_data *ifd)
 }
 
 void
-if_announce(void *msg)
+if_announce(void *msg, u_int rdomain)
 {
 	struct if_announcemsghdr	*ifan;
 	struct kif_node			*kif;
@@ -2547,7 +2552,7 @@ if_announce(void *msg)
 		break;
 	case IFAN_DEPARTURE:
 		kif = kif_find(ifan->ifan_index);
-		kif_remove(kif);
+		kif_remove(kif, rdomain);
 		break;
 	}
 }
@@ -3057,6 +3062,7 @@ fetchifs(int ifindex)
 		kif->k.flags = ifm.ifm_flags;
 		kif->k.link_state = ifm.ifm_data.ifi_link_state;
 		kif->k.if_type = ifm.ifm_data.ifi_type;
+		kif->k.rdomain = ifm.ifm_data.ifi_rdomain;
 		kif->k.baudrate = ifm.ifm_data.ifi_baudrate;
 		kif->k.nh_reachable = kif_validate(&kif->k);
 
@@ -3079,7 +3085,7 @@ fetchifs(int ifindex)
 }
 
 int
-dispatch_rtmsg(void)
+dispatch_rtmsg(u_int rdomain)
 {
 	char			 buf[RT_BUF_SIZE];
 	ssize_t			 n;
@@ -3106,7 +3112,7 @@ dispatch_rtmsg(void)
 		rtm = (struct rt_msghdr *)next;
 		if (lim < next + sizeof(u_short) ||
 		    lim < next + rtm->rtm_msglen)
-			fatalx("dispatch_rtmsg: partial rtm in buffer");
+			fatalx("%s: partial rtm in buffer", __func__);
 		if (rtm->rtm_version != RTM_VERSION)
 			continue;
 
@@ -3135,10 +3141,10 @@ dispatch_rtmsg(void)
 		case RTM_IFINFO:
 			memcpy(&ifm, next, sizeof(ifm));
 			if_change(ifm.ifm_index, ifm.ifm_flags,
-			    &ifm.ifm_data);
+			    &ifm.ifm_data, rdomain);
 			break;
 		case RTM_IFANNOUNCE:
-			if_announce(next);
+			if_announce(next, rdomain);
 			break;
 		default:
 			/* ignore for now */

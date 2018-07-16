@@ -1,4 +1,4 @@
-/*	$OpenBSD: rad.c,v 1.4 2018/07/11 19:05:25 florian Exp $	*/
+/*	$OpenBSD: rad.c,v 1.8 2018/07/15 09:28:21 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -27,6 +27,7 @@
 
 #include <netinet/in.h>
 #include <net/if.h>
+#include <net/route.h>
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
 #include <netinet6/in6_var.h>
@@ -129,6 +130,8 @@ main(int argc, char *argv[])
 	int			 pipe_main2frontend[2];
 	int			 pipe_main2engine[2];
 	int			 icmp6sock, on = 1;
+	int			 frontend_routesock, rtfilter;
+	int			 control_fd;
 
 	conffile = CONF_FILE;
 	csock = RAD_SOCKET;
@@ -178,7 +181,7 @@ main(int argc, char *argv[])
 	if (engine_flag)
 		engine(debug, cmd_opts & OPT_VERBOSE);
 	else if (frontend_flag)
-		frontend(debug, cmd_opts & OPT_VERBOSE, csock);
+		frontend(debug, cmd_opts & OPT_VERBOSE);
 
 	/* parse config file */
 	if ((main_conf = parse_config(conffile)) == NULL) {
@@ -280,12 +283,28 @@ main(int argc, char *argv[])
 	    sizeof(filt)) == -1)
 		fatal("ICMP6_FILTER");
 
-	main_imsg_compose_frontend_fd(IMSG_ICMP6SOCK, 0, icmp6sock);
+	if ((frontend_routesock = socket(PF_ROUTE, SOCK_RAW | SOCK_CLOEXEC,
+	    AF_INET6)) < 0)
+		fatal("route socket");
 
+	rtfilter = ROUTE_FILTER(RTM_IFINFO) | ROUTE_FILTER(RTM_NEWADDR) |
+	    ROUTE_FILTER(RTM_DELADDR);
+	if (setsockopt(frontend_routesock, PF_ROUTE, ROUTE_MSGFILTER,
+	    &rtfilter, sizeof(rtfilter)) < 0)
+		fatal("setsockopt(ROUTE_MSGFILTER)");
+
+	if ((control_fd = control_init(csock)) == -1)
+		fatalx("control socket setup failed");
+
+	main_imsg_compose_frontend_fd(IMSG_ICMP6SOCK, 0, icmp6sock);
+	main_imsg_compose_frontend_fd(IMSG_ROUTESOCK, 0, frontend_routesock);
+	main_imsg_compose_frontend_fd(IMSG_CONTROLFD, 0, control_fd);
 	main_imsg_send_config(main_conf);
 
 	if (pledge("stdio rpath cpath sendfd", NULL) == -1)
 		fatal("pledge");
+
+	main_imsg_compose_frontend(IMSG_STARTUP, 0, NULL, 0);
 
 	event_dispatch();
 
@@ -575,6 +594,8 @@ main_imsg_send_config(struct rad_conf *xconf)
 {
 	struct ra_iface_conf	*ra_iface_conf;
 	struct ra_prefix_conf	*ra_prefix_conf;
+	struct ra_rdnss_conf	*ra_rdnss_conf;
+	struct ra_dnssl_conf	*ra_dnssl_conf;
 
 	/* Send fixed part of config to children. */
 	if (main_sendboth(IMSG_RECONF_CONF, xconf, sizeof(*xconf)) == -1)
@@ -595,6 +616,22 @@ main_imsg_send_config(struct rad_conf *xconf)
 		    entry) {
 			if (main_sendboth(IMSG_RECONF_RA_PREFIX,
 			    ra_prefix_conf, sizeof(*ra_prefix_conf)) == -1)
+				return (-1);
+		}
+		if (main_sendboth(IMSG_RECONF_RA_RDNS_LIFETIME,
+		    &ra_iface_conf->rdns_lifetime,
+		    sizeof(ra_iface_conf->rdns_lifetime)) == -1)
+			return (-1);
+		SIMPLEQ_FOREACH(ra_rdnss_conf, &ra_iface_conf->ra_rdnss_list,
+		    entry) {
+			if (main_sendboth(IMSG_RECONF_RA_RDNSS, ra_rdnss_conf,
+			    sizeof(*ra_rdnss_conf)) == -1)
+				return (-1);
+		}
+		SIMPLEQ_FOREACH(ra_dnssl_conf, &ra_iface_conf->ra_dnssl_list,
+		    entry) {
+			if (main_sendboth(IMSG_RECONF_RA_DNSSL, ra_dnssl_conf,
+			    sizeof(*ra_dnssl_conf)) == -1)
 				return (-1);
 		}
 	}

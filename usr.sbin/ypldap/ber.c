@@ -1,4 +1,4 @@
-/*	$OpenBSD: ber.c,v 1.24 2018/07/09 09:21:26 jca Exp $ */
+/*	$OpenBSD: ber.c,v 1.26 2018/07/13 08:50:38 rob Exp $ */
 
 /*
  * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -757,10 +757,10 @@ ber_scanf_elements(struct ber_element *ber, char *fmt, ...)
 }
 
 /*
- * write ber elements to the socket
+ * write ber elements to the write buffer
  *
  * params:
- *	ber	holds the socket
+ *	ber	holds the destination write buffer byte stream
  *	root	fully populated element tree
  *
  * returns:
@@ -796,10 +796,10 @@ ber_write_elements(struct ber *ber, struct ber_element *root)
 }
 
 /*
- * read ber elements from the socket
+ * read ber elements from the read buffer
  *
  * params:
- *	ber	holds the socket and lot more
+ *	ber	holds a fully populated read buffer byte stream
  *	root	if NULL, build up an element tree from what we receive on
  *		the wire. If not null, use the specified encoding for the
  *		elements received.
@@ -1032,12 +1032,11 @@ get_id(struct ber *b, unsigned long *tag, int *class, int *cstruct)
 			return -1;
 		t = (t << 7) | (u & ~BER_TAG_MORE);
 		i++;
+		if (i > sizeof(unsigned long)) {
+			errno = ERANGE;
+			return -1;
+		}
 	} while (u & BER_TAG_MORE);
-
-	if (i > sizeof(unsigned long)) {
-		errno = ERANGE;
-		return -1;
-	}
 
 	*tag = t;
 	return i + 1;
