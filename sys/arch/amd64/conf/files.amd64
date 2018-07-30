@@ -234,11 +234,6 @@ include "dev/i2c/files.i2c"
 include "dev/gpio/files.gpio"
 
 #
-# SPI
-#
-include "dev/spi/files.spi"
-
-#
 # ACPI
 #
 include "dev/acpi/files.acpi"

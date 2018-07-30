@@ -183,10 +183,6 @@ wsmouse* at iatp? mux 0
 skgpio0 at isa? port 0x680	# Soekris net6501 GPIO and LEDs
 gpio* at skgpio?
 
-ispi*	at acpi?		# Intel 100 Series SPI controller
-ispi*	at pci?
-spi*	at ispi?
-
 #option PCMCIAVERBOSE
 
 # PCI PCMCIA controllers
