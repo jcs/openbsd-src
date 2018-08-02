@@ -1,4 +1,4 @@
-/*	$OpenBSD: rad.h,v 1.11 2018/07/15 09:28:21 florian Exp $	*/
+/*	$OpenBSD: rad.h,v 1.14 2018/07/20 20:35:00 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -59,7 +59,6 @@ enum imsg_type {
 	IMSG_RECONF_RA_IFACE,
 	IMSG_RECONF_RA_AUTOPREFIX,
 	IMSG_RECONF_RA_PREFIX,
-	IMSG_RECONF_RA_RDNS_LIFETIME,
 	IMSG_RECONF_RA_RDNSS,
 	IMSG_RECONF_RA_DNSSL,
 	IMSG_RECONF_END,
@@ -76,7 +75,7 @@ enum imsg_type {
 	IMSG_SOCKET_IPC
 };
 
-/* RFC 4861 Section 4.2 */
+/* RFC 4861 Sections 4.2 and 4.6.4 */
 struct ra_options_conf {
 	int		dfr;			/* is default router? */
 	int		cur_hl;			/* current hop limit */
@@ -85,6 +84,7 @@ struct ra_options_conf {
 	int		router_lifetime;	/* default router lifetime */
 	uint32_t	reachable_time;
 	uint32_t	retrans_timer;
+	uint32_t	mtu;
 };
 
 /* RFC 4861 Section 4.6.2 */
@@ -153,8 +153,8 @@ int	imsg_compose_event(struct imsgev *, uint16_t, uint32_t, pid_t,
 
 struct rad_conf	*config_new_empty(void);
 void		 config_clear(struct rad_conf *);
-
-void	mask_prefix(struct in6_addr*, int len);
+void		 free_ra_iface_conf(struct ra_iface_conf *);
+void		 mask_prefix(struct in6_addr*, int len);
 const char	*sin6_to_str(struct sockaddr_in6 *);
 const char	*in6_to_str(struct in6_addr *);
 

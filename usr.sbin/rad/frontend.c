@@ -1,4 +1,4 @@
-/*	$OpenBSD: frontend.c,v 1.10 2018/07/15 09:28:21 florian Exp $	*/
+/*	$OpenBSD: frontend.c,v 1.14 2018/07/20 20:35:00 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -397,9 +397,6 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			SIMPLEQ_INSERT_TAIL(&ra_iface_conf->ra_prefix_list,
 			    ra_prefix_conf, entry);
 			break;
-		case IMSG_RECONF_RA_RDNS_LIFETIME:
-			ra_iface_conf->rdns_lifetime = *((uint32_t *)imsg.data);
-			break;
 		case IMSG_RECONF_RA_RDNSS:
 			if ((ra_rdnss_conf = malloc(sizeof(struct
 			    ra_rdnss_conf))) == NULL)
@@ -609,7 +606,7 @@ icmp6_receive(int fd, short events, void *arg)
 		return;
 	}
 
-	log_warnx("RA or RS with hop limit of %d from %s on %s",
+	log_debug("RA or RS with hop limit of %d from %s on %s",
 	    *hlimp, inet_ntop(AF_INET6, &icmp6ev.from.sin6_addr,
 	    ntopbuf, INET6_ADDRSTRLEN), if_indextoname(if_index,
 	    ifnamebuf));
@@ -838,8 +835,8 @@ get_interface_prefixes(struct ra_iface *ra_iface, struct ra_prefix_conf
 
 		add_new_prefix_to_ra_iface(ra_iface, &sin6->sin6_addr,
 		    prefixlen, autoprefix);
-
 	}
+	freeifaddrs(ifap);
 }
 
 struct ra_prefix_conf*
@@ -887,6 +884,7 @@ void
 build_packet(struct ra_iface *ra_iface)
 {
 	struct nd_router_advert		*ra;
+	struct nd_opt_mtu		*ndopt_mtu;
 	struct nd_opt_prefix_info	*ndopt_pi;
 	struct ra_iface_conf		*ra_iface_conf;
 	struct ra_options_conf		*ra_options_conf;
@@ -904,6 +902,8 @@ build_packet(struct ra_iface *ra_iface)
 	ra_options_conf = &ra_iface_conf->ra_options;
 
 	len = sizeof(*ra);
+	if (ra_options_conf->mtu > 0)
+		len += sizeof(*ndopt_mtu);
 	len += sizeof(*ndopt_pi) * ra_iface->prefix_count;
 	if (ra_iface_conf->rdnss_count > 0)
 		len += sizeof(*ndopt_rdnss) + ra_iface_conf->rdnss_count *
@@ -939,6 +939,15 @@ build_packet(struct ra_iface *ra_iface)
 	ra->nd_ra_reachable = htonl(ra_options_conf->reachable_time);
 	ra->nd_ra_retransmit = htonl(ra_options_conf->retrans_timer);
 	p += sizeof(*ra);
+
+	if (ra_options_conf->mtu > 0) {
+		ndopt_mtu = (struct nd_opt_mtu *)p;
+		ndopt_mtu->nd_opt_mtu_type = ND_OPT_MTU;
+		ndopt_mtu->nd_opt_mtu_len = 1;
+		ndopt_mtu->nd_opt_mtu_reserved = 0;
+		ndopt_mtu->nd_opt_mtu_mtu = htonl(ra_options_conf->mtu);
+		p += sizeof(*ndopt_mtu);
+	}
 
 	SIMPLEQ_FOREACH(ra_prefix_conf, &ra_iface->prefixes, entry) {
 		ndopt_pi = (struct nd_opt_prefix_info *)p;

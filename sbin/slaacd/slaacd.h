@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.h,v 1.17 2018/07/09 07:41:15 florian Exp $	*/
+/*	$OpenBSD: slaacd.h,v 1.20 2018/07/27 06:23:08 bket Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -55,6 +55,7 @@ enum imsg_type {
 	IMSG_CTL_SHOW_INTERFACE_INFO_DFR_PROPOSAL,
 	IMSG_CTL_END,
 	IMSG_UPDATE_ADDRESS,
+	IMSG_UPDATE_LINK_STATE,
 #endif	/* SMALL */
 	IMSG_CTL_SEND_SOLICITATION,
 	IMSG_SOCKET_IPC,
@@ -74,6 +75,7 @@ enum imsg_type {
 	IMSG_FAKE_ACK,
 	IMSG_CONFIGURE_DFR,
 	IMSG_WITHDRAW_DFR,
+	IMSG_DUP_ADDRESS,
 };
 
 enum {
@@ -109,6 +111,7 @@ struct ctl_engine_info_ra {
 	uint16_t		 router_lifetime;	/* in seconds */
 	uint32_t		 reachable_time;	/* in milliseconds */
 	uint32_t		 retrans_time;		/* in milliseconds */
+	uint32_t		 mtu;
 };
 
 struct ctl_engine_info_ra_prefix {
@@ -167,6 +170,11 @@ struct imsg_addrinfo {
 	uint32_t		vltime;
 	uint32_t		pltime;
 };
+
+struct imsg_link_state {
+	uint32_t	if_index;
+	int		link_state;
+};
 #endif	/* SMALL */
 
 struct imsg_ifinfo {
@@ -200,6 +208,11 @@ struct imsg_ra {
 	struct sockaddr_in6	from;
 	ssize_t			len;
 	uint8_t			packet[1500];
+};
+
+struct imsg_dup_addr {
+	uint32_t		if_index;
+	struct sockaddr_in6	addr;
 };
 
 /* slaacd.c */

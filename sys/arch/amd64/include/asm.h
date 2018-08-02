@@ -1,4 +1,4 @@
-/*	$OpenBSD: asm.h,v 1.15 2018/07/12 14:11:11 guenther Exp $	*/
+/*	$OpenBSD: asm.h,v 1.17 2018/07/24 02:42:25 guenther Exp $	*/
 /*	$NetBSD: asm.h,v 1.2 2003/05/02 18:05:47 yamt Exp $	*/
 
 /*-
@@ -90,6 +90,23 @@
 #define KUENTRY(x) \
 	KUTEXT; _ALIGN_TRAPS; _GENTRY(x)
 
+/* Return stack refill, to prevent speculation attacks on natural returns */
+#define	RET_STACK_REFILL_WITH_RCX	\
+		mov	$8,%rcx		; \
+		_ALIGN_TEXT		; \
+	3:	call	5f		; \
+	4:	pause			; \
+		lfence			; \
+		call	4b		; \
+		_ALIGN_TRAPS		; \
+	5:	call	7f		; \
+	6:	pause			; \
+		lfence			; \
+		call	6b		; \
+		_ALIGN_TRAPS		; \
+	7:	loop	3b		; \
+		add	$(16*8),%rsp
+
 #endif /* _KERNEL */
 
 #ifdef __STDC__
@@ -171,6 +188,7 @@
 #define	JMP_RETPOLINE(reg)		\
 		call	69f		; \
 	68:	pause			; \
+		lfence			; \
 		jmp	68b		; \
 		_ALIGN_TRAPS		; \
 	69:	mov	%reg,(%rsp)	; \

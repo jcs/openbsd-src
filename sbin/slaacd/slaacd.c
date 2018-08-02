@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.c,v 1.25 2018/07/09 07:41:15 florian Exp $	*/
+/*	$OpenBSD: slaacd.c,v 1.28 2018/07/27 06:20:01 bket Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -275,7 +275,7 @@ main(int argc, char *argv[])
 
 	rtfilter = ROUTE_FILTER(RTM_IFINFO) | ROUTE_FILTER(RTM_NEWADDR) |
 	    ROUTE_FILTER(RTM_DELADDR) | ROUTE_FILTER(RTM_PROPOSAL) |
-	    ROUTE_FILTER(RTM_DELETE);
+	    ROUTE_FILTER(RTM_DELETE) | ROUTE_FILTER(RTM_CHGADDRATTR);
 	if (setsockopt(frontend_routesock, PF_ROUTE, ROUTE_MSGFILTER,
 	    &rtfilter, sizeof(rtfilter)) < 0)
 		fatal("setsockopt(ROUTE_MSGFILTER)");
@@ -393,6 +393,7 @@ main_dispatch_frontend(int fd, short event, void *bula)
 	int			 shut = 0;
 #ifndef	SMALL
 	struct imsg_addrinfo	 imsg_addrinfo;
+	struct imsg_link_state	 imsg_link_state;
 	int			 verbose;
 #endif	/* SMALL */
 
@@ -437,6 +438,16 @@ main_dispatch_frontend(int fd, short event, void *bula)
 			    sizeof(imsg_addrinfo));
 			main_imsg_compose_engine(IMSG_UPDATE_ADDRESS, 0,
 			    &imsg_addrinfo, sizeof(imsg_addrinfo));
+			break;
+		case IMSG_UPDATE_LINK_STATE:
+			if (imsg.hdr.len != IMSG_HEADER_SIZE +
+			    sizeof(imsg_link_state))
+				fatal("%s: IMSG_UPDATE_LINK_STATE wrong "
+				    "length: %d", __func__, imsg.hdr.len);
+			memcpy(&imsg_link_state, imsg.data,
+			    sizeof(imsg_link_state));
+			main_imsg_compose_engine(IMSG_UPDATE_LINK_STATE, 0,
+			    &imsg_link_state, sizeof(imsg_link_state));
 			break;
 #endif	/* SMALL */
 		case IMSG_UPDATE_IF:
@@ -750,6 +761,18 @@ configure_interface(struct imsg_configure_address *address)
 
 	if (ioctl(ioctl_sock, SIOCAIFADDR_IN6, &in6_addreq) < 0)
 		fatal("SIOCAIFADDR_IN6");
+
+	if (address->mtu) {
+		struct ifreq	 ifr;
+
+		(void)strlcpy(ifr.ifr_name, in6_addreq.ifra_name,
+		    sizeof(ifr.ifr_name));
+		ifr.ifr_mtu = address->mtu;
+		log_debug("Setting MTU to %d", ifr.ifr_mtu);
+
+		if (ioctl(ioctl_sock, SIOCSIFMTU, &ifr) < 0)
+		    log_warn("failed to set MTU");
+	}
 }
 
 void

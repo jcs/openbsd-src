@@ -1,4 +1,4 @@
-/*	$OpenBSD: rad.c,v 1.8 2018/07/15 09:28:21 florian Exp $	*/
+/*	$OpenBSD: rad.c,v 1.12 2018/07/20 20:35:00 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -67,7 +67,6 @@ static int	main_imsg_send_config(struct rad_conf *);
 int	main_reload(void);
 int	main_sendboth(enum imsg_type, void *, uint16_t);
 
-void	free_ra_iface_conf(struct ra_iface_conf *);
 void	in6_prefixlen2mask(struct in6_addr *, int len);
 
 struct rad_conf	*main_conf;
@@ -129,7 +128,7 @@ main(int argc, char *argv[])
 	char			*saved_argv0;
 	int			 pipe_main2frontend[2];
 	int			 pipe_main2engine[2];
-	int			 icmp6sock, on = 1;
+	int			 icmp6sock, on = 1, off = 0;
 	int			 frontend_routesock, rtfilter;
 	int			 control_fd;
 
@@ -273,6 +272,10 @@ main(int argc, char *argv[])
 
 	if (setsockopt(icmp6sock, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &on,
 	    sizeof(on)) < 0)
+		fatal("IPV6_RECVHOPLIMIT");
+
+	if (setsockopt(icmp6sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &off,
+	    sizeof(off)) < 0)
 		fatal("IPV6_RECVHOPLIMIT");
 
 	/* only router advertisements and solicitations */
@@ -618,10 +621,6 @@ main_imsg_send_config(struct rad_conf *xconf)
 			    ra_prefix_conf, sizeof(*ra_prefix_conf)) == -1)
 				return (-1);
 		}
-		if (main_sendboth(IMSG_RECONF_RA_RDNS_LIFETIME,
-		    &ra_iface_conf->rdns_lifetime,
-		    sizeof(ra_iface_conf->rdns_lifetime)) == -1)
-			return (-1);
 		SIMPLEQ_FOREACH(ra_rdnss_conf, &ra_iface_conf->ra_rdnss_list,
 		    entry) {
 			if (main_sendboth(IMSG_RECONF_RA_RDNSS, ra_rdnss_conf,
@@ -657,16 +656,30 @@ void
 free_ra_iface_conf(struct ra_iface_conf *ra_iface_conf)
 {
 	struct ra_prefix_conf	*prefix;
+	struct ra_rdnss_conf	*ra_rdnss;
+	struct ra_dnssl_conf	*ra_dnssl;
 
 	if (!ra_iface_conf)
 		return;
 
 	free(ra_iface_conf->autoprefix);
 
-	while ((prefix = SIMPLEQ_FIRST(&ra_iface_conf->ra_prefix_list))
-	    != NULL) {
+	while ((prefix = SIMPLEQ_FIRST(&ra_iface_conf->ra_prefix_list)) !=
+	    NULL) {
 		SIMPLEQ_REMOVE_HEAD(&ra_iface_conf->ra_prefix_list, entry);
 		free(prefix);
+	}
+
+	while ((ra_rdnss = SIMPLEQ_FIRST(&ra_iface_conf->ra_rdnss_list)) !=
+	    NULL) {
+		SIMPLEQ_REMOVE_HEAD(&ra_iface_conf->ra_rdnss_list, entry);
+		free(ra_rdnss);
+	}
+
+	while ((ra_dnssl = SIMPLEQ_FIRST(&ra_iface_conf->ra_dnssl_list)) !=
+	    NULL) {
+		SIMPLEQ_REMOVE_HEAD(&ra_iface_conf->ra_dnssl_list, entry);
+		free(ra_dnssl);
 	}
 
 	free(ra_iface_conf);
@@ -712,6 +725,7 @@ config_new_empty(void)
 	xconf->ra_options.router_lifetime = 1800;
 	xconf->ra_options.reachable_time = 0;
 	xconf->ra_options.retrans_timer = 0;
+	xconf->ra_options.mtu = 0;
 
 	return (xconf);
 }

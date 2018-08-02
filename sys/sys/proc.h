@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.252 2018/07/13 09:25:23 beck Exp $	*/
+/*	$OpenBSD: proc.h,v 1.254 2018/07/28 18:07:26 deraadt Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -112,12 +112,8 @@ struct	emul {
 	char	*e_sigcode;		/* Start of sigcode */
 	char	*e_esigcode;		/* End of sigcode */
 	char	*e_esigret;		/* sigaction RET position */
-	int	e_flags;		/* Flags, see below */
 	struct uvm_object *e_sigobject;	/* shared sigcode object */
 };
-/* Flags for e_flags */
-#define	EMUL_ENABLED	0x0001		/* Allow exec to continue */
-#define	EMUL_NATIVE	0x0002		/* Always enabled */
 
 /*
  * time usage: accumulated times in ticks
@@ -208,7 +204,6 @@ struct process {
 	size_t ps_uvvcount;		/* count of unveil vnodes held */
 	size_t ps_uvncount;		/* count of unveil names allocated */
 	int ps_uvshrink;		/* do we need to shrink vnode list */
-	int ps_uvactive;		/* is unveil active */
 	int ps_uvdone;			/* no more unveil is permitted */
 	int ps_uvpcwdgone;		/* need to reevaluate cwd unveil */
 

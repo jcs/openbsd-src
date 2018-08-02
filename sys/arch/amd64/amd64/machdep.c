@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.248 2018/07/12 14:11:11 guenther Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.250 2018/07/30 09:04:52 jmatthew Exp $	*/
 /*	$NetBSD: machdep.c,v 1.3 2003/05/07 22:58:18 fvdl Exp $	*/
 
 /*-
@@ -1485,6 +1485,16 @@ init_x86_64(paddr_t first_avail)
 				continue;
 		}
 
+		/*
+		 * The direct map is limited to 512GB of memory, so
+		 * discard anything above that.
+		 */
+		if (e1 >= (uint64_t)512*1024*1024*1024) {
+			e1 = (uint64_t)512*1024*1024*1024;
+			if (s1 > e1)
+				continue;
+		}
+
 		/* Crop stuff into "640K hole" */
 		if (s1 < IOM_BEGIN && e1 > IOM_BEGIN)
 			e1 = IOM_BEGIN;
@@ -1705,7 +1715,7 @@ init_x86_64(paddr_t first_avail)
 
 	softintr_init();
 	splraise(IPL_IPI);
-	enable_intr();
+	intr_enable();
 
 #ifdef DDB
 	db_machine_init();
@@ -1718,8 +1728,7 @@ init_x86_64(paddr_t first_avail)
 void
 cpu_reset(void)
 {
-
-	disable_intr();
+	intr_disable();
 
 	if (cpuresetfn)
 		(*cpuresetfn)();

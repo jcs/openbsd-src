@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_unveil.c,v 1.2 2018/07/13 13:47:41 jsg Exp $	*/
+/*	$OpenBSD: kern_unveil.c,v 1.9 2018/07/30 15:16:27 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2017-2018 Bob Beck <beck@openbsd.org>
@@ -50,7 +50,7 @@ unvname_compare(const struct unvname *n1, const struct unvname *n2)
 }
 
 struct unvname *
-unvname_new(const char *name, size_t size, int flags)
+unvname_new(const char *name, size_t size, uint64_t flags)
 {
 	struct unvname *ret = malloc(sizeof(struct unvname), M_PROC, M_WAITOK);
 	ret->un_name = malloc(size, M_PROC, M_WAITOK);
@@ -61,9 +61,11 @@ unvname_new(const char *name, size_t size, int flags)
 }
 
 void
-unveil_free_traversed_vnodes(struct nameidata *ndp) {
+unveil_free_traversed_vnodes(struct nameidata *ndp)
+{
 	if (ndp->ni_tvpsize) {
 		size_t i;
+
 		for (i = 0; i < ndp->ni_tvpend; i++)
 			vrele(ndp->ni_tvp[i]); /* ref for being in list */
 		free(ndp->ni_tvp, M_PROC, ndp->ni_tvpsize * sizeof(struct vnode *));
@@ -73,7 +75,8 @@ unveil_free_traversed_vnodes(struct nameidata *ndp) {
 }
 
 void
-unveil_save_traversed_vnode(struct nameidata *ndp, struct vnode *vp) {
+unveil_save_traversed_vnode(struct nameidata *ndp, struct vnode *vp)
+{
 	if (ndp->ni_tvpsize == 0) {
 		ndp->ni_tvp = mallocarray(MAXPATHLEN, sizeof(struct vnode *),
 		    M_PROC, M_WAITOK);
@@ -108,6 +111,9 @@ unveil_delete_names(struct unveil *uv)
 		ret++;
 	}
 	rw_exit_write(&uv->uv_lock);
+#ifdef DEBUG_UNVEIL
+	printf("deleted %d names\n", ret);
+#endif
 	return ret;
 }
 
@@ -121,7 +127,7 @@ unveil_add_name(struct unveil *uv, char *name, uint64_t flags)
 	RBT_INSERT(unvname_rbt, &uv->uv_names, unvn);
 	rw_exit_write(&uv->uv_lock);
 #ifdef DEBUG_UNVEIL
-	printf("added name %s\n", name);
+	printf("added name %s underneath vnode %p\n", name, uv->uv_vp);
 #endif
 }
 
@@ -188,39 +194,48 @@ unveil_destroy(struct process *ps)
 	ps->ps_uvpaths = NULL;
 }
 
-struct unveil *
-unveil_copy(struct process *ps, size_t *count)
+void
+unveil_copy(struct process *parent, struct process *child)
 {
-	struct unveil *ret;
 	size_t i;
 
-        ret = mallocarray(UNVEIL_MAX_VNODES, sizeof(struct unveil),
+	if (parent->ps_uvvcount == 0)
+		return;
+
+	child->ps_uvpaths = mallocarray(UNVEIL_MAX_VNODES, sizeof(struct unveil),
 	    M_PROC, M_WAITOK|M_ZERO);
 
-	*count = 0;
-	for (i = 0; ps->ps_uvpaths != NULL && i < ps->ps_uvvcount; i++) {
-		struct unveil *uv = ps->ps_uvpaths + i;
+	child->ps_uvncount = 0;
+	for (i = 0; parent->ps_uvpaths != NULL && i < parent->ps_uvvcount;
+	     i++) {
+		struct unveil *from = parent->ps_uvpaths + i;
+		struct unveil *to = child->ps_uvpaths + i;
 		struct unvname *unvn, *next;
 
-		ret[i].uv_vp = uv->uv_vp;
-		if (ret[i].uv_vp != NULL) {
-			vref(ret[i].uv_vp);
-			ret[i].uv_vp->v_uvcount++;
+		to->uv_vp = from->uv_vp;
+		if (to->uv_vp != NULL) {
+			vref(to->uv_vp);
+			to->uv_vp->v_uvcount++;
 		}
-		rw_init(&ret[i].uv_lock, "unveil");
-		RBT_INIT(unvname_rbt, &ret[i].uv_names);
-		rw_enter_read(&uv->uv_lock);
-		RBT_FOREACH_SAFE(unvn, unvname_rbt, &uv->uv_names, next) {
-			unveil_add_name(&ret[i], unvn->un_name, unvn->un_flags);
-			(*count)++;
+		rw_init(&to->uv_lock, "unveil");
+		RBT_INIT(unvname_rbt, &to->uv_names);
+		rw_enter_read(&from->uv_lock);
+		RBT_FOREACH_SAFE(unvn, unvname_rbt, &from->uv_names, next) {
+			unveil_add_name(&child->ps_uvpaths[i], unvn->un_name,
+			    unvn->un_flags);
+			child->ps_uvncount++;
 		}
-		printf("count now %ld\n", *count);
-		rw_exit_read(&uv->uv_lock);
-		ret[i].uv_flags = uv->uv_flags;
+		rw_exit_read(&from->uv_lock);
+		to->uv_flags = from->uv_flags;
 	}
-	return(ret);
+	child->ps_uvvcount = parent->ps_uvvcount;
+	if (parent->ps_uvpcwd)
+		child->ps_uvpcwd = child->ps_uvpaths +
+		    (parent->ps_uvpcwd - parent->ps_uvpaths);
+	child->ps_uvpcwdgone = parent->ps_uvpcwdgone;
+	child->ps_uvdone = parent->ps_uvdone;
+	child->ps_uvshrink = parent->ps_uvshrink;
 }
-
 
 struct unveil *
 unveil_lookup(struct vnode *vp, struct proc *p)
@@ -237,6 +252,7 @@ unveil_lookup(struct vnode *vp, struct proc *p)
 	 */
 	if (pr->ps_uvshrink) {
 		size_t i = 0, j;
+
 		while (i < pr->ps_uvvcount) {
 			if (uv[i].uv_vp == NULL)  {
 				pr->ps_uvncount -= unveil_delete_names(&uv[i]);
@@ -266,11 +282,9 @@ unveil_lookup(struct vnode *vp, struct proc *p)
 		if (pr->ps_uvpcwd) {
 			printf("unveil: %s(%d): did not nuke cwd because %p != %p\n",
 			    p->p_p->ps_comm, p->p_p->ps_pid, vp, pr->ps_uvpcwd->uv_vp);
-		}
-		else
+		} else
 			printf("unveil: %s(%d): cwd is null\n",
  			    p->p_p->ps_comm, p->p_p->ps_pid);
-
 	}
 #endif
 
@@ -296,25 +310,25 @@ unveil_lookup(struct vnode *vp, struct proc *p)
 }
 
 int
-unveil_parseflags(const char *cflags, uint64_t *flags)
+unveil_parsepermissions(const char *permissions, uint64_t *perms)
 {
 	size_t i = 0;
 	char c;
 
-	*flags = 0;
-	while ((c = cflags[i++]) != '\0') {
+	*perms = 0;
+	while ((c = permissions[i++]) != '\0') {
 		switch (c) {
 		case 'r':
-			*flags |= PLEDGE_RPATH;
+			*perms |= PLEDGE_RPATH;
 			break;
 		case 'w':
-			*flags |= PLEDGE_WPATH;
+			*perms |= PLEDGE_WPATH;
 			break;
 		case 'x':
-			*flags |= PLEDGE_EXEC;
+			*perms |= PLEDGE_EXEC;
 			break;
 		case 'c':
-			*flags |= PLEDGE_CPATH;
+			*perms |= PLEDGE_CPATH;
 			break;
 		default:
 			return -1;
@@ -343,6 +357,9 @@ unveil_add_vnode(struct process *pr, struct vnode *vp)
 {
 	struct unveil *uv = NULL;
 	ssize_t i;
+
+	KASSERT(pr->ps_uvvcount < UNVEIL_MAX_VNODES);
+
 	for (i = pr->ps_uvvcount;
 	     i > 0 && pr->ps_uvpaths[i - 1].uv_vp > vp;
 	     i--)
@@ -366,6 +383,7 @@ unveil_add_traversed_vnodes(struct proc *p, struct nameidata *ndp)
 	 */
 	if (ndp->ni_tvpsize) {
 		size_t i;
+
 		for (i = 0; i < ndp->ni_tvpend; i++) {
 			struct vnode *vp = ndp->ni_tvp[i];
 			if (unveil_lookup(vp, p) == NULL) {
@@ -378,7 +396,7 @@ unveil_add_traversed_vnodes(struct proc *p, struct nameidata *ndp)
 }
 
 int
-unveil_add(struct proc *p, struct nameidata *ndp, const char *cflags)
+unveil_add(struct proc *p, struct nameidata *ndp, const char *permissions)
 {
 	struct process *pr = p->p_p;
 	struct vnode *vp;
@@ -389,7 +407,7 @@ unveil_add(struct proc *p, struct nameidata *ndp, const char *cflags)
 
 	KASSERT(ISSET(ndp->ni_cnd.cn_flags, HASBUF)); /* must have SAVENAME */
 
-	if (unveil_parseflags(cflags, &flags) == -1)
+	if (unveil_parsepermissions(permissions, &flags) == -1)
 		goto done;
 
 	if (pr->ps_uvpaths == NULL) {
@@ -397,7 +415,7 @@ unveil_add(struct proc *p, struct nameidata *ndp, const char *cflags)
 		    sizeof(struct unveil), M_PROC, M_WAITOK|M_ZERO);
 	}
 
-	if (pr->ps_uvvcount >= UNVEIL_MAX_VNODES ||
+	if ((pr->ps_uvvcount + ndp->ni_tvpend) >= UNVEIL_MAX_VNODES ||
 	    pr->ps_uvncount >= UNVEIL_MAX_NAMES) {
 		ret = E2BIG;
 		goto done;
@@ -407,9 +425,9 @@ unveil_add(struct proc *p, struct nameidata *ndp, const char *cflags)
 	directory_add = ndp->ni_vp != NULL && ndp->ni_vp->v_type == VDIR;
 
 	if (directory_add)
-		vp=ndp->ni_vp;
+		vp = ndp->ni_vp;
 	else
-		vp=ndp->ni_dvp;
+		vp = ndp->ni_dvp;
 
 	KASSERT(vp->v_type == VDIR);
 	vref(vp);
@@ -462,7 +480,7 @@ unveil_add(struct proc *p, struct nameidata *ndp, const char *cflags)
 			}
 		}
 
-	} else  {
+	} else {
 		/*
 		 * New unveil involving this directory vnode.
 		 */
@@ -573,12 +591,13 @@ unveil_flagmatch(struct nameidata *ni, uint64_t flags)
  * unveil checking - for component directories in a namei lookup.
  */
 void
-unveil_check_component(struct proc *p, struct nameidata *ni, struct vnode *dp )
+unveil_check_component(struct proc *p, struct nameidata *ni, struct vnode *dp)
 {
 	struct unveil *uv = NULL;
 
 	if (ni->ni_pledge != PLEDGE_UNVEIL) {
 		if ((ni->ni_cnd.cn_flags & BYPASSUNVEIL) == 0 &&
+		    ! (ni->ni_cnd.cn_flags & ISDOTDOT) &&
 		    (uv = unveil_lookup(dp, p)) != NULL) {
 			/* if directory flags match, it's a match */
 			if (unveil_flagmatch(ni, uv->uv_flags)) {
@@ -593,8 +612,7 @@ unveil_check_component(struct proc *p, struct nameidata *ni, struct vnode *dp )
 				}
 			}
 		}
-	}
-	else
+	} else
 		unveil_save_traversed_vnode(ni, dp);
 }
 
@@ -675,8 +693,7 @@ done:
 		    ni->ni_unveil_match->uv_vp);
 #endif
 		return (0);
-	}
-	else if (p->p_p->ps_uvpcwd) {
+	} else if (p->p_p->ps_uvpcwd) {
 		ni->ni_unveil_match = p->p_p->ps_uvpcwd;
 #ifdef DEBUG_UNVEIL
 		printf("unveil: %s(%d): used cwd unveil vnode from vnode %p\n",
@@ -709,6 +726,7 @@ unveil_removevnode(struct vnode *vp)
 #endif
 	LIST_FOREACH(pr, &allprocess, ps_list) {
 		struct unveil * uv;
+
 		if ((uv = unveil_lookup(vp, pr->ps_mainproc)) != NULL) {
 			uv->uv_vp = NULL;
 			uv->uv_flags = 0;

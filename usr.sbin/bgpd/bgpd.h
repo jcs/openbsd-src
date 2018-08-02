@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.326 2018/07/14 12:32:35 benno Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.328 2018/07/22 16:52:27 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -1165,6 +1165,18 @@ int		 aspath_match(void *, u_int16_t, struct filter_as *, u_int32_t);
 int		 as_compare(u_int8_t, u_int32_t, u_int32_t, u_int32_t,
 		    u_int32_t);
 u_int32_t	 aspath_extract(const void *, int);
+int		 aspath_verify(void *, u_int16_t, int);
+#define		 AS_ERR_LEN	-1
+#define		 AS_ERR_TYPE	-2
+#define		 AS_ERR_BAD	-3
+#define		 AS_ERR_SOFT	-4
+u_char		*aspath_inflate(void *, u_int16_t, u_int16_t *);
+int		 nlri_get_prefix(u_char *, u_int16_t, struct bgpd_addr *,
+		     u_int8_t *);
+int		 nlri_get_prefix6(u_char *, u_int16_t, struct bgpd_addr *,
+		     u_int8_t *);
+int		 nlri_get_vpn4(u_char *, u_int16_t, struct bgpd_addr *,
+		     u_int8_t *, int);
 int		 prefix_compare(const struct bgpd_addr *,
 		    const struct bgpd_addr *, int);
 in_addr_t	 prefixlen2mask(u_int8_t);
@@ -1177,6 +1189,10 @@ sa_family_t	 aid2af(u_int8_t);
 int		 af2aid(sa_family_t, u_int8_t, u_int8_t *);
 struct sockaddr	*addr2sa(struct bgpd_addr *, u_int16_t);
 void		 sa2addr(struct sockaddr *, struct bgpd_addr *);
+uint64_t	 ift2ifm(uint8_t);
+const char *	 get_media_descr(uint64_t);
+const char *	 get_linkstate(uint8_t, int);
+const char *	 get_baudrate(u_int64_t, char *);
 
 static const char * const log_procnames[] = {
 	"parent",

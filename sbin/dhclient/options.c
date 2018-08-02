@@ -1,4 +1,4 @@
-/*	$OpenBSD: options.c,v 1.109 2017/10/11 00:09:32 krw Exp $	*/
+/*	$OpenBSD: options.c,v 1.113 2018/07/22 21:32:04 krw Exp $	*/
 
 /* DHCP options parsing and reassembly. */
 
@@ -404,12 +404,18 @@ int
 parse_option_buffer(struct option_data *options, unsigned char *buffer,
     int length)
 {
-	unsigned char	*s, *t, *end = buffer + length;
+	unsigned char	*s, *t, *end;
 	char		*name, *fmt;
-	int		 len, code;
+	int		 code, len, newlen;
 
-	for (s = buffer; *s != DHO_END && s < end; ) {
+	s = buffer;
+	end = s + length;
+	while (s < end) {
 		code = s[0];
+
+		/* End options terminate processing. */
+		if (code == DHO_END)
+			break;
 
 		/* Pad options don't have a length - just skip them. */
 		if (code == DHO_PAD) {
@@ -441,8 +447,7 @@ parse_option_buffer(struct option_data *options, unsigned char *buffer,
 		}
 
 		/*
-		 * Strip trailing NULs from ascii ('t') options. They
-		 * will be treated as DHO_PAD options. i.e. ignored. RFC 2132
+		 * Strip trailing NULs from ascii ('t') options. RFC 2132
 		 * says "Options containing NVT ASCII data SHOULD NOT include
 		 * a trailing NULL; however, the receiver of such options
 		 * MUST be prepared to delete trailing nulls if they exist."
@@ -453,37 +458,21 @@ parse_option_buffer(struct option_data *options, unsigned char *buffer,
 		}
 
 		/*
-		 * If we haven't seen this option before, just make
-		 * space for it and copy it there.
+		 * Concatenate new data + NUL to existing option data.
+		 *
+		 * Note that the NUL is *not* counted in the len field!
 		 */
-		if (options[code].data == NULL) {
-			t = calloc(1, len + 1);
-			if (t == NULL)
-				fatal("option %s", name);
-			/*
-			 * Copy and NUL-terminate the option (in case
-			 * it's an ASCII string).
-			 */
-			memcpy(t, &s[2], len);
-			t[len] = 0;
-			options[code].len = len;
-			options[code].data = t;
-		} else {
-			/*
-			 * If it's a repeat, concatenate it to whatever
-			 * we last saw.
-			 */
-			t = calloc(1, len + options[code].len + 1);
-			if (t == NULL)
-				fatal("option %s concat", name);
-			memcpy(t, options[code].data, options[code].len);
-			memcpy(t + options[code].len, &s[2], len);
-			options[code].len += len;
-			t[options[code].len] = 0;
-			free(options[code].data);
-			options[code].data = t;
-		}
-		s += len + 2;
+		newlen = options[code].len + len;
+		if ((t = realloc(options[code].data, newlen + 1)) == NULL)
+			fatal("option %s", name);
+
+		memcpy(t + options[code].len, &s[2], len);
+		t[newlen] = 0;
+
+		options[code].len = newlen;
+		options[code].data = t;
+
+		s += s[1] + 2;
 	}
 
 	return 1;

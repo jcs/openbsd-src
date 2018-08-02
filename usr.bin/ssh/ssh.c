@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh.c,v 1.485 2018/07/16 11:05:41 dtucker Exp $ */
+/* $OpenBSD: ssh.c,v 1.490 2018/07/27 05:34:42 dtucker Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -94,7 +94,6 @@
 #include "sshpty.h"
 #include "match.h"
 #include "msg.h"
-#include "uidswap.h"
 #include "version.h"
 #include "ssherr.h"
 #include "myproposal.h"
@@ -162,10 +161,6 @@ struct sockaddr_storage hostaddr;
 /* Private host keys. */
 Sensitive sensitive_data;
 
-/* Original real UID. */
-uid_t original_real_uid;
-uid_t original_effective_uid;
-
 /* command to be executed */
 struct sshbuf *command;
 
@@ -208,7 +203,7 @@ tilde_expand_paths(char **paths, u_int num_paths)
 	char *cp;
 
 	for (i = 0; i < num_paths; i++) {
-		cp = tilde_expand_filename(paths[i], original_real_uid);
+		cp = tilde_expand_filename(paths[i], getuid());
 		free(paths[i]);
 		paths[i] = cp;
 	}
@@ -592,33 +587,15 @@ main(int ac, char **av)
 	 */
 	closefrom(STDERR_FILENO + 1);
 
-	/*
-	 * Save the original real uid.  It will be needed later (uid-swapping
-	 * may clobber the real uid).
-	 */
-	original_real_uid = getuid();
-	original_effective_uid = geteuid();
+	if (getuid() != geteuid())
+		fatal("ssh setuid not supported.");
+	if (getgid() != getegid())
+		fatal("ssh setgid not supported.");
 
-	/*
-	 * Use uid-swapping to give up root privileges for the duration of
-	 * option processing.  We will re-instantiate the rights when we are
-	 * ready to create the privileged port, and will permanently drop
-	 * them when the port has been created (actually, when the connection
-	 * has been made, as we may need to create the port several times).
-	 */
-	PRIV_END;
-
-	/* If we are installed setuid root be careful to not drop core. */
-	if (original_real_uid != original_effective_uid) {
-		struct rlimit rlim;
-		rlim.rlim_cur = rlim.rlim_max = 0;
-		if (setrlimit(RLIMIT_CORE, &rlim) < 0)
-			fatal("setrlimit failed: %.100s", strerror(errno));
-	}
 	/* Get user data. */
-	pw = getpwuid(original_real_uid);
+	pw = getpwuid(getuid());
 	if (!pw) {
-		logit("No user exists for uid %lu", (u_long)original_real_uid);
+		logit("No user exists for uid %lu", (u_long)getuid());
 		exit(255);
 	}
 	/* Take a copy of the returned structure. */
@@ -721,7 +698,6 @@ main(int ac, char **av)
 				fatal("Invalid multiplex command.");
 			break;
 		case 'P':	/* deprecated */
-			options.use_privileged_port = 0;
 			break;
 		case 'Q':
 			cp = NULL;
@@ -762,7 +738,7 @@ main(int ac, char **av)
 			options.gss_deleg_creds = 1;
 			break;
 		case 'i':
-			p = tilde_expand_filename(optarg, original_real_uid);
+			p = tilde_expand_filename(optarg, getuid());
 			if (stat(p, &st) < 0)
 				fprintf(stderr, "Warning: Identity file %s "
 				    "not accessible: %s.\n", p,
@@ -1225,9 +1201,6 @@ main(int ac, char **av)
 	if (options.connection_attempts <= 0)
 		fatal("Invalid number of ConnectionAttempts");
 
-	if (original_effective_uid != 0)
-		options.use_privileged_port = 0;
-
 	if (sshbuf_len(command) != 0 && options.remote_command != NULL)
 		fatal("Cannot execute command-line and remote command.");
 
@@ -1311,8 +1284,7 @@ main(int ac, char **av)
 	}
 
 	if (options.control_path != NULL) {
-		cp = tilde_expand_filename(options.control_path,
-		    original_real_uid);
+		cp = tilde_expand_filename(options.control_path, getuid());
 		free(options.control_path);
 		options.control_path = percent_expand(cp,
 		    "C", conn_hash_hex,
@@ -1361,8 +1333,7 @@ main(int ac, char **av)
 	/* Open a connection to the remote host. */
 	if (ssh_connect(ssh, host, addrs, &hostaddr, options.port,
 	    options.address_family, options.connection_attempts,
-	    &timeout_ms, options.tcp_keep_alive,
-	    options.use_privileged_port) != 0)
+	    &timeout_ms, options.tcp_keep_alive) != 0)
 		exit(255);
 
 	if (addrs != NULL)
@@ -1384,52 +1355,38 @@ main(int ac, char **av)
 	sensitive_data.nkeys = 0;
 	sensitive_data.keys = NULL;
 	if (options.hostbased_authentication) {
-		sensitive_data.nkeys = 11;
+		sensitive_data.nkeys = 10;
 		sensitive_data.keys = xcalloc(sensitive_data.nkeys,
 		    sizeof(struct sshkey));
 
 		/* XXX check errors? */
-#define L_KEY(t,p,o) \
-	check_load(sshkey_load_private_type(t, p, "", \
-	    &(sensitive_data.keys[o]), NULL, NULL), p, "key")
-#define L_KEYCERT(t,p,o) \
-	check_load(sshkey_load_private_cert(t, p, "", \
-	    &(sensitive_data.keys[o]), NULL), p, "cert and key")
-#define L_PUBKEY(p,o) \
+#define L_PUBKEY(p,o) do { \
+	if ((o) >= sensitive_data.nkeys) \
+		fatal("%s pubkey out of array bounds", __func__); \
 	check_load(sshkey_load_public(p, &(sensitive_data.keys[o]), NULL), \
-	    p, "pubkey")
-#define L_CERT(p,o) \
-	check_load(sshkey_load_cert(p, &(sensitive_data.keys[o])), p, "cert")
+	    p, "pubkey"); \
+} while (0)
+#define L_CERT(p,o) do { \
+	if ((o) >= sensitive_data.nkeys) \
+		fatal("%s cert out of array bounds", __func__); \
+	check_load(sshkey_load_cert(p, &(sensitive_data.keys[o])), p, "cert"); \
+} while (0)
 
 		if (options.hostbased_authentication == 1) {
-			L_CERT(_PATH_HOST_ECDSA_KEY_FILE, 1);
-			L_CERT(_PATH_HOST_ED25519_KEY_FILE, 2);
-			L_CERT(_PATH_HOST_RSA_KEY_FILE, 3);
-			L_CERT(_PATH_HOST_DSA_KEY_FILE, 4);
-			L_PUBKEY(_PATH_HOST_ECDSA_KEY_FILE, 5);
-			L_PUBKEY(_PATH_HOST_ED25519_KEY_FILE, 6);
-			L_PUBKEY(_PATH_HOST_RSA_KEY_FILE, 7);
-			L_PUBKEY(_PATH_HOST_DSA_KEY_FILE, 8);
-			L_CERT(_PATH_HOST_XMSS_KEY_FILE, 9);
-			L_PUBKEY(_PATH_HOST_XMSS_KEY_FILE, 10);
+			L_CERT(_PATH_HOST_ECDSA_KEY_FILE, 0);
+			L_CERT(_PATH_HOST_ED25519_KEY_FILE, 1);
+			L_CERT(_PATH_HOST_RSA_KEY_FILE, 2);
+			L_CERT(_PATH_HOST_DSA_KEY_FILE, 3);
+			L_PUBKEY(_PATH_HOST_ECDSA_KEY_FILE, 4);
+			L_PUBKEY(_PATH_HOST_ED25519_KEY_FILE, 5);
+			L_PUBKEY(_PATH_HOST_RSA_KEY_FILE, 6);
+			L_PUBKEY(_PATH_HOST_DSA_KEY_FILE, 7);
+			L_CERT(_PATH_HOST_XMSS_KEY_FILE, 8);
+			L_PUBKEY(_PATH_HOST_XMSS_KEY_FILE, 9);
 		}
 	}
-	/*
-	 * Get rid of any extra privileges that we may have.  We will no
-	 * longer need them.  Also, extra privileges could make it very hard
-	 * to read identity files and other non-world-readable files from the
-	 * user's home directory if it happens to be on a NFS volume where
-	 * root is mapped to nobody.
-	 */
-	if (original_effective_uid == 0) {
-		PRIV_START;
-		permanently_set_uid(pw);
-	}
 
-	/*
-	 * Now that we are back to our own permissions, create ~/.ssh
-	 * directory if it doesn't already exist.
-	 */
+	/* Create ~/.ssh * directory if it doesn't already exist. */
 	if (config == NULL) {
 		r = snprintf(buf, sizeof buf, "%s%s%s", pw->pw_dir,
 		    strcmp(pw->pw_dir, "/") ? "/" : "", _PATH_SSH_USER_DIR);
@@ -1449,7 +1406,7 @@ main(int ac, char **av)
 			unsetenv(SSH_AUTHSOCKET_ENV_NAME);
 		} else {
 			p = tilde_expand_filename(options.identity_agent,
-			    original_real_uid);
+			    getuid());
 			cp = percent_expand(p,
 			    "d", pw->pw_dir,
 			    "h", host,
@@ -2010,8 +1967,6 @@ load_public_identity_files(struct passwd *pw)
 		free(keys);
 	}
 #endif /* ENABLE_PKCS11 */
-	if ((pw = getpwuid(original_real_uid)) == NULL)
-		fatal("load_public_identity_files: getpwuid failed");
 	for (i = 0; i < options.num_identity_files; i++) {
 		if (n_ids >= SSH_MAX_IDENTITY_FILES ||
 		    strcasecmp(options.identity_files[i], "none") == 0) {
@@ -2019,8 +1974,7 @@ load_public_identity_files(struct passwd *pw)
 			options.identity_files[i] = NULL;
 			continue;
 		}
-		cp = tilde_expand_filename(options.identity_files[i],
-		    original_real_uid);
+		cp = tilde_expand_filename(options.identity_files[i], getuid());
 		filename = percent_expand(cp, "d", pw->pw_dir,
 		    "u", pw->pw_name, "l", thishost, "h", host,
 		    "r", options.user, (char *)NULL);
@@ -2071,7 +2025,7 @@ load_public_identity_files(struct passwd *pw)
 		fatal("%s: too many certificates", __func__);
 	for (i = 0; i < options.num_certificate_files; i++) {
 		cp = tilde_expand_filename(options.certificate_files[i],
-		    original_real_uid);
+		    getuid());
 		filename = percent_expand(cp,
 		    "d", pw->pw_dir,
 		    "h", host,

@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.77 2018/07/05 19:25:38 kettenis Exp $
+# $OpenBSD: GENERIC,v 1.81 2018/08/02 14:13:44 patrick Exp $
 #
 # GENERIC machine description file
 #
@@ -58,7 +58,8 @@ uk*		at scsibus?
 
 ampintc*	at fdt? early 1
 ampintcmsi*	at fdt? early 1
-agintc*		at fdt?
+agintc*		at fdt? early 1
+agintcmsi*	at fdt? early 1
 agtimer*	at fdt?
 ahci*		at fdt?
 dwge*		at fdt?
@@ -111,6 +112,10 @@ imxesdhc*	at fdt?
 sdmmc*		at imxesdhc?
 imxpd*		at fdt?
 imxdwusb*	at fdt?
+imxspi*		at fdt?
+ssdfb*		at iic?
+ssdfb*		at spi?
+wsdisplay*	at ssdfb?
 
 # Raspberry Pi 3
 bcmaux*		at fdt?

@@ -1,4 +1,4 @@
-/*	$OpenBSD: printconf.c,v 1.2 2018/07/15 09:28:21 florian Exp $	*/
+/*	$OpenBSD: printconf.c,v 1.4 2018/07/20 17:55:09 bket Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -54,6 +54,8 @@ print_ra_options(const char *indent, const struct ra_options_conf *ra_options)
 	printf("%srouter lifetime %d\n", indent, ra_options->router_lifetime);
 	printf("%sreachable time %u\n", indent, ra_options->reachable_time);
 	printf("%sretrans timer %u\n", indent, ra_options->retrans_timer);
+	if (ra_options->mtu > 0)
+		printf("%smtu %u\n", indent, ra_options->mtu);
 }
 
 void
@@ -104,7 +106,7 @@ print_config(struct rad_conf *conf)
 			printf("\tdns {\n");
 			printf("\t\tlifetime %u\n", iface->rdns_lifetime);
 			if (!SIMPLEQ_EMPTY(&iface->ra_rdnss_list)) {
-				printf("\t\tresolver {\n");
+				printf("\t\tnameserver {\n");
 				SIMPLEQ_FOREACH(ra_rdnss,
 				    &iface->ra_rdnss_list, entry) {
 					inet_ntop(AF_INET6, &ra_rdnss->rdnss,

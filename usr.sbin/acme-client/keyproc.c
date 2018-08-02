@@ -1,4 +1,4 @@
-/*	$Id: keyproc.c,v 1.9 2017/03/26 18:41:02 deraadt Exp $ */
+/*	$Id: keyproc.c,v 1.11 2018/07/29 20:22:02 tb Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -252,13 +252,10 @@ out:
 	free(der64);
 	free(sans);
 	free(san);
-	if (x != NULL)
-		X509_REQ_free(x);
-	if (name != NULL)
-		X509_NAME_free(name);
-	if (pkey != NULL)
-		EVP_PKEY_free(pkey);
+	X509_REQ_free(x);
+	X509_NAME_free(name);
+	EVP_PKEY_free(pkey);
 	ERR_print_errors_fp(stderr);
 	ERR_free_strings();
-	return (rc);
+	return rc;
 }

@@ -75,6 +75,7 @@
 ./etc/examples/ospfd.conf
 ./etc/examples/pf.conf
 ./etc/examples/printcap
+./etc/examples/rad.conf
 ./etc/examples/radiusd.conf
 ./etc/examples/rbootd.conf
 ./etc/examples/rc.local
@@ -183,7 +184,6 @@
 ./etc/rc.d/relayd
 ./etc/rc.d/ripd
 ./etc/rc.d/route6d
-./etc/rc.d/rtadvd
 ./etc/rc.d/sasyncd
 ./etc/rc.d/sensorsd
 ./etc/rc.d/slaacd
@@ -2222,6 +2222,7 @@
 ./usr/libexec/mail.lmtp
 ./usr/libexec/mail.local
 ./usr/libexec/mail.maildir
+./usr/libexec/mail.mboxfile
 ./usr/libexec/mail.mda
 ./usr/libexec/makewhatis
 ./usr/libexec/ntalkd
@@ -2482,7 +2483,6 @@
 ./usr/sbin/rpc.bootparamd
 ./usr/sbin/rpc.lockd
 ./usr/sbin/rpc.statd
-./usr/sbin/rtadvd
 ./usr/sbin/sa
 ./usr/sbin/sasyncd
 ./usr/sbin/sendmail

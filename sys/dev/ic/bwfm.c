@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.52 2018/07/16 13:46:17 patrick Exp $ */
+/* $OpenBSD: bwfm.c,v 1.54 2018/07/25 20:37:11 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -174,7 +174,6 @@ bwfm_attach(struct bwfm_softc *sc)
 	struct ifnet *ifp = &ic->ic_if;
 
 	TAILQ_INIT(&sc->sc_bcdc_rxctlq);
-	TAILQ_INIT(&sc->sc_bcdc_txctlq);
 
 	/* Init host async commands ring. */
 	sc->sc_cmdq.cur = sc->sc_cmdq.next = sc->sc_cmdq.queued = 0;
@@ -1359,9 +1358,8 @@ bwfm_proto_bcdc_txctl(struct bwfm_softc *sc, int reqid, char *buf, size_t *len)
 	ctl->reqid = reqid;
 	ctl->buf = buf;
 	ctl->len = *len;
-	TAILQ_INSERT_TAIL(&sc->sc_bcdc_txctlq, ctl, next);
 
-	if (sc->sc_bus_ops->bs_txctl(sc)) {
+	if (sc->sc_bus_ops->bs_txctl(sc, ctl)) {
 		DPRINTF(("%s: tx failed\n", DEVNAME(sc)));
 		return 1;
 	}
@@ -1927,7 +1925,6 @@ bwfm_rx_auth_ind(struct bwfm_softc *sc, struct bwfm_event *e, size_t len)
 	struct ifnet *ifp = &ic->ic_if;
 	struct ieee80211_rxinfo rxi;
 	struct ieee80211_frame *wh;
-	struct ieee80211_node *ni;
 	struct mbuf *m;
 	uint32_t pktlen, ieslen;
 
@@ -1954,18 +1951,10 @@ bwfm_rx_auth_ind(struct bwfm_softc *sc, struct bwfm_event *e, size_t len)
 
 	/* Finalize mbuf. */
 	m->m_pkthdr.len = m->m_len = pktlen;
-	ni = ieee80211_find_node(ic, wh->i_addr2);
-	if (ni == NULL)
-		ni = ieee80211_alloc_node(ic, wh->i_addr2);
-	if (ni == NULL) {
-		m_free(m);
-		return;
-	}
-	ni->ni_chan = &ic->ic_channels[0];
 	rxi.rxi_flags = 0;
 	rxi.rxi_rssi = 0;
 	rxi.rxi_tstamp = 0;
-	ieee80211_input(ifp, m, ni, &rxi);
+	ieee80211_input(ifp, m, ic->ic_bss, &rxi);
 }
 
 void
@@ -2014,13 +2003,10 @@ bwfm_rx_assoc_ind(struct bwfm_softc *sc, struct bwfm_event *e, size_t len,
 	/* Finalize mbuf. */
 	m->m_pkthdr.len = m->m_len = pktlen;
 	ni = ieee80211_find_node(ic, wh->i_addr2);
-	if (ni == NULL)
-		ni = ieee80211_alloc_node(ic, wh->i_addr2);
 	if (ni == NULL) {
 		m_free(m);
 		return;
 	}
-	ni->ni_chan = &ic->ic_channels[0];
 	rxi.rxi_flags = 0;
 	rxi.rxi_rssi = 0;
 	rxi.rxi_tstamp = 0;

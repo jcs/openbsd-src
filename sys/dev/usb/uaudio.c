@@ -1,4 +1,4 @@
-/*	$OpenBSD: uaudio.c,v 1.129 2018/07/07 13:03:08 landry Exp $ */
+/*	$OpenBSD: uaudio.c,v 1.131 2018/07/30 11:51:42 ratchov Exp $ */
 /*	$NetBSD: uaudio.c,v 1.90 2004/10/29 17:12:53 kent Exp $	*/
 
 /*
@@ -314,8 +314,6 @@ const usb_interface_descriptor_t *uaudio_find_iface
 	(const char *, int, int *, int, int);
 
 void	uaudio_mixer_add_ctl(struct uaudio_softc *, struct mixerctl *);
-char	*uaudio_id_name
-	(struct uaudio_softc *, const struct io_terminal *, int);
 uByte	uaudio_get_cluster_nchan
 	(int, const struct io_terminal *);
 void	uaudio_add_input
@@ -672,14 +670,6 @@ uaudio_mixer_add_ctl(struct uaudio_softc *sc, struct mixerctl *mc)
 #endif
 }
 
-char *
-uaudio_id_name(struct uaudio_softc *sc, const struct io_terminal *iot, int id)
-{
-	static char buf[32];
-	snprintf(buf, sizeof(buf), "i%d", id);
-	return (buf);
-}
-
 uByte
 uaudio_get_cluster_nchan(int id, const struct io_terminal *iot)
 {
@@ -805,9 +795,8 @@ uaudio_add_mixer(struct uaudio_softc *sc, const struct io_terminal *iot, int id)
 						mix.wValue[k++] =
 							MAKE(p+c+1, o+1);
 				}
-			snprintf(mix.ctlname, sizeof(mix.ctlname), "mix%d-%s",
-			    d->bUnitId, uaudio_id_name(sc, iot,
-			    d->baSourceId[i]));
+			snprintf(mix.ctlname, sizeof(mix.ctlname), "mix%d-i%d",
+			    d->bUnitId, d->baSourceId[i]);
 			mix.nchan = chs;
 			uaudio_mixer_add_ctl(sc, &mix);
 		} else {
@@ -1353,8 +1342,7 @@ uaudio_io_terminaltype(int outtype, struct io_terminal *iot, int id)
 		it->output = tml;
 		if (it->inputs != NULL) {
 			for (i = 0; i < it->inputs_size; i++)
-				if (it->inputs[i] != NULL)
-					free(it->inputs[i], M_TEMP, 0);
+				free(it->inputs[i], M_TEMP, 0);
 			free(it->inputs, M_TEMP, 0);
 		}
 		it->inputs_size = 0;
@@ -1874,8 +1862,7 @@ uaudio_identify_ac(struct uaudio_softc *sc, const usb_config_descriptor_t *cdesc
 			continue;
 		pot = iot[i].d.ot;
 		tml = uaudio_io_terminaltype(UGETW(pot->wTerminalType), iot, i);
-		if (tml != NULL)
-			free(tml, M_TEMP, 0);
+		free(tml, M_TEMP, 0);
 	}
 
 #ifdef UAUDIO_DEBUG
@@ -1988,14 +1975,11 @@ uaudio_identify_ac(struct uaudio_softc *sc, const usb_config_descriptor_t *cdesc
 		if (iot[i].d.desc == NULL)
 			continue;
 		if (iot[i].inputs != NULL) {
-			for (j = 0; j < iot[i].inputs_size; j++) {
-				if (iot[i].inputs[j] != NULL)
-					free(iot[i].inputs[j], M_TEMP, 0);
-			}
+			for (j = 0; j < iot[i].inputs_size; j++)
+				free(iot[i].inputs[j], M_TEMP, 0);
 			free(iot[i].inputs, M_TEMP, 0);
 		}
-		if (iot[i].output != NULL)
-			free(iot[i].output, M_TEMP, 0);
+		free(iot[i].output, M_TEMP, 0);
 		iot[i].d.desc = NULL;
 	}
 	free(iot, M_TEMP, 256 * sizeof(struct io_terminal));

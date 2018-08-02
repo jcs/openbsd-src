@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpufunc.h,v 1.26 2018/06/30 10:16:35 kettenis Exp $	*/
+/*	$OpenBSD: cpufunc.h,v 1.30 2018/07/27 21:11:31 kettenis Exp $	*/
 /*	$NetBSD: cpufunc.h,v 1.3 2003/05/08 10:27:43 fvdl Exp $	*/
 
 /*-
@@ -152,18 +152,6 @@ void	setidt(int idx, /*XXX*/caddr_t func, int typ, int dpl);
 
 /* XXXX ought to be in psl.h with spl() functions */
 
-static __inline void
-disable_intr(void)
-{
-	__asm volatile("cli");
-}
-
-static __inline void
-enable_intr(void)
-{
-	__asm volatile("sti");
-}
-
 static __inline u_long
 read_rflags(void)
 {
@@ -182,7 +170,7 @@ write_rflags(u_long ef)
 static __inline void
 intr_enable(void)
 {
-	enable_intr();
+	__asm volatile("sti");
 }
 
 static __inline u_long
@@ -191,7 +179,7 @@ intr_disable(void)
 	u_long ef;
 
 	ef = read_rflags();
-	disable_intr();
+	__asm volatile("cli");
 	return (ef);
 }
 
@@ -289,7 +277,23 @@ static __inline void
 mwait(u_long extensions, u_int hints)
 {
 
-	__asm volatile("mwait" : : "a" (hints), "c" (extensions));
+	__asm volatile(
+		"	mwait			;"
+		"	mov	$8,%%rcx	;"
+		"	.align	16,0x90		;"
+		"3:	call	5f		;"
+		"4:	pause			;"
+		"	lfence			;"
+		"	call	4b		;"
+		"	.align	16,0xcc		;"
+		"5:	call	7f		;"
+		"6:	pause			;"
+		"	lfence			;"
+		"	call	6b		;"
+		"	.align	16,0xcc		;"
+		"7:	loop	3b		;"
+		"	add	$(16*8),%%rsp"
+	    : "+c" (extensions) : "a" (hints));
 }
 
 static __inline void

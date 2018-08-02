@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.26 2018/07/13 08:18:11 claudio Exp $ */
+/*	$OpenBSD: util.c,v 1.28 2018/07/22 16:52:27 claudio Exp $ */
 
 /*
  * Copyright (c) 2006 Claudio Jeker <claudio@openbsd.org>
@@ -18,6 +18,9 @@
  */
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <net/if.h>
+#include <net/if_media.h>
+#include <net/if_types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -504,6 +507,148 @@ aspath_inflate(void *data, u_int16_t len, u_int16_t *newlen)
 	return (ndata);
 }
 
+/* NLRI functions to extract prefixes from the NLRI blobs */
+static int
+extract_prefix(u_char *p, u_int16_t len, void *va,
+    u_int8_t pfxlen, u_int8_t max)
+{
+	static u_char addrmask[] = {
+	    0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff };
+	u_char		*a = va;
+	int		 i;
+	u_int16_t	 plen = 0;
+
+	for (i = 0; pfxlen && i < max; i++) {
+		if (len <= plen)
+			return (-1);
+		if (pfxlen < 8) {
+			a[i] = *p++ & addrmask[pfxlen];
+			plen++;
+			break;
+		} else {
+			a[i] = *p++;
+			plen++;
+			pfxlen -= 8;
+		}
+	}
+	return (plen);
+}
+
+int
+nlri_get_prefix(u_char *p, u_int16_t len, struct bgpd_addr *prefix,
+    u_int8_t *prefixlen)
+{
+	u_int8_t	 pfxlen;
+	int		 plen;
+
+	if (len < 1)
+		return (-1);
+
+	pfxlen = *p++;
+	len--;
+
+	bzero(prefix, sizeof(struct bgpd_addr));
+	prefix->aid = AID_INET;
+	*prefixlen = pfxlen;
+
+	if (pfxlen > 32)
+		return (-1);
+	if ((plen = extract_prefix(p, len, &prefix->v4, pfxlen,
+	    sizeof(prefix->v4))) == -1)
+		return (-1);
+
+	return (plen + 1);	/* pfxlen needs to be added */
+}
+
+int
+nlri_get_prefix6(u_char *p, u_int16_t len, struct bgpd_addr *prefix,
+    u_int8_t *prefixlen)
+{
+	int		plen;
+	u_int8_t	pfxlen;
+
+	if (len < 1)
+		return (-1);
+
+	pfxlen = *p++;
+	len--;
+
+	bzero(prefix, sizeof(struct bgpd_addr));
+	prefix->aid = AID_INET6;
+	*prefixlen = pfxlen;
+
+	if (pfxlen > 128)
+		return (-1);
+	if ((plen = extract_prefix(p, len, &prefix->v6, pfxlen,
+	    sizeof(prefix->v6))) == -1)
+		return (-1);
+
+	return (plen + 1);	/* pfxlen needs to be added */
+}
+
+int
+nlri_get_vpn4(u_char *p, u_int16_t len, struct bgpd_addr *prefix,
+    u_int8_t *prefixlen, int withdraw)
+{
+	int		 rv, done = 0;
+	u_int8_t	 pfxlen;
+	u_int16_t	 plen;
+
+	if (len < 1)
+		return (-1);
+
+	memcpy(&pfxlen, p, 1);
+	p += 1;
+	plen = 1;
+
+	bzero(prefix, sizeof(struct bgpd_addr));
+
+	/* label stack */
+	do {
+		if (len - plen < 3 || pfxlen < 3 * 8)
+			return (-1);
+		if (prefix->vpn4.labellen + 3U >
+		    sizeof(prefix->vpn4.labelstack))
+			return (-1);
+		if (withdraw) {
+			/* on withdraw ignore the labelstack all together */
+			plen += 3;
+			pfxlen -= 3 * 8;
+			break;
+		}
+		prefix->vpn4.labelstack[prefix->vpn4.labellen++] = *p++;
+		prefix->vpn4.labelstack[prefix->vpn4.labellen++] = *p++;
+		prefix->vpn4.labelstack[prefix->vpn4.labellen] = *p++;
+		if (prefix->vpn4.labelstack[prefix->vpn4.labellen] &
+		    BGP_MPLS_BOS)
+			done = 1;
+		prefix->vpn4.labellen++;
+		plen += 3;
+		pfxlen -= 3 * 8;
+	} while (!done);
+
+	/* RD */
+	if (len - plen < (int)sizeof(u_int64_t) ||
+	    pfxlen < sizeof(u_int64_t) * 8)
+		return (-1);
+	memcpy(&prefix->vpn4.rd, p, sizeof(u_int64_t));
+	pfxlen -= sizeof(u_int64_t) * 8;
+	p += sizeof(u_int64_t);
+	plen += sizeof(u_int64_t);
+
+	/* prefix */
+	prefix->aid = AID_VPN_IPv4;
+	*prefixlen = pfxlen;
+
+	if (pfxlen > 32)
+		return (-1);
+	if ((rv = extract_prefix(p, len, &prefix->vpn4.addr,
+	    pfxlen, sizeof(prefix->vpn4.addr))) == -1)
+		return (-1);
+
+	return (plen + rv);
+}
+
 /*
  * This function will have undefined behaviour if the passed in prefixlen is
  * to large for the respective bgpd_addr address family.
@@ -707,3 +852,73 @@ sa2addr(struct sockaddr *sa, struct bgpd_addr *addr)
 		break;
 	}
 }
+
+const struct if_status_description
+		if_status_descriptions[] = LINK_STATE_DESCRIPTIONS;
+const struct ifmedia_description
+		ifm_type_descriptions[] = IFM_TYPE_DESCRIPTIONS;
+
+uint64_t
+ift2ifm(uint8_t if_type)
+{
+	switch (if_type) {
+	case IFT_ETHER:
+		return (IFM_ETHER);
+	case IFT_FDDI:
+		return (IFM_FDDI);
+	case IFT_CARP:
+		return (IFM_CARP);
+	case IFT_IEEE80211:
+		return (IFM_IEEE80211);
+	default:
+		return (0);
+	}
+}
+
+const char *
+get_media_descr(uint64_t media_type)
+{
+	const struct ifmedia_description	*p;
+
+	for (p = ifm_type_descriptions; p->ifmt_string != NULL; p++)
+		if (media_type == p->ifmt_word)
+			return (p->ifmt_string);
+
+	return ("unknown media");
+}
+
+const char *
+get_linkstate(uint8_t if_type, int link_state)
+{
+	const struct if_status_description *p;
+	static char buf[8];
+
+	for (p = if_status_descriptions; p->ifs_string != NULL; p++) {
+		if (LINK_STATE_DESC_MATCH(p, if_type, link_state))
+			return (p->ifs_string);
+	}
+	snprintf(buf, sizeof(buf), "[#%d]", link_state);
+	return (buf);
+}
+
+const char *
+get_baudrate(u_int64_t baudrate, char *unit)
+{
+	static char bbuf[16];
+
+	if (baudrate > IF_Gbps(1))
+		snprintf(bbuf, sizeof(bbuf), "%llu G%s",
+		    baudrate / IF_Gbps(1), unit);
+	else if (baudrate > IF_Mbps(1))
+		snprintf(bbuf, sizeof(bbuf), "%llu M%s",
+		    baudrate / IF_Mbps(1), unit);
+	else if (baudrate > IF_Kbps(1))
+		snprintf(bbuf, sizeof(bbuf), "%llu K%s",
+		    baudrate / IF_Kbps(1), unit);
+	else
+		snprintf(bbuf, sizeof(bbuf), "%llu %s",
+		    baudrate, unit);
+
+	return (bbuf);
+}
+

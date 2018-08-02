@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.179 2018/07/16 09:09:20 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.182 2018/07/31 15:30:04 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -68,8 +68,9 @@ struct rde_peer {
 	struct uptree_attr		 up_attrs;
 	struct uplist_attr		 updates[AID_MAX];
 	struct uplist_prefix		 withdraws[AID_MAX];
-	struct capabilities		 capa;
 	time_t				 staletime[AID_MAX];
+	struct capabilities		 capa;
+	struct rib			*rib;
 	u_int64_t			 prefix_rcvd_update;
 	u_int64_t			 prefix_rcvd_withdraw;
 	u_int64_t			 prefix_rcvd_eor;
@@ -83,7 +84,6 @@ struct rde_peer {
 	u_int32_t			 up_nlricnt;
 	u_int32_t			 up_wcnt;
 	enum peer_state			 state;
-	struct rib			*rib;
 	u_int16_t			 short_as;
 	u_int16_t			 mrt_idx;
 	u_int8_t			 reconf_out;	/* out filter changed */
@@ -316,6 +316,8 @@ struct prefix {
 
 struct filterstate {
 	struct rde_aspath	aspath;
+	struct nexthop		*nexthop;
+	unsigned int		nhflags;
 };
 
 extern struct rde_memstats rdemem;
@@ -360,17 +362,11 @@ void		 attr_free(struct rde_aspath *, struct attr *);
 #define		 attr_optlen(x)	\
     ((x)->len > 255 ? (x)->len + 4 : (x)->len + 3)
 
-int		 aspath_verify(void *, u_int16_t, int);
-#define		 AS_ERR_LEN	-1
-#define		 AS_ERR_TYPE	-2
-#define		 AS_ERR_BAD	-3
-#define		 AS_ERR_SOFT	-4
 void		 aspath_init(u_int32_t);
 void		 aspath_shutdown(void);
 void		 aspath_hash_stats(struct rde_hashstats *);
 struct aspath	*aspath_get(void *, u_int16_t);
 void		 aspath_put(struct aspath *);
-u_char		*aspath_inflate(void *, u_int16_t, u_int16_t *);
 u_char		*aspath_deflate(u_char *, u_int16_t *, int *);
 void		 aspath_merge(struct rde_aspath *, struct attr *);
 u_char		*aspath_dump(struct aspath *);
@@ -405,7 +401,7 @@ u_char		*community_ext_delete_non_trans(u_char *, u_int16_t,
 void		 prefix_evaluate(struct prefix *, struct rib_entry *);
 
 /* rde_filter.c */
-void		 rde_filterstate_prep(struct filterstate *, struct rde_aspath *);
+void		 rde_filterstate_prep(struct filterstate *, struct rde_aspath *,		    struct nexthop *);
 void		 rde_filterstate_clean(struct filterstate *);
 enum filter_actions rde_filter(struct filter_head *, struct rde_peer *,
 		     struct prefix *, struct filterstate *);
@@ -506,6 +502,12 @@ prefix_aspath(struct prefix *p)
 	return (p->aspath);
 }
 
+static inline struct nexthop *
+prefix_nexthop(struct prefix *p)
+{
+	return (p->aspath->nexthop);
+}
+
 static inline struct rde_peer *
 prefix_peer(struct prefix *p)
 {
@@ -528,7 +530,7 @@ int		 nexthop_compare(struct nexthop *, struct nexthop *);
 void		 up_init(struct rde_peer *);
 void		 up_down(struct rde_peer *);
 int		 up_test_update(struct rde_peer *, struct prefix *);
-int		 up_generate(struct rde_peer *, struct rde_aspath *,
+int		 up_generate(struct rde_peer *, struct filterstate *,
 		     struct bgpd_addr *, u_int8_t);
 void		 up_generate_updates(struct filter_head *, struct rde_peer *,
 		     struct prefix *, struct prefix *);

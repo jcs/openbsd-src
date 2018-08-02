@@ -1,4 +1,4 @@
-/* $OpenBSD: misc.c,v 1.129 2018/06/09 03:01:12 djm Exp $ */
+/* $OpenBSD: misc.c,v 1.131 2018/07/27 05:13:02 dtucker Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  * Copyright (c) 2005,2006 Damien Miller.  All rights reserved.
@@ -58,7 +58,6 @@
 #include "ssh.h"
 #include "sshbuf.h"
 #include "ssherr.h"
-#include "uidswap.h"
 
 /* remove newline at end of string */
 char *
@@ -1498,15 +1497,6 @@ forward_equals(const struct Forward *a, const struct Forward *b)
 	if (strcmp_maybe_null(a->connect_path, b->connect_path) == 0)
 		return 0;
 	/* allocated_port and handle are not checked */
-	return 1;
-}
-
-/* returns 1 if bind to specified port by specified user is permitted */
-int
-bind_permitted(int port, uid_t uid)
-{
-	if (port < IPPORT_RESERVED && uid != 0)
-		return 0;
 	return 1;
 }
 
