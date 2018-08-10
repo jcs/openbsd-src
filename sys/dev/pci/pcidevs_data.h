@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1855 2018/07/24 21:16:59 kettenis Exp 
+ *	OpenBSD: pcidevs,v 1.1857 2018/08/09 09:03:12 kettenis Exp 
  */
 
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
@@ -2398,6 +2398,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ASMEDIA, PCI_PRODUCT_ASMEDIA_ASM1042A,
 	    "ASM1042A xHCI",
+	},
+	{
+	    PCI_VENDOR_ASMEDIA, PCI_PRODUCT_ASMEDIA_ASM1184E,
+	    "ASM1184e",
 	},
 	{
 	    PCI_VENDOR_ASMEDIA, PCI_PRODUCT_ASMEDIA_ASM1042AE,
@@ -24136,7 +24140,7 @@ static const struct pci_known_product pci_known_products[] = {
 	    "8185",
 	},
 	{
-	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RT8188,
+	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8188CE,
 	    "8188CE",
 	},
 	{

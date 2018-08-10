@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_unveil.c,v 1.9 2018/07/30 15:16:27 deraadt Exp $	*/
+/*	$OpenBSD: kern_unveil.c,v 1.12 2018/08/07 15:07:54 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2017-2018 Bob Beck <beck@openbsd.org>
@@ -50,7 +50,7 @@ unvname_compare(const struct unvname *n1, const struct unvname *n2)
 }
 
 struct unvname *
-unvname_new(const char *name, size_t size, uint64_t flags)
+unvname_new(const char *name, size_t size, u_char flags)
 {
 	struct unvname *ret = malloc(sizeof(struct unvname), M_PROC, M_WAITOK);
 	ret->un_name = malloc(size, M_PROC, M_WAITOK);
@@ -118,7 +118,7 @@ unveil_delete_names(struct unveil *uv)
 }
 
 void
-unveil_add_name(struct unveil *uv, char *name, uint64_t flags)
+unveil_add_name(struct unveil *uv, char *name, u_char flags)
 {
 	struct unvname *unvn;
 
@@ -310,7 +310,7 @@ unveil_lookup(struct vnode *vp, struct proc *p)
 }
 
 int
-unveil_parsepermissions(const char *permissions, uint64_t *perms)
+unveil_parsepermissions(const char *permissions, u_char *perms)
 {
 	size_t i = 0;
 	char c;
@@ -319,16 +319,16 @@ unveil_parsepermissions(const char *permissions, uint64_t *perms)
 	while ((c = permissions[i++]) != '\0') {
 		switch (c) {
 		case 'r':
-			*perms |= PLEDGE_RPATH;
+			*perms |= UNVEIL_READ;
 			break;
 		case 'w':
-			*perms |= PLEDGE_WPATH;
+			*perms |= UNVEIL_WRITE;
 			break;
 		case 'x':
-			*perms |= PLEDGE_EXEC;
+			*perms |= UNVEIL_EXEC;
 			break;
 		case 'c':
-			*perms |= PLEDGE_CPATH;
+			*perms |= UNVEIL_CREATE;
 			break;
 		default:
 			return -1;
@@ -338,7 +338,7 @@ unveil_parsepermissions(const char *permissions, uint64_t *perms)
 }
 
 int
-unveil_setflags(uint64_t *flags, uint64_t nflags)
+unveil_setflags(u_char *flags, u_char nflags)
 {
 #if 0
 	if (((~(*flags)) & nflags) != 0) {
@@ -403,7 +403,7 @@ unveil_add(struct proc *p, struct nameidata *ndp, const char *permissions)
 	struct unveil *uv;
 	int directory_add;
 	int ret = EINVAL;
-	u_int64_t flags;
+	u_char flags;
 
 	KASSERT(ISSET(ndp->ni_cnd.cn_flags, HASBUF)); /* must have SAVENAME */
 
@@ -530,9 +530,10 @@ unveil_add(struct proc *p, struct nameidata *ndp, const char *permissions)
  * XXX collapse down later once debug surely unneded
  */
 int
-unveil_flagmatch(struct nameidata *ni, uint64_t flags)
+unveil_flagmatch(struct nameidata *ni, u_char flags)
 {
 	if (flags == 0) {
+		/* XXX Fix this, you can do it better */
 		if (ni->ni_pledge & PLEDGE_STAT) {
 #ifdef DEBUG_UNVEIL
 			printf("allowing stat/accesss for 0 flags");
@@ -552,34 +553,34 @@ unveil_flagmatch(struct nameidata *ni, uint64_t flags)
 		CLR(ni->ni_pledge, PLEDGE_STATLIE);
 		return 1;
 	}
-	if (ni->ni_pledge & PLEDGE_RPATH) {
-		if ((flags & PLEDGE_RPATH) == 0) {
+	if (ni->ni_unveil & UNVEIL_READ) {
+		if ((flags & UNVEIL_READ) == 0) {
 #ifdef DEBUG_UNVEIL
-			printf("Pledge wants read but disallowed\n");
+			printf("unveil lacks UNVEIL_READ\n");
 #endif
 			return 0;
 		}
 	}
-	if (ni->ni_pledge & PLEDGE_WPATH) {
-		if ((flags & PLEDGE_WPATH) == 0) {
+	if (ni->ni_unveil & UNVEIL_WRITE) {
+		if ((flags & UNVEIL_WRITE) == 0) {
 #ifdef DEBUG_UNVEIL
-			printf("Pledge wants write but disallowed\n");
+			printf("unveil lacks UNVEIL_WRITE\n");
 #endif
 			return 0;
 		}
 	}
-	if (ni->ni_pledge & PLEDGE_EXEC) {
-		if ((flags & PLEDGE_EXEC) == 0) {
+	if (ni->ni_unveil & UNVEIL_EXEC) {
+		if ((flags & UNVEIL_EXEC) == 0) {
 #ifdef DEBUG_UNVEIL
-			printf("Pledge wants exec but disallowed\n");
+			printf("unveil lacks UNVEIL_EXEC\n");
 #endif
 			return 0;
 		}
 	}
-	if (ni->ni_pledge & PLEDGE_CPATH) {
-		if ((flags & PLEDGE_CPATH) == 0) {
+	if (ni->ni_unveil & UNVEIL_CREATE) {
+		if ((flags & UNVEIL_CREATE) == 0) {
 #ifdef DEBUG_UNVEIL
-			printf("Pledge wants cpath but disallowed\n");
+			printf("unveil lacks UNVEIL_CREATE\n");
 #endif
 			return 0;
 		}
@@ -717,28 +718,37 @@ void
 unveil_removevnode(struct vnode *vp)
 {
 	struct process *pr;
-	int count = 0;
 
 	if (vp->v_uvcount == 0)
 		return;
+
 #ifdef DEBUG_UNVEIL
-	printf("unveil_removevnode found vnode %p with count %d", vp, vp->v_uvcount);
+	printf("unveil_removevnode found vnode %p with count %d\n",
+	    vp, vp->v_uvcount);
 #endif
+	vref(vp); /* make sure it is held till we are done */
+
 	LIST_FOREACH(pr, &allprocess, ps_list) {
 		struct unveil * uv;
 
-		if ((uv = unveil_lookup(vp, pr->ps_mainproc)) != NULL) {
+		if ((uv = unveil_lookup(vp, pr->ps_mainproc)) != NULL &&
+		    uv->uv_vp != NULL) {
 			uv->uv_vp = NULL;
 			uv->uv_flags = 0;
 #ifdef DEBUG_UNVEIL
-	printf("unveil_removevnode vnode %p now count %d", vp, vp->v_uvcount);
+			printf("unveil_removevnode vnode %p now count %d\n",
+			    vp, vp->v_uvcount);
 #endif
 			pr->ps_uvshrink = 1;
-			count++;
+			if (vp->v_uvcount > 0) {
+				vrele(vp);
+				vp->v_uvcount--;
+			} else
+				panic("vp %p, v_uvcount of %d should be 0",
+				    vp, vp->v_uvcount);
 		}
 	}
-	KASSERT(vp->v_uvcount == count);
+	KASSERT(vp->v_uvcount == 0);
 
-	while (vp->v_uvcount--)
-		vrele(vp);
+	vrele(vp); /* release our ref */
 }

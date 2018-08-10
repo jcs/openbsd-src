@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_attr.c,v 1.105 2018/07/13 08:18:11 claudio Exp $ */
+/*	$OpenBSD: rde_attr.c,v 1.109 2018/08/10 11:15:53 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -441,8 +441,8 @@ attr_put(struct attr *a)
 
 /* aspath specific functions */
 
-u_int16_t	 aspath_countlength(struct aspath *, u_int16_t, int);
-void		 aspath_countcopy(struct aspath *, u_int16_t, u_int8_t *,
+static u_int16_t aspath_countlength(struct aspath *, u_int16_t, int);
+static void	 aspath_countcopy(struct aspath *, u_int16_t, u_int8_t *,
 		     u_int16_t, int);
 struct aspath	*aspath_lookup(const void *, u_int16_t);
 
@@ -692,7 +692,7 @@ aspath_count(const void *data, u_int16_t len)
 	return (cnt);
 }
 
-u_int16_t
+static u_int16_t
 aspath_countlength(struct aspath *aspath, u_int16_t cnt, int headcnt)
 {
 	const u_int8_t	*seg;
@@ -728,7 +728,7 @@ aspath_countlength(struct aspath *aspath, u_int16_t cnt, int headcnt)
 	return (clen);
 }
 
-void
+static void
 aspath_countcopy(struct aspath *aspath, u_int16_t cnt, u_int8_t *buf,
     u_int16_t size, int headcnt)
 {
@@ -922,7 +922,7 @@ aspath_lenmatch(struct aspath *a, enum aslen_spec type, u_int aslen)
 	u_int32_t	 as, lastas = 0;
 	u_int		 count = 0;
 	u_int16_t	 len, seg_size;
-	u_int8_t	 i, seg_len;
+	u_int8_t	 i, seg_len, seg_type;
 
 	if (type == ASLEN_MAX) {
 		if (aslen < aspath_count(a->data, a->len))
@@ -934,15 +934,19 @@ aspath_lenmatch(struct aspath *a, enum aslen_spec type, u_int aslen)
 	/* type == ASLEN_SEQ */
 	seg = a->data;
 	for (len = a->len; len > 0; len -= seg_size, seg += seg_size) {
+		seg_type = seg[0];
 		seg_len = seg[1];
 		seg_size = 2 + sizeof(u_int32_t) * seg_len;
 
+			
 		for (i = 0; i < seg_len; i++) {
-			/* what should we do with AS_SET? */
 			as = aspath_extract(seg, i);
 			if (as == lastas) {
 				if (aslen < ++count)
 					return (1);
+			} else if (seg_type == AS_SET) {
+				/* AS path 3 { 4 3 7 } 3 will have count = 3 */
+				continue;
 			} else
 				count = 1;
 			lastas = as;
@@ -1337,6 +1341,12 @@ community_ext_matchone(struct filter_extcommunity *c, u_int16_t neighas,
 	return (0);
 }
 
+struct wire_largecommunity {
+	uint32_t	as;
+	uint32_t	ld1;
+	uint32_t	ld2;
+};
+
 int
 community_large_match(struct rde_aspath *asp, int64_t as, int64_t ld1,
     int64_t ld2)
@@ -1500,7 +1510,7 @@ community_ext_delete_non_trans(u_char *data, u_int16_t len, u_int16_t *newlen)
 
 	newdata = malloc(nlen);
 	if (newdata == NULL)
-		fatal("%s", __func__);;
+		fatal("%s", __func__);
 
 	for (l = 0, nlen = 0; l < len; l += sizeof(u_int64_t)) {
 		if (!(ext[l] & EXT_COMMUNITY_TRANSITIVE)) {

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ntpd.c,v 1.114 2018/08/02 13:05:34 mestre Exp $ */
+/*	$OpenBSD: ntpd.c,v 1.116 2018/08/08 22:56:42 deraadt Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -244,7 +244,11 @@ main(int argc, char *argv[])
 	 * Constraint processes are forked with certificates in memory,
 	 * then privdrop into chroot before speaking to the outside world.
 	 */
-	if (pledge("stdio rpath cpath inet settime proc exec id", NULL) == -1)
+	if (unveil("/etc/ssl/cert.pem", "r") == -1)
+		err(1, "unveil");
+	if (unveil("/usr/sbin/ntpd", "x") == -1)
+		err(1, "unveil");
+	if (pledge("stdio rpath inet settime proc exec id", NULL) == -1)
 		err(1, "pledge");
 
 	while (quit == 0) {
@@ -327,7 +331,6 @@ main(int argc, char *argv[])
 
 	msgbuf_clear(&ibuf->w);
 	free(ibuf);
-	control_cleanup(CTLSOCKET);
 	log_info("Terminating");
 	return (0);
 }

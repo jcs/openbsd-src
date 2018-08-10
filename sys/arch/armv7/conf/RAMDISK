@@ -1,4 +1,4 @@
-#	$OpenBSD: RAMDISK,v 1.102 2018/07/09 18:50:38 patrick Exp $
+#	$OpenBSD: RAMDISK,v 1.105 2018/08/05 13:20:58 jsg Exp $
 
 machine		armv7 arm
 
@@ -30,6 +30,7 @@ config		bsd root on rd0a swap on rd0b
 
 # The main bus device
 mainbus0	at root
+softraid0	at root
 simplebus*	at fdt?
 cpu0		at mainbus?
 
@@ -114,6 +115,7 @@ sysreg*		at fdt?
 pluart*		at fdt?
 plrtc*		at fdt?
 virtio*		at fdt?
+virtio*		at pci?
 pciecam*	at fdt?
 pci*		at pciecam?
 
@@ -235,6 +237,7 @@ smsc*		at uhub?		# SMSC LAN95xx Ethernet
 cdce*		at uhub?		# CDC Ethernet
 udav*		at uhub?		# Davicom DM9601 based Ethernet
 mos*		at uhub?		# MOSCHIP MCS7730/7830 10/100 Ethernet
+mue*		at uhub?		# Microchip LAN75xx/LAN78xx Ethernet
 url*		at uhub?		# Realtek RTL8150L based adapters
 ure*		at uhub?		# Realtek RTL8152 based adapters
 wi*		at uhub?		# WaveLAN IEEE 802.11DS
@@ -265,3 +268,4 @@ pseudo-device	openprom
 pseudo-device	loop 1
 pseudo-device	bpfilter 1
 pseudo-device	rd 1
+pseudo-device	bio 1

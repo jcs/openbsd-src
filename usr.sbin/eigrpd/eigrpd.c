@@ -1,4 +1,4 @@
-/*	$OpenBSD: eigrpd.c,v 1.23 2018/08/02 06:43:31 mestre Exp $ */
+/*	$OpenBSD: eigrpd.c,v 1.25 2018/08/05 08:41:28 mestre Exp $ */
 
 /*
  * Copyright (c) 2015 Renato Westphal <renato@openbsd.org>
@@ -36,7 +36,6 @@
 #include "eigrpe.h"
 #include "rde.h"
 #include "log.h"
-#include "control.h"
 
 static void		 main_sig_handler(int, short, void *);
 static __dead void	 usage(void);
@@ -168,8 +167,6 @@ main(int argc, char *argv[])
 	else if (eflag)
 		eigrpe(debug, global.cmd_opts & EIGRPD_OPT_VERBOSE, sockname);
 
-	global.csock = sockname;
-
 	mib[0] = CTL_NET;
 	mib[1] = PF_INET;
 	mib[2] = IPPROTO_IP;
@@ -271,7 +268,7 @@ main(int argc, char *argv[])
 	    eigrpd_conf->rdomain) == -1)
 		fatalx("kr_init failed");
 
-	if (pledge("stdio rpath cpath inet sendfd", NULL) == -1)
+	if (pledge("stdio rpath inet sendfd", NULL) == -1)
 		fatal("pledge");
 
 	event_dispatch();
@@ -293,7 +290,6 @@ eigrpd_shutdown(void)
 	msgbuf_clear(&iev_rde->ibuf.w);
 	close(iev_rde->ibuf.fd);
 
-	control_cleanup(global.csock);
 	kr_shutdown();
 	config_clear(eigrpd_conf);
 

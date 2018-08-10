@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.835 2018/08/02 11:56:12 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.837 2018/08/09 09:53:44 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -511,10 +511,11 @@ struct msg_stderr_data {
 #define ALL_MOUSE_MODES (MODE_MOUSE_STANDARD|MODE_MOUSE_BUTTON|MODE_MOUSE_ALL)
 
 /*
- * A single UTF-8 character. UTF8_SIZE must be big enough to hold at least one
- * combining character as well.
+ * A single UTF-8 character. UTF8_SIZE must be big enough to hold
+ * combining characters as well, currently at most five (of three
+ * bytes) are supported.
 */
-#define UTF8_SIZE 9
+#define UTF8_SIZE 18
 struct utf8_data {
 	u_char	data[UTF8_SIZE];
 
@@ -1760,6 +1761,7 @@ int		 cmd_find_from_mouse(struct cmd_find_state *,
 int		 cmd_find_from_nothing(struct cmd_find_state *, int);
 
 /* cmd.c */
+void		 cmd_log_argv(int, char **, const char *);
 int		 cmd_pack_argv(int, char **, char *, size_t);
 int		 cmd_unpack_argv(char *, size_t, int, char ***);
 char	       **cmd_copy_argv(int, char **);

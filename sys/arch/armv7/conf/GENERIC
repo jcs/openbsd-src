@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.116 2018/08/02 14:13:44 patrick Exp $
+#	$OpenBSD: GENERIC,v 1.118 2018/08/05 13:20:58 jsg Exp $
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -124,6 +124,7 @@ sysreg*		at fdt?
 pluart*		at fdt?
 plrtc*		at fdt?
 virtio*		at fdt?
+virtio*		at pci?
 pciecam*	at fdt?
 pci*		at pciecam?
 
@@ -303,6 +304,7 @@ upl*	at uhub?		# Prolific PL2301/PL2302 host-to-host `network'
 ugl*	at uhub?		# Genesys Logic GL620USB-A host-to-host `network'
 udav*	at uhub?		# Davicom DM9601 based Ethernet
 mos*	at uhub?		# MOSCHIP MCS7730/7830 10/100 Ethernet
+mue*	at uhub?		# Microchip LAN75xx/LAN78xx Ethernet
 url*	at uhub?		# Realtek RTL8150L based adapters
 ure*	at uhub?		# Realtek RTL8152 based adapters
 wi*	at uhub?		# WaveLAN IEEE 802.11DS

@@ -1,4 +1,4 @@
-/*	$OpenBSD: editor.c,v 1.340 2018/07/12 16:59:59 krw Exp $	*/
+/*	$OpenBSD: editor.c,v 1.343 2018/08/04 16:09:00 krw Exp $	*/
 
 /*
  * Copyright (c) 1997-2000 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -706,7 +706,7 @@ editor_resize(struct disklabel *lp, char *p)
 {
 	struct disklabel label;
 	struct partition *pp, *prev;
-	u_int64_t secs, sz, off;
+	u_int64_t ui, sz, off;
 	int partno, i, flags;
 
 	label = *lp;
@@ -735,15 +735,15 @@ editor_resize(struct disklabel *lp, char *p)
 		return;
 	}
 	flags = DO_CONVERSIONS;
-	secs = getuint64(lp, "[+|-]new size (with unit)",
+	ui = getuint64(lp, "[+|-]new size (with unit)",
 	    "new size or amount to grow (+) or shrink (-) partition including "
 	    "unit", sz, sz + editor_countfree(lp), &flags);
 
-	if (secs == CMD_ABORTED)
+	if (ui == CMD_ABORTED)
 		return;
-	else if (secs == CMD_BADVALUE)
+	else if (ui == CMD_BADVALUE)
 		return;
-	else if (secs == 0) {
+	else if (ui == 0) {
 		fputs("The size must be > 0 sectors\n", stderr);
 		return;
 	}
@@ -752,15 +752,15 @@ editor_resize(struct disklabel *lp, char *p)
 	if (lp->d_secpercyl & D_VENDOR) {
 		u_int64_t cylsecs;
 		cylsecs = lp->d_secpercyl;
-		secs = ((secs + cylsecs - 1) / cylsecs) * cylsecs;
+		ui = ((ui + cylsecs - 1) / cylsecs) * cylsecs;
 	}
 #endif
-	if (DL_GETPOFFSET(pp) + secs > ending_sector) {
+	if (DL_GETPOFFSET(pp) + ui > ending_sector) {
 		fputs("Amount too big\n", stderr);
 		return;
 	}
 
-	DL_SETPSIZE(pp, secs);
+	DL_SETPSIZE(pp, ui);
 	get_fsize(&label, partno);
 	get_bsize(&label, partno);
 	get_cpg(&label, partno);
@@ -1228,7 +1228,6 @@ getuint64(struct disklabel *lp, char *prompt, char *helpstring,
 	return (rval);
 
 invalid:
-	errno = EINVAL;
 	fputs("Invalid entry\n", stderr);
 	return (CMD_BADVALUE);
 }

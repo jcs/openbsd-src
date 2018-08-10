@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_node.c,v 1.135 2018/07/30 11:09:17 stsp Exp $	*/
+/*	$OpenBSD: ieee80211_node.c,v 1.139 2018/08/07 18:13:14 stsp Exp $	*/
 /*	$NetBSD: ieee80211_node.c,v 1.14 2004/05/09 09:18:47 dyoung Exp $	*/
 
 /*-
@@ -196,7 +196,7 @@ ieee80211_del_ess(struct ieee80211com *ic, char *nwid, int all)
 }
 
 int
-ieee80211_add_ess(struct ieee80211com *ic, char *nwid, int wpa, int wep)
+ieee80211_add_ess(struct ieee80211com *ic, int wpa, int wep)
 {
 	struct ieee80211_ess *ess;
 	int i = 0, new = 0, ness = 0;
@@ -206,11 +206,12 @@ ieee80211_add_ess(struct ieee80211com *ic, char *nwid, int wpa, int wep)
 		return (0);
 
 	/* Don't save an empty nwid */
-	if (strnlen(nwid, IEEE80211_NWID_LEN) == 0)
+	if (ic->ic_des_esslen == 0)
 		return (0);
 
 	TAILQ_FOREACH(ess, &ic->ic_ess, ess_next) {
-		if (memcmp(ess->essid, nwid, IEEE80211_NWID_LEN) == 0)
+		if (ess->esslen == ic->ic_des_esslen &&
+		    memcmp(ess->essid, ic->ic_des_essid, ess->esslen) == 0)
 			break;
 		ness++;
 	}
@@ -229,10 +230,9 @@ ieee80211_add_ess(struct ieee80211com *ic, char *nwid, int wpa, int wep)
 		ess = malloc(sizeof(*ess), M_DEVBUF, M_NOWAIT|M_ZERO);
 		if (ess == NULL)
 			return (ENOMEM);
+		memcpy(ess->essid, ic->ic_des_essid, ic->ic_des_esslen);
+		ess->esslen = ic->ic_des_esslen;
 	}
-
-	memcpy(ess->essid, nwid, ic->ic_des_esslen);
-	ess->esslen = ic->ic_des_esslen;
 
 	if (wpa) {
 		if (ic->ic_flags & (IEEE80211_F_RSNON|IEEE80211_F_PSK)) {
@@ -388,13 +388,6 @@ ieee80211_match_ess(struct ieee80211com *ic)
 				if (ni->ni_capinfo & IEEE80211_CAPINFO_PRIVACY)
 					continue;
 			}
-
-			if ((ess->rsnprotos & ni->ni_rsnprotos) == 0)
-				continue;
-			if ((ess->rsnakms & ni->ni_rsnakms) == 0)
-				continue;
-			if ((ess->rsnciphers & ni->ni_rsnciphers) == 0)
-				continue;
 
 			if ((ic->ic_flags & IEEE80211_F_DESBSSID) &&
 			    !IEEE80211_ADDR_EQ(ic->ic_des_bssid, ni->ni_bssid))
@@ -1936,7 +1929,7 @@ ieee80211_clear_htcaps(struct ieee80211_node *ni)
  */
 int
 ieee80211_setup_htop(struct ieee80211_node *ni, const uint8_t *data,
-    uint8_t len)
+    uint8_t len, int isprobe)
 {
 	if (len != 22)
 		return 0;
@@ -1947,7 +1940,8 @@ ieee80211_setup_htop(struct ieee80211_node *ni, const uint8_t *data,
 	ni->ni_htop1 = (data[2] | (data[3] << 8));
 	ni->ni_htop2 = (data[3] | (data[4] << 8));
 
-	memcpy(ni->ni_basic_mcs, &data[6], sizeof(ni->ni_basic_mcs));
+	if (isprobe)
+		memcpy(ni->ni_basic_mcs, &data[6], sizeof(ni->ni_basic_mcs));
 
 	return 1;
 }
