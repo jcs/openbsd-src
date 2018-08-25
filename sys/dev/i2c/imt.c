@@ -154,6 +154,7 @@ imt_attach(struct device *parent, struct device *self, void *aux)
 	/* assume everything has "natural scrolling" where Y axis is reversed */
 	mt->sc_flags = HIDMT_REVY;
 
+	mt->hidev_report_type_conv = ihidev_report_type_conv;
 	mt->hidev_get_report = imt_hidev_get_report;
 	mt->hidev_set_report = imt_hidev_set_report;
 	mt->sc_rep_input = sc->sc_rep_input;

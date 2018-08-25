@@ -126,7 +126,11 @@ hidmt_setup(struct device *self, struct hidmt *mt, void *desc, int dlen)
 	capsize = hid_report_size(desc, dlen, hid_feature, mt->sc_rep_cap);
 	rep = malloc(capsize, M_DEVBUF, M_NOWAIT | M_ZERO);
 
-	if (mt->hidev_get_report(mt->sc_device, hid_feature, mt->sc_rep_cap,
+	if (mt->hidev_report_type_conv == NULL)
+		panic("no report type conversion function");
+
+	if (mt->hidev_get_report(mt->sc_device,
+	    mt->hidev_report_type_conv(hid_feature), mt->sc_rep_cap,
 	    rep, capsize)) {
 		printf("\n%s: failed getting capability report\n",
 		    self->dv_xname);
@@ -278,8 +282,12 @@ hidmt_detach(struct hidmt *mt, int flags)
 int
 hidmt_set_input_mode(struct hidmt *mt, uint16_t mode)
 {
-	return mt->hidev_set_report(mt->sc_device, hid_feature,
-	    mt->sc_rep_config, &mode, 2);
+	if (mt->hidev_report_type_conv == NULL)
+		panic("no report type conversion function");
+
+	return mt->hidev_set_report(mt->sc_device,
+	    mt->hidev_report_type_conv(hid_feature),
+	    mt->sc_rep_config, &mode, sizeof(mode));
 }
 
 void

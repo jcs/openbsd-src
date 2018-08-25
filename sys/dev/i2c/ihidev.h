@@ -128,5 +128,6 @@ int ihidev_open(struct ihidev *);
 void ihidev_close(struct ihidev *);
 int ihidev_ioctl(struct ihidev *, u_long, caddr_t, int, struct proc *);
 
+int ihidev_report_type_conv(int);
 int ihidev_set_report(struct device *, int, int, void *, int);
 int ihidev_get_report(struct device *, int, int, void *, int);

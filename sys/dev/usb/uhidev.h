@@ -84,6 +84,7 @@ struct uhidev_attach_arg {
 #define	UHIDEV_CLAIM_ALLREPORTID	255
 };
 
+int uhidev_report_type_conv(int);
 void uhidev_get_report_desc(struct uhidev_softc *, void **, int *);
 int uhidev_open(struct uhidev *);
 void uhidev_close(struct uhidev *);

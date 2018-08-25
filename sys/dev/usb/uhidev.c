@@ -639,6 +639,22 @@ uhidev_close(struct uhidev *scd)
 	}
 }
 
+/* convert hid_* constants used throughout HID code to USB HID equivalents */
+int
+uhidev_report_type_conv(int hid_type_id)
+{
+	switch (hid_type_id) {
+	case hid_input:
+		return UHID_INPUT_REPORT;
+	case hid_output:
+		return UHID_OUTPUT_REPORT;
+	case hid_feature:
+		return UHID_FEATURE_REPORT;
+	default:
+		return -1;
+	}
+}
+
 int
 uhidev_set_report(struct uhidev_softc *sc, int type, int id, void *data,
     int len)

@@ -808,12 +808,8 @@ ihidev_get_report(struct device *dev, int type, int id, void *data, int len)
 {
 	struct ihidev_softc *sc = (struct ihidev_softc *)dev;
 	struct i2c_hid_report_request rreq;
-	int ctype;
 
-	if ((ctype = ihidev_report_type_conv(type)) < 0)
-		return (1);
-
-	rreq.type = ctype;
+	rreq.type = type;
 	rreq.id = id;
 	rreq.data = data;
 	rreq.len = len;
@@ -831,12 +827,8 @@ ihidev_set_report(struct device *dev, int type, int id, void *data, int len)
 {
 	struct ihidev_softc *sc = (struct ihidev_softc *)dev;
 	struct i2c_hid_report_request rreq;
-	int ctype;
 
-	if ((ctype = ihidev_report_type_conv(type)) < 0)
-		return (1);
-
-	rreq.type = ctype;
+	rreq.type = type;
 	rreq.id = id;
 	rreq.data = data;
 	rreq.len = len;

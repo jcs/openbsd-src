@@ -39,6 +39,7 @@ struct hidmt {
 #define HIDMT_REVY	0x0001	/* Y-axis is reversed ("natural" scrolling) */
 
 	struct device	*sc_device;
+	int		(*hidev_report_type_conv)(int);
 	int		(*hidev_get_report)(struct device *, int, int, void *,
 			    int);
 	int		(*hidev_set_report)(struct device *, int, int, void *,
