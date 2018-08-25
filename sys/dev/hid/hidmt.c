@@ -221,7 +221,7 @@ hidmt_setup(struct device *self, struct hidmt *mt, void *desc, int dlen)
 		return 1;
 	}
 
-	if (hidmt_set_input_mode(mt, HIDMT_INPUT_MODE_MT)) {
+	if (hidmt_set_input_mode(mt, HIDMT_INPUT_MODE_MT_TOUCHPAD)) {
 		printf("\n%s: switch to multitouch mode failed\n",
 		    self->dv_xname);
 		return 1;

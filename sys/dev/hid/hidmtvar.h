@@ -67,7 +67,8 @@ struct hidmt {
 };
 
 int	hidmt_set_input_mode(struct hidmt *, uint16_t);
-#define HIDMT_INPUT_MODE_MT	0x3
+#define HIDMT_INPUT_MODE_MT_TOUCHSCREEN	0x2
+#define HIDMT_INPUT_MODE_MT_TOUCHPAD	0x3
 
 void	hidmt_attach(struct hidmt *, const struct wsmouse_accessops *);
 int	hidmt_detach(struct hidmt *, int);
