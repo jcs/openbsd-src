@@ -160,10 +160,6 @@ file	dev/acpi/xhci_acpi.c		xhci_acpi
 attach	dwiic at acpi with dwiic_acpi
 file	dev/acpi/dwiic_acpi.c		dwiic_acpi
 
-# Intel 100 Series SPI controller
-attach	ispi at acpi with ispi_acpi
-file	dev/acpi/ispi_acpi.c		ispi_acpi
-
 # Chromebook keyboard backlight
 device	acpicbkbd
 attach	acpicbkbd at acpi

@@ -829,9 +829,5 @@ device	bnxt: ether, ifnet, ifmedia
 attach	bnxt at pci
 file	dev/pci/if_bnxt.c		bnxt
 
-# Intel 100 Series SPI Controller
-attach	ispi at pci with ispi_pci
-file	dev/pci/ispi_pci.c		ispi_pci
-
 include "dev/pci/files.agp"
 include "dev/pci/drm/files.drm"
