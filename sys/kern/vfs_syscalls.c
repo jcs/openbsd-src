@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.301 2018/08/05 14:23:57 beck Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.304 2018/08/20 16:00:22 mpi Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -636,10 +636,10 @@ sys_statfs(struct proc *p, void *v, register_t *retval)
 	int error;
 	struct nameidata nd;
 
-	NDINIT(&nd, LOOKUP, FOLLOW, UIO_USERSPACE, SCARG(uap, path), p);
+	NDINIT(&nd, LOOKUP, FOLLOW | BYPASSUNVEIL, UIO_USERSPACE,
+	    SCARG(uap, path), p);
 	nd.ni_pledge = PLEDGE_RPATH;
 	nd.ni_unveil = UNVEIL_READ;
-	nd.ni_cnd.cn_flags |= BYPASSUNVEIL;
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	mp = nd.ni_vp->v_mount;
@@ -1809,8 +1809,8 @@ dofaccessat(struct proc *p, int fd, const char *path, int amode, int flag)
 	}
 
 	NDINITAT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_USERSPACE, fd, path, p);
-	nd.ni_pledge = PLEDGE_RPATH | PLEDGE_STAT;
-	nd.ni_unveil = 0; /* XXX fix this when we fix PLEDGE_STAT */
+	nd.ni_pledge = PLEDGE_RPATH;
+	nd.ni_unveil = UNVEIL_INSPECT;
 	if ((error = namei(&nd)) != 0)
 		goto out;
 	vp = nd.ni_vp;
@@ -1880,8 +1880,8 @@ dofstatat(struct proc *p, int fd, const char *path, struct stat *buf, int flag)
 
 	follow = (flag & AT_SYMLINK_NOFOLLOW) ? NOFOLLOW : FOLLOW;
 	NDINITAT(&nd, LOOKUP, follow | LOCKLEAF, UIO_USERSPACE, fd, path, p);
-	nd.ni_pledge = PLEDGE_RPATH | PLEDGE_STAT;
-	nd.ni_unveil = 0;
+	nd.ni_pledge = PLEDGE_RPATH;
+	nd.ni_unveil = UNVEIL_INSPECT;
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	error = vn_stat(nd.ni_vp, &sb, p);
@@ -1989,8 +1989,8 @@ doreadlinkat(struct proc *p, int fd, const char *path, char *buf,
 	struct nameidata nd;
 
 	NDINITAT(&nd, LOOKUP, NOFOLLOW | LOCKLEAF, UIO_USERSPACE, fd, path, p);
-	nd.ni_pledge = PLEDGE_RPATH | PLEDGE_STAT;
-	nd.ni_unveil = 0;
+	nd.ni_pledge = PLEDGE_RPATH;
+	nd.ni_unveil = UNVEIL_INSPECT;
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	vp = nd.ni_vp;
@@ -3038,33 +3038,19 @@ sys_pread(struct proc *p, void *v, register_t *retval)
 		syscallarg(off_t) offset;
 	} */ *uap = v;
 	struct iovec iov;
-	struct filedesc *fdp = p->p_fd;
-	struct file *fp;
-	struct vnode *vp;
-	off_t offset;
-	int fd = SCARG(uap, fd);
+	struct uio auio;
 
 	iov.iov_base = SCARG(uap, buf);
 	iov.iov_len = SCARG(uap, nbyte);
-
-	if ((fp = fd_getfile_mode(fdp, fd, FREAD)) == NULL)
-		return (EBADF);
-
-	vp = fp->f_data;
-	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||
-	    (vp->v_flag & VISTTY)) {
-		FRELE(fp, p);
-		return (ESPIPE);
-	}
-
-	offset = SCARG(uap, offset);
-	if (offset < 0 && vp->v_type != VCHR) {
-		FRELE(fp, p);
+	if (iov.iov_len > SSIZE_MAX)
 		return (EINVAL);
-	}
 
-	/* dofilereadv() will FRELE the descriptor for us */
-	return (dofilereadv(p, fd, fp, &iov, 1, 0, &offset, retval));
+	auio.uio_iov = &iov;
+	auio.uio_iovcnt = 1;
+	auio.uio_resid = iov.iov_len;
+	auio.uio_offset = SCARG(uap, offset);
+
+	return (dofilereadv(p, SCARG(uap, fd), &auio, FO_POSITION, retval));
 }
 
 /*
@@ -3080,31 +3066,24 @@ sys_preadv(struct proc *p, void *v, register_t *retval)
 		syscallarg(int) pad;
 		syscallarg(off_t) offset;
 	} */ *uap = v;
-	struct filedesc *fdp = p->p_fd;
-	struct file *fp;
-	struct vnode *vp;
-	off_t offset;
-	int fd = SCARG(uap, fd);
+	struct iovec aiov[UIO_SMALLIOV], *iov = NULL;
+	int error, iovcnt = SCARG(uap, iovcnt);
+	struct uio auio;
+	size_t resid;
 
-	if ((fp = fd_getfile_mode(fdp, fd, FREAD)) == NULL)
-		return (EBADF);
+	error = iovec_copyin(SCARG(uap, iovp), &iov, aiov, iovcnt, &resid);
+	if (error)
+		goto done;
 
-	vp = fp->f_data;
-	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||
-	    (vp->v_flag & VISTTY)) {
-		FRELE(fp, p);
-		return (ESPIPE);
-	}
+	auio.uio_iov = iov;
+	auio.uio_iovcnt = iovcnt;
+	auio.uio_resid = resid;
+	auio.uio_offset = SCARG(uap, offset);
 
-	offset = SCARG(uap, offset);
-	if (offset < 0 && vp->v_type != VCHR) {
-		FRELE(fp, p);
-		return (EINVAL);
-	}
-
-	/* dofilereadv() will FRELE the descriptor for us */
-	return (dofilereadv(p, fd, fp, SCARG(uap, iovp), SCARG(uap, iovcnt), 1,
-	    &offset, retval));
+	error = dofilereadv(p, SCARG(uap, fd), &auio, FO_POSITION, retval);
+ done:
+	iovec_free(iov, iovcnt);
+ 	return (error);
 }
 
 /*
@@ -3121,33 +3100,19 @@ sys_pwrite(struct proc *p, void *v, register_t *retval)
 		syscallarg(off_t) offset;
 	} */ *uap = v;
 	struct iovec iov;
-	struct filedesc *fdp = p->p_fd;
-	struct file *fp;
-	struct vnode *vp;
-	off_t offset;
-	int fd = SCARG(uap, fd);
+	struct uio auio;
 
 	iov.iov_base = (void *)SCARG(uap, buf);
 	iov.iov_len = SCARG(uap, nbyte);
-
-	if ((fp = fd_getfile_mode(fdp, fd, FWRITE)) == NULL)
-		return (EBADF);
-
-	vp = fp->f_data;
-	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||
-	    (vp->v_flag & VISTTY)) {
-		FRELE(fp, p);
-		return (ESPIPE);
-	}
-
-	offset = SCARG(uap, offset);
-	if (offset < 0 && vp->v_type != VCHR) {
-		FRELE(fp, p);
+	if (iov.iov_len > SSIZE_MAX)
 		return (EINVAL);
-	}
 
-	/* dofilewritev() will FRELE the descriptor for us */
-	return (dofilewritev(p, fd, fp, &iov, 1, 0, &offset, retval));
+	auio.uio_iov = &iov;
+	auio.uio_iovcnt = 1;
+	auio.uio_resid = iov.iov_len;
+	auio.uio_offset = SCARG(uap, offset);
+
+	return (dofilewritev(p, SCARG(uap, fd), &auio, FO_POSITION, retval));
 }
 
 /*
@@ -3163,29 +3128,22 @@ sys_pwritev(struct proc *p, void *v, register_t *retval)
 		syscallarg(int) pad;
 		syscallarg(off_t) offset;
 	} */ *uap = v;
-	struct filedesc *fdp = p->p_fd;
-	struct file *fp;
-	struct vnode *vp;
-	off_t offset;
-	int fd = SCARG(uap, fd);
+	struct iovec aiov[UIO_SMALLIOV], *iov = NULL;
+	int error, iovcnt = SCARG(uap, iovcnt);
+	struct uio auio;
+	size_t resid;
 
-	if ((fp = fd_getfile_mode(fdp, fd, FWRITE)) == NULL)
-		return (EBADF);
+	error = iovec_copyin(SCARG(uap, iovp), &iov, aiov, iovcnt, &resid);
+	if (error)
+		goto done;
 
-	vp = fp->f_data;
-	if (fp->f_type != DTYPE_VNODE || vp->v_type == VFIFO ||
-	    (vp->v_flag & VISTTY)) {
-		FRELE(fp, p);
-		return (ESPIPE);
-	}
+	auio.uio_iov = iov;
+	auio.uio_iovcnt = iovcnt;
+	auio.uio_resid = resid;
+	auio.uio_offset = SCARG(uap, offset);
 
-	offset = SCARG(uap, offset);
-	if (offset < 0 && vp->v_type != VCHR) {
-		FRELE(fp, p);
-		return (EINVAL);
-	}
-
-	/* dofilewritev() will FRELE the descriptor for us */
-	return (dofilewritev(p, fd, fp, SCARG(uap, iovp), SCARG(uap, iovcnt),
-	    1, &offset, retval));
+	error = dofilewritev(p, SCARG(uap, fd), &auio, FO_POSITION, retval);
+ done:
+	iovec_free(iov, iovcnt);
+ 	return (error);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: mandoc.c,v 1.72 2018/07/28 18:32:30 schwarze Exp $ */
+/*	$OpenBSD: mandoc.c,v 1.75 2018/08/20 18:06:42 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2011-2015, 2017, 2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -39,7 +39,7 @@ enum mandoc_esc
 mandoc_escape(const char **end, const char **start, int *sz)
 {
 	const char	*local_start;
-	int		 local_sz;
+	int		 local_sz, c, i;
 	char		 term;
 	enum mandoc_esc	 gly;
 
@@ -136,6 +136,13 @@ mandoc_escape(const char **end, const char **start, int *sz)
 			*sz = 1;
 			break;
 		}
+		break;
+	case '*':
+		if (strncmp(*start, "(.T", 3) != 0)
+			abort();
+		gly = ESCAPE_DEVICE;
+		*start = ++*end;
+		*sz = 2;
 		break;
 
 	/*
@@ -293,8 +300,8 @@ mandoc_escape(const char **end, const char **start, int *sz)
 
 	switch (gly) {
 	case ESCAPE_FONT:
-		if (2 == *sz) {
-			if ('C' == **start) {
+		if (*sz == 2) {
+			if (**start == 'C') {
 				/*
 				 * Treat constant-width font modes
 				 * just like regular font modes.
@@ -302,12 +309,15 @@ mandoc_escape(const char **end, const char **start, int *sz)
 				(*start)++;
 				(*sz)--;
 			} else {
-				if ('B' == (*start)[0] && 'I' == (*start)[1])
+				if ((*start)[0] == 'B' && (*start)[1] == 'I')
 					gly = ESCAPE_FONTBI;
 				break;
 			}
-		} else if (1 != *sz)
+		} else if (*sz != 1) {
+			if (*sz == 0)
+				gly = ESCAPE_FONTPREV;
 			break;
+		}
 
 		switch (**start) {
 		case '3':
@@ -328,8 +338,26 @@ mandoc_escape(const char **end, const char **start, int *sz)
 		}
 		break;
 	case ESCAPE_SPECIAL:
-		if (1 == *sz && 'c' == **start)
-			gly = ESCAPE_NOSPACE;
+		if (**start == 'c') {
+			if (*sz == 1) {
+				gly = ESCAPE_NOSPACE;
+				break;
+			}
+			if (*sz < 6 || *sz > 7 ||
+			    strncmp(*start, "char", 4) != 0 ||
+			    (int)strspn(*start + 4, "0123456789") + 4 < *sz)
+				break;
+			c = 0;
+			for (i = 4; i < *sz; i++)
+				c = 10 * c + ((*start)[i] - '0');
+			if (c < 0x21 || (c > 0x7e && c < 0xa0) || c > 0xff)
+				break;
+			*start += 4;
+			*sz -= 4;
+			gly = ESCAPE_NUMBERED;
+			break;
+		}
+
 		/*
 		 * Unicode escapes are defined in groff as \[u0000]
 		 * to \[u10FFFF], where the contained value must be

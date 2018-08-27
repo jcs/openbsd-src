@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_term.c,v 1.164 2018/06/10 15:12:32 schwarze Exp $ */
+/*	$OpenBSD: man_term.c,v 1.173 2018/08/26 16:18:38 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2015, 2017, 2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -49,7 +49,7 @@ struct	mtermp {
 			  struct roff_node *n, \
 			  const struct roff_meta *meta
 
-struct	termact {
+struct	man_term_act {
 	int		(*pre)(DECL_ARGS);
 	void		(*post)(DECL_ARGS);
 	int		  flags;
@@ -76,6 +76,7 @@ static	int		  pre_PP(DECL_ARGS);
 static	int		  pre_RS(DECL_ARGS);
 static	int		  pre_SH(DECL_ARGS);
 static	int		  pre_SS(DECL_ARGS);
+static	int		  pre_SY(DECL_ARGS);
 static	int		  pre_TP(DECL_ARGS);
 static	int		  pre_UR(DECL_ARGS);
 static	int		  pre_alternate(DECL_ARGS);
@@ -88,14 +89,16 @@ static	void		  post_HP(DECL_ARGS);
 static	void		  post_RS(DECL_ARGS);
 static	void		  post_SH(DECL_ARGS);
 static	void		  post_SS(DECL_ARGS);
+static	void		  post_SY(DECL_ARGS);
 static	void		  post_TP(DECL_ARGS);
 static	void		  post_UR(DECL_ARGS);
 
-static	const struct termact __termacts[MAN_MAX - MAN_TH] = {
+static const struct man_term_act man_term_acts[MAN_MAX - MAN_TH] = {
 	{ NULL, NULL, 0 }, /* TH */
 	{ pre_SH, post_SH, 0 }, /* SH */
 	{ pre_SS, post_SS, 0 }, /* SS */
 	{ pre_TP, post_TP, 0 }, /* TP */
+	{ pre_TP, post_TP, 0 }, /* TQ */
 	{ pre_PP, NULL, 0 }, /* LP */
 	{ pre_PP, NULL, 0 }, /* PP */
 	{ pre_PP, NULL, 0 }, /* P */
@@ -112,8 +115,8 @@ static	const struct termact __termacts[MAN_MAX - MAN_TH] = {
 	{ pre_I, NULL, 0 }, /* I */
 	{ pre_alternate, NULL, 0 }, /* IR */
 	{ pre_alternate, NULL, 0 }, /* RI */
-	{ pre_literal, NULL, 0 }, /* nf */
-	{ pre_literal, NULL, 0 }, /* fi */
+	{ pre_literal, NULL, MAN_NOTEXT }, /* nf */
+	{ pre_literal, NULL, MAN_NOTEXT }, /* fi */
 	{ NULL, NULL, 0 }, /* RE */
 	{ pre_RS, post_RS, 0 }, /* RS */
 	{ pre_DT, NULL, 0 }, /* DT */
@@ -121,6 +124,8 @@ static	const struct termact __termacts[MAN_MAX - MAN_TH] = {
 	{ pre_PD, NULL, MAN_NOTEXT }, /* PD */
 	{ pre_ign, NULL, 0 }, /* AT */
 	{ pre_in, NULL, MAN_NOTEXT }, /* in */
+	{ pre_SY, post_SY, 0 }, /* SY */
+	{ NULL, NULL, 0 }, /* YS */
 	{ pre_OP, NULL, 0 }, /* OP */
 	{ pre_literal, NULL, 0 }, /* EX */
 	{ pre_literal, NULL, 0 }, /* EE */
@@ -129,8 +134,15 @@ static	const struct termact __termacts[MAN_MAX - MAN_TH] = {
 	{ pre_UR, post_UR, 0 }, /* MT */
 	{ NULL, NULL, 0 }, /* ME */
 };
-static	const struct termact *termacts = __termacts - MAN_TH;
+static const struct man_term_act *man_term_act(enum roff_tok);
 
+
+static const struct man_term_act *
+man_term_act(enum roff_tok tok)
+{
+	assert(tok >= MAN_TH && tok <= MAN_MAX);
+	return man_term_acts + (tok - MAN_TH);
+}
 
 void
 terminal_man(void *arg, const struct roff_man *man)
@@ -332,7 +344,7 @@ pre_OP(DECL_ARGS)
 {
 
 	term_word(p, "[");
-	p->flags |= TERMP_NOSPACE;
+	p->flags |= TERMP_KEEP | TERMP_NOSPACE;
 
 	if (NULL != (n = n->child)) {
 		term_fontrepl(p, TERMFONT_BOLD);
@@ -344,6 +356,7 @@ pre_OP(DECL_ARGS)
 	}
 
 	term_fontrepl(p, TERMFONT_NONE);
+	p->flags &= ~TERMP_KEEP;
 	p->flags |= TERMP_NOSPACE;
 	term_word(p, "]");
 	return 0;
@@ -582,7 +595,8 @@ pre_TP(DECL_ARGS)
 		p->flags |= TERMP_NOSPACE;
 		break;
 	case ROFFT_BLOCK:
-		print_bvspace(p, n, mt->pardist);
+		if (n->tok == MAN_TP)
+			print_bvspace(p, n, mt->pardist);
 		/* FALLTHROUGH */
 	default:
 		return 1;
@@ -672,7 +686,7 @@ pre_SS(DECL_ARGS)
 		do {
 			n = n->prev;
 		} while (n != NULL && n->tok >= MAN_TH &&
-		    termacts[n->tok].flags & MAN_NOTEXT);
+		    man_term_act(n->tok)->flags & MAN_NOTEXT);
 		if (n == NULL || n->type == ROFFT_COMMENT ||
 		    (n->tok == MAN_SS && n->body->child == NULL))
 			break;
@@ -735,7 +749,7 @@ pre_SH(DECL_ARGS)
 		do {
 			n = n->prev;
 		} while (n != NULL && n->tok >= MAN_TH &&
-		    termacts[n->tok].flags & MAN_NOTEXT);
+		    man_term_act(n->tok)->flags & MAN_NOTEXT);
 		if (n == NULL || n->type == ROFFT_COMMENT ||
 		    (n->tok == MAN_SH && n->body->child == NULL))
 			break;
@@ -838,6 +852,63 @@ post_RS(DECL_ARGS)
 }
 
 static int
+pre_SY(DECL_ARGS)
+{
+	const struct roff_node	*nn;
+	int			 len;
+
+	switch (n->type) {
+	case ROFFT_BLOCK:
+		if (n->prev == NULL || n->prev->tok != MAN_SY)
+			print_bvspace(p, n, mt->pardist);
+		return 1;
+	case ROFFT_HEAD:
+	case ROFFT_BODY:
+		break;
+	default:
+		abort();
+	}
+
+	nn = n->parent->head->child;
+	len = nn == NULL ? 1 : term_strlen(p, nn->string) + 1;
+
+	switch (n->type) {
+	case ROFFT_HEAD:
+		p->tcol->offset = mt->offset;
+		p->tcol->rmargin = mt->offset + len;
+		p->flags |= TERMP_NOBREAK;
+		term_fontrepl(p, TERMFONT_BOLD);
+		break;
+	case ROFFT_BODY:
+		mt->lmargin[mt->lmargincur] = len;
+		p->tcol->offset = mt->offset + len;
+		p->tcol->rmargin = p->maxrmargin;
+		p->flags |= TERMP_NOSPACE;
+		break;
+	default:
+		abort();
+	}
+	return 1;
+}
+
+static void
+post_SY(DECL_ARGS)
+{
+	switch (n->type) {
+	case ROFFT_HEAD:
+		term_flushln(p);
+		p->flags &= ~TERMP_NOBREAK;
+		break;
+	case ROFFT_BODY:
+		term_newln(p);
+		p->tcol->offset = mt->offset;
+		break;
+	default:
+		break;
+	}
+}
+
+static int
 pre_UR(DECL_ARGS)
 {
 
@@ -864,7 +935,8 @@ post_UR(DECL_ARGS)
 static void
 print_man_node(DECL_ARGS)
 {
-	int		 c;
+	const struct man_term_act *act;
+	int c;
 
 	switch (n->type) {
 	case ROFFT_TEXT:
@@ -882,6 +954,8 @@ print_man_node(DECL_ARGS)
 		} else if (*n->string == ' ' && n->flags & NODE_LINE &&
 		    (p->flags & TERMP_NONEWLINE) == 0)
 			term_newln(p);
+		else if (n->flags & NODE_DELIMC)
+			p->flags |= TERMP_NOSPACE;
 
 		term_word(p, n->string);
 		goto out;
@@ -908,20 +982,20 @@ print_man_node(DECL_ARGS)
 		return;
 	}
 
-	assert(n->tok >= MAN_TH && n->tok <= MAN_MAX);
-	if ( ! (MAN_NOTEXT & termacts[n->tok].flags))
+	act = man_term_act(n->tok);
+	if ((act->flags & MAN_NOTEXT) == 0 && n->tok != MAN_SM)
 		term_fontrepl(p, TERMFONT_NONE);
 
 	c = 1;
-	if (termacts[n->tok].pre)
-		c = (*termacts[n->tok].pre)(p, mt, n, meta);
+	if (act->pre != NULL)
+		c = (*act->pre)(p, mt, n, meta);
 
 	if (c && n->child)
 		print_man_nodelist(p, mt, n->child, meta);
 
-	if (termacts[n->tok].post)
-		(*termacts[n->tok].post)(p, mt, n, meta);
-	if ( ! (MAN_NOTEXT & termacts[n->tok].flags))
+	if (act->post != NULL)
+		(*act->post)(p, mt, n, meta);
+	if ((act->flags & MAN_NOTEXT) == 0 && n->tok != MAN_SM)
 		term_fontrepl(p, TERMFONT_NONE);
 
 out:

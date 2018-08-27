@@ -1,4 +1,4 @@
-/* $OpenBSD: evp.h,v 1.64 2018/05/30 15:40:50 tb Exp $ */
+/* $OpenBSD: evp.h,v 1.68 2018/08/24 20:22:15 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -491,6 +491,7 @@ unsigned long EVP_CIPHER_flags(const EVP_CIPHER *cipher);
 #define EVP_CIPHER_mode(e)		(EVP_CIPHER_flags(e) & EVP_CIPH_MODE)
 
 const EVP_CIPHER * EVP_CIPHER_CTX_cipher(const EVP_CIPHER_CTX *ctx);
+int EVP_CIPHER_CTX_encrypting(const EVP_CIPHER_CTX *ctx);
 int EVP_CIPHER_CTX_nid(const EVP_CIPHER_CTX *ctx);
 int EVP_CIPHER_CTX_block_size(const EVP_CIPHER_CTX *ctx);
 int EVP_CIPHER_CTX_key_length(const EVP_CIPHER_CTX *ctx);
@@ -630,7 +631,7 @@ int EVP_SealInit(EVP_CIPHER_CTX *ctx, const EVP_CIPHER *type,
 int EVP_SealFinal(EVP_CIPHER_CTX *ctx, unsigned char *out, int *outl);
 
 void EVP_EncodeInit(EVP_ENCODE_CTX *ctx);
-void EVP_EncodeUpdate(EVP_ENCODE_CTX *ctx, unsigned char *out, int *outl,
+int EVP_EncodeUpdate(EVP_ENCODE_CTX *ctx, unsigned char *out, int *outl,
     const unsigned char *in, int inl);
 void EVP_EncodeFinal(EVP_ENCODE_CTX *ctx, unsigned char *out, int *outl);
 int EVP_EncodeBlock(unsigned char *t, const unsigned char *f, int n);
@@ -655,7 +656,7 @@ int EVP_CIPHER_CTX_rand_key(EVP_CIPHER_CTX *ctx, unsigned char *key);
 const BIO_METHOD *BIO_f_md(void);
 const BIO_METHOD *BIO_f_base64(void);
 const BIO_METHOD *BIO_f_cipher(void);
-void BIO_set_cipher(BIO *b, const EVP_CIPHER *c, const unsigned char *k,
+int BIO_set_cipher(BIO *b, const EVP_CIPHER *c, const unsigned char *k,
     const unsigned char *i, int enc);
 #endif
 
@@ -1011,7 +1012,7 @@ void EVP_PKEY_asn1_set_public(EVP_PKEY_ASN1_METHOD *ameth,
     int (*pkey_size)(const EVP_PKEY *pk),
     int (*pkey_bits)(const EVP_PKEY *pk));
 void EVP_PKEY_asn1_set_private(EVP_PKEY_ASN1_METHOD *ameth,
-    int (*priv_decode)(EVP_PKEY *pk, PKCS8_PRIV_KEY_INFO *p8inf),
+    int (*priv_decode)(EVP_PKEY *pk, const PKCS8_PRIV_KEY_INFO *p8inf),
     int (*priv_encode)(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pk),
     int (*priv_print)(BIO *out, const EVP_PKEY *pkey, int indent,
     ASN1_PCTX *pctx));

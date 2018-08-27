@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpipci.c,v 1.4 2018/08/03 22:40:05 kettenis Exp $	*/
+/*	$OpenBSD: acpipci.c,v 1.7 2018/08/19 08:23:47 kettenis Exp $	*/
 /*
  * Copyright (c) 2018 Mark Kettenis
  *
@@ -34,10 +34,18 @@
 #include <dev/pci/pcivar.h>
 #include <dev/pci/ppbreg.h>
 
-bus_addr_t pci_mcfg_addr;
-int pci_mcfg_min_bus, pci_mcfg_max_bus;
-bus_space_tag_t pci_mcfgt;
-bus_space_handle_t pci_mcfgh;
+struct acpipci_mcfg {
+	SLIST_ENTRY(acpipci_mcfg) am_list;
+
+	uint16_t	am_segment;
+	uint8_t		am_min_bus;
+	uint8_t		am_max_bus;
+
+	bus_space_tag_t	am_iot;
+	bus_space_handle_t am_ioh;
+
+	struct arm64_pci_chipset am_pc;
+};
 
 struct acpipci_trans {
 	struct acpipci_trans *at_next;
@@ -51,16 +59,14 @@ struct acpipci_softc {
 	struct device	sc_dev;
 	struct acpi_softc *sc_acpi;
 	struct aml_node *sc_node;
-
 	bus_space_tag_t	sc_iot;
-	bus_space_handle_t sc_ioh;
+	pci_chipset_tag_t sc_pc;
 
 	struct bus_space sc_bus_iot;
 	struct bus_space sc_bus_memt;
 	struct acpipci_trans *sc_io_trans;
 	struct acpipci_trans *sc_mem_trans;
 
-	struct arm64_pci_chipset sc_pc;
 	struct extent	*sc_busex;
 	struct extent	*sc_memex;
 	struct extent	*sc_ioex;
@@ -68,6 +74,7 @@ struct acpipci_softc {
 	char		sc_ioex_name[32];
 	char		sc_memex_name[32];
 	int		sc_bus;
+	uint32_t	sc_seg;
 };
 
 int	acpipci_match(struct device *, void *, void *);
@@ -108,6 +115,8 @@ void	*acpipci_intr_establish(void *, pci_intr_handle_t, int,
 	    int (*)(void *), void *, char *);
 void	acpipci_intr_disestablish(void *, void *);
 
+uint32_t acpipci_iort_map_msi(pci_chipset_tag_t, pcitag_t);
+
 int
 acpipci_match(struct device *parent, void *match, void *aux)
 {
@@ -125,12 +134,7 @@ acpipci_attach(struct device *parent, struct device *self, void *aux)
 	struct pcibus_attach_args pba;
 	struct aml_value res;
 	uint64_t bbn = 0;
-
-	/* Bail out early if we don't have a valid MCFG table. */
-	if (pci_mcfg_addr == 0 || pci_mcfg_max_bus <= pci_mcfg_min_bus) {
-		printf(": no registers\n");
-		return;
-	}
+	uint64_t seg = 0;
 
 	sc->sc_acpi = (struct acpi_softc *)parent;
 	sc->sc_node = aaa->aaa_node;
@@ -144,9 +148,11 @@ acpipci_attach(struct device *parent, struct device *self, void *aux)
 	aml_evalinteger(sc->sc_acpi, sc->sc_node, "_BBN", 0, NULL, &bbn);
 	sc->sc_bus = bbn;
 
-	sc->sc_iot = pci_mcfgt;
-	sc->sc_ioh = pci_mcfgh;
+	aml_evalinteger(sc->sc_acpi, sc->sc_node, "_SEG", 0, NULL, &seg);
+	sc->sc_seg = seg;
 
+	sc->sc_iot = aaa->aaa_memt;
+	
 	printf("\n");
 
 	/* Create extents for our address spaces. */
@@ -172,29 +178,23 @@ acpipci_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_bus_memt.bus_private = sc->sc_mem_trans;
 	sc->sc_bus_memt._space_map = acpipci_bs_map;
 
-	sc->sc_pc.pc_conf_v = sc;
-	sc->sc_pc.pc_attach_hook = acpipci_attach_hook;
-	sc->sc_pc.pc_bus_maxdevs = acpipci_bus_maxdevs;
-	sc->sc_pc.pc_make_tag = acpipci_make_tag;
-	sc->sc_pc.pc_decompose_tag = acpipci_decompose_tag;
-	sc->sc_pc.pc_conf_size = acpipci_conf_size;
-	sc->sc_pc.pc_conf_read = acpipci_conf_read;
-	sc->sc_pc.pc_conf_write = acpipci_conf_write;
+	sc->sc_pc = pci_lookup_segment(seg);
+	KASSERT(sc->sc_pc->pc_intr_v == NULL);
 
-	sc->sc_pc.pc_intr_v = sc;
-	sc->sc_pc.pc_intr_map = acpipci_intr_map;
-	sc->sc_pc.pc_intr_map_msi = acpipci_intr_map_msi;
-	sc->sc_pc.pc_intr_map_msix = acpipci_intr_map_msix;
-	sc->sc_pc.pc_intr_string = acpipci_intr_string;
-	sc->sc_pc.pc_intr_establish = acpipci_intr_establish;
-	sc->sc_pc.pc_intr_disestablish = acpipci_intr_disestablish;
+	sc->sc_pc->pc_intr_v = sc;
+	sc->sc_pc->pc_intr_map = acpipci_intr_map;
+	sc->sc_pc->pc_intr_map_msi = acpipci_intr_map_msi;
+	sc->sc_pc->pc_intr_map_msix = acpipci_intr_map_msix;
+	sc->sc_pc->pc_intr_string = acpipci_intr_string;
+	sc->sc_pc->pc_intr_establish = acpipci_intr_establish;
+	sc->sc_pc->pc_intr_disestablish = acpipci_intr_disestablish;
 
 	memset(&pba, 0, sizeof(pba));
 	pba.pba_busname = "pci";
 	pba.pba_iot = &sc->sc_bus_iot;
 	pba.pba_memt = &sc->sc_bus_memt;
 	pba.pba_dmat = aaa->aaa_dmat;
-	pba.pba_pc = &sc->sc_pc;
+	pba.pba_pc = sc->sc_pc;
 	pba.pba_busex = sc->sc_busex;
 	pba.pba_ioex = sc->sc_ioex;
 	pba.pba_memex = sc->sc_memex;
@@ -312,17 +312,25 @@ acpipci_conf_size(void *v, pcitag_t tag)
 pcireg_t
 acpipci_conf_read(void *v, pcitag_t tag, int reg)
 {
-	struct acpipci_softc *sc = v;
+	struct acpipci_mcfg *am = v;
 
-	return bus_space_read_4(sc->sc_iot, sc->sc_ioh, tag | reg);
+	if (tag < (am->am_min_bus << 20) ||
+	    tag >= ((am->am_max_bus + 1) << 20))
+		return 0xffffffff;
+
+	return bus_space_read_4(am->am_iot, am->am_ioh, tag | reg);
 }
 
 void
 acpipci_conf_write(void *v, pcitag_t tag, int reg, pcireg_t data)
 {
-	struct acpipci_softc *sc = v;
+	struct acpipci_mcfg *am = v;
 
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, tag | reg, data);
+	if (tag < (am->am_min_bus << 20) ||
+	    tag >= ((am->am_max_bus + 1) << 20))
+		return;
+
+	bus_space_write_4(am->am_iot, am->am_ioh, tag | reg, data);
 }
 
 struct acpipci_intr_handle {
@@ -333,24 +341,51 @@ struct acpipci_intr_handle {
 };
 
 int
+acpipci_intr_swizzle(struct pci_attach_args *pa, pci_intr_handle_t *ihp)
+{
+	struct acpipci_intr_handle *ih;
+	int dev, swizpin;
+
+	if (pa->pa_bridgetag == NULL)
+		return -1;
+
+	pci_decompose_tag(pa->pa_pc, pa->pa_tag, NULL, &dev, NULL);
+	swizpin = PPB_INTERRUPT_SWIZZLE(pa->pa_rawintrpin, dev);
+	if ((void *)pa->pa_bridgeih[swizpin - 1] == NULL)
+		return -1;
+
+	ih = malloc(sizeof(struct acpipci_intr_handle), M_DEVBUF, M_WAITOK);
+	memcpy(ih, (void *)pa->pa_bridgeih[swizpin - 1],
+	    sizeof(struct acpipci_intr_handle));
+	*ihp = (pci_intr_handle_t)ih;
+
+	return 0;
+}
+
+int
 acpipci_intr_map(struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 {
 	struct acpipci_softc *sc = pa->pa_pc->pc_intr_v;
-	struct aml_node *node;
+	struct aml_node *node = sc->sc_node;
 	struct aml_value res;
 	uint64_t addr, pin, source, index;
 	struct acpipci_intr_handle *ih;
 	int i;
 
-	if (pa->pa_bridgetag == NULL)
-		return -1;
-
-	node = acpi_find_pci(pa->pa_pc, *pa->pa_bridgetag);
-	if (node == NULL)
-		return -1;
+	/*
+	 * If we're behind a bridge, we need to look for a _PRT for
+	 * it.  If we don't find a _PRT, we need to swizzle.  If we're
+	 * not behind a bridge we need to look for a _PRT on the host
+	 * bridge node itself.
+	 */
+	if (pa->pa_bridgetag) {
+		node = acpi_find_pci(pa->pa_pc, *pa->pa_bridgetag);
+		if (node == NULL)
+			return acpipci_intr_swizzle(pa, ihp);
+	}
 
 	if (aml_evalname(sc->sc_acpi, node, "_PRT", 0, NULL, &res))
-		return -1;
+		return acpipci_intr_swizzle(pa, ihp);
 
 	if (res.type != AML_OBJTYPE_PACKAGE)
 		return -1;
@@ -453,8 +488,8 @@ acpipci_intr_establish(void *v, pci_intr_handle_t ihp, int level,
 		pcireg_t reg;
 		int off;
 
-		/* Assume hardware passes Requester ID as sideband data. */
-		data = pci_requester_id(ih->ih_pc, ih->ih_tag);
+		/* Map Requester ID through IORT to get sideband data. */
+		data = acpipci_iort_map_msi(ih->ih_pc, ih->ih_tag);
 		cookie = ic->ic_establish_msi(ic->ic_cookie, &addr,
 		    &data, level, func, arg, name);
 		if (cookie == NULL)
@@ -515,41 +550,180 @@ acpipci_bs_map(bus_space_tag_t t, bus_addr_t addr, bus_size_t size,
 	return ENXIO;
 }
 
-struct arm64_pci_chipset pci_mcfg_chipset;
+SLIST_HEAD(,acpipci_mcfg) acpipci_mcfgs =
+    SLIST_HEAD_INITIALIZER(acpipci_mcfgs);
+
+void
+pci_mcfg_init(bus_space_tag_t iot, bus_addr_t addr, int segment,
+    int min_bus, int max_bus)
+{
+	struct acpipci_mcfg *am;
+
+	am = malloc(sizeof(struct acpipci_mcfg), M_DEVBUF, M_WAITOK | M_ZERO);
+	am->am_segment = segment;
+	am->am_min_bus = min_bus;
+	am->am_max_bus = max_bus;
+
+	am->am_iot = iot;
+	if (bus_space_map(iot, addr, (max_bus + 1) << 20, 0, &am->am_ioh))
+		panic("%s: can't map config space", __func__);
+
+	am->am_pc.pc_conf_v = am;
+	am->am_pc.pc_attach_hook = acpipci_attach_hook;
+	am->am_pc.pc_bus_maxdevs = acpipci_bus_maxdevs;
+	am->am_pc.pc_make_tag = acpipci_make_tag;
+	am->am_pc.pc_decompose_tag = acpipci_decompose_tag;
+	am->am_pc.pc_conf_size = acpipci_conf_size;
+	am->am_pc.pc_conf_read = acpipci_conf_read;
+	am->am_pc.pc_conf_write = acpipci_conf_write;
+	SLIST_INSERT_HEAD(&acpipci_mcfgs, am, am_list);
+}
 
 pcireg_t
-pci_mcfg_conf_read(void *v, pcitag_t tag, int reg)
+acpipci_dummy_conf_read(void *v, pcitag_t tag, int reg)
 {
-	return bus_space_read_4(pci_mcfgt, pci_mcfgh, tag | reg);
+	return 0xffffffff;
 }
 
 void
-pci_mcfg_conf_write(void *v, pcitag_t tag, int reg, pcireg_t data)
+acpipci_dummy_conf_write(void *v, pcitag_t tag, int reg, pcireg_t data)
 {
-	bus_space_write_4(pci_mcfgt, pci_mcfgh, tag | reg, data);
 }
 
+struct arm64_pci_chipset acpipci_dummy_chipset = {
+	.pc_attach_hook = acpipci_attach_hook,
+	.pc_bus_maxdevs = acpipci_bus_maxdevs,
+	.pc_make_tag = acpipci_make_tag,
+	.pc_decompose_tag = acpipci_decompose_tag,
+	.pc_conf_size = acpipci_conf_size,
+	.pc_conf_read = acpipci_dummy_conf_read,
+	.pc_conf_write = acpipci_dummy_conf_write,
+};
+
 pci_chipset_tag_t
-pci_mcfg_init(bus_space_tag_t iot, bus_addr_t addr, int min_bus, int max_bus)
+pci_lookup_segment(int segment)
 {
-	pci_chipset_tag_t pc = &pci_mcfg_chipset;
+	struct acpipci_mcfg *am;
 
-	pci_mcfgt = iot;
-	pci_mcfg_addr = addr;
-	pci_mcfg_min_bus = min_bus;
-	pci_mcfg_max_bus = max_bus;
+	SLIST_FOREACH(am, &acpipci_mcfgs, am_list) {
+		if (am->am_segment == segment)
+			return &am->am_pc;
+	}
 
-	if (bus_space_map(iot, addr, (pci_mcfg_max_bus + 1) << 20, 0,
-	    &pci_mcfgh))
-		panic("%s: can't map config space", __func__);
+	return &acpipci_dummy_chipset;
+}
 
-	memset(pc, 0, sizeof(*pc));
-	pc->pc_bus_maxdevs = acpipci_bus_maxdevs;
-	pc->pc_make_tag = acpipci_make_tag;
-	pc->pc_decompose_tag = acpipci_decompose_tag;
-	pc->pc_conf_size = acpipci_conf_size;
-	pc->pc_conf_read = pci_mcfg_conf_read;
-	pc->pc_conf_write = pci_mcfg_conf_write;
+/*
+ * IORT support.
+ */
 
-	return pc;
+struct acpi_iort {
+	struct acpi_table_header	hdr;
+#define IORT_SIG	"IORT"
+	uint32_t	number_of_nodes;
+	uint32_t	offset;
+	uint32_t	reserved;
+} __packed;
+
+struct acpi_iort_node {
+	uint8_t		type;
+#define ACPI_IORT_ITS		0
+#define ACPI_IORT_ROOT_COMPLEX	2
+	uint16_t	length;
+	uint8_t		revision;
+	uint32_t	reserved1;
+	uint32_t	number_of_mappings;
+	uint32_t	mapping_offset;
+	uint64_t	memory_access_properties;
+	uint32_t	atf_attributes;
+	uint32_t	segment;
+	uint8_t		memory_address_size_limit;
+	uint8_t		reserved2[3];
+} __packed;
+
+struct acpi_iort_mapping {
+	uint32_t	input_base;
+	uint32_t	length;
+	uint32_t	output_base;
+	uint32_t	output_reference;
+	uint32_t	flags;
+#define ACPI_IORT_MAPPING_SINGLE	0x00000001
+} __packed;
+
+uint32_t
+acpipci_iort_map_node(struct acpi_iort_node *node, uint32_t id, uint32_t reference)
+{
+	struct acpi_iort_mapping *map =
+	    (struct acpi_iort_mapping *)((char *)node + node->mapping_offset);
+	int i;
+	
+	for (i = 0; i < node->number_of_mappings; i++) {
+		if (map[i].output_reference != reference)
+			continue;
+		
+		if (map[i].flags & ACPI_IORT_MAPPING_SINGLE)
+			return map[i].output_base;
+
+		if (map[i].input_base <= id &&
+		    id < map[i].input_base + map[i].length)
+			return map[i].output_base + (id - map[i].input_base);
+	}
+
+	return id;
+}
+
+uint32_t
+acpipci_iort_map_msi(pci_chipset_tag_t pc, pcitag_t tag)
+{
+	struct acpipci_softc *sc = pc->pc_intr_v;
+	struct acpi_table_header *hdr;
+	struct acpi_iort *iort = NULL;
+	struct acpi_iort_node *node;
+	struct acpi_q *entry;
+	uint32_t rid, its = 0;
+	uint32_t offset;
+	int i;
+
+	rid = pci_requester_id(pc, tag);
+
+	/* Look for IORT table. */
+	SIMPLEQ_FOREACH(entry, &sc->sc_acpi->sc_tables, q_next) {
+		hdr = entry->q_table;
+		if (strncmp(hdr->signature, IORT_SIG,
+		    sizeof(hdr->signature)) == 0) {
+			iort = entry->q_table;
+			break;
+		}
+	}
+	if (iort == NULL)
+		return rid;
+
+	/* Find reference to ITS group. */
+	offset = iort->offset;
+	for (i = 0; i < iort->number_of_nodes; i++) {
+		node = (struct acpi_iort_node *)((char *)iort + offset);
+		switch (node->type) {
+		case ACPI_IORT_ITS:
+			its = offset;
+			break;
+		}
+		offset += node->length;
+	}
+	if (its == 0)
+		return rid;
+
+	/* Find our root complex and map. */
+	offset = iort->offset;
+	for (i = 0; i < iort->number_of_nodes; i++) {
+		node = (struct acpi_iort_node *)((char *)iort + offset);
+		switch (node->type) {
+		case ACPI_IORT_ROOT_COMPLEX:
+			if (node->segment == sc->sc_seg)
+				return acpipci_iort_map_node(node, rid, its);
+			break;
+		}
+		offset += node->length;
+	}
+
+	return rid;
 }

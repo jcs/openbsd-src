@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.607 2018/07/23 19:02:49 kn Exp $
+.\" $OpenBSD: tmux.1,v 1.610 2018/08/26 09:28:42 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: July 23 2018 $
+.Dd $Mdocdate: August 26 2018 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -1540,7 +1540,7 @@ The default
 .Ar template
 is "select-pane -t '%%'".
 .It Xo Ic find-window
-.Op Fl CNT
+.Op Fl CNTZ
 .Op Fl t Ar target-pane
 .Ar match-string
 .Xc
@@ -1559,6 +1559,8 @@ matches only the window name and
 matches only the window title.
 The default is
 .Fl CNT .
+.Fl Z
+zooms the pane.
 .Pp
 This command works only if at least one client is attached.
 .It Xo Ic join-pane
@@ -3502,7 +3504,10 @@ and a location suffix (one of
 for the contents of a pane,
 .Ql Border
 for a pane border or
-.Ql Status
+.Ql Status ,
+.Ql StatusLeft ,
+or
+.Ql StatusRight
 for the status line).
 The following mouse events are available:
 .Bl -column "MouseDown1" "MouseDrag1" "WheelDown" -offset indent
@@ -3671,6 +3676,10 @@ prefixes are
 and
 .Xr dirname 3
 of the variable respectively.
+.Ql q:
+will escape
+.Xr sh 1
+special characters.
 A prefix of the form
 .Ql s/foo/bar/:
 will substitute

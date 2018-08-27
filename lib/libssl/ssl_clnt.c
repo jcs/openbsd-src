@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_clnt.c,v 1.26 2018/06/03 15:31:30 jsing Exp $ */
+/* $OpenBSD: ssl_clnt.c,v 1.33 2018/08/24 17:30:32 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -683,7 +683,7 @@ ssl3_send_client_hello(SSL *s)
 		if (!SSL_IS_DTLS(s) || D1I(s)->send_cookie == 0)
 			arc4random_buf(s->s3->client_random, SSL3_RANDOM_SIZE);
 
-		if (!ssl3_handshake_msg_start_cbb(s, &cbb, &client_hello,
+		if (!ssl3_handshake_msg_start(s, &cbb, &client_hello,
 		    SSL3_MT_CLIENT_HELLO))
 			goto err;
 
@@ -775,7 +775,7 @@ ssl3_send_client_hello(SSL *s)
 			goto err;
 		}
 
-		if (!ssl3_handshake_msg_finish_cbb(s, &cbb))
+		if (!ssl3_handshake_msg_finish(s, &cbb))
 			goto err;
 
 		S3I(s)->hs.state = SSL3_ST_CW_CLNT_HELLO_B;
@@ -1189,9 +1189,9 @@ err:
 }
 
 static int
-ssl3_get_server_kex_dhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
+ssl3_get_server_kex_dhe(SSL *s, EVP_PKEY **pkey, CBS *cbs)
 {
-	CBS cbs, dhp, dhg, dhpk;
+	CBS dhp, dhg, dhpk;
 	BN_CTX *bn_ctx = NULL;
 	SESS_CERT *sc = NULL;
 	DH *dh = NULL;
@@ -1201,31 +1201,26 @@ ssl3_get_server_kex_dhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
 	alg_a = S3I(s)->hs.new_cipher->algorithm_auth;
 	sc = SSI(s)->sess_cert;
 
-	if (*nn < 0)
-		goto err;
-
-	CBS_init(&cbs, *pp, *nn);
-
 	if ((dh = DH_new()) == NULL) {
 		SSLerror(s, ERR_R_DH_LIB);
 		goto err;
 	}
 
-	if (!CBS_get_u16_length_prefixed(&cbs, &dhp))
+	if (!CBS_get_u16_length_prefixed(cbs, &dhp))
 		goto truncated;
 	if ((dh->p = BN_bin2bn(CBS_data(&dhp), CBS_len(&dhp), NULL)) == NULL) {
 		SSLerror(s, ERR_R_BN_LIB);
 		goto err;
 	}
 
-	if (!CBS_get_u16_length_prefixed(&cbs, &dhg))
+	if (!CBS_get_u16_length_prefixed(cbs, &dhg))
 		goto truncated;
 	if ((dh->g = BN_bin2bn(CBS_data(&dhg), CBS_len(&dhg), NULL)) == NULL) {
 		SSLerror(s, ERR_R_BN_LIB);
 		goto err;
 	}
 
-	if (!CBS_get_u16_length_prefixed(&cbs, &dhpk))
+	if (!CBS_get_u16_length_prefixed(cbs, &dhpk))
 		goto truncated;
 	if ((dh->pub_key = BN_bin2bn(CBS_data(&dhpk), CBS_len(&dhpk),
 	    NULL)) == NULL) {
@@ -1249,9 +1244,6 @@ ssl3_get_server_kex_dhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
 		*pkey = NULL;
 
 	sc->peer_dh_tmp = dh;
-
-	*nn = CBS_len(&cbs);
-	*pp = (unsigned char *)CBS_data(&cbs);
 
 	return (1);
 
@@ -1353,9 +1345,9 @@ ssl3_get_server_kex_ecdhe_ecx(SSL *s, SESS_CERT *sc, int nid, CBS *public)
 }
 
 static int
-ssl3_get_server_kex_ecdhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
+ssl3_get_server_kex_ecdhe(SSL *s, EVP_PKEY **pkey, CBS *cbs)
 {
-	CBS cbs, public;
+	CBS public;
 	uint8_t curve_type;
 	uint16_t curve_id;
 	SESS_CERT *sc;
@@ -1366,15 +1358,10 @@ ssl3_get_server_kex_ecdhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
 	alg_a = S3I(s)->hs.new_cipher->algorithm_auth;
 	sc = SSI(s)->sess_cert;
 
-	if (*nn < 0)
-		goto err;
-
-	CBS_init(&cbs, *pp, *nn);
-
 	/* Only named curves are supported. */
-	if (!CBS_get_u8(&cbs, &curve_type) ||
+	if (!CBS_get_u8(cbs, &curve_type) ||
 	    curve_type != NAMED_CURVE_TYPE ||
-	    !CBS_get_u16(&cbs, &curve_id)) {
+	    !CBS_get_u16(cbs, &curve_id)) {
 		al = SSL_AD_DECODE_ERROR;
 		SSLerror(s, SSL_R_LENGTH_TOO_SHORT);
 		goto f_err;
@@ -1396,7 +1383,7 @@ ssl3_get_server_kex_ecdhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
 		goto f_err;
 	}
 
-	if (!CBS_get_u8_length_prefixed(&cbs, &public))
+	if (!CBS_get_u8_length_prefixed(cbs, &public))
 		goto truncated;
 
 	if (nid == NID_X25519) {
@@ -1420,9 +1407,6 @@ ssl3_get_server_kex_ecdhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
 		/* XXX - Anonymous ECDH, so no certificate or pkey. */
 		*pkey = NULL;
 
-	*nn = CBS_len(&cbs);
-	*pp = (unsigned char *)CBS_data(&cbs);
-
 	return (1);
 
  truncated:
@@ -1439,14 +1423,17 @@ ssl3_get_server_kex_ecdhe(SSL *s, EVP_PKEY **pkey, unsigned char **pp, long *nn)
 int
 ssl3_get_server_key_exchange(SSL *s)
 {
-	unsigned char	*q, md_buf[EVP_MAX_MD_SIZE*2];
-	EVP_MD_CTX	 md_ctx;
-	unsigned char	*param, *p;
-	int		 al, i, j, param_len, ok;
-	long		 n, alg_k, alg_a;
-	EVP_PKEY	*pkey = NULL;
-	const		 EVP_MD *md = NULL;
-	RSA		*rsa = NULL;
+	CBS cbs, signature;
+	const EVP_MD *md = NULL;
+	EVP_PKEY *pkey = NULL;
+	EVP_MD_CTX md_ctx;
+	const unsigned char *param;
+	uint8_t hash_id, sig_id;
+	long n, alg_k, alg_a;
+	int al, ok, sigalg;
+	size_t param_len;
+
+	EVP_MD_CTX_init(&md_ctx);
 
 	alg_k = S3I(s)->hs.new_cipher->algorithm_mkey;
 	alg_a = S3I(s)->hs.new_cipher->algorithm_auth;
@@ -1460,7 +1447,10 @@ ssl3_get_server_key_exchange(SSL *s)
 	if (!ok)
 		return ((int)n);
 
-	EVP_MD_CTX_init(&md_ctx);
+	if (n < 0)
+		goto err;
+
+	CBS_init(&cbs, s->internal->init_msg, n);
 
 	if (S3I(s)->tmp.message_type != SSL3_MT_SERVER_KEY_EXCHANGE) {
 		/*
@@ -1493,14 +1483,14 @@ ssl3_get_server_key_exchange(SSL *s)
 			goto err;
 	}
 
-	param = p = (unsigned char *)s->internal->init_msg;
-	param_len = n;
+	param = CBS_data(&cbs);
+	param_len = CBS_len(&cbs);
 
 	if (alg_k & SSL_kDHE) {
-		if (ssl3_get_server_kex_dhe(s, &pkey, &p, &n) != 1)
+		if (ssl3_get_server_kex_dhe(s, &pkey, &cbs) != 1)
 			goto err;
 	} else if (alg_k & SSL_kECDHE) {
-		if (ssl3_get_server_kex_ecdhe(s, &pkey, &p, &n) != 1)
+		if (ssl3_get_server_kex_ecdhe(s, &pkey, &cbs) != 1)
 			goto err;
 	} else if (alg_k != 0) {
 		al = SSL_AD_UNEXPECTED_MESSAGE;
@@ -1508,93 +1498,62 @@ ssl3_get_server_key_exchange(SSL *s)
 			goto f_err;
 	}
 
-	param_len = param_len - n;
+	param_len -= CBS_len(&cbs);
 
 	/* if it was signed, check the signature */
 	if (pkey != NULL) {
 		if (SSL_USE_SIGALGS(s)) {
-			int sigalg = tls12_get_sigid(pkey);
-			/* Should never happen */
-			if (sigalg == -1) {
-				SSLerror(s, ERR_R_INTERNAL_ERROR);
-				goto err;
-			}
-			/*
-			 * Check key type is consistent
-			 * with signature
-			 */
-			if (2 > n)
+			if (!CBS_get_u8(&cbs, &hash_id))
 				goto truncated;
-			if (sigalg != (int)p[1]) {
-				SSLerror(s, SSL_R_WRONG_SIGNATURE_TYPE);
-				al = SSL_AD_DECODE_ERROR;
-				goto f_err;
-			}
-			md = tls12_get_hash(p[0]);
-			if (md == NULL) {
+			if (!CBS_get_u8(&cbs, &sig_id))
+				goto truncated;
+
+			if ((md = tls12_get_hash(hash_id)) == NULL) {
 				SSLerror(s, SSL_R_UNKNOWN_DIGEST);
 				al = SSL_AD_DECODE_ERROR;
 				goto f_err;
 			}
-			p += 2;
-			n -= 2;
-		} else
+
+			/* Check key type is consistent with signature. */
+			if ((sigalg = tls12_get_sigid(pkey)) == -1) {
+				/* Should never happen */
+				SSLerror(s, ERR_R_INTERNAL_ERROR);
+				goto err;
+			}
+			if (sigalg != sig_id) {
+				SSLerror(s, SSL_R_WRONG_SIGNATURE_TYPE);
+				al = SSL_AD_DECODE_ERROR;
+				goto f_err;
+			}
+		} else if (pkey->type == EVP_PKEY_RSA) {
+			md = EVP_md5_sha1();
+		} else {
 			md = EVP_sha1();
+		}
 
-		if (2 > n)
+		if (!CBS_get_u16_length_prefixed(&cbs, &signature))
 			goto truncated;
-		n2s(p, i);
-		n -= 2;
-		j = EVP_PKEY_size(pkey);
-
-		if (i != n || n > j) {
-			/* wrong packet length */
+		if (CBS_len(&signature) > EVP_PKEY_size(pkey)) {
 			al = SSL_AD_DECODE_ERROR;
 			SSLerror(s, SSL_R_WRONG_SIGNATURE_LENGTH);
 			goto f_err;
 		}
 
-		if (pkey->type == EVP_PKEY_RSA && !SSL_USE_SIGALGS(s)) {
-			j = 0;
-			q = md_buf;
-			if (!EVP_DigestInit_ex(&md_ctx, EVP_md5_sha1(), NULL)) {
-				al = SSL_AD_INTERNAL_ERROR;
-				goto f_err;
-			}
-			EVP_DigestUpdate(&md_ctx, s->s3->client_random,
-			    SSL3_RANDOM_SIZE);
-			EVP_DigestUpdate(&md_ctx, s->s3->server_random,
-			    SSL3_RANDOM_SIZE);
-			EVP_DigestUpdate(&md_ctx, param, param_len);
-			EVP_DigestFinal_ex(&md_ctx, q, (unsigned int *)&i);
-			q += i;
-			j += i;
-			i = RSA_verify(NID_md5_sha1, md_buf, j,
-			    p, n, pkey->pkey.rsa);
-			if (i < 0) {
-				al = SSL_AD_DECRYPT_ERROR;
-				SSLerror(s, SSL_R_BAD_RSA_DECRYPT);
-				goto f_err;
-			}
-			if (i == 0) {
-				/* bad signature */
-				al = SSL_AD_DECRYPT_ERROR;
-				SSLerror(s, SSL_R_BAD_SIGNATURE);
-				goto f_err;
-			}
-		} else {
-			EVP_VerifyInit_ex(&md_ctx, md, NULL);
-			EVP_VerifyUpdate(&md_ctx, s->s3->client_random,
-			    SSL3_RANDOM_SIZE);
-			EVP_VerifyUpdate(&md_ctx, s->s3->server_random,
-			    SSL3_RANDOM_SIZE);
-			EVP_VerifyUpdate(&md_ctx, param, param_len);
-			if (EVP_VerifyFinal(&md_ctx, p,(int)n, pkey) <= 0) {
-				/* bad signature */
-				al = SSL_AD_DECRYPT_ERROR;
-				SSLerror(s, SSL_R_BAD_SIGNATURE);
-				goto f_err;
-			}
+		if (!EVP_VerifyInit_ex(&md_ctx, md, NULL))
+			goto err;
+		if (!EVP_VerifyUpdate(&md_ctx, s->s3->client_random,
+		    SSL3_RANDOM_SIZE))
+			goto err;
+		if (!EVP_VerifyUpdate(&md_ctx, s->s3->server_random,
+		    SSL3_RANDOM_SIZE))
+			goto err;
+		if (!EVP_VerifyUpdate(&md_ctx, param, param_len))
+			goto err;
+		if (EVP_VerifyFinal(&md_ctx, CBS_data(&signature),
+		    CBS_len(&signature), pkey) <= 0) {
+			al = SSL_AD_DECRYPT_ERROR;
+			SSLerror(s, SSL_R_BAD_SIGNATURE);
+			goto f_err;
 		}
 	} else {
 		/* aNULL does not need public keys. */
@@ -1602,12 +1561,12 @@ ssl3_get_server_key_exchange(SSL *s)
 			SSLerror(s, ERR_R_INTERNAL_ERROR);
 			goto err;
 		}
-		/* still data left over */
-		if (n != 0) {
-			al = SSL_AD_DECODE_ERROR;
-			SSLerror(s, SSL_R_EXTRA_DATA_IN_MESSAGE);
-			goto f_err;
-		}
+	}
+
+	if (CBS_len(&cbs) != 0) {
+		al = SSL_AD_DECODE_ERROR;
+		SSLerror(s, SSL_R_EXTRA_DATA_IN_MESSAGE);
+		goto f_err;
 	}
 
 	EVP_PKEY_free(pkey);
@@ -1616,7 +1575,6 @@ ssl3_get_server_key_exchange(SSL *s)
 	return (1);
 
  truncated:
-	/* wrong packet length */
 	al = SSL_AD_DECODE_ERROR;
 	SSLerror(s, SSL_R_BAD_PACKET_LENGTH);
 
@@ -1625,7 +1583,6 @@ ssl3_get_server_key_exchange(SSL *s)
 
  err:
 	EVP_PKEY_free(pkey);
-	RSA_free(rsa);
 	EVP_MD_CTX_cleanup(&md_ctx);
 
 	return (-1);
@@ -2364,7 +2321,7 @@ ssl3_send_client_key_exchange(SSL *s)
 			goto err;
 		}
 
-		if (!ssl3_handshake_msg_start_cbb(s, &cbb, &kex,
+		if (!ssl3_handshake_msg_start(s, &cbb, &kex,
 		    SSL3_MT_CLIENT_KEY_EXCHANGE))
 			goto err;
 
@@ -2387,7 +2344,7 @@ ssl3_send_client_key_exchange(SSL *s)
 			goto err;
 		}
 
-		if (!ssl3_handshake_msg_finish_cbb(s, &cbb))
+		if (!ssl3_handshake_msg_finish(s, &cbb))
 			goto err;
 
 		S3I(s)->hs.state = SSL3_ST_CW_KEY_EXCH_B;
@@ -2405,19 +2362,25 @@ err:
 int
 ssl3_send_client_verify(SSL *s)
 {
-	unsigned char	*p;
-	unsigned char	 data[MD5_DIGEST_LENGTH + SHA_DIGEST_LENGTH];
-	EVP_PKEY	*pkey;
-	EVP_PKEY_CTX	*pctx = NULL;
-	EVP_MD_CTX	 mctx;
-	unsigned	 u = 0;
-	unsigned long	 n;
-	int		 j;
+	CBB cbb, cert_verify, cbb_signature;
+	unsigned char data[MD5_DIGEST_LENGTH + SHA_DIGEST_LENGTH];
+	unsigned char *signature = NULL;
+	unsigned int signature_len;
+	EVP_PKEY_CTX *pctx = NULL;
+	EVP_PKEY *pkey;
+	EVP_MD_CTX mctx;
+	const EVP_MD *md;
+	long hdatalen;
+	void *hdata;
 
 	EVP_MD_CTX_init(&mctx);
 
+	memset(&cbb, 0, sizeof(cbb));
+
 	if (S3I(s)->hs.state == SSL3_ST_CW_CERT_VRFY_A) {
-		p = ssl3_handshake_msg_start(s, SSL3_MT_CERTIFICATE_VERIFY);
+		if (!ssl3_handshake_msg_start(s, &cbb, &cert_verify,
+		    SSL3_MT_CERTIFICATE_VERIFY))
+			goto err;
 
 		/*
 		 * Create context from key and test if sha1 is allowed as
@@ -2430,6 +2393,9 @@ ssl3_send_client_verify(SSL *s)
 		/* XXX - is this needed? */
 		if (EVP_PKEY_CTX_set_signature_md(pctx, EVP_sha1()) <= 0)
 			ERR_clear_error();
+
+		if ((signature = calloc(1, EVP_PKEY_size(pkey))) == NULL)
+			goto err;
 
 		if (!SSL_USE_SIGALGS(s)) {
 			if (S3I(s)->handshake_buffer) {
@@ -2446,55 +2412,44 @@ ssl3_send_client_verify(SSL *s)
 		 * using agreed digest and cached handshake records.
 		 */
 		if (SSL_USE_SIGALGS(s)) {
-			long hdatalen = 0;
-			void *hdata;
-			const EVP_MD *md = s->cert->key->digest;
 			hdatalen = BIO_get_mem_data(S3I(s)->handshake_buffer,
 			    &hdata);
+			md = s->cert->key->digest;
 			if (hdatalen <= 0 ||
-			    !tls12_get_sigandhash(p, pkey, md)) {
+			    !tls12_get_hashandsig(&cert_verify, pkey, md)) {
 				SSLerror(s, ERR_R_INTERNAL_ERROR);
 				goto err;
 			}
-			p += 2;
 			if (!EVP_SignInit_ex(&mctx, md, NULL) ||
 			    !EVP_SignUpdate(&mctx, hdata, hdatalen) ||
-			    !EVP_SignFinal(&mctx, p + 2, &u, pkey)) {
+			    !EVP_SignFinal(&mctx, signature, &signature_len,
+				pkey)) {
 				SSLerror(s, ERR_R_EVP_LIB);
 				goto err;
 			}
-			s2n(u, p);
-			n = u + 4;
 			if (!tls1_digest_cached_records(s))
 				goto err;
 		} else if (pkey->type == EVP_PKEY_RSA) {
 			if (RSA_sign(NID_md5_sha1, data,
-			    MD5_DIGEST_LENGTH + SHA_DIGEST_LENGTH, &(p[2]),
-			    &u, pkey->pkey.rsa) <= 0 ) {
+			    MD5_DIGEST_LENGTH + SHA_DIGEST_LENGTH, signature,
+			    &signature_len, pkey->pkey.rsa) <= 0 ) {
 				SSLerror(s, ERR_R_RSA_LIB);
 				goto err;
 			}
-			s2n(u, p);
-			n = u + 2;
 		} else if (pkey->type == EVP_PKEY_EC) {
 			if (!ECDSA_sign(pkey->save_type,
-			    &(data[MD5_DIGEST_LENGTH]),
-			    SHA_DIGEST_LENGTH, &(p[2]),
-			    (unsigned int *)&j, pkey->pkey.ec)) {
+			    &data[MD5_DIGEST_LENGTH], SHA_DIGEST_LENGTH,
+			    signature, &signature_len, pkey->pkey.ec)) {
 				SSLerror(s, ERR_R_ECDSA_LIB);
 				goto err;
 			}
-			s2n(j, p);
-			n = j + 2;
 #ifndef OPENSSL_NO_GOST
 		} else if (pkey->type == NID_id_GostR3410_94 ||
-			   pkey->type == NID_id_GostR3410_2001) {
+		    pkey->type == NID_id_GostR3410_2001) {
 			unsigned char signbuf[128];
-			long hdatalen = 0;
-			void *hdata;
-			const EVP_MD *md;
-			int nid;
+			unsigned int u;
 			size_t sigsize;
+			int nid;
 
 			hdatalen = BIO_get_mem_data(S3I(s)->handshake_buffer, &hdata);
 			if (hdatalen <= 0) {
@@ -2511,38 +2466,47 @@ ssl3_send_client_verify(SSL *s)
 			    !EVP_DigestFinal(&mctx, signbuf, &u) ||
 			    (EVP_PKEY_CTX_set_signature_md(pctx, md) <= 0) ||
 			    (EVP_PKEY_CTX_ctrl(pctx, -1, EVP_PKEY_OP_SIGN,
-					       EVP_PKEY_CTRL_GOST_SIG_FORMAT,
-					       GOST_SIG_FORMAT_RS_LE,
-					       NULL) <= 0) ||
-			    (EVP_PKEY_sign(pctx, &(p[2]), &sigsize,
-					   signbuf, u) <= 0)) {
+				EVP_PKEY_CTRL_GOST_SIG_FORMAT,
+				GOST_SIG_FORMAT_RS_LE, NULL) <= 0) ||
+			    (EVP_PKEY_sign(pctx, signature, &sigsize,
+				signbuf, u) <= 0)) {
 				SSLerror(s, ERR_R_EVP_LIB);
 				goto err;
 			}
+			if (sigsize > UINT_MAX)
+				goto err;
+			signature_len = sigsize;
 			if (!tls1_digest_cached_records(s))
 				goto err;
-			j = sigsize;
-			s2n(j, p);
-			n = j + 2;
 #endif
 		} else {
 			SSLerror(s, ERR_R_INTERNAL_ERROR);
 			goto err;
 		}
 
-		S3I(s)->hs.state = SSL3_ST_CW_CERT_VRFY_B;
+		if (!CBB_add_u16_length_prefixed(&cert_verify, &cbb_signature))
+			goto err;
+		if (!CBB_add_bytes(&cbb_signature, signature, signature_len))
+			goto err;
 
-		ssl3_handshake_msg_finish(s, n);
+		if (!ssl3_handshake_msg_finish(s, &cbb))
+			goto err;
+
+		S3I(s)->hs.state = SSL3_ST_CW_CERT_VRFY_B;
 	}
 
 	EVP_MD_CTX_cleanup(&mctx);
 	EVP_PKEY_CTX_free(pctx);
+	free(signature);
 
 	return (ssl3_handshake_write(s));
 
-err:
+ err:
+	CBB_cleanup(&cbb);
 	EVP_MD_CTX_cleanup(&mctx);
 	EVP_PKEY_CTX_free(pctx);
+	free(signature);
+
 	return (-1);
 }
 
@@ -2597,13 +2561,13 @@ ssl3_send_client_certificate(SSL *s)
 	}
 
 	if (S3I(s)->hs.state == SSL3_ST_CW_CERT_C) {
-		if (!ssl3_handshake_msg_start_cbb(s, &cbb, &client_cert,
+		if (!ssl3_handshake_msg_start(s, &cbb, &client_cert,
 		    SSL3_MT_CERTIFICATE))
 			goto err;
 		if (!ssl3_output_cert_chain(s, &client_cert,
 		    (S3I(s)->tmp.cert_req == 2) ? NULL : s->cert->key->x509))
 			goto err;
-		if (!ssl3_handshake_msg_finish_cbb(s, &cbb))
+		if (!ssl3_handshake_msg_finish(s, &cbb))
 			goto err;
 
 		S3I(s)->hs.state = SSL3_ST_CW_CERT_D;

@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.303 2018/07/04 09:44:07 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.305 2018/08/19 16:45:03 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -179,7 +179,7 @@ tty_timer_callback(__unused int fd, __unused short events, void *data)
 
 	log_debug("%s: %zu discarded", c->name, tty->discarded);
 
-	c->flags |= CLIENT_REDRAW;
+	c->flags |= CLIENT_ALLREDRAWFLAGS;
 	c->discarded += tty->discarded;
 
 	if (tty->discarded < TTY_BLOCK_STOP(tty)) {
@@ -698,6 +698,21 @@ tty_repeat_space(struct tty *tty, u_int n)
 		tty_putn(tty, s, n, n);
 }
 
+/* How many lines are taken up by the status line on this client? */
+u_int
+tty_status_lines(struct client *c)
+{
+	u_int	lines;
+
+	if (c->flags & CLIENT_STATUSOFF)
+		lines = 0;
+	else
+		lines = status_line_size(c->session);
+	if (c->message_string != NULL || c->prompt_string != NULL)
+		lines = (lines == 0) ? 1 : lines;
+	return (lines);
+}
+
 /*
  * Is the region large enough to be worth redrawing once later rather than
  * probably several times now? Currently yes if it is more than 50% of the
@@ -1034,7 +1049,7 @@ tty_client_ready(struct client *c, struct window_pane *wp)
 {
 	if (c->session == NULL || c->tty.term == NULL)
 		return (0);
-	if (c->flags & (CLIENT_REDRAW|CLIENT_SUSPENDED))
+	if (c->flags & (CLIENT_REDRAWWINDOW|CLIENT_SUSPENDED))
 		return (0);
 	if (c->tty.flags & TTY_FREEZE)
 		return (0);

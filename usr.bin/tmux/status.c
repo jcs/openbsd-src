@@ -1,4 +1,4 @@
-/* $OpenBSD: status.c,v 1.176 2018/02/22 11:42:41 nicm Exp $ */
+/* $OpenBSD: status.c,v 1.179 2018/08/22 20:06:14 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -157,7 +157,7 @@ status_timer_callback(__unused int fd, __unused short events, void *arg)
 		return;
 
 	if (c->message_string == NULL && c->prompt_string == NULL)
-		c->flags |= CLIENT_STATUS;
+		c->flags |= CLIENT_REDRAWSTATUS;
 
 	timerclear(&tv);
 	tv.tv_sec = options_get_number(s->options, "status-interval");
@@ -284,7 +284,7 @@ status_get_window_at(struct client *c, u_int x)
 	const char	*sep;
 	size_t		 seplen;
 
-	x += c->wlmouse;
+	x += c->status.window_list_offset;
 	RB_FOREACH(wl, winlinks, &s->windows) {
 		oo = wl->window->options;
 
@@ -506,10 +506,14 @@ draw:
 		wloffset++;
 
 	/* Copy the window list. */
-	c->wlmouse = -wloffset + wlstart;
+	c->status.window_list_offset = -wloffset + wlstart;
 	screen_write_cursormove(&ctx, wloffset, 0);
 	screen_write_fast_copy(&ctx, &window_list, wlstart, 0, wlwidth, 1);
 	screen_free(&window_list);
+
+	/* Save left and right size. */
+	c->status.left_size = llen;
+	c->status.right_size = rlen;
 
 	screen_write_stop(&ctx);
 
@@ -615,7 +619,7 @@ status_message_set(struct client *c, const char *fmt, ...)
 	}
 
 	c->tty.flags |= (TTY_NOCURSOR|TTY_FREEZE);
-	c->flags |= CLIENT_STATUS;
+	c->flags |= CLIENT_REDRAWSTATUS;
 }
 
 /* Clear status line message. */
@@ -630,7 +634,7 @@ status_message_clear(struct client *c)
 
 	if (c->prompt_string == NULL)
 		c->tty.flags &= ~(TTY_NOCURSOR|TTY_FREEZE);
-	c->flags |= CLIENT_REDRAW; /* screen was frozen and may have changed */
+	c->flags |= CLIENT_ALLREDRAWFLAGS; /* was frozen and may have changed */
 
 	screen_reinit(&c->status.status);
 }
@@ -734,7 +738,7 @@ status_prompt_set(struct client *c, const char *msg, const char *input,
 
 	if (~flags & PROMPT_INCREMENTAL)
 		c->tty.flags |= (TTY_NOCURSOR|TTY_FREEZE);
-	c->flags |= CLIENT_STATUS;
+	c->flags |= CLIENT_REDRAWSTATUS;
 
 	if ((flags & PROMPT_INCREMENTAL) && *tmp != '\0') {
 		xasprintf(&cp, "=%s", tmp);
@@ -763,7 +767,7 @@ status_prompt_clear(struct client *c)
 	c->prompt_buffer = NULL;
 
 	c->tty.flags &= ~(TTY_NOCURSOR|TTY_FREEZE);
-	c->flags |= CLIENT_REDRAW; /* screen was frozen and may have changed */
+	c->flags |= CLIENT_ALLREDRAWFLAGS; /* was frozen and may have changed */
 
 	screen_reinit(&c->status.status);
 }
@@ -791,7 +795,7 @@ status_prompt_update(struct client *c, const char *msg, const char *input)
 
 	c->prompt_hindex = 0;
 
-	c->flags |= CLIENT_STATUS;
+	c->flags |= CLIENT_REDRAWSTATUS;
 
 	free(tmp);
 	format_free(ft);
@@ -938,7 +942,7 @@ status_prompt_translate_key(struct client *c, key_code key, key_code *new_key)
 			return (1);
 		case '\033': /* Escape */
 			c->prompt_mode = PROMPT_COMMAND;
-			c->flags |= CLIENT_STATUS;
+			c->flags |= CLIENT_REDRAWSTATUS;
 			return (0);
 		}
 		*new_key = key;
@@ -952,17 +956,17 @@ status_prompt_translate_key(struct client *c, key_code key, key_code *new_key)
 	case 's':
 	case 'a':
 		c->prompt_mode = PROMPT_ENTRY;
-		c->flags |= CLIENT_STATUS;
+		c->flags |= CLIENT_REDRAWSTATUS;
 		break; /* switch mode and... */
 	case 'S':
 		c->prompt_mode = PROMPT_ENTRY;
-		c->flags |= CLIENT_STATUS;
+		c->flags |= CLIENT_REDRAWSTATUS;
 		*new_key = '\025'; /* C-u */
 		return (1);
 	case 'i':
 	case '\033': /* Escape */
 		c->prompt_mode = PROMPT_ENTRY;
-		c->flags |= CLIENT_STATUS;
+		c->flags |= CLIENT_REDRAWSTATUS;
 		return (0);
 	}
 
@@ -1357,7 +1361,7 @@ process_key:
 		goto append_key;
 	}
 
-	c->flags |= CLIENT_STATUS;
+	c->flags |= CLIENT_REDRAWSTATUS;
 	return (0);
 
 append_key:
@@ -1392,7 +1396,7 @@ append_key:
 	}
 
 changed:
-	c->flags |= CLIENT_STATUS;
+	c->flags |= CLIENT_REDRAWSTATUS;
 	if (c->prompt_flags & PROMPT_INCREMENTAL) {
 		s = utf8_tocstr(c->prompt_buffer);
 		xasprintf(&cp, "%c%s", prefix, s);

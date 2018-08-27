@@ -1,4 +1,4 @@
-.\"	$OpenBSD: roff.7,v 1.77 2018/08/10 04:41:21 schwarze Exp $
+.\"	$OpenBSD: roff.7,v 1.85 2018/08/25 16:43:52 schwarze Exp $
 .\"
 .\" Copyright (c) 2010, 2011, 2012 Kristaps Dzonsons <kristaps@bsd.lv>
 .\" Copyright (c) 2010-2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: August 10 2018 $
+.Dd $Mdocdate: August 25 2018 $
 .Dt ROFF 7
 .Os
 .Sh NAME
@@ -86,13 +86,9 @@ character, and, in certain circumstances, the tab character.
 The backslash character
 .Sq \e
 indicates the start of an escape sequence, used for example for
-.Sx Comments ,
-.Sx Special Characters ,
-.Sx Predefined Strings ,
+.Sx Comments
 and
-user-defined strings defined using the
-.Sx ds
-request.
+.Sx Special Characters .
 For a listing of escape sequences, consult the
 .Sx ESCAPE SEQUENCE REFERENCE
 below.
@@ -167,34 +163,6 @@ Text decoration is
 recommended for
 .Xr mdoc 7 ,
 which encourages semantic annotation.
-.Ss Predefined Strings
-Predefined strings, like
-.Sx Special Characters ,
-mark special output glyphs.
-Predefined strings are escaped with the slash-asterisk,
-.Sq \e* :
-single-character
-.Sq \e*X ,
-two-character
-.Sq \e*(XX ,
-and N-character
-.Sq \e* Ns Bq N .
-.Pp
-Examples:
-.Bl -tag -width Ds -offset indent -compact
-.It Li \e*(Am
-Two-letter ampersand predefined string.
-.It Li \e*q
-One-letter double-quote predefined string.
-.El
-.Pp
-Predefined strings are not recommended for use,
-as they differ across implementations.
-Those supported by
-.Xr mandoc 1
-are listed in
-.Xr mandoc_char 7 .
-Manuals using these predefined strings are almost certainly not portable.
 .Ss Whitespace
 Whitespace consists of the space character.
 In text lines, whitespace is preserved within a line.
@@ -537,9 +505,16 @@ This is a groff extension and currently ignored.
 .It Ic \&ch Ar macroname Op Ar dist
 Change a trap location.
 Currently ignored.
-.It Ic \&char Ar glyphname Op Ar string
-Define a new glyph.
-Currently unsupported.
+.It Ic \&char Ar glyph Op Ar string
+Define or redefine the ASCII character or character escape sequence
+.Ar glyph
+to be rendered as
+.Ar string ,
+which can be empty.
+Only partially supported in
+.Xr mandoc 1 ;
+may interact incorrectly with
+.Ic \&tr .
 .It Ic \&chop Ar stringname
 Remove the last character from a macro, string, or diversion.
 Currently unsupported.
@@ -664,6 +639,8 @@ produces
 in the input stream, and thus in the output: \fI\^XtFree\^\fP.
 Each occurrence of \e\e$* is replaced with all the arguments,
 joined together with single space characters.
+The variant \e\e$@ is similar, except that each argument is
+individually quoted.
 .Pp
 Since macros and user-defined strings share a common string table,
 defining a macro
@@ -920,15 +897,15 @@ The following
 .Ar font
 arguments are supported:
 .Bl -tag -width 4n -offset indent
-.It Cm B , BI , 3 , 4
+.It Cm B , BI , CB , 3 , 4
 switches to
 .Sy bold
 font
-.It Cm I , 2
+.It Cm I , CI , 2
 switches to
 .Em underlined
 font
-.It Cm R , CW , 1
+.It Cm R , CR , CW , 1
 switches to normal font
 .It Cm P No "or no argument"
 switches back to the previous font
@@ -1035,13 +1012,13 @@ is
 or
 .Sq o
 .Pq odd page ,
-it evaluates to true.
+it evaluates to true, and the
+.Ar body
+starts with the next character.
 .It
 If the first character of
 .Ar condition
 is
-.Sq c
-.Pq character available ,
 .Sq e
 .Pq even page ,
 .Sq t
@@ -1049,7 +1026,20 @@ is
 or
 .Sq v
 .Pq vroff mode ,
-it evaluates to false.
+it evaluates to false, and the
+.Ar body
+starts with the next character.
+.It
+If the first character of
+.Ar condition
+is
+.Sq c
+.Pq character available ,
+it evaluates to true if the following character is an ASCII character
+or a valid character escape sequence, or to false otherwise.
+The
+.Ar body
+starts with the character following that next character.
 .It
 If the first character of
 .Ar condition
@@ -1217,7 +1207,7 @@ While evaluating the
 the unit suffixes described below
 .Sx Scaling Widths
 are ignored.
-.It Ic \&it Ar expression macro
+.It Ic \&itc Ar expression macro
 Set an input line trap, not counting lines ending with \ec.
 Currently unsupported.
 .It Ic \&IX Ar class keystring
@@ -1487,8 +1477,8 @@ Currently ignored.
 Set the maximum stack depth for recursive macros.
 This is a Heirloom extension and currently ignored.
 .It Ic \&return Op Ar twice
-Exit a macro and return to the caller.
-Currently unsupported.
+Exit the presently executed macro and return to the caller.
+The argument is currently ignored.
 .It Ic \&rfschar Ar font glyph ...
 Remove font-specific fallback glyph definitions.
 Currently unsupported.
@@ -1537,8 +1527,11 @@ This is a Heirloom extension and currently ignored.
 Change the soft hyphen character.
 Currently ignored.
 .It Ic \&shift Op Ar number
-Shift macro arguments.
-Currently unsupported.
+Shift macro arguments
+.Ar number
+times, by default once: \e\e$i becomes what \e\e$i+number was.
+Also decrement \en(.$ by
+.Ar number .
 .It Ic \&sizes Ar size ...
 Define permissible point sizes.
 This is a groff extension and currently ignored.
@@ -1727,8 +1720,12 @@ This is a Heirloom extension and currently ignored.
 Set a page location trap.
 Currently unsupported.
 .It Ic \&while Ar condition body
-Repeated execution while a condition is true.
-Currently unsupported.
+Repeated execution while a
+.Ar condition
+is true, with syntax similar to
+.Ic \&if .
+Currently implemented with two restrictions: cannot nest,
+and each loop must start and end in the same scope.
 .It Ic \&write Oo \(dq Oc Ns Ar string
 Write to an open file.
 Ignored because insecure.
@@ -1849,6 +1846,15 @@ is an unpaddable space-sized non-breaking space character; see
 .Ss \e\(dq
 The rest of the input line is treated as
 .Sx Comments .
+.Ss \e#
+Line continuation with comment.
+Discard the rest of the physical input line and continue the logical
+input line on the next physical input line, joining the text on
+both lines together as if it were on a single input line.
+This is a groff extension.
+.Ss \e$ Ns Ar arg
+Macro argument expansion, see
+.Sx de .
 .Ss \e%
 Hyphenation allowed at this point of the word; ignored by
 .Xr mandoc 1 .
@@ -1865,15 +1871,30 @@ with two-letter names, see
 .Xr mandoc_char 7 .
 .Ss \e* Ns Bq Ar name
 Interpolate the string with the
-.Ar name ;
-see
-.Sx Predefined Strings
-and
-.Sx ds .
+.Ar name .
 For short names, there are variants
 .No \e* Ns Ar c
 and
 .No \e*( Ns Ar cc .
+.Pp
+One string is predefined on the
+.Nm
+language level: \e*(.T expands to the name of the output device,
+for example ascii, utf8, ps, pdf, html, or markdown.
+.Pp
+Macro sets traditionally predefine additional strings which are not
+portable and differ across implementations.
+Those supported by
+.Xr mandoc 1
+are listed in
+.Xr mandoc_char 7 .
+.Pp
+Strings can be defined, changed, and deleted with the
+.Ic \&ds ,
+.Ic \&as ,
+and
+.Ic \&rm
+requests.
 .Ss \e,
 Left italic correction (groff extension); ignored by
 .Xr mandoc 1 .
@@ -2137,10 +2158,6 @@ macro control character does not suppress output line breaks.
 .It
 Diversions are not implemented,
 and support for traps is very incomplete.
-.It
-While recursion is supported,
-.Sx \&while
-loops are not.
 .El
 .Pp
 The special semantics of the

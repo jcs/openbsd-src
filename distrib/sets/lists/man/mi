@@ -1451,6 +1451,7 @@
 ./usr/share/man/man4/jme.4
 ./usr/share/man/man4/jmphy.4
 ./usr/share/man/man4/kate.4
+./usr/share/man/man4/kcov.4
 ./usr/share/man/man4/keynote.4
 ./usr/share/man/man4/km.4
 ./usr/share/man/man4/ksyms.4
@@ -1893,6 +1894,7 @@
 ./usr/share/man/man4/umodem.4
 ./usr/share/man/man4/ums.4
 ./usr/share/man/man4/umsm.4
+./usr/share/man/man4/umt.4
 ./usr/share/man/man4/unix.4
 ./usr/share/man/man4/uoaklux.4
 ./usr/share/man/man4/uoakrh.4

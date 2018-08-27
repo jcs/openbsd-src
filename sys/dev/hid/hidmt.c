@@ -1,4 +1,4 @@
-/* $OpenBSD: hidmt.c,v 1.7 2018/07/30 15:56:30 jcs Exp $ */
+/* $OpenBSD: hidmt.c,v 1.9 2018/08/25 20:31:31 jcs Exp $ */
 /*
  * HID multitouch driver for devices conforming to Windows Precision Touchpad
  * standard

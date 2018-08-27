@@ -1,4 +1,4 @@
-/* $OpenBSD: hidmtvar.h,v 1.5 2017/10/10 20:31:50 jcs Exp $ */
+/* $OpenBSD: hidmtvar.h,v 1.7 2018/08/25 20:31:31 jcs Exp $ */
 /*
  * Copyright (c) 2016 joshua stein <jcs@openbsd.org>
  *

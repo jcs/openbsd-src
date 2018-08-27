@@ -1,4 +1,4 @@
-/*	$OpenBSD: conf.c,v 1.158 2016/10/21 06:20:58 mlarkin Exp $	*/
+/*	$OpenBSD: conf.c,v 1.160 2018/08/19 18:01:05 deraadt Exp $	*/
 /*	$NetBSD: conf.c,v 1.75 1996/05/03 19:40:20 christos Exp $	*/
 
 /*
@@ -114,6 +114,13 @@ int	nblkdev = nitems(bdevsw);
 	(dev_type_stop((*))) enodev, 0, seltrue, \
 	(dev_type_mmap((*))) enodev }
 
+/* open, close, ioctl, mmap */
+#define cdev_kcov_init(c,n) { \
+	dev_init(c,n,open), dev_init(c,n,close), (dev_type_read((*))) enodev, \
+	(dev_type_write((*))) enodev, dev_init(c,n,ioctl), \
+	(dev_type_stop((*))) enodev, 0, selfalse, \
+	(dev_init(c,n,mmap)), 0, D_CLONE }
+
 #define	mmread	mmrw
 #define	mmwrite	mmrw
 cdev_decl(mm);
@@ -165,11 +172,13 @@ cdev_decl(cztty);
 cdev_decl(nvram);
 #include "drm.h"
 cdev_decl(drm);
+cdev_decl(kcov);
 
 #include "wsdisplay.h"
 #include "wskbd.h"
 #include "wsmouse.h"
 #include "wsmux.h"
+#include "kcov.h"
 
 #ifdef USER_PCICONF
 #include "pci.h"
@@ -211,7 +220,7 @@ struct cdevsw	cdevsw[] =
 	cdev_lpt_init(NLPT,lpt),	/* 16: parallel printer */
 	cdev_ch_init(NCH,ch),		/* 17: SCSI autochanger */
 	cdev_notdef(),			/* 18: was: concatenated disk driver */
-	cdev_notdef(),			/* 19 */
+	cdev_kcov_init(NKCOV,kcov),	/* 19: kcov */
 	cdev_uk_init(NUK,uk),		/* 20: unknown SCSI */
 	cdev_acpiapm_init(1,acpiapm),	/* 21: Power Management stuff */
 	cdev_fd_init(1,filedesc),	/* 22: file descriptor pseudo-device */

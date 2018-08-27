@@ -1,4 +1,4 @@
-/*	$OpenBSD: read.c,v 1.168 2018/07/28 18:32:30 schwarze Exp $ */
+/*	$OpenBSD: read.c,v 1.172 2018/08/25 16:43:52 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -46,7 +46,8 @@ struct	mparse {
 	char		 *sodest; /* filename pointed to by .so */
 	const char	 *file; /* filename of current input file */
 	struct buf	 *primary; /* buffer currently being parsed */
-	struct buf	 *secondary; /* preprocessed copy of input */
+	struct buf	 *secondary; /* copy of top level input */
+	struct buf	 *loop; /* open .while request line */
 	const char	 *os_s; /* default operating system */
 	mandocmsg	  mmsg; /* warning/error message handler */
 	enum mandoclevel  file_status; /* status of current parse */
@@ -59,6 +60,7 @@ struct	mparse {
 };
 
 static	void	  choose_parser(struct mparse *);
+static	void	  free_buf_list(struct buf *);
 static	void	  resize_buf(struct buf *, size_t);
 static	int	  mparse_buf_r(struct mparse *, struct buf, size_t, int);
 static	int	  read_whole_file(struct mparse *, const char *, int,
@@ -194,6 +196,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"unknown library name",
 	"invalid content in Rs block",
 	"invalid Boolean argument",
+	"argument contains two font escapes",
 	"unknown font, skipping request",
 	"odd number of characters in request",
 
@@ -231,6 +234,7 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"input stack limit exceeded, infinite loop?",
 	"skipping bad character",
 	"skipping unknown macro",
+	"ignoring request outside macro",
 	"skipping insecure request",
 	"skipping item outside list",
 	"skipping column outside column list",
@@ -241,14 +245,18 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 
 	/* related to request and macro arguments */
 	"escaped character not allowed in a name",
+	"using macro argument outside macro",
+	"argument number is not numeric",
 	"NOT IMPLEMENTED: Bd -file",
 	"skipping display without arguments",
 	"missing list type, using -item",
 	"argument is not numeric, using 1",
+	"argument is not a character",
 	"missing manual name, using \"\"",
 	"uname(3) system call failed, using UNKNOWN",
 	"unknown standard specifier",
 	"skipping request without numeric argument",
+	"excessive shift",
 	"NOT IMPLEMENTED: .so with absolute path or \"..\"",
 	".so request failed",
 	"skipping all arguments",
@@ -259,6 +267,10 @@ static	const char * const	mandocerrs[MANDOCERR_MAX] = {
 	"input too large",
 	"unsupported control character",
 	"unsupported roff request",
+	"nested .while loops",
+	"end of scope with open .while loop",
+	"end of .while loop in inner scope",
+	"cannot continue this .while loop",
 	"eqn delim option in tbl",
 	"unsupported tbl layout modifier",
 	"ignoring macro in table",
@@ -281,6 +293,19 @@ resize_buf(struct buf *buf, size_t initial)
 
 	buf->sz = buf->sz > initial/2 ? 2 * buf->sz : initial;
 	buf->buf = mandoc_realloc(buf->buf, buf->sz);
+}
+
+static void
+free_buf_list(struct buf *buf)
+{
+	struct buf *tmp;
+
+	while (buf != NULL) {
+		tmp = buf;
+		buf = tmp->next;
+		free(tmp->buf);
+		free(tmp);
+	}
 }
 
 static void
@@ -340,24 +365,27 @@ static int
 mparse_buf_r(struct mparse *curp, struct buf blk, size_t i, int start)
 {
 	struct buf	 ln;
+	struct buf	*firstln, *lastln, *thisln, *loop;
 	const char	*save_file;
 	char		*cp;
 	size_t		 pos; /* byte number in the ln buffer */
-	enum rofferr	 rr;
+	int		 line_result, result;
 	int		 of;
 	int		 lnn; /* line number in the real file */
 	int		 fd;
+	int		 inloop; /* Saw .while on this level. */
 	unsigned char	 c;
 
-	memset(&ln, 0, sizeof(ln));
-
+	ln.sz = 256;
+	ln.buf = mandoc_malloc(ln.sz);
+	ln.next = NULL;
+	firstln = loop = NULL;
 	lnn = curp->line;
 	pos = 0;
+	inloop = 0;
+	result = ROFF_CONT;
 
-	while (i < blk.sz) {
-		if (0 == pos && '\0' == blk.buf[i])
-			break;
-
+	while (i < blk.sz && (blk.buf[i] != '\0' || pos != 0)) {
 		if (start) {
 			curp->line = lnn;
 			curp->reparse_count = 0;
@@ -387,10 +415,10 @@ mparse_buf_r(struct mparse *curp, struct buf blk, size_t i, int start)
 
 			/*
 			 * Make sure we have space for the worst
-			 * case of 11 bytes: "\\[u10ffff]\0"
+			 * case of 12 bytes: "\\[u10ffff]\n\0"
 			 */
 
-			if (pos + 11 > ln.sz)
+			if (pos + 12 > ln.sz)
 				resize_buf(&ln, 256);
 
 			/*
@@ -426,13 +454,32 @@ mparse_buf_r(struct mparse *curp, struct buf blk, size_t i, int start)
 
 			ln.buf[pos++] = blk.buf[i++];
 		}
-
-		if (pos + 1 >= ln.sz)
-			resize_buf(&ln, 256);
-
-		if (i == blk.sz || blk.buf[i] == '\0')
-			ln.buf[pos++] = '\n';
 		ln.buf[pos] = '\0';
+
+		/*
+		 * Maintain a lookaside buffer of all lines.
+		 * parsed from this input source.
+		 */
+
+		thisln = mandoc_malloc(sizeof(*thisln));
+		thisln->buf = mandoc_strdup(ln.buf);
+		thisln->sz = strlen(ln.buf) + 1;
+		thisln->next = NULL;
+		if (firstln == NULL) {
+			firstln = lastln = thisln;
+			if (curp->secondary == NULL)
+				curp->secondary = firstln;
+		} else {
+			lastln->next = thisln;
+			lastln = thisln;
+		}
+
+		/* XXX Ugly hack to mark the end of the input. */
+
+		if (i == blk.sz || blk.buf[i] == '\0') {
+			ln.buf[pos++] = '\n';
+			ln.buf[pos] = '\0';
+		}
 
 		/*
 		 * A significant amount of complexity is contained by
@@ -444,64 +491,104 @@ mparse_buf_r(struct mparse *curp, struct buf blk, size_t i, int start)
 		 */
 
 		of = 0;
-
-		/*
-		 * Maintain a lookaside buffer of all parsed lines.  We
-		 * only do this if mparse_keep() has been invoked (the
-		 * buffer may be accessed with mparse_getkeep()).
-		 */
-
-		if (curp->secondary) {
-			curp->secondary->buf = mandoc_realloc(
-			    curp->secondary->buf,
-			    curp->secondary->sz + pos + 2);
-			memcpy(curp->secondary->buf +
-			    curp->secondary->sz,
-			    ln.buf, pos);
-			curp->secondary->sz += pos;
-			curp->secondary->buf
-				[curp->secondary->sz] = '\n';
-			curp->secondary->sz++;
-			curp->secondary->buf
-				[curp->secondary->sz] = '\0';
-		}
 rerun:
-		rr = roff_parseln(curp->roff, curp->line, &ln, &of);
+		line_result = roff_parseln(curp->roff, curp->line, &ln, &of);
 
-		switch (rr) {
-		case ROFF_REPARSE:
-			if (++curp->reparse_count > REPARSE_LIMIT)
-				mandoc_msg(MANDOCERR_ROFFLOOP, curp,
-				    curp->line, pos, NULL);
-			else if (mparse_buf_r(curp, ln, of, 0) == 1 ||
-			    start == 1) {
-				pos = 0;
-				continue;
+		/* Process options. */
+
+		if (line_result & ROFF_APPEND)
+			assert(line_result == (ROFF_IGN | ROFF_APPEND));
+
+		if (line_result & ROFF_USERCALL)
+			assert((line_result & ROFF_MASK) == ROFF_REPARSE);
+
+		if (line_result & ROFF_USERRET) {
+			assert(line_result == (ROFF_IGN | ROFF_USERRET));
+			if (start == 0) {
+				/* Return from the current macro. */
+				result = ROFF_USERRET;
+				goto out;
 			}
-			free(ln.buf);
-			return 0;
-		case ROFF_APPEND:
-			pos = strlen(ln.buf);
-			continue;
+		}
+
+		switch (line_result & ROFF_LOOPMASK) {
+		case ROFF_IGN:
+			break;
+		case ROFF_WHILE:
+			if (curp->loop != NULL) {
+				if (loop == curp->loop)
+					break;
+				mandoc_msg(MANDOCERR_WHILE_NEST,
+				    curp, curp->line, pos, NULL);
+			}
+			curp->loop = thisln;
+			loop = NULL;
+			inloop = 1;
+			break;
+		case ROFF_LOOPCONT:
+		case ROFF_LOOPEXIT:
+			if (curp->loop == NULL) {
+				mandoc_msg(MANDOCERR_WHILE_FAIL,
+				    curp, curp->line, pos, NULL);
+				break;
+			}
+			if (inloop == 0) {
+				mandoc_msg(MANDOCERR_WHILE_INTO,
+				    curp, curp->line, pos, NULL);
+				curp->loop = loop = NULL;
+				break;
+			}
+			if (line_result & ROFF_LOOPCONT)
+				loop = curp->loop;
+			else {
+				curp->loop = loop = NULL;
+				inloop = 0;
+			}
+			break;
+		default:
+			abort();
+		}
+
+		/* Process the main instruction from the roff parser. */
+
+		switch (line_result & ROFF_MASK) {
+		case ROFF_IGN:
+			break;
+		case ROFF_CONT:
+			if (curp->man->macroset == MACROSET_NONE)
+				choose_parser(curp);
+			if ((curp->man->macroset == MACROSET_MDOC ?
+			     mdoc_parseln(curp->man, curp->line, ln.buf, of) :
+			     man_parseln(curp->man, curp->line, ln.buf, of)
+			    ) == 2)
+				goto out;
+			break;
 		case ROFF_RERUN:
 			goto rerun;
-		case ROFF_IGN:
-			pos = 0;
-			continue;
+		case ROFF_REPARSE:
+			if (++curp->reparse_count > REPARSE_LIMIT) {
+				/* Abort and return to the top level. */
+				result = ROFF_IGN;
+				mandoc_msg(MANDOCERR_ROFFLOOP, curp,
+				    curp->line, pos, NULL);
+				goto out;
+			}
+			result = mparse_buf_r(curp, ln, of, 0);
+			if (line_result & ROFF_USERCALL) {
+				roff_userret(curp->roff);
+				/* Continue normally. */
+				if (result & ROFF_USERRET)
+					result = ROFF_CONT;
+			}
+			if (start == 0 && result != ROFF_CONT)
+				goto out;
+			break;
 		case ROFF_SO:
 			if ( ! (curp->options & MPARSE_SO) &&
 			    (i >= blk.sz || blk.buf[i] == '\0')) {
 				curp->sodest = mandoc_strdup(ln.buf + of);
-				free(ln.buf);
-				return 1;
+				goto out;
 			}
-			/*
-			 * We remove `so' clauses from our lookaside
-			 * buffer because we're going to descend into
-			 * the file recursively.
-			 */
-			if (curp->secondary)
-				curp->secondary->sz -= pos + 1;
 			save_file = curp->file;
 			if ((fd = mparse_open(curp, ln.buf + of)) != -1) {
 				mparse_readfd(curp, fd, ln.buf + of);
@@ -520,32 +607,40 @@ rerun:
 				of = 0;
 				mparse_buf_r(curp, ln, of, 0);
 			}
-			pos = 0;
-			continue;
+			break;
 		default:
-			break;
+			abort();
 		}
-
-		if (curp->man->macroset == MACROSET_NONE)
-			choose_parser(curp);
-
-		if ((curp->man->macroset == MACROSET_MDOC ?
-		    mdoc_parseln(curp->man, curp->line, ln.buf, of) :
-		    man_parseln(curp->man, curp->line, ln.buf, of)) == 2)
-				break;
-
-		/* Temporary buffers typically are not full. */
-
-		if (0 == start && '\0' == blk.buf[i])
-			break;
 
 		/* Start the next input line. */
 
-		pos = 0;
-	}
+		if (loop != NULL &&
+		    (line_result & ROFF_LOOPMASK) == ROFF_IGN)
+			loop = loop->next;
 
+		if (loop != NULL) {
+			if ((line_result & ROFF_APPEND) == 0)
+				*ln.buf = '\0';
+			if (ln.sz < loop->sz)
+				resize_buf(&ln, loop->sz);
+			(void)strlcat(ln.buf, loop->buf, ln.sz);
+			of = 0;
+			goto rerun;
+		}
+
+		pos = (line_result & ROFF_APPEND) ? strlen(ln.buf) : 0;
+	}
+out:
+	if (inloop) {
+		if (result != ROFF_USERRET)
+			mandoc_msg(MANDOCERR_WHILE_OUTOF, curp,
+			    curp->line, pos, NULL);
+		curp->loop = NULL;
+	}
 	free(ln.buf);
-	return 1;
+	if (firstln != curp->secondary)
+		free_buf_list(firstln);
+	return result;
 }
 
 static int
@@ -802,12 +897,11 @@ mparse_reset(struct mparse *curp)
 {
 	roff_reset(curp->roff);
 	roff_man_reset(curp->man);
+	free_buf_list(curp->secondary);
+	curp->secondary = NULL;
 
 	free(curp->sodest);
 	curp->sodest = NULL;
-
-	if (curp->secondary)
-		curp->secondary->sz = 0;
 
 	curp->file_status = MANDOCLEVEL_OK;
 	curp->gzip = 0;
@@ -816,15 +910,11 @@ mparse_reset(struct mparse *curp)
 void
 mparse_free(struct mparse *curp)
 {
-
 	roffhash_free(curp->man->mdocmac);
 	roffhash_free(curp->man->manmac);
 	roff_man_free(curp->man);
 	roff_free(curp->roff);
-	if (curp->secondary)
-		free(curp->secondary->buf);
-
-	free(curp->secondary);
+	free_buf_list(curp->secondary);
 	free(curp->sodest);
 	free(curp);
 }
@@ -897,17 +987,10 @@ mparse_strlevel(enum mandoclevel lvl)
 }
 
 void
-mparse_keep(struct mparse *p)
+mparse_copy(const struct mparse *p)
 {
+	struct buf	*buf;
 
-	assert(NULL == p->secondary);
-	p->secondary = mandoc_calloc(1, sizeof(struct buf));
-}
-
-const char *
-mparse_getkeep(const struct mparse *p)
-{
-
-	assert(p->secondary);
-	return p->secondary->sz ? p->secondary->buf : NULL;
+	for (buf = p->secondary; buf != NULL; buf = buf->next)
+		puts(buf->buf);
 }

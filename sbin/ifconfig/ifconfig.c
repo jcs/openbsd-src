@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.372 2018/08/08 17:26:52 florian Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.376 2018/08/15 14:43:30 florian Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -171,7 +171,12 @@ int	shownet80211chans;
 int	shownet80211nodes;
 int	showclasses;
 
-struct ifencap;
+struct	ifencap;
+
+const	char *lacpmodeactive = "active";
+const	char *lacpmodepassive = "passive";
+const	char *lacptimeoutfast = "fast";
+const	char *lacptimeoutslow = "slow";
 
 void	notealias(const char *, int);
 void	setifaddr(const char *, int);
@@ -188,6 +193,7 @@ void	setifllprio(const char *, int);
 void	setifnwid(const char *, int);
 void	setifjoin(const char *, int);
 void	delifjoin(const char *, int);
+void	showjoin(const char *, int);
 void	setifbssid(const char *, int);
 void	setifnwkey(const char *, int);
 void	setifwpa(const char *, int);
@@ -253,6 +259,8 @@ void	setautoconf(const char *, int);
 void	settrunkport(const char *, int);
 void	unsettrunkport(const char *, int);
 void	settrunkproto(const char *, int);
+void	settrunklacpmode(const char *, int);
+void	settrunklacptimeout(const char *, int);
 void	trunk_status(void);
 void	list_cloners(void);
 
@@ -376,8 +384,10 @@ const struct	cmd {
 	{ "mtu",	NEXTARG,	0,		setifmtu },
 	{ "nwid",	NEXTARG,	0,		setifnwid },
 	{ "-nwid",	-1,		0,		setifnwid },
-	{ "join",	NEXTARG0,	0,		setifjoin },
-	{ "-join",	NEXTARG0,	0,		delifjoin },
+	{ "join",	NEXTARG,	0,		setifjoin },
+	{ "-join",	NEXTARG,	0,		delifjoin },
+	{ "joinlist",	NEXTARG0,	0,		showjoin },
+	{ "-joinlist",	-1,		0,		delifjoin },
 	{ "bssid",	NEXTARG,	0,		setifbssid },
 	{ "-bssid",	-1,		0,		setifbssid },
 	{ "nwkey",	NEXTARG,	0,		setifnwkey },
@@ -409,6 +419,8 @@ const struct	cmd {
 	{ "trunkport",	NEXTARG,	0,		settrunkport },
 	{ "-trunkport",	NEXTARG,	0,		unsettrunkport },
 	{ "trunkproto",	NEXTARG,	0,		settrunkproto },
+	{ "lacpmode",	NEXTARG,	0,		settrunklacpmode },
+	{ "lacptimeout", NEXTARG,	0,		settrunklacptimeout },
 	{ "anycast",	IN6_IFF_ANYCAST,	0,	setia6flags },
 	{ "-anycast",	-IN6_IFF_ANYCAST,	0,	setia6flags },
 	{ "tentative",	IN6_IFF_TENTATIVE,	0,	setia6flags },
@@ -737,7 +749,11 @@ main(int argc, char *argv[])
 	}
 
 	if (!found_rulefile) {
-		if (unveil("/", "") == -1)
+		if (unveil("/etc/resolv.conf", "r") == -1)
+			err(1, "unveil");
+		if (unveil("/etc/hosts", "r") == -1)
+			err(1, "unveil");
+		if (unveil("/etc/services", "r") == -1)
 			err(1, "unveil");
 		if (unveil(NULL, NULL) == -1)
 			err(1, "unveil");
@@ -1677,11 +1693,6 @@ setifjoin(const char *val, int d)
 	struct ieee80211_join join;
 	int len;
 
-	if (val == NULL) {
-		show_join = 1;
-		return;
-	}
-
 	if (d != 0) {
 		/* no network id is especially desired */
 		memset(&join, 0, sizeof(join));
@@ -1709,23 +1720,16 @@ delifjoin(const char *val, int d)
 	len = 0;
 	join.i_flags |= IEEE80211_JOIN_DEL;
 
-	if (val == NULL) {
+	if (d == -1) {
 		ifr.ifr_data = (caddr_t)&join;
 		if (ioctl(s, SIOCS80211JOIN, (caddr_t)&ifr) < 0)
 			warn("SIOCS80211JOIN");
 		return;
 	}
 
-	if (d != 0) {
-		/* no network id is especially desired */
-		memset(&join, 0, sizeof(join));
-		len = 0;
-	} else {
-		len = sizeof(join.i_nwid);
-		if (val != NULL &&
-		    get_string(val, NULL, join.i_nwid, &len) == NULL)
-			return;
-	}
+	len = sizeof(join.i_nwid);
+	if (get_string(val, NULL, join.i_nwid, &len) == NULL)
+		return;
 	join.i_len = len;
 	(void)strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 	ifr.ifr_data = (caddr_t)&join;
@@ -2321,6 +2325,13 @@ ieee80211_status(void)
 		ieee80211_listchans();
 	else if (shownet80211nodes)
 		ieee80211_listnodes();
+}
+
+void
+showjoin(const char *cmd, int val)
+{
+	show_join = 1;
+	return;
 }
 
 void
@@ -4062,6 +4073,72 @@ settrunkproto(const char *val, int d)
 	strlcpy(ra.ra_ifname, name, sizeof(ra.ra_ifname));
 	if (ioctl(s, SIOCSTRUNK, &ra) != 0)
 		err(1, "SIOCSTRUNK");
+}
+
+void
+settrunklacpmode(const char *val, int d)
+{
+	struct trunk_reqall ra;
+	struct trunk_opts tops;
+
+	bzero(&ra, sizeof(ra));
+	strlcpy(ra.ra_ifname, name, sizeof(ra.ra_ifname));
+
+	if (ioctl(s, SIOCGTRUNK, &ra) != 0)
+		err(1, "SIOCGTRUNK");
+
+	if (ra.ra_proto != TRUNK_PROTO_LACP)
+		errx(1, "Invalid option for trunk: %s", name);
+
+	if (strcmp(val, lacpmodeactive) != 0 &&
+	    strcmp(val, lacpmodepassive) != 0)
+		errx(1, "Invalid lacpmode option for trunk: %s", name);
+
+	bzero(&tops, sizeof(tops));
+	strlcpy(tops.to_ifname, name, sizeof(tops.to_ifname));
+	tops.to_proto = TRUNK_PROTO_LACP;
+	tops.to_opts |= TRUNK_OPT_LACP_MODE;
+
+	if (strcmp(val, lacpmodeactive) == 0)
+		tops.to_lacpopts.lacp_mode = 1;
+	else
+		tops.to_lacpopts.lacp_mode = 0;
+
+	if (ioctl(s, SIOCSTRUNKOPTS, &tops) != 0)
+		err(1, "SIOCSTRUNKOPTS");
+}
+
+void
+settrunklacptimeout(const char *val, int d)
+{
+	struct trunk_reqall ra;
+	struct trunk_opts tops;
+
+	bzero(&ra, sizeof(ra));
+	strlcpy(ra.ra_ifname, name, sizeof(ra.ra_ifname));
+
+	if (ioctl(s, SIOCGTRUNK, &ra) != 0)
+		err(1, "SIOCGTRUNK");
+
+	if (ra.ra_proto != TRUNK_PROTO_LACP)
+		errx(1, "Invalid option for trunk: %s", name);
+
+	if (strcmp(val, lacptimeoutfast) != 0 &&
+	    strcmp(val, lacptimeoutslow) != 0)
+		errx(1, "Invalid lacptimeout option for trunk: %s", name);
+
+	bzero(&tops, sizeof(tops));
+	strlcpy(tops.to_ifname, name, sizeof(tops.to_ifname));
+	tops.to_proto = TRUNK_PROTO_LACP;
+	tops.to_opts |= TRUNK_OPT_LACP_TIMEOUT;
+
+	if (strcmp(val, lacptimeoutfast) == 0)
+		tops.to_lacpopts.lacp_timeout = 1;
+	else
+		tops.to_lacpopts.lacp_timeout = 0;
+
+	if (ioctl(s, SIOCSTRUNKOPTS, &tops) != 0)
+		err(1, "SIOCSTRUNKOPTS");
 }
 
 void

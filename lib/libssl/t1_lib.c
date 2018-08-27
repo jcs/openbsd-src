@@ -1,4 +1,4 @@
-/* $OpenBSD: t1_lib.c,v 1.141 2018/02/08 11:30:30 jsing Exp $ */
+/* $OpenBSD: t1_lib.c,v 1.144 2018/08/24 18:10:25 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -815,11 +815,9 @@ ssl_check_serverhello_tlsext(SSL *s)
  * ClientHello, and other operations depend on the result, we need to handle
  * any TLS session ticket extension at the same time.
  *
- *   session_id: points at the session ID in the ClientHello. This code will
- *       read past the end of this in order to parse out the session ticket
- *       extension, if any.
- *   len: the length of the session ID.
- *   limit: a pointer to the first byte after the ClientHello.
+ *   session_id: points at the session ID in the ClientHello.
+ *   session_id_len: the length of the session ID.
+ *   ext_block: a CBS for the ClientHello extensions block.
  *   ret: (output) on return, if a ticket was decrypted, then this is set to
  *       point to the resulting session.
  *
@@ -845,55 +843,34 @@ ssl_check_serverhello_tlsext(SSL *s)
  *   Otherwise, s->internal->tlsext_ticket_expected is set to 0.
  */
 int
-tls1_process_ticket(SSL *s, const unsigned char *session, int session_len,
-    const unsigned char *limit, SSL_SESSION **ret)
+tls1_process_ticket(SSL *s, const unsigned char *session_id, int session_id_len,
+    CBS *ext_block, SSL_SESSION **ret)
 {
-	/* Point after session ID in client hello */
-	CBS session_id, cookie, cipher_list, compress_algo, extensions;
+	CBS extensions;
 
-	*ret = NULL;
 	s->internal->tlsext_ticket_expected = 0;
+	*ret = NULL;
 
-	/* If tickets disabled behave as if no ticket present
-	 * to permit stateful resumption.
+	/*
+	 * If tickets disabled behave as if no ticket present to permit stateful
+	 * resumption.
 	 */
 	if (SSL_get_options(s) & SSL_OP_NO_TICKET)
 		return 0;
-	if (!limit)
+
+	/*
+	 * An empty extensions block is valid, but obviously does not contain
+	 * a session ticket.
+	 */
+	if (CBS_len(ext_block) == 0)
 		return 0;
 
-	if (limit < session)
-		return -1;
-
-	CBS_init(&session_id, session, limit - session);
-
-	/* Skip past the session id */
-	if (!CBS_skip(&session_id, session_len))
-		return -1;
-
-	/* Skip past DTLS cookie */
-	if (SSL_IS_DTLS(s)) {
-		if (!CBS_get_u8_length_prefixed(&session_id, &cookie))
-			return -1;
-	}
-
-	/* Skip past cipher list */
-	if (!CBS_get_u16_length_prefixed(&session_id, &cipher_list))
-		return -1;
-
-	/* Skip past compression algorithm list */
-	if (!CBS_get_u8_length_prefixed(&session_id, &compress_algo))
-		return -1;
-
-	/* Now at start of extensions */
-	if (CBS_len(&session_id) == 0)
-		return 0;
-	if (!CBS_get_u16_length_prefixed(&session_id, &extensions))
+	if (!CBS_get_u16_length_prefixed(ext_block, &extensions))
 		return -1;
 
 	while (CBS_len(&extensions) > 0) {
-		CBS ext_data;
 		uint16_t ext_type;
+		CBS ext_data;
 
 		if (!CBS_get_u16(&extensions, &ext_type) ||
 		    !CBS_get_u16_length_prefixed(&extensions, &ext_data))
@@ -907,7 +884,7 @@ tls1_process_ticket(SSL *s, const unsigned char *session, int session_len,
 				s->internal->tlsext_ticket_expected = 1;
 				return 1;
 			}
-			if (s->internal->tls_session_secret_cb) {
+			if (s->internal->tls_session_secret_cb != NULL) {
 				/* Indicate that the ticket couldn't be
 				 * decrypted rather than generating the session
 				 * from ticket now, trigger abbreviated
@@ -917,7 +894,7 @@ tls1_process_ticket(SSL *s, const unsigned char *session, int session_len,
 			}
 
 			r = tls_decrypt_ticket(s, CBS_data(&ext_data),
-			    CBS_len(&ext_data), session, session_len, ret);
+			    CBS_len(&ext_data), session_id, session_id_len, ret);
 
 			switch (r) {
 			case 2: /* ticket couldn't be decrypted */
@@ -1116,28 +1093,41 @@ tls12_find_id(int nid, tls12_lookup *table, size_t tlen)
 }
 
 int
-tls12_get_sigandhash(unsigned char *p, const EVP_PKEY *pk, const EVP_MD *md)
+tls12_get_hashid(const EVP_MD *md)
 {
-	int sig_id, md_id;
-	if (!md)
-		return 0;
-	md_id = tls12_find_id(EVP_MD_type(md), tls12_md,
+	if (md == NULL)
+		return -1;
+
+	return tls12_find_id(EVP_MD_type(md), tls12_md,
 	    sizeof(tls12_md) / sizeof(tls12_lookup));
-	if (md_id == -1)
-		return 0;
-	sig_id = tls12_get_sigid(pk);
-	if (sig_id == -1)
-		return 0;
-	p[0] = (unsigned char)md_id;
-	p[1] = (unsigned char)sig_id;
-	return 1;
 }
 
 int
 tls12_get_sigid(const EVP_PKEY *pk)
 {
+	if (pk == NULL)
+		return -1;
+
 	return tls12_find_id(pk->type, tls12_sig,
 	    sizeof(tls12_sig) / sizeof(tls12_lookup));
+}
+
+int
+tls12_get_hashandsig(CBB *cbb, const EVP_PKEY *pk, const EVP_MD *md)
+{
+	int hash_id, sig_id;
+
+	if ((hash_id = tls12_get_hashid(md)) == -1)
+		return 0;
+	if ((sig_id = tls12_get_sigid(pk)) == -1)
+		return 0;
+
+	if (!CBB_add_u8(cbb, hash_id))
+		return 0;
+	if (!CBB_add_u8(cbb, sig_id))
+		return 0;
+
+	return 1;
 }
 
 const EVP_MD *

@@ -1,4 +1,4 @@
-/* $OpenBSD: pmap.c,v 1.54 2018/06/01 23:10:59 kettenis Exp $ */
+/* $OpenBSD: pmap.c,v 1.57 2018/08/18 15:42:19 kettenis Exp $ */
 /*
  * Copyright (c) 2008-2009,2014-2016 Dale Rahn <drahn@dalerahn.com>
  *
@@ -1537,9 +1537,43 @@ pmap_init(void)
 void
 pmap_proc_iflush(struct process *pr, vaddr_t va, vsize_t len)
 {
-	/* We only need to do anything if it is the current process. */
-	if (pr == curproc->p_p)
+	struct pmap *pm = vm_map_pmap(&pr->ps_vmspace->vm_map);
+	vaddr_t kva = zero_page + cpu_number() * PAGE_SIZE;
+	paddr_t pa;
+	vsize_t clen;
+	vsize_t off;
+
+	/*
+	 * If we're caled for the current processes, we can simply
+	 * flush the data cache to the point of unification and
+	 * invalidate the instruction cache.
+	 */
+	if (pr == curproc->p_p) {
 		cpu_icache_sync_range(va, len);
+		return;
+	}
+
+	/*
+	 * Flush and invalidate through an aliased mapping.  This
+	 * assumes the instruction cache is PIPT.  That is only true
+	 * for some of the hardware we run on.
+	 */
+	while (len > 0) {
+		/* add one to always round up to the next page */
+		clen = round_page(va + 1) - va;
+		if (clen > len)
+			clen = len;
+
+		off = va - trunc_page(va);
+		if (pmap_extract(pm, trunc_page(va), &pa)) {
+			pmap_kenter_pa(kva, pa, PROT_READ|PROT_WRITE);
+			cpu_icache_sync_range(kva + off, clen);
+			pmap_kremove_pg(kva);
+		}
+
+		len -= clen;
+		va += clen;
+	}
 }
 
 void
@@ -2169,33 +2203,45 @@ pmap_map_early(paddr_t spa, psize_t len)
  */
 
 #define NUM_ASID (1 << 16)
-uint64_t pmap_asid[NUM_ASID / 64];
+uint32_t pmap_asid[NUM_ASID / 32];
 
 void
 pmap_allocate_asid(pmap_t pm)
 {
+	uint32_t bits;
 	int asid, bit;
 
-	do {
-		asid = arc4random() & (NUM_ASID - 2);
-		bit = (asid & (64 - 1));
-	} while (asid == 0 || (pmap_asid[asid / 64] & (3ULL << bit)));
+	for (;;) {
+		do {
+			asid = arc4random() & (NUM_ASID - 2);
+			bit = (asid & (32 - 1));
+			bits = pmap_asid[asid / 32];
+		} while (asid == 0 || (bits & (3U << bit)));
 
-	pmap_asid[asid / 64] |= (3ULL << bit);
+		if (atomic_cas_uint(&pmap_asid[asid / 32], bits,
+		    bits | (3U << bit)) == bits)
+			break;
+	}
 	pm->pm_asid = asid;
 }
 
 void
 pmap_free_asid(pmap_t pm)
 {
+	uint32_t bits;
 	int bit;
 
 	KASSERT(pm != curcpu()->ci_curpm);
 	cpu_tlb_flush_asid_all((uint64_t)pm->pm_asid << 48);
 	cpu_tlb_flush_asid_all((uint64_t)(pm->pm_asid | ASID_USER) << 48);
 
-	bit = (pm->pm_asid & (64 - 1));
-	pmap_asid[pm->pm_asid / 64] &= ~(3ULL << bit);
+	bit = (pm->pm_asid & (32 - 1));
+	for (;;) {
+		bits = pmap_asid[pm->pm_asid / 32];
+		if (atomic_cas_uint(&pmap_asid[pm->pm_asid / 32], bits,
+		    bits & ~(3U << bit)) == bits)
+			break;
+	}
 }
 
 void

@@ -1,4 +1,4 @@
-/* $OpenBSD: imt.c,v 1.2 2017/07/23 22:39:11 jcs Exp $ */
+/* $OpenBSD: imt.c,v 1.4 2018/08/25 20:31:31 jcs Exp $ */
 /*
  * HID-over-i2c multitouch trackpad driver for devices conforming to
  * Windows Precision Touchpad standard

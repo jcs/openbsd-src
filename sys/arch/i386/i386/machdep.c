@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.623 2018/08/01 20:33:53 brynet Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.627 2018/08/24 06:25:40 jsg Exp $	*/
 /*	$NetBSD: machdep.c,v 1.214 1996/11/10 03:16:17 thorpej Exp $	*/
 
 /*-
@@ -421,6 +421,10 @@ cpu_startup(void)
 #endif
 	}
 	ioport_malloc_safe = 1;
+
+#ifndef SMALL_KERNEL
+	cpu_ucode_setup();
+#endif
 
 	/* enter the IDT and trampoline code in the u-k maps */
 	enter_shared_special_pages();
@@ -989,6 +993,7 @@ const struct cpu_cpuid_feature i386_ecpuid_features[] = {
 	{ CPUID_MMXX,		"MMXX" },
 	{ CPUID_FFXSR,		"FFXSR" },
 	{ CPUID_PAGE1GB,	"PAGE1GB" },
+	{ CPUID_RDTSCP,		"RDTSCP" },
 	{ CPUID_LONG,		"LONG" },
 	{ CPUID_3DNOW2,		"3DNOW2" },
 	{ CPUID_3DNOW,		"3DNOW" }
@@ -1094,6 +1099,16 @@ const struct cpu_cpuid_feature cpu_seff0_ecxfeatures[] = {
 	{ SEFF0ECX_PKU,		"PKU" },
 };
 
+const struct cpu_cpuid_feature cpu_seff0_edxfeatures[] = {
+	{ SEFF0EDX_AVX512_4FNNIW, "AVX512FNNIW" },
+	{ SEFF0EDX_AVX512_4FMAPS, "AVX512FMAPS" },
+	{ SEFF0EDX_IBRS,	"IBRS,IBPB" },
+	{ SEFF0EDX_STIBP,	"STIBP" },
+	{ SEFF0EDX_L1DF,	"L1DF" },
+	 /* SEFF0EDX_ARCH_CAP (not printed) */
+	{ SEFF0EDX_SSBD,	"SSBD" },
+};
+
 const struct cpu_cpuid_feature cpu_tpm_eaxfeatures[] = {
 	{ TPM_SENSOR,		"SENSOR" },
 	{ TPM_ARAT,		"ARAT" },
@@ -1105,6 +1120,13 @@ const struct cpu_cpuid_feature i386_cpuid_eaxperf[] = {
 
 const struct cpu_cpuid_feature i386_cpuid_edxapmi[] = {
 	{ CPUIDEDX_ITSC,	"ITSC" },
+};
+
+const struct cpu_cpuid_feature cpu_xsave_extfeatures[] = {
+	{ XSAVE_XSAVEOPT,	"XSAVEOPT" },
+	{ XSAVE_XSAVEC,		"XSAVEC" },
+	{ XSAVE_XGETBV1,	"XGETBV1" },
+	{ XSAVE_XSAVES,		"XSAVES" },
 };
 
 void
@@ -1720,8 +1742,6 @@ identifycpu(struct cpu_info *ci)
 		ci->ci_model = model;
 		step = ci->ci_signature & 15;
 #ifdef CPUDEBUG
-		printf("%s: family %x model %x step %x\n", cpu_device, family,
-		    model, step);
 		printf("%s: cpuid level %d cache eax %x ebx %x ecx %x edx %x\n",
 		    cpu_device, cpuid_level, cpu_cache_eax, cpu_cache_ebx,
 		    cpu_cache_ecx, cpu_cache_edx);
@@ -1924,6 +1944,11 @@ identifycpu(struct cpu_info *ci)
 			printf(" %d MHz", cpuspeed);
 		}
 	}
+
+	if (cpuid_level != -1)
+		printf(", %02x-%02x-%02x", ci->ci_family, ci->ci_model,
+		    step);
+
 	printf("\n");
 
 	if (ci->ci_feature_flags) {
@@ -1940,14 +1965,6 @@ identifycpu(struct cpu_info *ci)
 				numbits++;
 			}
 		}
-		for (i = 0; i < nitems(i386_ecpuid_features); i++) {
-			if (ecpu_feature &
-			    i386_ecpuid_features[i].feature_bit) {
-				printf("%s%s", (numbits == 0 ? "" : ","),
-				    i386_ecpuid_features[i].feature_name);
-				numbits++;
-			}
-		}
 		max = sizeof(i386_cpuid_ecxfeatures)
 			/ sizeof(i386_cpuid_ecxfeatures[0]);
 		for (i = 0; i < max; i++) {
@@ -1955,6 +1972,14 @@ identifycpu(struct cpu_info *ci)
 			    i386_cpuid_ecxfeatures[i].feature_bit) {
 				printf("%s%s", (numbits == 0 ? "" : ","),
 				    i386_cpuid_ecxfeatures[i].feature_name);
+				numbits++;
+			}
+		}
+		for (i = 0; i < nitems(i386_ecpuid_features); i++) {
+			if (ecpu_feature &
+			    i386_ecpuid_features[i].feature_bit) {
+				printf("%s%s", (numbits == 0 ? "" : ","),
+				    i386_ecpuid_features[i].feature_name);
 				numbits++;
 			}
 		}
@@ -1989,7 +2014,8 @@ identifycpu(struct cpu_info *ci)
 			/* "Structured Extended Feature Flags" */
 			CPUID_LEAF(0x7, 0, dummy,
 			    ci->ci_feature_sefflags_ebx,
-			    ci->ci_feature_sefflags_ecx, dummy);
+			    ci->ci_feature_sefflags_ecx,
+			    ci->ci_feature_sefflags_edx);
 			for (i = 0; i < nitems(cpu_seff0_ebxfeatures); i++)
 				if (ci->ci_feature_sefflags_ebx &
 				    cpu_seff0_ebxfeatures[i].feature_bit)
@@ -2002,6 +2028,12 @@ identifycpu(struct cpu_info *ci)
 					printf("%s%s",
 					    (numbits == 0 ? "" : ","),
 					    cpu_seff0_ecxfeatures[i].feature_name);
+			for (i = 0; i < nitems(cpu_seff0_edxfeatures); i++)
+				if (ci->ci_feature_sefflags_edx &
+				    cpu_seff0_edxfeatures[i].feature_bit)
+					printf("%s%s",
+					    (numbits == 0 ? "" : ","),
+					    cpu_seff0_edxfeatures[i].feature_name);
 		}
 
 		if (!strcmp(cpu_vendor, "GenuineIntel") &&
@@ -2015,6 +2047,17 @@ identifycpu(struct cpu_info *ci)
 				if (ci->ci_feature_tpmflags &
 				    cpu_tpm_eaxfeatures[i].feature_bit)
 					printf(",%s", cpu_tpm_eaxfeatures[i].feature_name);
+		}
+
+		/* xsave subfeatures */
+		if (cpuid_level >= 0xd) {
+			uint32_t dummy, val;
+
+			CPUID_LEAF(0xd, 1, val, dummy, dummy, dummy);
+			for (i = 0; i < nitems(cpu_xsave_extfeatures); i++)
+				if (val & cpu_xsave_extfeatures[i].feature_bit)
+					printf(",%s",
+					    cpu_xsave_extfeatures[i].feature_name);
 		}
 
 		if (cpu_meltdown)

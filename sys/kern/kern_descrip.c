@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_descrip.c,v 1.178 2018/08/10 15:53:49 jsing Exp $	*/
+/*	$OpenBSD: kern_descrip.c,v 1.182 2018/08/24 12:45:27 visa Exp $	*/
 /*	$NetBSD: kern_descrip.c,v 1.42 1996/03/30 22:24:38 christos Exp $	*/
 
 /*
@@ -1002,6 +1002,7 @@ restart:
 		return (ENFILE);
 	}
 
+	FREF(fp);
 	*resultfp = fp;
 	*resultfd = i;
 
@@ -1021,12 +1022,6 @@ fnew(struct proc *p)
 		return (NULL);
 	}
 
-	/*
-	 * Allocate a new file descriptor.
-	 * If the process has file descriptor zero open, add to the list
-	 * of open files at that point, otherwise put it at the front of
-	 * the list of open files.
-	 */
 	fp = pool_get(&file_pool, PR_WAITOK|PR_ZERO);
 	/*
 	 * We need to block interrupts as long as `f_mtx' is being taken
@@ -1036,8 +1031,6 @@ fnew(struct proc *p)
 	fp->f_count = 1;
 	fp->f_cred = p->p_ucred;
 	crhold(fp->f_cred);
-
-	FREF(fp);
 
 	return (fp);
 }
@@ -1167,16 +1160,16 @@ void
 fdfree(struct proc *p)
 {
 	struct filedesc *fdp = p->p_fd;
-	struct file **fpp, *fp;
-	int i;
+	struct file *fp;
+	int fd;
 
 	if (--fdp->fd_refcnt > 0)
 		return;
-	fpp = fdp->fd_ofiles;
-	for (i = fdp->fd_lastfile; i >= 0; i--, fpp++) {
-		fp = *fpp;
+	for (fd = 0; fd <= fdp->fd_lastfile; fd++) {
+		fp = fdp->fd_ofiles[fd];
 		if (fp != NULL) {
-			*fpp = NULL;
+			fdp->fd_ofiles[fd] = NULL;
+			knote_fdclose(p, fd);
 			 /* closef() expects a refcount of 2 */
 			FREF(fp);
 			(void) closef(fp, p);

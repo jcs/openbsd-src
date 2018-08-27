@@ -1,4 +1,4 @@
-.\"	$OpenBSD: mandoc.1,v 1.150 2018/07/28 18:32:30 schwarze Exp $
+.\"	$OpenBSD: mandoc.1,v 1.152 2018/08/25 16:43:52 schwarze Exp $
 .\"
 .\" Copyright (c) 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
 .\" Copyright (c) 2012, 2014-2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: July 28 2018 $
+.Dd $Mdocdate: August 25 2018 $
 .Dt MANDOC 1
 .Os
 .Sh NAME
@@ -1606,6 +1606,12 @@ or
 .Cm off .
 The invalid argument is moved out of the macro, which leaves the macro
 empty, causing it to toggle the spacing mode.
+.It Sy "argument contains two font escapes"
+.Pq roff
+The second argument of a
+.Ic char
+request contains more than one font escape sequence.
+A wrong font may remain active after using the character.
 .It Sy "unknown font, skipping request"
 .Pq man , tbl
 A
@@ -1807,6 +1813,13 @@ or
 macro.
 It may be mistyped or unsupported.
 The request or macro is discarded including its arguments.
+.It Sy "skipping request outside macro"
+.Pq roff
+A
+.Ic shift
+or
+.Ic return
+request occurs outside any macro definition and has no effect.
 .It Sy "skipping insecure request"
 .Pq roff
 An input file attempted to run a shell command
@@ -1916,6 +1929,14 @@ When parsing for a request or a user-defined macro name to be called,
 only the escape sequence is discarded.
 The characters preceding it are used as the request or macro name,
 the characters following it are used as the arguments to the request or macro.
+.It Sy "using macro argument outside macro"
+.Pq roff
+The escape sequence \e$ occurs outside any macro definition
+and expands to the empty string.
+.It Sy "argument number is not numeric"
+.Pq roff
+The argument of the escape sequence \e$ is not a digit;
+the escape sequence expands to the empty string.
 .It Sy "NOT IMPLEMENTED: Bd -file"
 .Pq mdoc
 For security reasons, the
@@ -1944,6 +1965,13 @@ macro fails to specify the list type.
 The argument of a
 .Ic \&ce
 request is not a number.
+.It Sy "argument is not a character"
+.Pq roff
+The first argument of a
+.Ic char
+request is neither a single ASCII character
+nor a single character escape sequence.
+The request is ignored including all its arguments.
 .It Sy "missing manual name, using \(dq\(dq"
 .Pq mdoc
 The first call to
@@ -1978,6 +2006,13 @@ or
 .Ic \&gsize
 statement has a non-numeric or negative argument or no argument at all.
 The invalid request or statement is ignored.
+.It Sy "excessive shift"
+.Pq roff
+The argument of a
+.Ic shift
+request is larger than the number of arguments of the macro that is
+currently being executed.
+All macro arguments are deleted and \en(.$ is set to zero.
 .It Sy "NOT IMPLEMENTED: .so with absolute path or \(dq..\(dq"
 .Pq roff
 For security reasons,

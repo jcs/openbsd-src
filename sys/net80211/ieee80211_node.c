@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_node.c,v 1.139 2018/08/07 18:13:14 stsp Exp $	*/
+/*	$OpenBSD: ieee80211_node.c,v 1.142 2018/08/15 18:45:43 stsp Exp $	*/
 /*	$NetBSD: ieee80211_node.c,v 1.14 2004/05/09 09:18:47 dyoung Exp $	*/
 
 /*-
@@ -76,7 +76,6 @@ void ieee80211_ba_del(struct ieee80211_node *);
 struct ieee80211_node *ieee80211_alloc_node_helper(struct ieee80211com *);
 void ieee80211_node_cleanup(struct ieee80211com *, struct ieee80211_node *);
 void ieee80211_node_switch_bss(struct ieee80211com *, struct ieee80211_node *);
-void ieee80211_node_join_bss(struct ieee80211com *, struct ieee80211_node *);
 void ieee80211_needs_auth(struct ieee80211com *, struct ieee80211_node *);
 #ifndef IEEE80211_STA_ONLY
 void ieee80211_node_join_ht(struct ieee80211com *, struct ieee80211_node *);
@@ -192,7 +191,6 @@ ieee80211_del_ess(struct ieee80211com *ic, char *nwid, int all)
 				return;
 		}
 	}
-
 }
 
 int
@@ -297,118 +295,221 @@ ieee80211_add_ess(struct ieee80211com *ic, int wpa, int wep)
 }
 
 int
-ieee80211_ess_is_better(struct ieee80211com *ic, struct ieee80211_node *nicur,
-    struct ieee80211_node *selni)
+ieee80211_ess_cmp_crypto(struct ieee80211_node *nicur,
+    struct ieee80211_node *nican)
 {
-	uint8_t			 min_5ghz_rssi;
-
-	/* anything is better than nothing */
-	if (selni == NULL)
+	if ((nican->ni_rsnprotos & IEEE80211_PROTO_RSN) &&
+	    (nicur->ni_rsnprotos & IEEE80211_PROTO_RSN) == 0)
 		return 1;
+	if ((nican->ni_rsnprotos & IEEE80211_PROTO_RSN) == 0 &&
+	    (nicur->ni_rsnprotos & IEEE80211_PROTO_RSN))
+		return -1;
+
+	if ((nican->ni_rsnprotos & IEEE80211_PROTO_WPA) &&
+	    (nicur->ni_rsnprotos & IEEE80211_PROTO_WPA) == 0)
+		return 1;
+	if ((nican->ni_rsnprotos & IEEE80211_PROTO_WPA) == 0 &&
+	    (nicur->ni_rsnprotos & IEEE80211_PROTO_WPA))
+		return -1;
+
+	if ((nican->ni_capinfo & IEEE80211_CAPINFO_PRIVACY) &&
+	    (nicur->ni_capinfo & IEEE80211_CAPINFO_PRIVACY) == 0)
+		return 1;
+	if ((nican->ni_capinfo & IEEE80211_CAPINFO_PRIVACY) == 0 &&
+	    (nicur->ni_capinfo & IEEE80211_CAPINFO_PRIVACY))
+		return -1;
+
+	return 0;
+}
+
+int
+ieee80211_ess_cmp_band(struct ieee80211com *ic,
+    struct ieee80211_node *nicur, struct ieee80211_node *nican)
+{
+	uint8_t	min_5ghz_rssi;
 
 	if (ic->ic_max_rssi)
 		min_5ghz_rssi = IEEE80211_RSSI_THRES_RATIO_5GHZ;
 	else
 		min_5ghz_rssi = (uint8_t)IEEE80211_RSSI_THRES_5GHZ;
 
-	/* First 5GHz with acceptable signal */
-	if ((IEEE80211_IS_CHAN_5GHZ(nicur->ni_chan) &&
-	    !IEEE80211_IS_CHAN_5GHZ(selni->ni_chan)) &&
+	if (IEEE80211_IS_CHAN_5GHZ(nican->ni_chan) &&
+	    IEEE80211_IS_CHAN_2GHZ(nicur->ni_chan) &&
+	    nican->ni_rssi > min_5ghz_rssi)
+		return 1;
+
+	if (IEEE80211_IS_CHAN_5GHZ(nicur->ni_chan) &&
+	    IEEE80211_IS_CHAN_5GHZ(nican->ni_chan) &&
 	    nicur->ni_rssi > min_5ghz_rssi)
-		return 1;
-
-	/* Prefer 5GHz N over not-N */
-	if ((IEEE80211_IS_CHAN_5GHZ(nicur->ni_chan) &&
-	    nicur->ni_rssi > min_5ghz_rssi) &&
-	    ieee80211_node_supports_ht(nicur))
-		return 1;
-
-	/* Settle for just N */
-	if (ieee80211_node_supports_ht(nicur) &&
-	    !ieee80211_node_supports_ht(selni))
-		return 1;
-
-	/* Last resort of best rssi */
-	if (nicur->ni_rssi > selni->ni_rssi)
-		return 1;
+		return -1;
 
 	return 0;
 }
 
+uint8_t
+ieee80211_ess_adjust_rssi(struct ieee80211com *ic, struct ieee80211_node *ni)
+{
+	uint8_t rssi = ni->ni_rssi;
+
+	/*
+	 * Slightly punish 2 GHz RSSI values since they are usually
+	 * stronger than 5 GHz RSSI values.
+	 */
+	if (IEEE80211_IS_CHAN_2GHZ(ni->ni_chan)) {
+		if (ic->ic_max_rssi) {
+			uint8_t p = (5 * ic->ic_max_rssi) / 100;
+	 		if (rssi >= p)
+				rssi -= p; /* punish by 5% */
+		} else  {
+			if (rssi >= 8)
+				rssi -= 8; /* punish by 8 dBm */
+		}
+	}
+
+	return rssi;
+}
+
 int
-ieee80211_match_ess(struct ieee80211com *ic)
+ieee80211_ess_cmp_rssi(struct ieee80211com *ic,
+    struct ieee80211_node *nicur, struct ieee80211_node *nican)
+{
+	uint8_t cur_rssi = ieee80211_ess_adjust_rssi(ic, nicur);
+	uint8_t can_rssi = ieee80211_ess_adjust_rssi(ic, nican);
+
+	if (can_rssi > cur_rssi)
+		return 1;
+	if (cur_rssi > can_rssi)
+		return -1;
+
+	return 0;
+}
+
+/*
+ * Given two APs, determine the "better" one of the two.
+ * We compute a score based on the following attributes:
+ *
+ *  crypto: wpa2 > wpa1 > wep > open
+ *  band: 5 GHz > 2 GHz provided 5 GHz rssi is above threshold
+ *  rssi: rssi1 > rssi2 as a numeric comparison with a slight
+ *         disadvantage for 2 GHz APs
+ *
+ * Crypto carries most weight, followed by band, followed by rssi.
+ */
+int
+ieee80211_ess_is_better(struct ieee80211com *ic,
+    struct ieee80211_node *nicur, struct ieee80211_node *nican)
+{
+	int score_cur = 0, score_can = 0;
+
+	switch (ieee80211_ess_cmp_crypto(nicur, nican)) {
+	case 1:
+		score_can += 4;
+		break;
+	case -1:
+		score_cur += 4;
+		break;
+	default:
+		break;
+	}
+		
+	switch (ieee80211_ess_cmp_band(ic, nicur, nican)) {
+	case 1:
+		score_can += 2;
+		break;
+	case -1:
+		score_cur += 2;
+		break;
+	default:
+		break;
+	}
+
+	switch (ieee80211_ess_cmp_rssi(ic, nicur, nican)) {
+	case 1:
+		score_can += 1;
+		break;
+	case -1:
+		score_cur += 1;
+		break;
+	default:
+		break;
+	}
+
+	return score_can > score_cur;
+}
+
+/* Determine whether a candidate AP belongs to a given ESS. */
+int
+ieee80211_match_ess(struct ieee80211_ess *ess, struct ieee80211_node *ni)
+{
+	if (ess->esslen != ni->ni_esslen)
+		return 0;
+	if (memcmp(ess->essid, ni->ni_essid, ess->esslen) != 0)
+		return 0;
+
+	if (ess->flags & (IEEE80211_F_PSK | IEEE80211_F_RSNON)) {
+		/* Ensure same WPA version. */
+		if ((ni->ni_rsnprotos & IEEE80211_PROTO_RSN) &&
+		    (ess->rsnprotos & IEEE80211_PROTO_RSN) == 0)
+			return 0;
+		if ((ni->ni_rsnprotos & IEEE80211_PROTO_WPA) &&
+		    (ess->rsnprotos & IEEE80211_PROTO_WPA) == 0)
+			return 0;
+	} else if (ess->flags & IEEE80211_F_WEPON) {
+		if ((ni->ni_capinfo & IEEE80211_CAPINFO_PRIVACY) == 0)
+			return 0;
+	}
+
+	return 1;
+}
+
+void
+ieee80211_switch_ess(struct ieee80211com *ic)
 {
 	struct ifnet		*ifp = &ic->ic_if;
 	struct ieee80211_ess	*ess, *seless = NULL;
 	struct ieee80211_node	*ni, *selni = NULL;
 
 	if (!ISSET(ifp->if_flags, IFF_RUNNING))
-		return (0);
+		return;
 
-	/*
-	 * Apple's iOS uses the algorithm described at
-	 * https://support.apple.com/en-us/HT202831
-	 *
-	 * basically:
-	 * last network recently joined
-	 * then strongest security
-	 * then rssi level
-	 */
+	/* Find the best AP matching an entry on our ESS join list. */
+	RBT_FOREACH(ni, ieee80211_tree, &ic->ic_tree) {
+		if ((ic->ic_flags & IEEE80211_F_DESBSSID) &&
+		    !IEEE80211_ADDR_EQ(ic->ic_des_bssid, ni->ni_bssid))
+			continue;
 
-	/* skip if it's the same network */
-	TAILQ_FOREACH(ess, &ic->ic_ess, ess_next) {
-		if (LINK_STATE_IS_UP(ifp->if_link_state) &&
-		    ess->esslen == ic->ic_des_esslen &&
-		    (memcmp(ic->ic_des_essid, ess->essid,
-		     IEEE80211_NWID_LEN) == 0)) {
-			if (ifp->if_flags & IFF_DEBUG) {
-				printf(" %s: staying on ",
-				    ifp->if_xname);
-				ieee80211_print_essid(ess->essid, ess->esslen);
-				printf("\n");
-			}
-			return (0);
+		TAILQ_FOREACH(ess, &ic->ic_ess, ess_next) {
+			if (ieee80211_match_ess(ess, ni))
+				break;
 		}
-	}
+		if (ess == NULL)
+			continue;
 
-	TAILQ_FOREACH(ess, &ic->ic_ess, ess_next) {
-		RBT_FOREACH(ni, ieee80211_tree, &ic->ic_tree) {
-			if (memcmp(ess->essid, ni->ni_essid,
-			    IEEE80211_NWID_LEN) != 0 ||
-			    ni->ni_fails != 0)
-				continue;
+		if (selni == NULL) {
+			seless = ess;
+			selni = ni;
+			continue;
+		}
 
-			/* make sure encryptions match */
-			if (ess->flags &
-			    (IEEE80211_F_PSK | IEEE80211_F_RSNON)) {
-				if ((ni->ni_capinfo &
-				    IEEE80211_CAPINFO_PRIVACY) == 0)
-					continue;
-			} else {
-				if (ni->ni_capinfo & IEEE80211_CAPINFO_PRIVACY)
-					continue;
-			}
-
-			if ((ic->ic_flags & IEEE80211_F_DESBSSID) &&
-			    !IEEE80211_ADDR_EQ(ic->ic_des_bssid, ni->ni_bssid))
-				continue;
-
-			if (ieee80211_ess_is_better(ic, ni, selni) > 0) {
-				seless = ess;
-				selni = ni;
-			}
+		if (ieee80211_ess_is_better(ic, selni, ni)) {
+			seless = ess;
+			selni = ni;
 		}
 	}
 
 	if (seless && !(seless->esslen == ic->ic_des_esslen &&
 	    (memcmp(ic->ic_des_essid, seless->essid,
 	     IEEE80211_NWID_LEN) == 0))) {
-		ieee80211_set_ess(ic, seless->essid);
-		return (1);
-	}
+		if (ifp->if_flags & IFF_DEBUG) {
+			printf("%s: switching to network ", ifp->if_xname);
+			ieee80211_print_essid(seless->essid, seless->esslen);
+			printf("\n");
 
-	return (0);
+		}
+		ieee80211_set_ess(ic, seless->essid);
+	}
 }
+
 void
 ieee80211_set_ess(struct ieee80211com *ic, char *nwid)
 {
@@ -978,6 +1079,9 @@ ieee80211_node_join_bss(struct ieee80211com *ic, struct ieee80211_node *selbs)
 		int bgscan = ((ic->ic_flags & IEEE80211_F_BGSCAN) &&
 		    ic->ic_opmode == IEEE80211_M_STA &&
 		    ic->ic_state == IEEE80211_S_RUN);
+		int auth_next = (ic->ic_opmode == IEEE80211_M_STA &&
+		    ic->ic_state == IEEE80211_S_AUTH);
+		int mgt = -1;
 
 		timeout_del(&ic->ic_bgscan_timeout);
 		ic->ic_flags &= ~IEEE80211_F_BGSCAN;
@@ -988,9 +1092,80 @@ ieee80211_node_join_bss(struct ieee80211com *ic, struct ieee80211_node *selbs)
 		 * ieee80211_new_state() try to re-auth and thus send
 		 * an AUTH frame to our newly selected AP.
 		 */
-		ieee80211_new_state(ic, IEEE80211_S_AUTH,
-		    bgscan ? IEEE80211_FC0_SUBTYPE_DEAUTH : -1);
+		if (bgscan)
+			mgt = IEEE80211_FC0_SUBTYPE_DEAUTH;
+		/*
+		 * If we are trying another AP after the previous one
+		 * failed (state transition AUTH->AUTH), ensure that
+		 * ieee80211_new_state() tries to send another auth frame.
+		 */
+		else if (auth_next)
+			mgt = IEEE80211_FC0_SUBTYPE_AUTH;
+
+		ieee80211_new_state(ic, IEEE80211_S_AUTH, mgt);
 	}
+}
+
+struct ieee80211_node *
+ieee80211_node_choose_bss(struct ieee80211com *ic, int bgscan,
+    struct ieee80211_node **curbs)
+{
+	struct ieee80211_node *ni, *nextbs, *selbs = NULL, 
+	    *selbs2 = NULL, *selbs5 = NULL;
+	uint8_t min_5ghz_rssi;
+
+	ni = RBT_MIN(ieee80211_tree, &ic->ic_tree);
+
+	for (; ni != NULL; ni = nextbs) {
+		nextbs = RBT_NEXT(ieee80211_tree, ni);
+		if (ni->ni_fails) {
+			/*
+			 * The configuration of the access points may change
+			 * during my scan.  So delete the entry for the AP
+			 * and retry to associate if there is another beacon.
+			 */
+			if (ni->ni_fails++ > 2)
+				ieee80211_free_node(ic, ni);
+			continue;
+		}
+
+		if (curbs && ieee80211_node_cmp(ic->ic_bss, ni) == 0)
+			*curbs = ni;
+
+		if (ieee80211_match_bss(ic, ni) != 0)
+			continue;
+
+		if (ic->ic_caps & IEEE80211_C_SCANALLBAND) {
+			if (IEEE80211_IS_CHAN_2GHZ(ni->ni_chan) &&
+			    (selbs2 == NULL || ni->ni_rssi > selbs2->ni_rssi))
+				selbs2 = ni;
+			else if (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan) &&
+			    (selbs5 == NULL || ni->ni_rssi > selbs5->ni_rssi))
+				selbs5 = ni;
+		} else if (selbs == NULL || ni->ni_rssi > selbs->ni_rssi)
+			selbs = ni;
+	}
+
+	if (ic->ic_max_rssi)
+		min_5ghz_rssi = IEEE80211_RSSI_THRES_RATIO_5GHZ;
+	else
+		min_5ghz_rssi = (uint8_t)IEEE80211_RSSI_THRES_5GHZ;
+
+	/*
+	 * Prefer a 5Ghz AP even if its RSSI is weaker than the best 2Ghz AP
+	 * (as long as it meets the minimum RSSI threshold) since the 5Ghz band
+	 * is usually less saturated.
+	 */
+	if (selbs5 && selbs5->ni_rssi > min_5ghz_rssi)
+		selbs = selbs5;
+	else if (selbs5 && selbs2)
+		selbs = (selbs5->ni_rssi >= selbs2->ni_rssi ? selbs5 : selbs2);
+	else if (selbs2)
+		selbs = selbs2;
+	else if (selbs5)
+		selbs = selbs5;
+
+	return selbs;
 }
 
 /*
@@ -1000,12 +1175,10 @@ void
 ieee80211_end_scan(struct ifnet *ifp)
 {
 	struct ieee80211com *ic = (void *)ifp;
-	struct ieee80211_node *ni, *nextbs, *selbs = NULL, *curbs = NULL,
-	    *selbs2 = NULL, *selbs5 = NULL;
+	struct ieee80211_node *ni, *selbs = NULL, *curbs = NULL;
 	int bgscan = ((ic->ic_flags & IEEE80211_F_BGSCAN) &&
 	    ic->ic_opmode == IEEE80211_M_STA &&
 	    ic->ic_state == IEEE80211_S_RUN);
-	uint8_t min_5ghz_rssi;
 
 	if (ifp->if_flags & IFF_DEBUG)
 		printf("%s: end %s scan\n", ifp->if_xname,
@@ -1081,57 +1254,9 @@ ieee80211_end_scan(struct ifnet *ifp)
 
 	/* Possibly switch which ssid we are associated with */
 	if (!bgscan && ic->ic_opmode == IEEE80211_M_STA)
-		ieee80211_match_ess(ic);
+		ieee80211_switch_ess(ic);
 
-	for (; ni != NULL; ni = nextbs) {
-		nextbs = RBT_NEXT(ieee80211_tree, ni);
-		if (ni->ni_fails) {
-			/*
-			 * The configuration of the access points may change
-			 * during my scan.  So delete the entry for the AP
-			 * and retry to associate if there is another beacon.
-			 */
-			if (ni->ni_fails++ > 2)
-				ieee80211_free_node(ic, ni);
-			continue;
-		}
-
-		if (bgscan && ieee80211_node_cmp(ic->ic_bss, ni) == 0)
-			curbs = ni;
-
-		if (ieee80211_match_bss(ic, ni) != 0)
-			continue;
-
-		if (ic->ic_caps & IEEE80211_C_SCANALLBAND) {
-			if (IEEE80211_IS_CHAN_2GHZ(ni->ni_chan) &&
-			    (selbs2 == NULL || ni->ni_rssi > selbs2->ni_rssi))
-				selbs2 = ni;
-			else if (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan) &&
-			    (selbs5 == NULL || ni->ni_rssi > selbs5->ni_rssi))
-				selbs5 = ni;
-		} else if (selbs == NULL || ni->ni_rssi > selbs->ni_rssi)
-			selbs = ni;
-	}
-
-	if (ic->ic_max_rssi)
-		min_5ghz_rssi = IEEE80211_RSSI_THRES_RATIO_5GHZ;
-	else
-		min_5ghz_rssi = (uint8_t)IEEE80211_RSSI_THRES_5GHZ;
-
-	/*
-	 * Prefer a 5Ghz AP even if its RSSI is weaker than the best 2Ghz AP
-	 * (as long as it meets the minimum RSSI threshold) since the 5Ghz band
-	 * is usually less saturated.
-	 */
-	if (selbs5 && selbs5->ni_rssi > min_5ghz_rssi)
-		selbs = selbs5;
-	else if (selbs5 && selbs2)
-		selbs = (selbs5->ni_rssi >= selbs2->ni_rssi ? selbs5 : selbs2);
-	else if (selbs2)
-		selbs = selbs2;
-	else if (selbs5)
-		selbs = selbs5;
-
+	selbs = ieee80211_node_choose_bss(ic, bgscan, &curbs);
 	if (bgscan) {
 		struct ieee80211_node_switch_bss_arg *arg;
 
@@ -1940,6 +2065,11 @@ ieee80211_setup_htop(struct ieee80211_node *ni, const uint8_t *data,
 	ni->ni_htop1 = (data[2] | (data[3] << 8));
 	ni->ni_htop2 = (data[3] | (data[4] << 8));
 
+	/*
+	 * According to 802.11-2012 Table 8-130 the Basic MCS set is
+	 * only "present in Beacon, Probe Response, Mesh Peering Open
+	 * and Mesh Peering Confirm frames. Otherwise reserved."
+	 */
 	if (isprobe)
 		memcpy(ni->ni_basic_mcs, &data[6], sizeof(ni->ni_basic_mcs));
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.239 2018/08/02 15:34:07 rob Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.242 2018/08/20 10:00:04 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -78,9 +78,9 @@
 #endif
 #endif
 
-#if defined(__amd64__) || defined(__i386__) || \
-    defined(__loongson__) || defined(__macppc__) || \
-    defined(__sparc64__)
+#if defined(__amd64__) || defined(__arm64__) || \
+    defined(__i386__) || defined(__loongson__) || \
+    defined(__macppc__) || defined(__sparc64__)
 #include "drm.h"
 #endif
 
@@ -568,8 +568,8 @@ pledge_namei(struct proc *p, struct nameidata *ni, char *origpath)
 	    (p->p_p->ps_flags & PS_COREDUMP))
 		return (0);
 
-	if (!ni || (ni->ni_pledge == 0))
-		panic("ni_pledge");
+	if (ni->ni_pledge == 0)
+		panic("pledge_namei: ni_pledge");
 
 	/*
 	 * We set the BYPASSUNVEIL flag to skip unveil checks
@@ -608,14 +608,14 @@ pledge_namei(struct proc *p, struct nameidata *ni, char *origpath)
 	switch (p->p_pledge_syscall) {
 	case SYS_access:
 		/* tzset() needs this. */
-		if ((ni->ni_pledge == (PLEDGE_RPATH | PLEDGE_STAT)) &&
+		if (ni->ni_pledge == PLEDGE_RPATH &&
 		    strcmp(path, "/etc/localtime") == 0) {
 			ni->ni_cnd.cn_flags |= BYPASSUNVEIL;
 			return (0);
 		}
 
 		/* when avoiding YP mode, getpw* functions touch this */
-		if (ni->ni_pledge == (PLEDGE_RPATH | PLEDGE_STAT) &&
+		if (ni->ni_pledge == PLEDGE_RPATH &&
 		    strcmp(path, "/var/run/ypbind.lock") == 0) {
 			if (p->p_p->ps_pledge & PLEDGE_GETPW) {
 				ni->ni_cnd.cn_flags |= BYPASSUNVEIL;
@@ -713,7 +713,7 @@ pledge_namei(struct proc *p, struct nameidata *ni, char *origpath)
 		break;
 	case SYS_readlink:
 		/* Allow /etc/malloc.conf for malloc(3). */
-		if ((ni->ni_pledge == (PLEDGE_RPATH | PLEDGE_STAT)) &&
+		if ((ni->ni_pledge == PLEDGE_RPATH) &&
 		    strcmp(path, "/etc/malloc.conf") == 0) {
 			ni->ni_cnd.cn_flags |= BYPASSUNVEIL;
 			return (0);
@@ -721,7 +721,7 @@ pledge_namei(struct proc *p, struct nameidata *ni, char *origpath)
 		break;
 	case SYS_stat:
 		/* DNS needs /etc/resolv.conf. */
-		if ((ni->ni_pledge == (PLEDGE_RPATH | PLEDGE_STAT)) &&
+		if ((ni->ni_pledge == PLEDGE_RPATH) &&
 		    (p->p_p->ps_pledge & PLEDGE_DNS) &&
 		    strcmp(path, "/etc/resolv.conf") == 0) {
 			ni->ni_cnd.cn_flags |= BYPASSUNVEIL;
@@ -732,9 +732,9 @@ pledge_namei(struct proc *p, struct nameidata *ni, char *origpath)
 
 	/*
 	 * Ensure each flag of ni_pledge has counterpart allowing it in
-	 * ps_pledge. discard PLEDGE_STAT as it is unveil(2) stuff.
+	 * ps_pledge.
 	 */
-	if ((ni->ni_pledge & ~PLEDGE_STAT) & ~p->p_p->ps_pledge)
+	if (ni->ni_pledge & ~p->p_p->ps_pledge)
 		return (pledge_fail(p, EPERM, (ni->ni_pledge & ~p->p_p->ps_pledge)));
 
 	/* continue, and check unveil if present */

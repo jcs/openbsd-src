@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile.i386,v 1.124 2018/07/13 08:10:45 deraadt Exp $
+#	$OpenBSD: Makefile.i386,v 1.126 2018/08/21 18:06:12 anton Exp $
 
 # For instructions on building kernels consult the config(8) and options(4)
 # manual pages.
@@ -96,6 +96,10 @@ SYSTEM_LD_TAIL+=; umask 007; \
 LINKFLAGS+=	-S
 .endif
 
+.if ${SYSTEM_OBJ:Mkcov.o} && ${COMPILER_VERSION:Mclang}
+PROF=		-fsanitize-coverage=trace-pc
+.endif
+
 %LOAD
 
 # cc's -MD puts the source and output paths in the dependency file;
@@ -137,6 +141,11 @@ gap.o:	Makefile makegap.sh vers.o
 vers.o: ${SYSTEM_DEP:Ngap.o}
 	sh $S/conf/newvers.sh
 	${CC} ${CFLAGS} ${CPPFLAGS} ${PROF} -c vers.c
+
+.if ${SYSTEM_OBJ:Mkcov.o} && ${COMPILER_VERSION:Mclang}
+kcov.o: $S/dev/kcov.c
+	${NORMAL_C} -fno-sanitize-coverage=trace-pc
+.endif
 
 clean:
 	rm -f *bsd *bsd.gdb *.[dio] [a-z]*.s assym.* \

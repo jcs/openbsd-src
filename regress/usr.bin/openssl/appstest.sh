@@ -1,5 +1,22 @@
 #!/bin/sh
 #
+# $OpenBSD: appstest.sh,v 1.8 2018/08/26 13:28:13 inoguchi Exp $
+#
+# Copyright (c) 2016 Kinichiro Inoguchi <inoguchi@openbsd.org>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+#
 # appstest.sh - test script for openssl command according to man OPENSSL(1)
 #
 # input  : none
@@ -28,9 +45,20 @@ function start_message {
     echo "[TEST] $1"
 }
 
+function stop_s_server {
+    if [ ! -z "$s_server_pid" ] ; then
+        echo ":-| stop s_server [ $s_server_pid ]"
+        sleep 1
+        kill -TERM $s_server_pid
+        wait $s_server_pid
+        s_server_pid=
+    fi
+}
+
 function check_exit_status {
     status=$1
     if [ $status -ne 0 ] ; then
+        stop_s_server
         echo ":-< error occurs, exit status = [ $status ]"
         exit $status
     else
@@ -917,26 +945,56 @@ section_message "client/server operations"
 
 host="localhost"
 port=4433
-sess_log=$user1_dir/s_client_sess.log
-s_client_out=$user1_dir/s_client.out
+sess_dat=$user1_dir/s_client_sess.dat
+s_server_out=$server_dir/s_server.out
+s_client_1_out=$user1_dir/s_client_1.out
+s_client_2_out=$user1_dir/s_client_2.out
+s_client_3_out=$user1_dir/s_client_3.out
 
 start_message "s_server ... start SSL/TLS test server"
 $openssl_bin s_server -accept $port -CAfile $ca_cert \
     -cert $server_cert -key $server_key -pass pass:$server_pass \
     -context "appstest.sh" -id_prefix "APPSTEST.SH" \
     -crl_check -no_ssl2 -no_ssl3 -no_tls1 \
-    -nextprotoneg "http/1.1,spdy/3" -alpn "http/1.1,spdy/3" \
-    -www -quiet &
+    -nextprotoneg "http/1.1,spdy/3" -alpn "http/1.1,spdy/3" -www \
+    -msg -tlsextdebug > $s_server_out 2>&1 &
 check_exit_status $?
 s_server_pid=$!
 echo "s_server pid = [ $s_server_pid ]"
 sleep 1
 
 start_message "s_client ... connect to SSL/TLS test server"
-$openssl_bin s_client -connect $host:$port -CAfile $ca_cert \
-    -showcerts -crl_check -issuer_checks -policy_check -pause -prexit \
+$openssl_bin s_client -connect $host:$port -CAfile $ca_cert -pause -prexit \
     -nextprotoneg "spdy/3,http/1.1" -alpn "spdy/3,http/1.1" \
-    -sess_out $sess_log < /dev/null > $s_client_out 2>&1
+    -sess_out $sess_dat \
+    -msg -tlsextdebug < /dev/null > $s_client_1_out 2>&1
+check_exit_status $?
+
+grep 'New, TLSv1/SSLv3' $s_client_1_out > /dev/null
+check_exit_status $?
+
+grep 'Verify return code: 0 (ok)' $s_client_1_out > /dev/null
+check_exit_status $?
+
+start_message "s_client ... connect to SSL/TLS test server reusing session id"
+$openssl_bin s_client -connect $host:$port -CAfile $ca_cert -pause -prexit \
+    -sess_in $sess_dat \
+    -msg -tlsextdebug < /dev/null > $s_client_2_out 2>&1
+check_exit_status $?
+
+grep 'Reused, TLSv1/SSLv3' $s_client_2_out > /dev/null
+check_exit_status $?
+
+grep 'Verify return code: 0 (ok)' $s_client_2_out > /dev/null
+check_exit_status $?
+
+start_message "s_client ... connect to SSL/TLS test server but verify error"
+$openssl_bin s_client -connect $host:$port -CAfile $ca_cert -pause -prexit \
+    -showcerts -crl_check -issuer_checks -policy_check \
+    -msg -tlsextdebug < /dev/null > $s_client_3_out 2>&1
+check_exit_status $?
+
+grep 'Verify return code: 24 (invalid CA certificate)' $s_client_3_out > /dev/null
 check_exit_status $?
 
 start_message "s_time ... connect to SSL/TLS test server"
@@ -944,12 +1002,10 @@ $openssl_bin s_time -connect $host:$port -CAfile $ca_cert -time 2
 check_exit_status $?
 
 start_message "sess_id"
-$openssl_bin sess_id -in $sess_log -text -out $sess_log.out
+$openssl_bin sess_id -in $sess_dat -text -out $sess_dat.out
 check_exit_status $?
 
-sleep 1
-kill -TERM $s_server_pid
-wait $s_server_pid
+stop_s_server
 
 #---------#---------#---------#---------#---------#---------#---------#---------
 

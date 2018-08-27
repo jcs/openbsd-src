@@ -1,4 +1,4 @@
-/* $OpenBSD: agintc.c,v 1.10 2018/08/08 20:56:49 kettenis Exp $ */
+/* $OpenBSD: agintc.c,v 1.14 2018/08/18 10:10:19 kettenis Exp $ */
 /*
  * Copyright (c) 2007, 2009, 2011, 2017 Dale Rahn <drahn@dalerahn.com>
  * Copyright (c) 2018 Mark Kettenis <kettenis@openbsd.org>
@@ -29,6 +29,7 @@
 #include <sys/evcount.h>
 
 #include <machine/bus.h>
+#include <machine/cpufunc.h>
 #include <machine/fdt.h>
 
 #include <dev/ofw/fdt.h>
@@ -79,6 +80,7 @@
 #define GICD_ICACTIVER(i)	(0x0380 + (IRQ_TO_REG32(i) * 4))
 #define GICD_IPRIORITYR(i)	(0x0400 + (i))
 #define GICD_ICFGR(i)		(0x0c00 + (IRQ_TO_REG16(i) * 4))
+#define GICD_NSACR(i)		(0x0e00 + (IRQ_TO_REG16(i) * 4))
 #define GICD_IROUTER(i)		(0x6000 + ((i) * 8))
 
 /* redistributor registers */
@@ -113,7 +115,8 @@
 #define GICR_ICFGR1		0x10c04
 
 #define GICR_PROP_SIZE		(64 * 1024)
-#define GICR_PROP_ENABLE	(1 << 0)
+#define  GICR_PROP_GROUP1	(1 << 1)
+#define  GICR_PROP_ENABLE	(1 << 0)
 #define GICR_PEND_SIZE		(64 * 1024)
 
 #define PPI_BASE		16
@@ -129,27 +132,20 @@
 #define IRQ_ENABLE	1
 #define IRQ_DISABLE	0
 
-/*
- * This is not a true hard limit, but until bigger machines are supported
- * there is no need for this to be 96+, which the interrupt controller
- * does support. It may make sense to move to dynamic allocation of these 3
- * fields in the future, eg when hardware with 96 cores are supported.
- */
-#define MAX_CORES	24
-
 struct agintc_softc {
 	struct simplebus_softc	 sc_sbus;
 	struct intrq		*sc_handler;
 	struct intrhand		**sc_lpi_handler;
 	bus_space_tag_t		 sc_iot;
 	bus_space_handle_t	 sc_d_ioh;
-	bus_space_handle_t	 sc_r_ioh[MAX_CORES];
+	bus_space_handle_t	*sc_r_ioh;
 	bus_space_handle_t	 sc_redist_base;
 	bus_dma_tag_t		 sc_dmat;
-	uint64_t		 sc_affinity[MAX_CORES];
-	int			 sc_cpuremap[MAX_CORES]; /* bsd to redist */
+	uint64_t		*sc_affinity;
+	int			 sc_cpuremap[MAXCPUS];
 	int			 sc_nintr;
 	int			 sc_nlpi;
+	int			 sc_rk3399_quirk;
 	struct evcount		 sc_spur;
 	int			 sc_ncells;
 	int			 sc_num_redist;
@@ -157,7 +153,7 @@ struct agintc_softc {
 	struct agintc_dmamem	*sc_pend;
 	struct interrupt_controller sc_ic;
 	int			 sc_ipi_num[2]; /* id for NOP and DDB ipi */
-	int			 sc_ipi_reason[MAX_CORES]; /* NOP or DDB caused */
+	int			 sc_ipi_reason[MAXCPUS]; /* NOP or DDB caused */
 	void			*sc_ipi_irq[2]; /* irqhandle for each ipi */
 };
 struct agintc_softc *agintc_sc;
@@ -268,10 +264,11 @@ agintc_attach(struct device *parent, struct device *self, void *aux)
 	struct agintc_softc	*sc = (struct agintc_softc *)self;
 	struct fdt_attach_args	*faa = aux;
 	uint32_t		 typer;
+	uint32_t		 nsacr, oldnsacr;
+	uint32_t		 ctrl, bits;
 	int			 i, j, nintr;
 	int			 psw;
 	int			 offset, nredist;
-	int			 grp1enable;
 #ifdef MULTIPROCESSOR
 	int			 nipi, ipiirq[2];
 #endif
@@ -313,6 +310,31 @@ agintc_attach(struct device *parent, struct device *self, void *aux)
 		sc->sc_nlpi = 8192;
 	}
 
+	/*
+	 * The Rockchip RK3399 is busted.  Its GIC-500 treats all
+	 * access to its memory mapped registers as "secure".  As a
+	 * result, several registers don't behave as expected.  For
+	 * example, the GICD_IPRIORITYRn and GICR_IPRIORITYRn
+	 * registers expose the full priority range available to
+	 * secure interrupts.  We need to be aware of this and write
+	 * an adjusted priority value into these registers.  We also
+	 * need to be careful not to touch any bits that shouldn't be
+	 * writable in non-secure mode.
+	 *
+	 * We check whether we have secure mode access to these
+	 * registers by attempting to write to the GICD_NSACR register
+	 * and check whether its contents actually change.
+	 */
+	oldnsacr = bus_space_read_4(sc->sc_iot, sc->sc_d_ioh, GICD_NSACR(32));
+	bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, GICD_NSACR(32),
+	    oldnsacr ^ 0xffffffff);
+	nsacr = bus_space_read_4(sc->sc_iot, sc->sc_d_ioh, GICD_NSACR(32));
+	if (nsacr != oldnsacr) {
+		bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, GICD_NSACR(32),
+		    oldnsacr);
+		sc->sc_rk3399_quirk = 1;
+	}
+
 	evcount_attach(&sc->sc_spur, "irq1023/spur", NULL);
 
 	__asm volatile("msr "STR(ICC_SRE_EL1)", %x0" : : "r" (ICC_SRE_EL1_EN));
@@ -324,9 +346,40 @@ agintc_attach(struct device *parent, struct device *self, void *aux)
 
 	agintc_sc = sc; /* save this for global access */
 
-	/* find and submap the redistributors. */
+	/* find the redistributors. */
 	offset = 0;
 	for (nredist = 0; ; nredist++) {
+		int32_t sz = (64 * 1024 * 2);
+		uint64_t typer;
+
+		typer = bus_space_read_8(sc->sc_iot, sc->sc_redist_base,
+		    offset + GICR_TYPER);
+
+		if (typer & GICR_TYPER_VLPIS)
+			sz += (64 * 1024 * 2);
+
+#ifdef DEBUG_AGINTC
+		printf("probing redistributor %d %x\n", nredist, offset);
+#endif
+
+		offset += sz;
+
+		if (typer & GICR_TYPER_LAST) {
+			sc->sc_num_redist = nredist + 1;
+			break;
+		}
+	}
+
+	printf(" nirq %d, nredist %d", nintr, sc->sc_num_redist);
+	
+	sc->sc_r_ioh = mallocarray(sc->sc_num_redist,
+	    sizeof(*sc->sc_r_ioh), M_DEVBUF, M_WAITOK);
+	sc->sc_affinity = mallocarray(sc->sc_num_redist,
+	    sizeof(*sc->sc_affinity), M_DEVBUF, M_WAITOK);
+
+	/* submap and configure the redistributors. */
+	offset = 0;
+	for (nredist = 0; nredist < sc->sc_num_redist; nredist++) {
 		int32_t sz = (64 * 1024 * 2);
 		uint64_t typer;
 
@@ -341,11 +394,6 @@ agintc_attach(struct device *parent, struct device *self, void *aux)
 
 		bus_space_subregion(sc->sc_iot, sc->sc_redist_base,
 		    offset, sz, &sc->sc_r_ioh[nredist]);
-
-#ifdef DEBUG_AGINTC
-		printf("probing redistributor %d %x %p\n", nredist, offset,
-		    sc->sc_r_ioh[nredist]);
-#endif
 
 		if (sc->sc_nlpi > 0) {
 			bus_space_write_8(sc->sc_iot, sc->sc_redist_base,
@@ -363,14 +411,7 @@ agintc_attach(struct device *parent, struct device *self, void *aux)
 		}
 
 		offset += sz;
-
-		if (typer & GICR_TYPER_LAST) {
-			sc->sc_num_redist = nredist + 1;
-			break;
-		}
 	}
-
-	printf(" nirq %d, nredist %d", nintr, sc->sc_num_redist);
 
 	/* Disable all interrupts, clear all pending */
 	for (i = 1; i < nintr / 32; i++) {
@@ -415,13 +456,17 @@ agintc_attach(struct device *parent, struct device *self, void *aux)
 	    agintc_setipl, agintc_irq_handler);
 
 	/* enable interrupts */
-	bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, GICD_CTLR,
-	   GICD_CTRL_ARE_NS|GICD_CTRL_EnableGrp1A|GICD_CTRL_EnableGrp1);
+	ctrl = bus_space_read_4(sc->sc_iot, sc->sc_d_ioh, GICD_CTLR);
+	bits = GICD_CTRL_ARE_NS | GICD_CTRL_EnableGrp1A | GICD_CTRL_EnableGrp1;
+	if (sc->sc_rk3399_quirk) {
+		bits &= ~GICD_CTRL_EnableGrp1A;
+		bits <<= 1;
+	}
+	bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, GICD_CTLR, ctrl | bits);
 
-	grp1enable = 1;
 	__asm volatile("msr "STR(ICC_PMR)", %x0" :: "r"(0xff));
 	__asm volatile("msr "STR(ICC_BPR1)", %x0" :: "r"(0));
-	__asm volatile("msr "STR(ICC_IGRPEN1)", %x0" :: "r"(grp1enable));
+	__asm volatile("msr "STR(ICC_IGRPEN1)", %x0" :: "r"(1));
 
 #ifdef MULTIPROCESSOR
 	/* setup IPI interrupts */
@@ -501,6 +546,15 @@ agintc_attach(struct device *parent, struct device *self, void *aux)
 	return;
 
 unmap:
+	if (sc->sc_r_ioh) {
+		free(sc->sc_r_ioh, M_DEVBUF,
+		    sc->sc_num_redist * sizeof(*sc->sc_r_ioh));
+	}
+	if (sc->sc_affinity) {
+		free(sc->sc_affinity, M_DEVBUF,
+		     sc->sc_num_redist * sizeof(*sc->sc_affinity));
+	}
+
 	if (sc->sc_pend)
 		agintc_dmamem_free(sc->sc_dmat, sc->sc_pend);
 	if (sc->sc_prop)
@@ -586,14 +640,15 @@ agintc_set_priority(struct agintc_softc *sc, int irq, int pri)
 	uint32_t	 prival;
 
 	/*
-	 * The interrupt priority registers expose the full range of
-	 * priorities available in secure mode, and at least bit 3-7
-	 * must be implemented.  For non-secure interrupts the top bit
-	 * must be one.  We only use 16 (13 really) interrupt
-	 * priorities, so shift into bits 3-6.
-	 * also low values are higher priority thus NIPL - pri
+	 * The interrupt priority registers only expose the priorities
+	 * available in non-secure mode, so the top bit is hidden.  So
+	 * here we shift into bits 4-7.
+	 * Also low values are higher priority thus NIPL - pri
 	 */
-	prival = 0x80 | ((NIPL - pri) << 3);
+	prival = ((NIPL - pri) << 4);
+	if (sc->sc_rk3399_quirk)
+		prival = 0x80 | (prival >> 1);
+
 	if (irq >= SPI_BASE) {
 		bus_space_write_1(sc->sc_iot, sc->sc_d_ioh,
 		    GICD_IPRIORITYR(irq), prival);
@@ -616,15 +671,17 @@ agintc_setipl(int new)
 	ci->ci_cpl = new;
 
 	/*
-	 * The priority mask register only exposes the priorities
-	 * available in non-secure mode, so the top bit is hidden.  So
-	 * here we shift into bits 4-7.
-	 * low values are higher priority thus NIPL - pri
+	 * The priority mask register exposes the full range of
+	 * priorities available in secure mode, and at least bit 3-7
+	 * must be implemented.  For non-secure interrupts the top bit
+	 * must be one.  We only use 16 (13 really) interrupt
+	 * priorities, so shift into bits 3-6.
+	 * Low values are higher priority thus NIPL - pri
 	 */
 	if (new == IPL_NONE)
 		prival = 0xff;		/* minimum priority */
 	else
-		prival = ((NIPL - new) << 4);
+		prival = 0x80 | ((NIPL - new) << 3);
 
 	__asm volatile("msr "STR(ICC_PMR)", %x0" : : "r" (prival));
 	__isb();
@@ -638,7 +695,6 @@ agintc_intr_enable(struct agintc_softc *sc, int irq)
 	struct cpu_info	*ci = curcpu();
 	int hwcpu = sc->sc_cpuremap[ci->ci_cpuid];
 	int bit = 1 << IRQ_TO_REG32BIT(irq);
-	uint32_t enable;
 
 	if (irq >= 32) {
 		bus_space_write_4(sc->sc_iot, sc->sc_d_ioh,
@@ -646,12 +702,6 @@ agintc_intr_enable(struct agintc_softc *sc, int irq)
 	} else {
 		bus_space_write_4(sc->sc_iot, sc->sc_r_ioh[hwcpu],
 		    GICR_ISENABLE0, bit);
-		/* enable group1 as well */
-		bus_space_read_4(sc->sc_iot, sc->sc_r_ioh[hwcpu],
-		    GICR_IGROUP0);
-		enable |= 1 << IRQ_TO_REG32BIT(irq);
-		bus_space_write_4(sc->sc_iot, sc->sc_r_ioh[hwcpu],
-		    GICR_IGROUP0, enable);
 	}
 }
 
@@ -787,18 +837,15 @@ agintc_route_irq(void *v, int enable, struct cpu_info *ci)
 void
 agintc_route(struct agintc_softc *sc, int irq, int enable, struct cpu_info *ci)
 {
-	uint64_t  val;
-
 	/* XXX does not yet support 'participating node' */
 	if (irq >= 32) {
-		val = ((sc->sc_affinity[ci->ci_cpuid] & 0x00ffffff) |
-		    ((sc->sc_affinity[ci->ci_cpuid] & 0xff000000) << 8));
 #ifdef DEBUG_AGINTC
-		printf("router %x irq %d val %016llx\n", GICD_IROUTER(irq),irq,
+		printf("router %x irq %d val %016llx\n", GICD_IROUTER(irq),
+		    irq, ci->ci_mpidr & MPIDR_AFF);
 		    val);
 #endif
 		bus_space_write_8(sc->sc_iot, sc->sc_d_ioh,
-		    GICD_IROUTER(irq), val);
+		    GICD_IROUTER(irq), ci->ci_mpidr & MPIDR_AFF);
 	}
 }
 
@@ -927,7 +974,6 @@ agintc_intr_establish(int irqno, int level, int (*func)(void *),
     void *arg, char *name)
 {
 	struct agintc_softc	*sc = agintc_sc;
-	uint8_t			*prop = AGINTC_DMA_KVA(sc->sc_prop);
 	struct intrhand		*ih;
 	int			 psw;
 
@@ -961,9 +1007,14 @@ agintc_intr_establish(int irqno, int level, int (*func)(void *),
 	if (irqno < LPI_BASE) {
 		agintc_calc_irq(sc, irqno);
 	} else {
-		prop[irqno - LPI_BASE] =
-		    0x80 | ((NIPL - level) << 3) | GICR_PROP_ENABLE;
-		__asm volatile("dsb sy");	/* make globally visible */
+		uint8_t *prop = AGINTC_DMA_KVA(sc->sc_prop);
+
+		prop[irqno - LPI_BASE] = ((NIPL - ih->ih_ipl) << 4) |
+		    GICR_PROP_GROUP1 | GICR_PROP_ENABLE;
+
+		/* Make globally visible. */
+		cpu_dcache_wb_range((vaddr_t)prop, 1);
+		__asm volatile("dsb sy");
 	}
 
 	restore_interrupts(psw);
@@ -1082,9 +1133,10 @@ agintc_send_ipi(struct cpu_info *ci, int id)
 		sc->sc_ipi_reason[ci->ci_cpuid] = id;
 
 	/* will only send 1 cpu */
-	sendmask = (sc->sc_affinity[ci->ci_cpuid]  & 0xff000000) << 48;
-	sendmask |= (sc->sc_affinity[ci->ci_cpuid] & 0x00ffff00) << 8;
-	sendmask |= 1 << (sc->sc_affinity[ci->ci_cpuid] & 0x0000000f);
+	sendmask = (ci->ci_mpidr & MPIDR_AFF3) << 16;
+	sendmask |= (ci->ci_mpidr & MPIDR_AFF2) << 16;
+	sendmask |= (ci->ci_mpidr & MPIDR_AFF1) << 8;
+	sendmask |= 1 << (ci->ci_mpidr & 0x0f);
 	sendmask |= (sc->sc_ipi_num[id] << 24);
 
 	__asm volatile ("msr " STR(ICC_SGI1R)", %x0" ::"r"(sendmask));
@@ -1157,8 +1209,10 @@ struct agintc_msi_softc {
 	struct device			sc_dev;
 	bus_space_tag_t			sc_iot;
 	bus_space_handle_t		sc_ioh;
-	bus_addr_t			sc_addr;
 	bus_dma_tag_t			sc_dmat;
+
+	bus_addr_t			sc_msi_addr;
+	int				sc_msi_delta;
 
 	int				sc_nlpi;
 	void				**sc_lpi;
@@ -1198,6 +1252,7 @@ agintc_msi_attach(struct device *parent, struct device *self, void *aux)
 	struct agintc_msi_softc *sc = (struct agintc_msi_softc *)self;
 	struct fdt_attach_args *faa = aux;
 	struct gits_cmd cmd;
+	uint32_t pre_its[2];
 	uint64_t typer;
 	int i;
 
@@ -1212,8 +1267,14 @@ agintc_msi_attach(struct device *parent, struct device *self, void *aux)
 		printf(": can't map registers\n");
 		return;
 	}
-	sc->sc_addr = faa->fa_reg[0].addr;
 	sc->sc_dmat = faa->fa_dmat;
+
+	sc->sc_msi_addr = faa->fa_reg[0].addr + GITS_TRANSLATER;
+	if (OF_getpropintarray(faa->fa_node, "socionext,synquacer-pre-its",
+	    pre_its, sizeof(pre_its)) == sizeof(pre_its)) {
+		sc->sc_msi_addr = pre_its[0];
+		sc->sc_msi_delta = 4;
+	}
 
 	typer = bus_space_read_8(sc->sc_iot, sc->sc_ioh, GITS_TYPER);
 	if ((typer & GITS_TYPER_PHYS) == 0 || typer & GITS_TYPER_PTA ||
@@ -1252,7 +1313,7 @@ agintc_msi_attach(struct device *parent, struct device *self, void *aux)
 			printf(": can't alloc translation table\n");
 			goto unmap;
 		}
-		bus_space_write_8(sc->sc_iot, sc->sc_ioh, GITS_BASER(0),
+		bus_space_write_8(sc->sc_iot, sc->sc_ioh, GITS_BASER(i),
 		    AGINTC_DMA_DVA(sc->sc_dtt) | GITS_BASER_IC_NORM_NC |
 		    (GITS_DTT_SIZE / PAGE_SIZE) - 1 | GITS_BASER_VALID);
 	}
@@ -1296,9 +1357,13 @@ agintc_msi_send_cmd(struct agintc_msi_softc *sc, struct gits_cmd *cmd)
 {
 	struct gits_cmd *queue = AGINTC_DMA_KVA(sc->sc_cmdq);
 
-	memcpy(&queue[sc->sc_cmdidx++], cmd, sizeof(*cmd));
+	memcpy(&queue[sc->sc_cmdidx], cmd, sizeof(*cmd));
+
+	/* Make globally visible. */
+	cpu_dcache_wb_range((vaddr_t)&queue[sc->sc_cmdidx], sizeof(*cmd));
 	__asm volatile("dsb sy");
 
+	sc->sc_cmdidx++;
 	sc->sc_cmdidx %= GITS_CMDQ_NENTRIES;
 	bus_space_write_8(sc->sc_iot, sc->sc_ioh, GITS_CWRITER,
 	    sc->sc_cmdidx * sizeof(*cmd));
@@ -1399,7 +1464,7 @@ agintc_intr_establish_msi(void *self, uint64_t *addr, uint64_t *data,
 		agintc_msi_send_cmd(sc, &cmd);
 		agintc_msi_wait_cmd(sc);
 
-		*addr = sc->sc_addr + GITS_TRANSLATER;
+		*addr = sc->sc_msi_addr + deviceid * sc->sc_msi_delta;
 		*data = eventid;
 		sc->sc_lpi[i] = cookie;
 		return &sc->sc_lpi[i];
@@ -1440,6 +1505,9 @@ agintc_dmamem_alloc(bus_dma_tag_t dmat, bus_size_t size, bus_size_t align)
 	    nsegs, size, BUS_DMA_WAITOK) != 0)
 		goto unmap;
 
+	/* Make globally visible. */
+	cpu_dcache_wb_range((vaddr_t)adm->adm_kva, size);
+	__asm volatile("dsb sy");
 	return adm;
 
 unmap:

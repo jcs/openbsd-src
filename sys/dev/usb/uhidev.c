@@ -1,4 +1,4 @@
-/*	$OpenBSD: uhidev.c,v 1.75 2017/04/08 02:57:25 deraadt Exp $	*/
+/*	$OpenBSD: uhidev.c,v 1.76 2018/08/25 18:32:05 jcs Exp $	*/
 /*	$NetBSD: uhidev.c,v 1.14 2003/03/11 16:44:00 augustss Exp $	*/
 
 /*
@@ -639,7 +639,6 @@ uhidev_close(struct uhidev *scd)
 	}
 }
 
-/* convert hid_* constants used throughout HID code to USB HID equivalents */
 int
 uhidev_report_type_conv(int hid_type_id)
 {

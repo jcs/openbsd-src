@@ -1,4 +1,4 @@
-/* $OpenBSD: server-client.c,v 1.254 2018/08/02 11:44:07 nicm Exp $ */
+/* $OpenBSD: server-client.c,v 1.258 2018/08/22 20:06:14 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -416,7 +416,7 @@ server_client_check_mouse(struct client *c)
 	key_code		 key;
 	struct timeval		 tv;
 	enum { NOTYPE, MOVE, DOWN, UP, DRAG, WHEEL, DOUBLE, TRIPLE } type;
-	enum { NOWHERE, PANE, STATUS, BORDER } where;
+	enum { NOWHERE, PANE, STATUS, STATUS_LEFT, STATUS_RIGHT, BORDER } where;
 
 	type = NOTYPE;
 	where = NOWHERE;
@@ -495,19 +495,25 @@ have_event:
 	if (type == NOTYPE)
 		return (KEYC_UNKNOWN);
 
-	/* Always save the session. */
+	/* Save the session. */
 	m->s = s->id;
+	m->w = -1;
 
 	/* Is this on the status line? */
 	m->statusat = status_at_line(c);
 	if (m->statusat != -1 && y == (u_int)m->statusat) {
-		w = status_get_window_at(c, x);
-		if (w == NULL)
-			return (KEYC_UNKNOWN);
-		m->w = w->id;
-		where = STATUS;
-	} else
-		m->w = -1;
+		if (x < c->status.left_size)
+			where = STATUS_LEFT;
+		else if (x > c->tty.sx - c->status.right_size)
+			where = STATUS_RIGHT;
+		else {
+			w = status_get_window_at(c, x);
+			if (w == NULL)
+				return (KEYC_UNKNOWN);
+			m->w = w->id;
+			where = STATUS;
+		}
+	}
 
 	/* Not on status line. Adjust position and check for border or pane. */
 	if (where == NOWHERE) {
@@ -560,6 +566,10 @@ have_event:
 				key = KEYC_MOUSEDRAGEND1_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEDRAGEND1_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEDRAGEND1_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEDRAGEND1_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEDRAGEND1_BORDER;
 			break;
@@ -568,6 +578,10 @@ have_event:
 				key = KEYC_MOUSEDRAGEND2_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEDRAGEND2_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEDRAGEND2_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEDRAGEND2_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEDRAGEND2_BORDER;
 			break;
@@ -576,6 +590,10 @@ have_event:
 				key = KEYC_MOUSEDRAGEND3_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEDRAGEND3_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEDRAGEND3_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEDRAGEND3_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEDRAGEND3_BORDER;
 			break;
@@ -611,6 +629,10 @@ have_event:
 					key = KEYC_MOUSEDRAG1_PANE;
 				if (where == STATUS)
 					key = KEYC_MOUSEDRAG1_STATUS;
+				if (where == STATUS_LEFT)
+					key = KEYC_MOUSEDRAG1_STATUS_LEFT;
+				if (where == STATUS_RIGHT)
+					key = KEYC_MOUSEDRAG1_STATUS_RIGHT;
 				if (where == BORDER)
 					key = KEYC_MOUSEDRAG1_BORDER;
 				break;
@@ -619,6 +641,10 @@ have_event:
 					key = KEYC_MOUSEDRAG2_PANE;
 				if (where == STATUS)
 					key = KEYC_MOUSEDRAG2_STATUS;
+				if (where == STATUS_LEFT)
+					key = KEYC_MOUSEDRAG2_STATUS_LEFT;
+				if (where == STATUS_RIGHT)
+					key = KEYC_MOUSEDRAG2_STATUS_RIGHT;
 				if (where == BORDER)
 					key = KEYC_MOUSEDRAG2_BORDER;
 				break;
@@ -627,6 +653,10 @@ have_event:
 					key = KEYC_MOUSEDRAG3_PANE;
 				if (where == STATUS)
 					key = KEYC_MOUSEDRAG3_STATUS;
+				if (where == STATUS_LEFT)
+					key = KEYC_MOUSEDRAG3_STATUS_LEFT;
+				if (where == STATUS_RIGHT)
+					key = KEYC_MOUSEDRAG3_STATUS_RIGHT;
 				if (where == BORDER)
 					key = KEYC_MOUSEDRAG3_BORDER;
 				break;
@@ -645,6 +675,10 @@ have_event:
 				key = KEYC_WHEELUP_PANE;
 			if (where == STATUS)
 				key = KEYC_WHEELUP_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_WHEELUP_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_WHEELUP_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_WHEELUP_BORDER;
 		} else {
@@ -663,6 +697,10 @@ have_event:
 				key = KEYC_MOUSEUP1_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEUP1_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEUP1_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEUP1_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEUP1_BORDER;
 			break;
@@ -671,6 +709,10 @@ have_event:
 				key = KEYC_MOUSEUP2_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEUP2_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEUP2_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEUP2_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEUP2_BORDER;
 			break;
@@ -679,6 +721,10 @@ have_event:
 				key = KEYC_MOUSEUP3_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEUP3_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEUP3_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEUP3_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEUP3_BORDER;
 			break;
@@ -691,6 +737,10 @@ have_event:
 				key = KEYC_MOUSEDOWN1_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEDOWN1_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEDOWN1_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEDOWN1_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEDOWN1_BORDER;
 			break;
@@ -699,6 +749,10 @@ have_event:
 				key = KEYC_MOUSEDOWN2_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEDOWN2_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEDOWN2_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEDOWN2_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEDOWN2_BORDER;
 			break;
@@ -707,6 +761,10 @@ have_event:
 				key = KEYC_MOUSEDOWN3_PANE;
 			if (where == STATUS)
 				key = KEYC_MOUSEDOWN3_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_MOUSEDOWN3_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_MOUSEDOWN3_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_MOUSEDOWN3_BORDER;
 			break;
@@ -719,6 +777,10 @@ have_event:
 				key = KEYC_DOUBLECLICK1_PANE;
 			if (where == STATUS)
 				key = KEYC_DOUBLECLICK1_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_DOUBLECLICK1_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_DOUBLECLICK1_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_DOUBLECLICK1_BORDER;
 			break;
@@ -727,6 +789,10 @@ have_event:
 				key = KEYC_DOUBLECLICK2_PANE;
 			if (where == STATUS)
 				key = KEYC_DOUBLECLICK2_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_DOUBLECLICK2_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_DOUBLECLICK2_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_DOUBLECLICK2_BORDER;
 			break;
@@ -735,6 +801,10 @@ have_event:
 				key = KEYC_DOUBLECLICK3_PANE;
 			if (where == STATUS)
 				key = KEYC_DOUBLECLICK3_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_DOUBLECLICK3_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_DOUBLECLICK3_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_DOUBLECLICK3_BORDER;
 			break;
@@ -747,6 +817,10 @@ have_event:
 				key = KEYC_TRIPLECLICK1_PANE;
 			if (where == STATUS)
 				key = KEYC_TRIPLECLICK1_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_TRIPLECLICK1_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_TRIPLECLICK1_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_TRIPLECLICK1_BORDER;
 			break;
@@ -755,6 +829,10 @@ have_event:
 				key = KEYC_TRIPLECLICK2_PANE;
 			if (where == STATUS)
 				key = KEYC_TRIPLECLICK2_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_TRIPLECLICK2_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_TRIPLECLICK2_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_TRIPLECLICK2_BORDER;
 			break;
@@ -763,6 +841,10 @@ have_event:
 				key = KEYC_TRIPLECLICK3_PANE;
 			if (where == STATUS)
 				key = KEYC_TRIPLECLICK3_STATUS;
+			if (where == STATUS_LEFT)
+				key = KEYC_TRIPLECLICK3_STATUS_LEFT;
+			if (where == STATUS_RIGHT)
+				key = KEYC_TRIPLECLICK3_STATUS_RIGHT;
 			if (where == BORDER)
 				key = KEYC_TRIPLECLICK3_BORDER;
 			break;
@@ -1173,7 +1255,7 @@ server_client_check_focus(struct window_pane *wp)
 	TAILQ_FOREACH(c, &clients, entry) {
 		if (c->session == NULL || !(c->flags & CLIENT_FOCUSED))
 			continue;
-		if (c->session->flags & SESSION_UNATTACHED)
+		if (c->session->attached == 0)
 			continue;
 
 		if (c->session->curw->window == wp->window)
@@ -1312,13 +1394,19 @@ server_client_check_redraw(struct client *c)
 	struct session		*s = c->session;
 	struct tty		*tty = &c->tty;
 	struct window_pane	*wp;
-	int			 needed, flags, masked;
+	int			 needed, flags;
 	struct timeval		 tv = { .tv_usec = 1000 };
 	static struct event	 ev;
 	size_t			 left;
 
 	if (c->flags & (CLIENT_CONTROL|CLIENT_SUSPENDED))
 		return;
+	if (c->flags & CLIENT_ALLREDRAWFLAGS) {
+		log_debug("%s: redraw%s%s%s", c->name,
+		    (c->flags & CLIENT_REDRAWWINDOW) ? " window" : "",
+		    (c->flags & CLIENT_REDRAWSTATUS) ? " status" : "",
+		    (c->flags & CLIENT_REDRAWBORDERS) ? " borders" : "");
+	}
 
 	/*
 	 * If there is outstanding data, defer the redraw until it has been
@@ -1326,7 +1414,7 @@ server_client_check_redraw(struct client *c)
 	 * end up back here.
 	 */
 	needed = 0;
-	if (c->flags & CLIENT_REDRAW)
+	if (c->flags & CLIENT_ALLREDRAWFLAGS)
 		needed = 1;
 	else {
 		TAILQ_FOREACH(wp, &c->session->curw->window->panes, entry) {
@@ -1349,25 +1437,19 @@ server_client_check_redraw(struct client *c)
 		 * We may have got here for a single pane redraw, but force a
 		 * full redraw next time in case other panes have been updated.
 		 */
-		c->flags |= CLIENT_REDRAW;
+		c->flags |= CLIENT_ALLREDRAWFLAGS;
 		return;
 	} else if (needed)
 		log_debug("%s: redraw needed", c->name);
 
-	if (c->flags & (CLIENT_REDRAW|CLIENT_STATUS)) {
-		if (options_get_number(s->options, "set-titles"))
-			server_client_set_title(c);
-		screen_redraw_update(c); /* will adjust flags */
-	}
-
 	flags = tty->flags & (TTY_BLOCK|TTY_FREEZE|TTY_NOCURSOR);
 	tty->flags = (tty->flags & ~(TTY_BLOCK|TTY_FREEZE)) | TTY_NOCURSOR;
 
-	if (c->flags & CLIENT_REDRAW) {
-		tty_update_mode(tty, tty->mode, NULL);
-		screen_redraw_screen(c, 1, 1, 1);
-		c->flags &= ~(CLIENT_STATUS|CLIENT_BORDERS);
-	} else {
+	if (~c->flags & CLIENT_REDRAWWINDOW) {
+		/*
+		 * If not redrawing the entire window, check whether each pane
+		 * needs to be redrawn.
+		 */
 		TAILQ_FOREACH(wp, &c->session->curw->window->panes, entry) {
 			if (wp->flags & PANE_REDRAW) {
 				tty_update_mode(tty, tty->mode, NULL);
@@ -1376,21 +1458,16 @@ server_client_check_redraw(struct client *c)
 		}
 	}
 
-	masked = c->flags & (CLIENT_BORDERS|CLIENT_STATUS);
-	if (masked != 0)
-		tty_update_mode(tty, tty->mode, NULL);
-	if (masked == CLIENT_BORDERS)
-		screen_redraw_screen(c, 0, 0, 1);
-	else if (masked == CLIENT_STATUS)
-		screen_redraw_screen(c, 0, 1, 0);
-	else if (masked != 0)
-		screen_redraw_screen(c, 0, 1, 1);
+	if (c->flags & CLIENT_ALLREDRAWFLAGS) {
+		if (options_get_number(s->options, "set-titles"))
+			server_client_set_title(c);
+		screen_redraw_screen(c);
+	}
 
 	tty->flags = (tty->flags & ~(TTY_FREEZE|TTY_NOCURSOR)) | flags;
 	tty_update_mode(tty, tty->mode, NULL);
 
-	c->flags &= ~(CLIENT_REDRAW|CLIENT_BORDERS|CLIENT_STATUS|
-	    CLIENT_STATUSFORCE);
+	c->flags &= ~(CLIENT_ALLREDRAWFLAGS|CLIENT_STATUSFORCE);
 
 	if (needed) {
 		/*

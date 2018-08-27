@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpivar.h,v 1.97 2018/08/03 22:18:13 kettenis Exp $	*/
+/*	$OpenBSD: acpivar.h,v 1.99 2018/08/25 09:39:20 kettenis Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  *
@@ -63,6 +63,7 @@ struct acpi_attach_args {
 	void		*aaa_table;
 	struct aml_node *aaa_node;
 	const char	*aaa_dev;
+	const char	*aaa_cdev;
 };
 
 struct acpi_mem_map {
@@ -208,8 +209,6 @@ struct acpi_softc {
 	bus_space_tag_t		sc_iot;
 	bus_space_tag_t		sc_memt;
 	bus_dma_tag_t		sc_dmat;
-
-	pci_chipset_tag_t	sc_pc;		/* XXX assume single segment */
 
 	/*
 	 * First-level ACPI tables

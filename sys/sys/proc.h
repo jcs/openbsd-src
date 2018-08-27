@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.255 2018/08/05 14:23:57 beck Exp $	*/
+/*	$OpenBSD: proc.h,v 1.257 2018/08/25 15:38:07 anton Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -288,6 +288,7 @@ struct process {
      "\024NOBROADCASTKILL" "\025PLEDGE" "\026WXNEEDED" "\027EXECPLEDGE" )
 
 
+struct kd;
 struct lock_list_entry;
 
 struct proc {
@@ -374,6 +375,8 @@ struct proc {
 	u_short	p_xstat;	/* Exit status for wait; also stop signal. */
 
 	struct	lock_list_entry *p_sleeplocks;
+
+	struct	kd *p_kd;	/* kcov descriptor */
 };
 
 /* Status values. */
@@ -535,7 +538,7 @@ void	resetpriority(struct proc *);
 void	setrunnable(struct proc *);
 void	endtsleep(void *);
 void	unsleep(struct proc *);
-void	reaper(void);
+void	reaper(void *);
 void	exit1(struct proc *, int, int);
 void	exit2(struct proc *);
 int	dowait4(struct proc *, pid_t, int *, int, struct rusage *,

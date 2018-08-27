@@ -1,4 +1,4 @@
-/* $OpenBSD: apps.c,v 1.47 2018/02/07 08:57:25 jsing Exp $ */
+/* $OpenBSD: apps.c,v 1.49 2018/08/16 16:56:51 tb Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -2065,7 +2065,8 @@ policies_print(BIO *out, X509_STORE_CTX *ctx)
 	nodes_print(out, "Authority", X509_policy_tree_get0_policies(tree));
 	nodes_print(out, "User", X509_policy_tree_get0_user_policies(tree));
 
-	BIO_free(out);
+	if (free_out)
+		BIO_free(out);
 }
 
 /*

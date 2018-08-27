@@ -1,7 +1,7 @@
-/*	$OpenBSD: man.c,v 1.124 2017/06/28 12:52:27 schwarze Exp $ */
+/*	$OpenBSD: man.c,v 1.128 2018/08/26 16:18:38 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
- * Copyright (c) 2013, 2014, 2015, 2017 Ingo Schwarze <schwarze@openbsd.org>
+ * Copyright (c) 2013,2014,2015,2017,2018 Ingo Schwarze <schwarze@openbsd.org>
  * Copyright (c) 2011 Joerg Sonnenberger <joerg@netbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -33,7 +33,7 @@
 #include "roff_int.h"
 #include "libman.h"
 
-static	void		 man_descope(struct roff_man *, int, int);
+static	char		*man_hasc(char *);
 static	int		 man_ptext(struct roff_man *, int, char *, int);
 static	int		 man_pmacro(struct roff_man *, int, char *, int);
 
@@ -50,18 +50,43 @@ man_parseln(struct roff_man *man, int ln, char *buf, int offs)
 	    man_ptext(man, ln, buf, offs);
 }
 
-static void
-man_descope(struct roff_man *man, int line, int offs)
+/*
+ * If the string ends with \c, return a pointer to the backslash.
+ * Otherwise, return NULL.
+ */
+static char *
+man_hasc(char *start)
 {
+	char	*cp, *ep;
+
+	ep = strchr(start, '\0') - 2;
+	if (ep < start || ep[0] != '\\' || ep[1] != 'c')
+		return NULL;
+	for (cp = ep; cp > start; cp--)
+		if (cp[-1] != '\\')
+			break;
+	return (ep - cp) % 2 ? NULL : ep;
+}
+
+void
+man_descope(struct roff_man *man, int line, int offs, char *start)
+{
+	/* Trailing \c keeps next-line scope open. */
+
+	if (start != NULL && man_hasc(start) != NULL)
+		return;
+
 	/*
 	 * Co-ordinate what happens with having a next-line scope open:
-	 * first close out the element scope (if applicable), then close
-	 * out the block scope (also if applicable).
+	 * first close out the element scopes (if applicable),
+	 * then close out the block scope (also if applicable).
 	 */
 
 	if (man->flags & MAN_ELINE) {
+		while (man->last->parent->type != ROFFT_ROOT &&
+		    man_macro(man->last->parent->tok)->flags & MAN_ESCOPED)
+			man_unscope(man, man->last->parent);
 		man->flags &= ~MAN_ELINE;
-		man_unscope(man, man->last->parent);
 	}
 	if ( ! (man->flags & MAN_BLINE))
 		return;
@@ -74,14 +99,13 @@ static int
 man_ptext(struct roff_man *man, int line, char *buf, int offs)
 {
 	int		 i;
-	const char 	*cp, *sp;
 	char		*ep;
 
 	/* Literal free-form text whitespace is preserved. */
 
 	if (man->flags & MAN_LITERAL) {
 		roff_word_alloc(man, line, offs, buf + offs);
-		man_descope(man, line, offs);
+		man_descope(man, line, offs, buf + offs);
 		return 1;
 	}
 
@@ -102,20 +126,10 @@ man_ptext(struct roff_man *man, int line, char *buf, int offs)
 		}
 		if (man->last->tok == MAN_SH || man->last->tok == MAN_SS)
 			return 1;
-		switch (man->last->type) {
-		case ROFFT_TEXT:
-			sp = man->last->string;
-			cp = ep = strchr(sp, '\0') - 2;
-			if (cp < sp || cp[0] != '\\' || cp[1] != 'c')
-				break;
-			while (cp > sp && cp[-1] == '\\')
-				cp--;
-			if ((ep - cp) % 2)
-				break;
+		if (man->last->type == ROFFT_TEXT &&
+		    ((ep = man_hasc(man->last->string)) != NULL)) {
 			*ep = '\0';
 			return 1;
-		default:
-			break;
 		}
 		roff_elem_alloc(man, line, offs, ROFF_sp);
 		man->next = ROFF_NEXT_SIBLING;
@@ -155,7 +169,7 @@ man_ptext(struct roff_man *man, int line, char *buf, int offs)
 	if (mandoc_eos(buf, (size_t)i))
 		man->last->flags |= NODE_EOS;
 
-	man_descope(man, line, offs);
+	man_descope(man, line, offs, buf + offs);
 	return 1;
 }
 
@@ -228,16 +242,12 @@ man_pmacro(struct roff_man *man, int ln, char *buf, int offs)
 	 * page, that's very likely what the author intended.
 	 */
 
-	if (bline) {
-		cp = strchr(buf + offs, '\0') - 2;
-		if (cp >= buf && cp[0] == '\\' && cp[1] == 'c')
-			bline = 0;
-	}
+	if (bline && man_hasc(buf + offs))
+		bline = 0;
 
 	/* Call to handler... */
 
-	assert(man_macros[tok].fp);
-	(*man_macros[tok].fp)(man, tok, ln, ppos, &offs, buf);
+	(*man_macro(tok)->fp)(man, tok, ln, ppos, &offs, buf);
 
 	/* In quick mode (for mandocdb), abort after the NAME section. */
 
@@ -254,13 +264,13 @@ man_pmacro(struct roff_man *man, int ln, char *buf, int offs)
 	 * unless the next-line scope is allowed to continue.
 	 */
 
-	if ( ! bline || man->flags & MAN_ELINE ||
-	    man_macros[tok].flags & MAN_NSCOPED)
+	if (bline == 0 ||
+	    (man->flags & MAN_BLINE) == 0 ||
+	    man->flags & MAN_ELINE ||
+	    man_macro(tok)->flags & MAN_NSCOPED)
 		return 1;
 
-	assert(man->flags & MAN_BLINE);
 	man->flags &= ~MAN_BLINE;
-
 	man_unscope(man, man->last->parent);
 	roff_body_alloc(man, ln, ppos, man->last->tok);
 	return 1;
@@ -278,12 +288,13 @@ man_breakscope(struct roff_man *man, int tok)
 	 */
 
 	if (man->flags & MAN_ELINE && (tok < MAN_TH ||
-	    ! (man_macros[tok].flags & MAN_NSCOPED))) {
+	    (man_macro(tok)->flags & MAN_NSCOPED) == 0)) {
 		n = man->last;
 		if (n->type == ROFFT_TEXT)
 			n = n->parent;
 		if (n->tok < MAN_TH ||
-		    man_macros[n->tok].flags & MAN_NSCOPED)
+		    (man_macro(n->tok)->flags & (MAN_NSCOPED | MAN_ESCOPED))
+		     == MAN_NSCOPED)
 			n = n->parent;
 
 		mandoc_vmsg(MANDOCERR_BLK_LINE, man->parse,
@@ -315,18 +326,18 @@ man_breakscope(struct roff_man *man, int tok)
 	 */
 
 	if (man->flags & MAN_BLINE && (tok < MAN_TH ||
-	    man_macros[tok].flags & MAN_BSCOPE)) {
+	    man_macro(tok)->flags & MAN_XSCOPE)) {
 		n = man->last;
 		if (n->type == ROFFT_TEXT)
 			n = n->parent;
 		if (n->tok < MAN_TH ||
-		    (man_macros[n->tok].flags & MAN_BSCOPE) == 0)
+		    (man_macro(n->tok)->flags & MAN_XSCOPE) == 0)
 			n = n->parent;
 
 		assert(n->type == ROFFT_HEAD);
 		n = n->parent;
 		assert(n->type == ROFFT_BLOCK);
-		assert(man_macros[n->tok].flags & MAN_SCOPED);
+		assert(man_macro(n->tok)->flags & MAN_BSCOPED);
 
 		mandoc_vmsg(MANDOCERR_BLK_LINE, man->parse,
 		    n->line, n->pos, "%s breaks %s",
@@ -335,14 +346,6 @@ man_breakscope(struct roff_man *man, int tok)
 		roff_node_delete(man, n);
 		man->flags &= ~MAN_BLINE;
 	}
-}
-
-const struct mparse *
-man_mparse(const struct roff_man *man)
-{
-
-	assert(man && man->parse);
-	return man->parse;
 }
 
 void

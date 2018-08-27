@@ -1,4 +1,4 @@
-/*	$OpenBSD: conf.c,v 1.60 2016/09/04 10:51:23 naddy Exp $	*/
+/*	$OpenBSD: conf.c,v 1.62 2018/08/19 18:01:04 deraadt Exp $	*/
 
 /*
  * Copyright (c) 1994, 1995 Charles M. Hannum.  All rights reserved.
@@ -112,6 +112,13 @@ int	nblkdev = nitems(bdevsw);
 	(dev_type_stop((*))) enodev, 0, seltrue, \
 	(dev_type_mmap((*))) enodev }
 
+/* open, close, ioctl, mmap */
+#define cdev_kcov_init(c,n) { \
+	dev_init(c,n,open), dev_init(c,n,close), (dev_type_read((*))) enodev, \
+	(dev_type_write((*))) enodev, dev_init(c,n,ioctl), \
+	(dev_type_stop((*))) enodev, 0, selfalse, \
+	(dev_init(c,n,mmap)), 0, D_CLONE }
+
 /* open, close, ioctl */
 #define cdev_chromeec_init(c,n) { \
 	dev_init(c,n,open), dev_init(c,n,close), \
@@ -172,11 +179,13 @@ cdev_decl(nvram);
 cdev_decl(drm);
 #include "viocon.h"
 cdev_decl(viocon);
+cdev_decl(kcov);
 
 #include "wsdisplay.h"
 #include "wskbd.h"
 #include "wsmouse.h"
 #include "wsmux.h"
+#include "kcov.h"
 
 #ifdef USER_PCICONF
 #include "pci.h"
@@ -216,7 +225,7 @@ struct cdevsw	cdevsw[] =
 	cdev_lpt_init(NLPT,lpt),	/* 16: parallel printer */
 	cdev_ch_init(NCH,ch),		/* 17: SCSI autochanger */
 	cdev_notdef(),			/* 18: was: concatenated disk driver */
-	cdev_notdef(),			/* 19 */
+	cdev_kcov_init(NKCOV,kcov),	/* 19: kcov */
 	cdev_uk_init(NUK,uk),		/* 20: unknown SCSI */
 	cdev_notdef(),			/* 21 */
 	cdev_fd_init(1,filedesc),	/* 22: file descriptor pseudo-device */

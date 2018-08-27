@@ -1,4 +1,4 @@
-/*	$OpenBSD: mandoc.h,v 1.190 2018/07/28 18:32:30 schwarze Exp $ */
+/*	$OpenBSD: mandoc.h,v 1.195 2018/08/25 16:43:52 schwarze Exp $ */
 /*
  * Copyright (c) 2010, 2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -158,6 +158,7 @@ enum	mandocerr {
 	MANDOCERR_LB_BAD, /* unknown library name: Lb ... */
 	MANDOCERR_RS_BAD, /* invalid content in Rs block: macro */
 	MANDOCERR_SM_BAD, /* invalid Boolean argument: macro arg */
+	MANDOCERR_CHAR_FONT, /* argument contains two font escapes */
 	MANDOCERR_FT_BAD, /* unknown font, skipping request: ft font */
 	MANDOCERR_TR_ODD, /* odd number of characters in request: tr char */
 
@@ -195,6 +196,7 @@ enum	mandocerr {
 	MANDOCERR_ROFFLOOP, /* input stack limit exceeded, infinite loop? */
 	MANDOCERR_CHAR_BAD, /* skipping bad character: number */
 	MANDOCERR_MACRO, /* skipping unknown macro: macro */
+	MANDOCERR_REQ_NOMAC, /* skipping request outside macro: ... */
 	MANDOCERR_REQ_INSEC, /* skipping insecure request: request */
 	MANDOCERR_IT_STRAY, /* skipping item outside list: It ... */
 	MANDOCERR_TA_STRAY, /* skipping column outside column list: Ta */
@@ -205,14 +207,18 @@ enum	mandocerr {
 
 	/* related to request and macro arguments */
 	MANDOCERR_NAMESC, /* escaped character not allowed in a name: name */
+	MANDOCERR_ARG_UNDEF, /* using macro argument outside macro */
+	MANDOCERR_ARG_NONUM, /* argument number is not numeric */
 	MANDOCERR_BD_FILE, /* NOT IMPLEMENTED: Bd -file */
 	MANDOCERR_BD_NOARG, /* skipping display without arguments: Bd */
 	MANDOCERR_BL_NOTYPE, /* missing list type, using -item: Bl */
 	MANDOCERR_CE_NONUM, /* argument is not numeric, using 1: ce ... */
+	MANDOCERR_CHAR_ARG, /* argument is not a character: char ... */
 	MANDOCERR_NM_NONAME, /* missing manual name, using "": Nm */
 	MANDOCERR_OS_UNAME, /* uname(3) system call failed, using UNKNOWN */
 	MANDOCERR_ST_BAD, /* unknown standard specifier: St standard */
 	MANDOCERR_IT_NONUM, /* skipping request without numeric argument */
+	MANDOCERR_SHIFT, /* excessive shift: ..., but max is ... */
 	MANDOCERR_SO_PATH, /* NOT IMPLEMENTED: .so with absolute path or ".." */
 	MANDOCERR_SO_FAIL, /* .so request failed */
 	MANDOCERR_ARG_SKIP, /* skipping all arguments: macro args */
@@ -224,6 +230,10 @@ enum	mandocerr {
 	MANDOCERR_TOOLARGE, /* input too large */
 	MANDOCERR_CHAR_UNSUPP, /* unsupported control character: number */
 	MANDOCERR_REQ_UNSUPP, /* unsupported roff request: request */
+	MANDOCERR_WHILE_NEST, /* nested .while loops */
+	MANDOCERR_WHILE_OUTOF, /* end of scope with open .while loop */
+	MANDOCERR_WHILE_INTO, /* end of .while loop in inner scope */
+	MANDOCERR_WHILE_FAIL, /* cannot continue this .while loop */
 	MANDOCERR_TBLOPT_EQN, /* eqn delim option in tbl: arg */
 	MANDOCERR_TBLLAYOUT_MOD, /* unsupported tbl layout modifier: m */
 	MANDOCERR_TBLMACRO, /* ignoring macro in table: macro */
@@ -431,6 +441,7 @@ enum	mandoc_esc {
 	ESCAPE_FONTPREV, /* previous font mode */
 	ESCAPE_NUMBERED, /* a numbered glyph */
 	ESCAPE_UNICODE, /* a unicode codepoint */
+	ESCAPE_DEVICE, /* print the output device name */
 	ESCAPE_BREAK, /* break the output line */
 	ESCAPE_NOSPACE, /* suppress space if the last on a line */
 	ESCAPE_HORIZ, /* horizontal movement */
@@ -457,13 +468,12 @@ const char	 *mchars_spec2str(const char *, size_t, size_t *);
 struct mparse	 *mparse_alloc(int, enum mandocerr, mandocmsg,
 			enum mandoc_os, const char *);
 void		  mparse_free(struct mparse *);
-void		  mparse_keep(struct mparse *);
 int		  mparse_open(struct mparse *, const char *);
 enum mandoclevel  mparse_readfd(struct mparse *, int, const char *);
 void		  mparse_reset(struct mparse *);
 void		  mparse_result(struct mparse *,
 			struct roff_man **, char **);
-const char	 *mparse_getkeep(const struct mparse *);
+void		  mparse_copy(const struct mparse *);
 const char	 *mparse_strerror(enum mandocerr);
 const char	 *mparse_strlevel(enum mandoclevel);
 void		  mparse_updaterc(struct mparse *, enum mandoclevel *);

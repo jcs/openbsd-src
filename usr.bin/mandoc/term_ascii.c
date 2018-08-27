@@ -1,4 +1,4 @@
-/*	$OpenBSD: term_ascii.c,v 1.46 2018/05/20 21:37:11 schwarze Exp $ */
+/*	$OpenBSD: term_ascii.c,v 1.48 2018/08/21 16:01:38 schwarze Exp $ */
 /*
  * Copyright (c) 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2014, 2015, 2017, 2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -184,8 +184,7 @@ terminal_sepline(void *arg)
 static size_t
 ascii_width(const struct termp *p, int c)
 {
-
-	return 1;
+	return c != ASCII_BREAK;
 }
 
 void
@@ -299,7 +298,7 @@ ascii_uc2str(int uc)
 	"<88>",	"<89>",	"<8A>",	"<8B>",	"<8C>",	"<8D>",	"<8E>",	"<8F>",
 	"<90>",	"<91>",	"<92>",	"<93>",	"<94>",	"<95>",	"<96>",	"<97>",
 	"<98>",	"<99>",	"<9A>",	"<9B>",	"<9C>",	"<9D>",	"<9E>",	"<9F>",
-	nbrsp,	"!",	"/\bc",	"GBP",	"o\bx",	"=\bY",	"|",	"<section>",
+	nbrsp,	"!",	"/\bc",	"-\bL",	"o\bx",	"=\bY",	"|",	"<section>",
 	"\"",	"(C)",	"_\ba",	"<<",	"~",	"",	"(R)",	"-",
 	"<degree>","+-","^2",	"^3",	"'","<micro>","<paragraph>",".",
 	",",	"^1",	"_\bo",	">>",	"1/4",	"1/2",	"3/4",	"?",
