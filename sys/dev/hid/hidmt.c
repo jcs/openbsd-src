@@ -6,7 +6,10 @@
  * https://msdn.microsoft.com/en-us/library/windows/hardware/dn467314%28v=vs.85%29.aspx
  * https://docs.microsoft.com/en-us/windows-hardware/design/component-guidelines/touchscreen-packet-reporting-modes
  *
- * Copyright (c) 2016 joshua stein <jcs@openbsd.org>
+ * and Legacy Windows 8 Touchscreen and Pen devices
+ * ...
+ *
+ * Copyright (c) 2016-2018 joshua stein <jcs@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -107,27 +110,122 @@ hidmt_get_resolution(struct hid_item *h)
 }
 
 int
-hidmt_setup(struct device *self, struct hidmt *mt, void *desc, int dlen)
+hidmt_find_win_reports(struct hidmt *mt, int nrepid, void *desc, int size)
+{
+	int repid;
+	int input = 0, conf = 0, cap = 0, win8 = 0;
+
+	if (mt != NULL) {
+		mt->sc_rep_input = -1;
+		mt->sc_rep_config = -1;
+		mt->sc_rep_cap = -1;
+		mt->sc_rep_win8 = -1;
+	}
+
+	for (repid = 0; repid < nrepid; repid++) {
+		if (hid_report_size(desc, size, hid_input, repid) == 0 &&
+		    hid_report_size(desc, size, hid_output, repid) == 0 &&
+		    hid_report_size(desc, size, hid_feature, repid) == 0)
+			continue;
+
+		if (hid_is_collection(desc, size, repid,
+		    HID_USAGE2(HUP_DIGITIZERS, HUD_TOUCHPAD))) {
+			input = repid;
+			DPRINTF(("found digiters/touchpad at %d\n", repid));
+			if (mt != NULL && mt->sc_rep_input == -1) {
+				mt->sc_rep_input = repid;
+				mt->sc_touchscreen = 0;
+			}
+		} else if (hid_is_collection(desc, size, repid,
+		    HID_USAGE2(HUP_DIGITIZERS, HUD_TOUCHSCREEN))) {
+			input = repid;
+			DPRINTF(("found digiters/touchscreen at %d\n", repid));
+			if (mt != NULL && mt->sc_rep_input == -1) {
+				mt->sc_rep_input = repid;
+				mt->sc_touchscreen = 1;
+			}
+		} else if (hid_is_collection(desc, size, repid,
+		    HID_USAGE2(HUP_DIGITIZERS, HUD_CONFIG))) {
+			conf = repid;
+			DPRINTF(("found digiters/config at %d\n", repid));
+			if (mt != NULL && mt->sc_rep_config == -1)
+				mt->sc_rep_config = repid;
+		}
+
+		/* capabilities report could be anywhere */
+		if (hid_locate(desc, size, HID_USAGE2(HUP_DIGITIZERS,
+		    HUD_CONTACT_MAX), repid, hid_feature, NULL, NULL)) {
+			cap = repid;
+			DPRINTF(("found digiters/contact max at %d\n", repid));
+			if (mt != NULL && mt->sc_rep_cap == -1)
+				mt->sc_rep_cap = repid;
+		}
+
+		/* same with win8 blob */
+		if (hid_locate(desc, size, HID_USAGE2(HUP_MICROSOFT,
+		    HUD_WIN8), repid, hid_feature, NULL, NULL)) {
+			win8 = repid;
+			DPRINTF(("found win8 blob at %d\n", repid));
+			if (mt != NULL && mt->sc_rep_win8 == -1)
+				mt->sc_rep_win8 = repid;
+		}
+	}
+
+	/* if we have all 3, we're in PTP mode */
+	if (conf && input && cap) {
+		if (mt)
+			mt->sc_rep_win8 = -1;
+		return 1;
+	}
+
+	/* win8 mode just needs touch{screen/pad} input and capabilities */
+	/* XXX: is capabilities even needed? */
+	if (win8 && input && cap)
+		return 1;
+
+	return 0;
+}
+
+int
+hidmt_setup(struct device *self, struct hidmt *mt, int nrepid, void *desc,
+    int dlen)
 {
 	struct hid_location cap;
 	int32_t d;
 	uint8_t *rep;
 	int capsize;
-
 	struct hid_data *hd;
 	struct hid_item h;
 
 	mt->sc_device = self;
-	mt->sc_rep_input_size = hid_report_size(desc, dlen, hid_input,
-	    mt->sc_rep_input);
-
 	mt->sc_minx = mt->sc_miny = mt->sc_maxx = mt->sc_maxy = 0;
-
-	capsize = hid_report_size(desc, dlen, hid_feature, mt->sc_rep_cap);
-	rep = malloc(capsize, M_DEVBUF, M_NOWAIT | M_ZERO);
 
 	if (mt->hidev_report_type_conv == NULL)
 		panic("no report type conversion function");
+
+	hidmt_find_win_reports(mt, nrepid, desc, dlen);
+
+	mt->sc_rep_input_size = hid_report_size(desc, dlen, hid_input,
+	    mt->sc_rep_input);
+
+	if (mt->sc_rep_win8 > 0) {
+		/*
+		 * Fetch win8 signature blob which may be required for the
+		 * device to start sending events.
+		 */
+		capsize = hid_report_size(desc, dlen, hid_feature,
+		    mt->sc_rep_win8);
+		rep = malloc(capsize, M_DEVBUF, M_NOWAIT | M_ZERO);
+
+		mt->hidev_get_report(mt->sc_device,
+		    mt->hidev_report_type_conv(hid_feature), mt->sc_rep_win8,
+		    rep, capsize);
+
+		free(rep, M_DEVBUF, capsize);
+	}
+
+	capsize = hid_report_size(desc, dlen, hid_feature, mt->sc_rep_cap);
+	rep = malloc(capsize, M_DEVBUF, M_NOWAIT | M_ZERO);
 
 	if (mt->hidev_get_report(mt->sc_device,
 	    mt->hidev_report_type_conv(hid_feature), mt->sc_rep_cap,
@@ -145,7 +243,7 @@ hidmt_setup(struct device *self, struct hidmt *mt, void *desc, int dlen)
 	}
 
 	d = hid_get_udata(rep, capsize, &cap);
-	if (d > HIDMT_MAX_CONTACTS) {
+	if (mt->sc_rep_win8 <= 0 && d > HIDMT_MAX_CONTACTS) {
 		printf("\n%s: contacts %d > max %d\n", self->dv_xname, d,
 		    HIDMT_MAX_CONTACTS);
 		return 1;
@@ -153,15 +251,19 @@ hidmt_setup(struct device *self, struct hidmt *mt, void *desc, int dlen)
 	else
 		mt->sc_num_contacts = d;
 
-	/* find whether this is a clickpad or not */
-	if (!hid_locate(desc, dlen, HID_USAGE2(HUP_DIGITIZERS, HUD_BUTTON_TYPE),
-	    mt->sc_rep_cap, hid_feature, &cap, NULL)) {
-		printf("\n%s: can't find button type\n", self->dv_xname);
-		return 1;
-	}
+	if (!mt->sc_touchscreen) {
+		/* find whether this is a clickpad or not */
+		if (!hid_locate(desc, dlen, HID_USAGE2(HUP_DIGITIZERS,
+		    HUD_BUTTON_TYPE), mt->sc_rep_cap, hid_feature, &cap,
+		    NULL)) {
+			printf("\n%s: can't find button type\n",
+			    self->dv_xname);
+			return 1;
+		}
 
-	d = hid_get_udata(rep, capsize, &cap);
-	mt->sc_clickpad = (d == 0);
+		d = hid_get_udata(rep, capsize, &cap);
+		mt->sc_clickpad = (d == 0);
+	}
 
 	/*
 	 * Walk HID descriptor and store usages we care about to know what to
@@ -193,8 +295,10 @@ hidmt_setup(struct device *self, struct hidmt *mt, void *desc, int dlen)
 				mt->sc_resy = hidmt_get_resolution(&h);
 			}
 			break;
-		case HID_USAGE2(HUP_DIGITIZERS, HUD_TIP_SWITCH):
 		case HID_USAGE2(HUP_DIGITIZERS, HUD_CONFIDENCE):
+			mt->sc_confidence = 1;
+			break;
+		case HID_USAGE2(HUP_DIGITIZERS, HUD_TIP_SWITCH):
 		case HID_USAGE2(HUP_DIGITIZERS, HUD_WIDTH):
 		case HID_USAGE2(HUP_DIGITIZERS, HUD_HEIGHT):
 		case HID_USAGE2(HUP_DIGITIZERS, HUD_CONTACTID):
@@ -221,7 +325,7 @@ hidmt_setup(struct device *self, struct hidmt *mt, void *desc, int dlen)
 		return 1;
 	}
 
-	if (hidmt_set_input_mode(mt, HIDMT_INPUT_MODE_MT_TOUCHPAD)) {
+	if (mt->sc_rep_win8 <= 0 && hidmt_set_mt_input_mode(mt)) {
 		printf("\n%s: switch to multitouch mode failed\n",
 		    self->dv_xname);
 		return 1;
@@ -239,9 +343,14 @@ hidmt_configure(struct hidmt *mt)
 		return;
 
 	hw = wsmouse_get_hw(mt->sc_wsmousedev);
-	hw->type = WSMOUSE_TYPE_TOUCHPAD;
-	hw->hw_type = (mt->sc_clickpad
-	    ? WSMOUSEHW_CLICKPAD : WSMOUSEHW_TOUCHPAD);
+	if (mt->sc_touchscreen) {
+		hw->type = WSMOUSE_TYPE_TPANEL;
+		hw->hw_type = WSMOUSEHW_TPANEL;
+	} else {
+		hw->type = WSMOUSE_TYPE_TOUCHPAD;
+		hw->hw_type = (mt->sc_clickpad ? WSMOUSEHW_CLICKPAD :
+		    WSMOUSEHW_TOUCHPAD);
+	}
 	hw->x_min = mt->sc_minx;
 	hw->x_max = mt->sc_maxx;
 	hw->y_min = mt->sc_miny;
@@ -258,9 +367,10 @@ hidmt_attach(struct hidmt *mt, const struct wsmouse_accessops *ops)
 {
 	struct wsmousedev_attach_args a;
 
-	printf(": %spad, %d contact%s\n",
-	    (mt->sc_clickpad ? "click" : "touch"), mt->sc_num_contacts,
-	    (mt->sc_num_contacts == 1 ? "" : "s"));
+	printf(": %s, %d contact%s\n",
+	    (mt->sc_touchscreen ? "touchscreen" :
+	    (mt->sc_clickpad ? "clickpad" : "touchpad")),
+	    mt->sc_num_contacts, (mt->sc_num_contacts == 1 ? "" : "s"));
 
 	a.accessops = ops;
 	a.accesscookie = mt->sc_device;
@@ -280,10 +390,10 @@ hidmt_detach(struct hidmt *mt, int flags)
 }
 
 int
-hidmt_set_input_mode(struct hidmt *mt, uint16_t mode)
+hidmt_set_mt_input_mode(struct hidmt *mt)
 {
-	if (mt->hidev_report_type_conv == NULL)
-		panic("no report type conversion function");
+	uint16_t mode = (mt->sc_touchscreen ?
+	    HIDMT_INPUT_MODE_MT_TOUCHSCREEN : HIDMT_INPUT_MODE_MT_TOUCHPAD);
 
 	return mt->hidev_set_report(mt->sc_device,
 	    mt->hidev_report_type_conv(hid_feature),
@@ -360,8 +470,8 @@ hidmt_input(struct hidmt *mt, uint8_t *data, u_int len)
 		if (firstu && hi->usage == firstu) {
 			if (seencontacts < contactcount) {
 				hc.seen = 1;
-				i = wsmouse_id_to_slot(
-				    mt->sc_wsmousedev, hc.contactid);
+				i = wsmouse_id_to_slot(mt->sc_wsmousedev,
+				    hc.contactid);
 				if (i >= 0)
 					memcpy(&mt->sc_contacts[i], &hc,
 					    sizeof(struct hidmt_contact));
@@ -400,6 +510,9 @@ hidmt_input(struct hidmt *mt, uint8_t *data, u_int len)
 		case HID_USAGE2(HUP_DIGITIZERS, HUD_CONTACTID):
 			hc.contactid = d;
 			break;
+		case HID_USAGE2(HUP_DIGITIZERS, HUD_TIP_PRESSURE):
+			hc.pressure = d;
+			break;
 
 		/* these will only appear once per report */
 		case HID_USAGE2(HUP_DIGITIZERS, HUD_CONTACTCOUNT):
@@ -430,27 +543,43 @@ hidmt_input(struct hidmt *mt, uint8_t *data, u_int len)
 
 		DPRINTF(("%s: %s: contact %d of %d: id %d, x %d, y %d, "
 		    "touch %d, confidence %d, width %d, height %d "
-		    "(button %d)\n",
+		    "pressure %d, (button %d)\n",
 		    mt->sc_device->dv_xname, __func__,
 		    i + 1, contactcount,
 		    mt->sc_contacts[i].contactid,
 		    mt->sc_contacts[i].x,
 		    mt->sc_contacts[i].y,
 		    mt->sc_contacts[i].tip,
-		    mt->sc_contacts[i].confidence,
+		    mt->sc_confidence ? mt->sc_contacts[i].confidence : -1,
 		    mt->sc_contacts[i].width,
 		    mt->sc_contacts[i].height,
+		    mt->sc_contacts[i].pressure,
 		    mt->sc_button));
 
-		if (mt->sc_contacts[i].tip && !mt->sc_contacts[i].confidence)
+		/*
+		 * If the device supports sending confidence (required for PTP)
+		 * and it's not set, ignore this touch.
+		 */
+		if (mt->sc_contacts[i].tip && mt->sc_confidence &&
+		    !mt->sc_contacts[i].confidence)
 			continue;
 
 		/* Report width as pressure. */
-		z = (mt->sc_contacts[i].tip
-		    ? imax(mt->sc_contacts[i].width, 50) : 0);
+		z = (mt->sc_contacts[i].tip ?
+		    imax(mt->sc_contacts[i].width, WSMOUSE_DEFAULT_PRESSURE) :
+		    0);
 
-		wsmouse_mtstate(mt->sc_wsmousedev,
-		    i, mt->sc_contacts[i].x, mt->sc_contacts[i].y, z);
+		if (mt->sc_touchscreen) {
+			wsmouse_set(mt->sc_wsmousedev, WSMOUSE_MT_ABS_X,
+			    mt->sc_contacts[i].x, i);
+			wsmouse_set(mt->sc_wsmousedev, WSMOUSE_MT_ABS_Y,
+			    mt->sc_contacts[i].y, i);
+			wsmouse_set(mt->sc_wsmousedev, WSMOUSE_MT_PRESSURE,
+			    z, i);
+		} else {
+			wsmouse_mtstate(mt->sc_wsmousedev,
+			    i, mt->sc_contacts[i].x, mt->sc_contacts[i].y, z);
+		}
 	}
 	wsmouse_input_sync(mt->sc_wsmousedev);
 
@@ -464,6 +593,9 @@ hidmt_enable(struct hidmt *mt)
 		return EBUSY;
 
 	mt->sc_enabled = 1;
+
+	if (mt->sc_rep_win8 <= 0)
+		hidmt_set_mt_input_mode(mt);
 
 	return 0;
 }

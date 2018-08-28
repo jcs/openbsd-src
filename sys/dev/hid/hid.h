@@ -386,6 +386,7 @@ int	hid_is_collection(const void *, int, uint8_t, int32_t);
 #define HUD_CONTACT_MAX		0x0055
 #define HUD_SCAN_TIME		0x0056
 #define HUD_BUTTON_TYPE		0x0059
+#define HUD_WIN8		0x00c5
 
 /* Usages, LED */
 #define HUL_NUM_LOCK		0x0001

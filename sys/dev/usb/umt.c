@@ -1,10 +1,6 @@
 /* $OpenBSD: umt.c,v 1.1 2018/08/25 20:31:31 jcs Exp $ */
 /*
- * USB multitouch touchpad driver for devices conforming to
- * Windows Precision Touchpad standard
- *
- * https://msdn.microsoft.com/en-us/library/windows/hardware/dn467314%28v=vs.85%29.aspx
- *
+ * USB multitouch touchpad driver
  * Copyright (c) 2016-2018 joshua stein <jcs@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -41,10 +37,6 @@
 struct umt_softc {
 	struct uhidev	sc_hdev;
 	struct hidmt	sc_mt;
-
-	int		sc_rep_input;
-	int		sc_rep_config;
-	int		sc_rep_cap;
 };
 
 int	umt_enable(void *);
@@ -87,54 +79,12 @@ umt_match(struct device *parent, void *match, void *aux)
 
 	if (uha->reportid == UHIDEV_CLAIM_ALLREPORTID) {
 		uhidev_get_report_desc(uha->parent, &desc, &size);
-		if (umt_find_winptp_reports(uha->parent, desc, size, NULL))
+		if (hidmt_find_win_reports(NULL, uha->parent->sc_nrepid, desc,
+		    size))
 			return (UMATCH_DEVCLASS_DEVSUBCLASS);
 	}
 
 	return (UMATCH_NONE);
-}
-
-int
-umt_find_winptp_reports(struct uhidev_softc *parent, void *desc, int size,
-    struct umt_softc *sc)
-{
-	int repid;
-	int input = 0, conf = 0, cap = 0;
-
-	if (sc != NULL) {
-		sc->sc_rep_input = -1;
-		sc->sc_rep_config = -1;
-		sc->sc_rep_cap = -1;
-	}
-
-	for (repid = 0; repid < parent->sc_nrepid; repid++) {
-		if (hid_report_size(desc, size, hid_input, repid) == 0 &&
-		    hid_report_size(desc, size, hid_output, repid) == 0 &&
-		    hid_report_size(desc, size, hid_feature, repid) == 0)
-			continue;
-
-		if (hid_is_collection(desc, size, repid,
-		    HID_USAGE2(HUP_DIGITIZERS, HUD_TOUCHPAD))) {
-			input = 1;
-			if (sc != NULL && sc->sc_rep_input == -1)
-				sc->sc_rep_input = repid;
-		} else if (hid_is_collection(desc, size, repid,
-		    HID_USAGE2(HUP_DIGITIZERS, HUD_CONFIG))) {
-			conf = 1;
-			if (sc != NULL && sc->sc_rep_config == -1)
-				sc->sc_rep_config = repid;
-		}
-
-		/* capabilities report could be anywhere */
-		if (hid_locate(desc, size, HID_USAGE2(HUP_DIGITIZERS,
-		    HUD_CONTACT_MAX), repid, hid_feature, NULL, NULL)) {
-			cap = 1;
-			if (sc != NULL && sc->sc_rep_cap == -1)
-				sc->sc_rep_cap = repid;
-		}
-	}
-
-	return (conf && input && cap);
 }
 
 void
@@ -150,7 +100,6 @@ umt_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_hdev.sc_parent = uha->parent;
 
 	uhidev_get_report_desc(uha->parent, &desc, &size);
-	umt_find_winptp_reports(uha->parent, desc, size, sc);
 
 	memset(mt, 0, sizeof(sc->sc_mt));
 
@@ -160,11 +109,8 @@ umt_attach(struct device *parent, struct device *self, void *aux)
 	mt->hidev_report_type_conv = uhidev_report_type_conv;
 	mt->hidev_get_report = umt_hidev_get_report;
 	mt->hidev_set_report = umt_hidev_set_report;
-	mt->sc_rep_input = sc->sc_rep_input;
-	mt->sc_rep_config = sc->sc_rep_config;
-	mt->sc_rep_cap = sc->sc_rep_cap;
 
-	if (hidmt_setup(self, mt, desc, size) != 0)
+	if (hidmt_setup(self, mt, uha->parent->sc_nrepid, desc, size) != 0)
 		return;
 
 	hidmt_attach(mt, &umt_accessops);
@@ -218,12 +164,14 @@ umt_enable(void *v)
 	struct hidmt *mt = &sc->sc_mt;
 	int rv;
 
-	if ((rv = hidmt_enable(mt)) != 0)
+	if (mt->sc_enabled)
+		return EBUSY;
+
+	if ((rv = uhidev_open(&sc->sc_hdev)) != 0)
 		return rv;
 
-	rv = uhidev_open(&sc->sc_hdev);
-
-	hidmt_set_input_mode(mt, HIDMT_INPUT_MODE_MT_TOUCHPAD);
+	if ((rv = hidmt_enable(mt)) != 0)
+		return rv;
 
 	return rv;
 }
