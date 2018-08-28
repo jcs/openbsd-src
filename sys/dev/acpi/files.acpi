@@ -193,8 +193,3 @@ file	dev/acpi/acpisurface.c		acpisurface
 # IPMI
 attach	ipmi at acpi with ipmi_acpi
 file	dev/acpi/ipmi_acpi.c		ipmi_acpi
-
-# Intel Sunrisepoint GPIO
-device	sptgpio
-attach	sptgpio at acpi
-file	dev/acpi/sptgpio.c		sptgpio
