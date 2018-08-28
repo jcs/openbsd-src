@@ -269,7 +269,7 @@ sleep:
 #endif /* SMALL_KERNEL */
 		break;
 	case ACPIBTN_POWER:
-		if (notify_type == 0x80)
+		if (!acpi_hashidpower && notify_type == 0x80)
 			acpi_addtask(sc->sc_acpi, acpi_powerdown_task,
 			    sc->sc_acpi, 0);
 		break;

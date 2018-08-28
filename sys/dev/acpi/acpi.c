@@ -71,6 +71,7 @@ int	acpi_debug = 16;
 
 int	acpi_poll_enabled;
 int	acpi_hasprocfvs;
+int	acpi_hashidpower = 0;
 
 #define ACPIEN_RETRIES 15
 
@@ -1967,7 +1968,8 @@ acpi_pbtn_task(void *arg0, int dummy)
 	    en | ACPI_PM1_PWRBTN_EN);
 	splx(s);
 
-	acpi_addtask(sc, acpi_powerdown_task, sc, 0);
+	if (!acpi_hashidpower)
+		acpi_addtask(sc, acpi_powerdown_task, sc, 0);
 }
 
 void

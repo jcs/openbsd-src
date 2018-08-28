@@ -193,3 +193,8 @@ file	dev/acpi/acpisurface.c		acpisurface
 # IPMI
 attach	ipmi at acpi with ipmi_acpi
 file	dev/acpi/ipmi_acpi.c		ipmi_acpi
+
+# Intel HID event and 5-button array
+device	acpihid
+attach	acpihid at acpi
+file	dev/acpi/acpihid.c		acpihid

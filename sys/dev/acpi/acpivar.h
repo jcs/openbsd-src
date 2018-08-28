@@ -43,6 +43,7 @@ extern int acpi_debug;
 #endif
 
 extern int acpi_hasprocfvs;
+extern int acpi_hashidpower;
 
 struct klist;
 struct acpiec_softc;
