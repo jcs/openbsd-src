@@ -512,7 +512,7 @@ __devitem(pdc, pdc, PDC device)dnl
 __devitem(gpr, gpr*, GPR400 smartcard reader)dnl
 _mcdev(gpr, gpr*, gpr, {-major_gpr_c-})dnl
 __devitem(hotplug, hotplug, devices hot plugging)dnl
-_mkdev(hotplug, hotplug, {-M hotplug c major_hotplug_c $U 400-})dnl
+_mkdev(hotplug, hotplug, {-M hotplug c major_hotplug_c $U 444-})dnl
 __devitem(ipmi, ipmi*, IPMI BMC access)dnl
 _mkdev(ipmi, ipmi*, {-M ipmi$U c major_ipmi_c $U 600-})dnl
 __devitem(gpio, gpio*, General Purpose Input/Output)dnl
