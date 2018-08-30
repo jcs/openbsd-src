@@ -1,5 +1,6 @@
 /*	$OpenBSD: hotplug.c,v 1.16 2016/06/07 01:31:54 tedu Exp $	*/
 /*
+ * Copyright (c) 2018 joshua stein <jcs@openbsd.org>
  * Copyright (c) 2004 Alexander Yurchenko <grange@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -30,7 +31,6 @@
 #include <sys/vnode.h>
 
 #define HOTPLUG_MAXEVENTS	64
-#define HOTPLUG_EMPTY		-1
 
 struct hotplug_d {
 	int hd_unit;
@@ -43,7 +43,7 @@ LIST_HEAD(, hotplug_d) hotplug_d_list;
 struct hotplug_d *hotplug_lookup(int);
 
 static struct hotplug_event evqueue[HOTPLUG_MAXEVENTS];
-static int evqueue_head;
+static int evqueue_head, evqueue_count;
 
 void filt_hotplugrdetach(struct knote *);
 int  filt_hotplugread(struct knote *, long);
@@ -52,21 +52,17 @@ struct filterops hotplugread_filtops =
 	{ 1, NULL, filt_hotplugrdetach, filt_hotplugread};
 
 #define EVQUEUE_NEXT(p) (p == HOTPLUG_MAXEVENTS - 1 ? 0 : p + 1)
-#define EVQUEUE_PREV(p) (p == 0 ? HOTPLUG_MAXEVENTS : p - 1)
 
 void hotplug_put_event(struct hotplug_event *);
-int  hotplug_get_event(struct hotplug_d *hd, struct hotplug_event *);
+int  hotplug_get_event(struct hotplug_d *hd, struct hotplug_event *, int);
 
 void hotplugattach(int);
 
 void
 hotplugattach(int count)
 {
-	int i;
 	evqueue_head = 0;
-
-	for (i = 0; i < HOTPLUG_MAXEVENTS; i++)
-		evqueue[i].he_type = HOTPLUG_EMPTY;
+	evqueue_count = 0;
 
 	LIST_INIT(&hotplug_d_list);
 }
@@ -100,11 +96,12 @@ hotplug_put_event(struct hotplug_event *he)
 
 	evqueue[evqueue_head] = *he;
 	evqueue_head = EVQUEUE_NEXT(evqueue_head);
-	evqueue[evqueue_head].he_type = HOTPLUG_EMPTY;
+	if (evqueue_count < HOTPLUG_MAXEVENTS)
+		evqueue_count++;
 
 	/*
 	 * If any readers are still at the new evqueue_head, they are about to
-	 * get lapped.  Advance them one ahead.
+	 * get lapped.
 	 */
 	LIST_FOREACH(hd, &hotplug_d_list, hd_list) {
 		if (hd->evqueue_head == evqueue_head)
@@ -116,19 +113,20 @@ hotplug_put_event(struct hotplug_event *he)
 }
 
 int
-hotplug_get_event(struct hotplug_d *hd, struct hotplug_event *he)
+hotplug_get_event(struct hotplug_d *hd, struct hotplug_event *he, int peek)
 {
 	int s;
 
+	if (evqueue_count == 0 || hd->evqueue_head == evqueue_count ||
+	    hd->evqueue_head == evqueue_head)
+		return (1);
+
 	s = splbio();
-	if (evqueue[hd->evqueue_head].he_type != HOTPLUG_EMPTY) {
-		*he = evqueue[hd->evqueue_head];
+	*he = evqueue[hd->evqueue_head];
+	if (!peek)
 		hd->evqueue_head = EVQUEUE_NEXT(hd->evqueue_head);
-		splx(s);
-		return (0);
-	}
 	splx(s);
-	return (1);
+	return (0);
 }
 
 int
@@ -136,7 +134,6 @@ hotplugopen(dev_t dev, int flag, int mode, struct proc *p)
 {
 	struct hotplug_d *hd;
 	int unit = minor(dev);
-	int i;
 
 	if (flag & FWRITE)
 		return (EPERM);
@@ -151,11 +148,11 @@ hotplugopen(dev_t dev, int flag, int mode, struct proc *p)
 	 * Set head as far back as possible so each reader gets all historical
 	 * events.
 	 */
-	for (i = EVQUEUE_PREV(evqueue_head);
-	    evqueue[i].he_type != HOTPLUG_EMPTY && i != evqueue_head;
-	    i = EVQUEUE_PREV(i))
-		;
-	hd->evqueue_head = EVQUEUE_NEXT(i);
+	if (evqueue_count < HOTPLUG_MAXEVENTS)
+		hd->evqueue_head = 0;
+	else
+		hd->evqueue_head = EVQUEUE_NEXT(evqueue_head);
+
 	LIST_INSERT_HEAD(&hotplug_d_list, hd, hd_list);
 
 	return (0);
@@ -202,7 +199,7 @@ hotplugread(dev_t dev, struct uio *uio, int flags)
 		return (EINVAL);
 
 again:
-	if (hotplug_get_event(hd, &he) == 0)
+	if (hotplug_get_event(hd, &he, 0) == 0)
 		return (uiomove(&he, sizeof(he), uio));
 	if (flags & IO_NDELAY)
 		return (EAGAIN);
@@ -239,6 +236,7 @@ int
 hotplugpoll(dev_t dev, int events, struct proc *p)
 {
 	struct hotplug_d *hd;
+	struct hotplug_event he;
 	int revents = 0;
 
 	hd = hotplug_lookup(minor(dev));
@@ -246,8 +244,7 @@ hotplugpoll(dev_t dev, int events, struct proc *p)
 		return (POLLERR);
 
 	if (events & (POLLIN | POLLRDNORM)) {
-		if (evqueue[EVQUEUE_NEXT(hd->evqueue_head)].he_type !=
-		    HOTPLUG_EMPTY)
+		if (hotplug_get_event(hd, &he, 1) == 0)
 			revents |= events & (POLLIN | POLLRDNORM);
 		else
 			selrecord(p, &hd->hotplug_sel);
@@ -299,8 +296,9 @@ int
 filt_hotplugread(struct knote *kn, long hint)
 {
 	struct hotplug_d *hd = kn->kn_hook;
+	struct hotplug_event he;
 
-	if (evqueue[hd->evqueue_head].he_type == HOTPLUG_EMPTY)
+	if (hotplug_get_event(hd, &he, 1) != 0)
 		return (0);
 
 	return (1);
