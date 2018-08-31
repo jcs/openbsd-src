@@ -85,6 +85,12 @@ ims_match(struct device *parent, void *match, void *aux)
 	    HID_USAGE2(HUP_DIGITIZERS, HUD_PEN)))
 		return (IMATCH_IFACECLASS);
 
+	if (hid_is_collection(desc, size, iha->reportid,
+	    HID_USAGE2(HUP_DIGITIZERS, HUD_TOUCHSCREEN)) &&
+	    hid_locate(desc, size, HID_USAGE2(HUP_GENERIC_DESKTOP, HUG_X),
+	    iha->reportid, hid_input, NULL, NULL))
+		return (IMATCH_IFACECLASS);
+
 	return (IMATCH_NONE);
 }
 
