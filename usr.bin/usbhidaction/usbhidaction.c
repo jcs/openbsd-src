@@ -35,17 +35,21 @@
 #include <string.h>
 #include <ctype.h>
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/device.h>
 #include <sys/ioctl.h>
+#include <sys/hotplug.h>
 #include <dev/usb/usb.h>
 #include <dev/usb/usbhid.h>
 #include <usbhid.h>
 #include <syslog.h>
 #include <signal.h>
 #include <paths.h>
+#include <poll.h>
 
 int verbose = 0;
 int isdemon = 0;
@@ -64,12 +68,17 @@ struct command {
 };
 struct command *commands;
 
+/* max configuration line size */
 #define SIZE 4000
+
+#define HOTPLUG "/dev/hotplug"
 
 void usage(void);
 struct command *parse_conf(const char *, report_desc_t, int, int);
-void docmd(struct command *, int, const char *, int, char **);
+void docmd(struct command *, int, char *, int, char **);
 void freecommands(struct command *);
+int usbwait(long, long, int, char *);
+int usbmatches(char *, long, long, int, char *);
 
 /* ARGSUSED */
 static void
@@ -82,18 +91,20 @@ int
 main(int argc, char **argv)
 {
 	const char *conf = NULL;
-	const char *dev = NULL;
+	char dev[PATH_MAX] = { 0 };
 	int fd, ch, sz, n, val, i;
 	int demon, ignore;
 	report_desc_t repd;
 	char buf[100];
 	char devnamebuf[PATH_MAX];
+	const char *errstr;
 	struct command *cmd;
-	int reportid;
+	long usbv, usbp;
+	int reportid = -1;
 
 	demon = 1;
 	ignore = 0;
-	while ((ch = getopt(argc, argv, "c:df:iv")) != -1) {
+	while ((ch = getopt(argc, argv, "c:df:ir:u:v")) != -1) {
 		switch(ch) {
 		case 'c':
 			conf = optarg;
@@ -105,7 +116,25 @@ main(int argc, char **argv)
 			ignore++;
 			break;
 		case 'f':
-			dev = optarg;
+			strlcpy(dev, optarg, sizeof(dev));
+			break;
+		case 'r':
+			reportid = strtonum(optarg, 0, INT_MAX, &errstr);
+                        if (errstr != NULL)
+                                errx(1, "reportid %s", errstr);
+			break;
+		case 'u':
+			if (strlen(optarg) != 9 || optarg[4] != ':')
+				errx(1, "-u vendor and product must be in "
+				    "the form of xxxx:xxxx");
+			memcpy(buf, optarg, 4);
+			buf[4] = '\0';
+			if ((usbv = strtol(buf, NULL, 16)) == 0)
+				errx(1, "invalid USB vendor");
+			memcpy(buf, optarg + 5, 4);
+			buf[4] = '\0';
+			if ((usbp = strtol(buf, NULL, 16)) == 0)
+				errx(1, "invalid USB product");
 			break;
 		case 'v':
 			demon = 0;
@@ -119,27 +148,58 @@ main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (conf == NULL || dev == NULL)
+	if (conf == NULL)
 		usage();
+	if (!dev[0] && (!usbv || !usbp))
+		usage();
+	if (usbv && usbp && reportid < 0)
+		usage();
+	if (dev[0] && usbv && usbp) {
+		warnx("-f and -u are mutually exclusive");
+		usage();
+	}
 
 	if (hid_start(NULL) == -1)
 		errx(1, "hid_init");
 
-	if (dev[0] != '/') {
-		snprintf(devnamebuf, sizeof(devnamebuf), "/dev/%s%s",
-		    isdigit((unsigned char)dev[0]) ? "uhid" : "", dev);
-		dev = devnamebuf;
-	}
-
 	if (demon && conf[0] != '/')
 		errx(1, "config file must have an absolute path, %s", conf);
 
-	fd = open(dev, O_RDWR | O_CLOEXEC);
-	if (fd < 0)
-		err(1, "%s", dev);
+	if (dev[0]) {
+		if (dev[0] != '/') {
+			snprintf(devnamebuf, sizeof(devnamebuf), "/dev/%s%s",
+			    isdigit((unsigned char)dev[0]) ? "uhid" : "", dev);
+			strlcpy(dev, devnamebuf, sizeof(dev));
+		}
 
-	if (ioctl(fd, USB_GET_REPORT_ID, &reportid) < 0)
-		reportid = -1;
+		fd = open(dev, O_RDWR | O_CLOEXEC);
+		if (fd < 0)
+			err(1, "%s", dev);
+	}
+
+	if (demon) {
+		if (daemon(0, 0) < 0)
+			err(1, "daemon()");
+		isdemon = 1;
+	}
+
+	if (!dev[0]) {
+		usbwait(usbv, usbp, reportid, dev);
+		fd = open(dev, O_RDWR | O_CLOEXEC);
+		if (fd < 0)
+			err(1, "%s", dev);
+	}
+
+	(void)signal(SIGHUP, sighup);
+
+	/* we do not care about the children, so ignore them */
+	(void)signal(SIGCHLD, SIG_IGN);
+
+	if (reportid == -1) {
+		if (ioctl(fd, USB_GET_REPORT_ID, &reportid) < 0)
+			reportid = -1;
+	}
+
 	repd = hid_get_report_desc(fd);
 	if (repd == NULL)
 		err(1, "hid_get_report_desc() failed");
@@ -152,17 +212,6 @@ main(int argc, char **argv)
 		printf("report size %d\n", sz);
 	if (sz > sizeof buf)
 		errx(1, "report too large");
-
-	(void)signal(SIGHUP, sighup);
-
-	/* we do not care about the children, so ignore them */
-	(void)signal(SIGCHLD, SIG_IGN);
-
-	if (demon) {
-		if (daemon(0, 0) < 0)
-			err(1, "daemon()");
-		isdemon = 1;
-	}
 
 	for(;;) {
 		n = read(fd, buf, sz);
@@ -207,6 +256,8 @@ usage(void)
 
 	fprintf(stderr, "usage: %s [-div] -c config-file -f device arg ...\n",
 	    __progname);
+	fprintf(stderr, "       %s [-div] -c config-file -r reportid "
+	    "-u vend:prod arg ...\n", __progname);
 	exit(1);
 }
 
@@ -390,7 +441,7 @@ parse_conf(const char *conf, report_desc_t repd, int reportid, int ignore)
 }
 
 void
-docmd(struct command *cmd, int value, const char *hid, int argc, char **argv)
+docmd(struct command *cmd, int value, char *hid, int argc, char **argv)
 {
 	char cmdbuf[SIZE], *p, *q;
 	size_t len;
@@ -456,4 +507,99 @@ freecommands(struct command *cmd)
 		free(cmd);
 		cmd = next;
 	}
+}
+
+int
+usbwait(long usbv, long usbp, int reportid, char *dev)
+{
+	struct hotplug_event he;
+	struct pollfd pfd[1];
+	char *buf;
+	int i, devfd, sc;
+
+	if ((buf = malloc(PATH_MAX)) == NULL)
+		err(1, "malloc");
+	for (i = 0; i < 8; i++) {
+		snprintf(buf, PATH_MAX, "/dev/uhid%d", i);
+		if (usbmatches(buf, usbv, usbp, reportid, dev) == 0)
+			return 0;
+	}
+	free(buf);
+
+	if ((devfd = open(HOTPLUG, O_RDONLY | O_CLOEXEC)) == -1)
+		err(1, "%s", HOTPLUG);
+
+	/* flush events */
+	pfd[0].fd = devfd;
+	pfd[0].events = POLLIN;
+	while (poll(pfd, 1, 0) > 0)
+		read(devfd, &he, sizeof(he));
+
+	for (;;) {
+		if (read(devfd, &he, sizeof(he)) == -1) {
+			printf("read -1\n");
+			if (errno == EINTR)
+				continue;
+			err(1, "failed reading from " HOTPLUG);
+		}
+
+		if (he.he_type == HOTPLUG_DEVAT &&
+		    sscanf(he.he_devname, "uhid%d", &sc) == 1) {
+			snprintf(buf, PATH_MAX, "/dev/%s", he.he_devname);
+			if (usbmatches(buf, usbv, usbp, reportid, dev) == 0) {
+				close(devfd);
+				return 0;
+			}
+		}
+	}
+
+	return 1;
+}
+
+int
+usbmatches(char *dev, long usbv, long usbp, int reportid, char *out)
+{
+	int devfd, treportid;
+	struct usb_device_info udi;
+
+	if ((devfd = open(dev, O_RDONLY)) == -1) {
+		if (verbose)
+			warn("%s", dev);
+		return 1;
+	}
+	if (ioctl(devfd, USB_GET_DEVICEINFO, &udi) < 0) {
+		if (verbose)
+			warn("%s: ioctl USB_GET_DEVICEINFO failed", dev);
+		goto nomatch;
+	}
+	if (udi.udi_vendorNo != usbv || udi.udi_productNo != usbp) {
+		if (verbose)
+			printf("%s: vendor:%04x product %04x != wanted "
+			    "%04lx:%04lx\n", dev, udi.udi_vendorNo,
+			    udi.udi_productNo, usbv, usbp);
+		goto nomatch;
+	}
+	if (ioctl(devfd, USB_GET_REPORT_ID, &treportid) < 0) {
+		warn("%s: ioctl USB_GET_REPORTID failed", dev);
+		goto nomatch;
+	}
+	if (treportid != reportid) {
+		if (verbose)
+			printf("%s: report id %d != wanted %d\n", dev,
+			    treportid, reportid);
+		goto nomatch;
+	}
+
+	close(devfd);
+
+	if (verbose)
+		printf("%s: found matching vendor %04lx product %04lx "
+		    "report id %d\n", dev, usbv, usbp, reportid);
+
+	strlcpy(out, dev, PATH_MAX);
+	return 0;
+
+nomatch:
+	close(devfd);
+	return 1;
 }
