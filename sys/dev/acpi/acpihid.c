@@ -205,14 +205,14 @@ acpihid_notify(struct aml_node *node, int notify_type, void *arg)
 		break;
 	case 0xc4: /* volume up press */
 #if NAUDIO > 0 && NWSKBD > 0
-		wskbd_set_mixervolume(1, 1);
+		wskbd_set_mixervolume(1, 10);
 #endif
 		break;
 	case 0xc5: /* volume up release */
 		break;
 	case 0xc6: /* volume down press */
 #if NAUDIO > 0 && NWSKBD > 0
-		wskbd_set_mixervolume(-1, 1);
+		wskbd_set_mixervolume(-1, 10);
 #endif
 		break;
 	case 0xc7: /* volume down release */
