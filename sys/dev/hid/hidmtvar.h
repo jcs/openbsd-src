@@ -29,7 +29,6 @@ struct hidmt_contact {
 	int		tip;
 	int		confidence;
 	int		contactid;
-	int		pressure;
 
 	int		seen;
 };
@@ -50,17 +49,14 @@ struct hidmt {
 	int		sc_rep_input_size;
 	int		sc_rep_config;
 	int		sc_rep_cap;
-	int		sc_rep_win8;
 
 	SIMPLEQ_HEAD(, hidmt_data) sc_inputs;
 
 	struct device	*sc_wsmousedev;
 
 	int		sc_clickpad;
-	int		sc_touchscreen;
 	int		sc_num_contacts;
 #define HIDMT_MAX_CONTACTS	5
-	int		sc_confidence;
 	int		sc_minx, sc_maxx;
 	int		sc_miny, sc_maxy;
 	int		sc_resx, sc_resy;
@@ -70,7 +66,7 @@ struct hidmt {
 	int		sc_button;
 };
 
-int	hidmt_set_mt_input_mode(struct hidmt *);
+int	hidmt_set_input_mode(struct hidmt *, uint16_t);
 #define HIDMT_INPUT_MODE_MT_TOUCHSCREEN	0x2
 #define HIDMT_INPUT_MODE_MT_TOUCHPAD	0x3
 
@@ -80,5 +76,4 @@ void	hidmt_disable(struct hidmt *);
 int	hidmt_enable(struct hidmt *);
 void	hidmt_input(struct hidmt *, uint8_t *, u_int);
 int	hidmt_ioctl(struct hidmt *, u_long, caddr_t, int, struct proc *);
-int	hidmt_setup(struct device *, struct hidmt *, int, void *, int);
-int	hidmt_find_win_reports(struct hidmt *, int, void *, int);
+int	hidmt_setup(struct device *, struct hidmt *, void *, int);
