@@ -32,15 +32,15 @@
 
 #define HOTPLUG_MAXEVENTS	64
 
-struct hotplug_d {
+struct hotplug_dev {
 	int hd_unit;
-	int evqueue_head;
-	struct selinfo hotplug_sel;
-	LIST_ENTRY(hotplug_d) hd_list;
+	int hd_evqueue_head;
+	struct selinfo hd_sel;
+	LIST_ENTRY(hotplug_dev) hd_list;
 };
 
-LIST_HEAD(, hotplug_d) hotplug_d_list;
-struct hotplug_d *hotplug_lookup(int);
+LIST_HEAD(, hotplug_dev) hotplug_dev_list;
+struct hotplug_dev *hotplug_lookup(int);
 
 static struct hotplug_event evqueue[HOTPLUG_MAXEVENTS];
 static int evqueue_head, evqueue_count;
@@ -54,7 +54,7 @@ struct filterops hotplugread_filtops =
 #define EVQUEUE_NEXT(p) (p == HOTPLUG_MAXEVENTS - 1 ? 0 : p + 1)
 
 void hotplug_put_event(struct hotplug_event *);
-int  hotplug_get_event(struct hotplug_d *hd, struct hotplug_event *, int);
+int  hotplug_get_event(struct hotplug_dev *hd, struct hotplug_event *, int);
 
 void hotplugattach(int);
 
@@ -64,7 +64,7 @@ hotplugattach(int count)
 	evqueue_head = 0;
 	evqueue_count = 0;
 
-	LIST_INIT(&hotplug_d_list);
+	LIST_INIT(&hotplug_dev_list);
 }
 
 void
@@ -92,7 +92,7 @@ hotplug_device_detach(enum devclass class, char *name)
 void
 hotplug_put_event(struct hotplug_event *he)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 
 	evqueue[evqueue_head] = *he;
 	evqueue_head = EVQUEUE_NEXT(evqueue_head);
@@ -103,28 +103,28 @@ hotplug_put_event(struct hotplug_event *he)
 	 * If any readers are still at the new evqueue_head, they are about to
 	 * get lapped.
 	 */
-	LIST_FOREACH(hd, &hotplug_d_list, hd_list) {
-		if (hd->evqueue_head == evqueue_head)
-			hd->evqueue_head = EVQUEUE_NEXT(evqueue_head);
-		selwakeup(&hd->hotplug_sel);
+	LIST_FOREACH(hd, &hotplug_dev_list, hd_list) {
+		if (hd->hd_evqueue_head == evqueue_head)
+			hd->hd_evqueue_head = EVQUEUE_NEXT(evqueue_head);
+		selwakeup(&hd->hd_sel);
 	}
 
 	wakeup(&evqueue);
 }
 
 int
-hotplug_get_event(struct hotplug_d *hd, struct hotplug_event *he, int peek)
+hotplug_get_event(struct hotplug_dev *hd, struct hotplug_event *he, int peek)
 {
 	int s;
 
-	if (evqueue_count == 0 || hd->evqueue_head == evqueue_count ||
-	    hd->evqueue_head == evqueue_head)
+	if (evqueue_count == 0 || hd->hd_evqueue_head == evqueue_count ||
+	    hd->hd_evqueue_head == evqueue_head)
 		return (1);
 
 	s = splbio();
-	*he = evqueue[hd->evqueue_head];
+	*he = evqueue[hd->hd_evqueue_head];
 	if (!peek)
-		hd->evqueue_head = EVQUEUE_NEXT(hd->evqueue_head);
+		hd->hd_evqueue_head = EVQUEUE_NEXT(hd->hd_evqueue_head);
 	splx(s);
 	return (0);
 }
@@ -132,7 +132,7 @@ hotplug_get_event(struct hotplug_d *hd, struct hotplug_event *he, int peek)
 int
 hotplugopen(dev_t dev, int flag, int mode, struct proc *p)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 	int unit = minor(dev);
 
 	if (flag & FWRITE)
@@ -149,21 +149,21 @@ hotplugopen(dev_t dev, int flag, int mode, struct proc *p)
 	 * events.
 	 */
 	if (evqueue_count < HOTPLUG_MAXEVENTS)
-		hd->evqueue_head = 0;
+		hd->hd_evqueue_head = 0;
 	else
-		hd->evqueue_head = EVQUEUE_NEXT(evqueue_head);
+		hd->hd_evqueue_head = EVQUEUE_NEXT(evqueue_head);
 
-	LIST_INSERT_HEAD(&hotplug_d_list, hd, hd_list);
+	LIST_INSERT_HEAD(&hotplug_dev_list, hd, hd_list);
 
 	return (0);
 }
 
-struct hotplug_d *
+struct hotplug_dev *
 hotplug_lookup(int unit)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 
-	LIST_FOREACH(hd, &hotplug_d_list, hd_list)
+	LIST_FOREACH(hd, &hotplug_dev_list, hd_list)
 		if (hd->hd_unit == unit)
 			return (hd);
 	return (NULL);
@@ -172,7 +172,7 @@ hotplug_lookup(int unit)
 int
 hotplugclose(dev_t dev, int flag, int mode, struct proc *p)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 
 	hd = hotplug_lookup(minor(dev));
 	if (hd == NULL)
@@ -187,7 +187,7 @@ hotplugclose(dev_t dev, int flag, int mode, struct proc *p)
 int
 hotplugread(dev_t dev, struct uio *uio, int flags)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 	struct hotplug_event he;
 	int error;
 
@@ -213,7 +213,7 @@ again:
 int
 hotplugioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 
 	hd = hotplug_lookup(minor(dev));
 	if (hd == NULL)
@@ -235,7 +235,7 @@ hotplugioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 int
 hotplugpoll(dev_t dev, int events, struct proc *p)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 	struct hotplug_event he;
 	int revents = 0;
 
@@ -247,7 +247,7 @@ hotplugpoll(dev_t dev, int events, struct proc *p)
 		if (hotplug_get_event(hd, &he, 1) == 0)
 			revents |= events & (POLLIN | POLLRDNORM);
 		else
-			selrecord(p, &hd->hotplug_sel);
+			selrecord(p, &hd->hd_sel);
 	}
 
 	return (revents);
@@ -256,7 +256,7 @@ hotplugpoll(dev_t dev, int events, struct proc *p)
 int
 hotplugkqfilter(dev_t dev, struct knote *kn)
 {
-	struct hotplug_d *hd;
+	struct hotplug_dev *hd;
 	struct klist *klist;
 	int s;
 
@@ -266,7 +266,7 @@ hotplugkqfilter(dev_t dev, struct knote *kn)
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
-		klist = &hd->hotplug_sel.si_note;
+		klist = &hd->hd_sel.si_note;
 		kn->kn_fop = &hotplugread_filtops;
 		break;
 	default:
@@ -284,18 +284,18 @@ hotplugkqfilter(dev_t dev, struct knote *kn)
 void
 filt_hotplugrdetach(struct knote *kn)
 {
-	struct hotplug_d *hd = kn->kn_hook;
+	struct hotplug_dev *hd = kn->kn_hook;
 	int s;
 
 	s = splbio();
-	SLIST_REMOVE(&hd->hotplug_sel.si_note, kn, knote, kn_selnext);
+	SLIST_REMOVE(&hd->hd_sel.si_note, kn, knote, kn_selnext);
 	splx(s);
 }
 
 int
 filt_hotplugread(struct knote *kn, long hint)
 {
-	struct hotplug_d *hd = kn->kn_hook;
+	struct hotplug_dev *hd = kn->kn_hook;
 	struct hotplug_event he;
 
 	if (hotplug_get_event(hd, &he, 1) != 0)
