@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.330 2018/08/09 21:12:33 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.333 2018/09/05 09:49:57 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -87,6 +87,7 @@
 #define	F_CTL_ACTIVE		0x8000
 #define	F_RTLABEL		0x10000
 #define	F_CTL_SSV		0x20000	/* only used by bgpctl */
+#define	F_CTL_INVALID		0x40000 /* only used by bgpctl */
 
 /*
  * Limit the number of messages queued in the session engine.
@@ -612,6 +613,7 @@ struct ctl_neighbor {
 #define	F_PREF_INTERNAL	0x04
 #define	F_PREF_ANNOUNCE	0x08
 #define	F_PREF_STALE	0x10
+#define	F_PREF_INVALID	0x20
 
 struct ctl_show_rib {
 	struct bgpd_addr	true_nexthop;
@@ -647,7 +649,6 @@ enum aslen_spec {
 };
 
 struct filter_as {
-	u_int32_t	as;
 	u_int16_t	flags;
 	enum as_spec	type;
 	u_int8_t	op;
@@ -712,8 +713,8 @@ struct ctl_show_rib_request {
 	struct filter_extcommunity extcommunity;
 	struct filter_largecommunity large_community;
 	u_int32_t		peerid;
+	u_int32_t		flags;
 	pid_t			pid;
-	u_int16_t		flags;
 	enum imsg_type		type;
 	u_int8_t		prefixlen;
 	u_int8_t		aid;
@@ -1172,6 +1173,7 @@ int		 nlri_get_vpn4(u_char *, u_int16_t, struct bgpd_addr *,
 int		 prefix_compare(const struct bgpd_addr *,
 		    const struct bgpd_addr *, int);
 in_addr_t	 prefixlen2mask(u_int8_t);
+void		 inet4applymask(struct in_addr *, const struct in_addr *, int);
 void		 inet6applymask(struct in6_addr *, const struct in6_addr *,
 		    int);
 const char	*aid2str(u_int8_t);

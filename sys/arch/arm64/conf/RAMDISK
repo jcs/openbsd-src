@@ -1,4 +1,4 @@
-# $OpenBSD: RAMDISK,v 1.68 2018/08/26 16:52:16 kettenis Exp $
+# $OpenBSD: RAMDISK,v 1.72 2018/08/27 20:05:06 kettenis Exp $
 #
 # GENERIC machine description file
 #
@@ -87,6 +87,7 @@ xhci*		at fdt?
 com*		at fdt?
 
 # Generic devices
+pinctrl*	at fdt? early 1
 plgpio*		at fdt? early 1
 plrtc*		at fdt?
 pluart*		at fdt?
@@ -126,6 +127,11 @@ bcmdog*		at fdt?
 bcmrng*		at fdt?
 dwctwo*		at fdt?
 usb*		at dwctwo?
+
+# HiSilicon SoCs
+hiclock*	at fdt? early 1
+hidwusb*	at fdt?
+hireset*	at fdt? early 1
 
 # Marvell SoCs
 mvclock*	at fdt? early 1

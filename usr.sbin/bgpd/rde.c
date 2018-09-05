@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.c,v 1.414 2018/08/09 12:54:06 claudio Exp $ */
+/*	$OpenBSD: rde.c,v 1.418 2018/09/05 09:49:57 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -1310,6 +1310,7 @@ rde_update_update(struct rde_peer *peer, struct filterstate *in,
 	struct prefix		*p;
 	enum filter_actions	 action;
 	u_int16_t		 i;
+	const char		*wmsg = "filtered, withdraw";
 
 	peer->prefix_rcvd_update++;
 	/* add original path to the Adj-RIB-In */
@@ -1323,6 +1324,9 @@ rde_update_update(struct rde_peer *peer, struct filterstate *in,
 		rde_update_err(peer, ERR_CEASE, ERR_CEASE_MAX_PREFIX, NULL, 0);
 		return (-1);
 	}
+
+	if (in->aspath.flags & F_ATTR_PARSE_ERR)
+		wmsg = "path invalid, withdraw";
 
 	p = prefix_get(&ribs[RIB_ADJ_IN].rib, peer, prefix, prefixlen, 0);
 	if (p == NULL)
@@ -1344,7 +1348,7 @@ rde_update_update(struct rde_peer *peer, struct filterstate *in,
 			    prefixlen, 0);
 		} else if (prefix_remove(&ribs[i].rib, peer, prefix, prefixlen,
 		    0)) {
-			rde_update_log("filtered withdraw", i, peer,
+			rde_update_log(wmsg, i, peer,
 			    NULL, prefix, prefixlen);
 		}
 
@@ -1579,6 +1583,9 @@ bad_flags:
 		/* 4-byte ready server take the default route */
 		goto optattr;
 	case ATTR_COMMUNITIES:
+		if (!CHECK_FLAGS(flags, ATTR_OPTIONAL|ATTR_TRANSITIVE,
+		    ATTR_PARTIAL))
+			goto bad_flags;
 		if (attr_len == 0 || attr_len % 4 != 0) {
 			/*
 			 * mark update as bad and withdraw all routes as per
@@ -1587,12 +1594,13 @@ bad_flags:
 			a->flags |= F_ATTR_PARSE_ERR;
 			log_peer_warnx(&peer->conf, "bad COMMUNITIES, "
 			    "path invalidated and prefix withdrawn");
+			break;
 		}
+		goto optattr;
+	case ATTR_LARGE_COMMUNITIES:
 		if (!CHECK_FLAGS(flags, ATTR_OPTIONAL|ATTR_TRANSITIVE,
 		    ATTR_PARTIAL))
 			goto bad_flags;
-		goto optattr;
-	case ATTR_LARGE_COMMUNITIES:
 		if (attr_len == 0 || attr_len % 12 != 0) {
 			/*
 			 * mark update as bad and withdraw all routes as per
@@ -1601,12 +1609,13 @@ bad_flags:
 			a->flags |= F_ATTR_PARSE_ERR;
 			log_peer_warnx(&peer->conf, "bad LARGE COMMUNITIES, "
 			    "path invalidated and prefix withdrawn");
+			break;
 		}
+		goto optattr;
+	case ATTR_EXT_COMMUNITIES:
 		if (!CHECK_FLAGS(flags, ATTR_OPTIONAL|ATTR_TRANSITIVE,
 		    ATTR_PARTIAL))
 			goto bad_flags;
-		goto optattr;
-	case ATTR_EXT_COMMUNITIES:
 		if (attr_len == 0 || attr_len % 8 != 0) {
 			/*
 			 * mark update as bad and withdraw all routes as per
@@ -1615,10 +1624,8 @@ bad_flags:
 			a->flags |= F_ATTR_PARSE_ERR;
 			log_peer_warnx(&peer->conf, "bad EXT_COMMUNITIES, "
 			    "path invalidated and prefix withdrawn");
+			break;
 		}
-		if (!CHECK_FLAGS(flags, ATTR_OPTIONAL|ATTR_TRANSITIVE,
-		    ATTR_PARTIAL))
-			goto bad_flags;
 		goto optattr;
 	case ATTR_ORIGINATOR_ID:
 		if (attr_len != 4)
@@ -2081,6 +2088,8 @@ rde_dump_rib_as(struct prefix *p, struct rde_aspath *asp, pid_t pid, int flags)
 		rib.flags |= F_PREF_ELIGIBLE;
 	if (asp->flags & F_ATTR_LOOP)
 		rib.flags &= ~F_PREF_ELIGIBLE;
+	if (asp->flags & F_ATTR_PARSE_ERR)
+		rib.flags |= F_PREF_INVALID;
 	staletime = prefix_peer(p)->staletime[p->re->prefix->aid];
 	if (staletime && p->lastchange <= staletime)
 		rib.flags |= F_PREF_STALE;
@@ -2142,14 +2151,27 @@ rde_dump_filter(struct prefix *p, struct ctl_show_rib_request *req)
 	struct rde_peer		*peer;
 	struct rde_aspath	*asp;
 
-	if (req->flags & F_CTL_ADJ_IN ||
-	    !(req->flags & (F_CTL_ADJ_IN|F_CTL_ADJ_OUT))) {
+	if (req->flags & F_CTL_ADJ_OUT) {
+		if (p->re->active != p)
+			/* only consider active prefix */
+			return;
+		if (req->peerid) {
+			if ((peer = peer_get(req->peerid)) != NULL)
+				rde_dump_filterout(peer, p, req);
+			return;
+		}
+	} else {
 		asp = prefix_aspath(p);
 		if (req->peerid && req->peerid != prefix_peer(p)->conf.id)
 			return;
+		if ((req->flags & F_CTL_ACTIVE) && p->re->active != p)
+			return;
+		if ((req->flags & F_CTL_INVALID) &&
+		    (asp->flags & F_ATTR_PARSE_ERR) == 0)
+			return;
 		if (req->type == IMSG_CTL_SHOW_RIB_AS &&
 		    !aspath_match(asp->aspath->data, asp->aspath->len,
-		    &req->as, req->as.as))
+		    &req->as, 0))
 			return;
 		if (req->type == IMSG_CTL_SHOW_RIB_COMMUNITY &&
 		    !community_match(asp, req->community.as,
@@ -2162,18 +2184,7 @@ rde_dump_filter(struct prefix *p, struct ctl_show_rib_request *req)
 		    !community_large_match(asp, req->large_community.as,
 		    req->large_community.ld1, req->large_community.ld2))
 			return;
-		if ((req->flags & F_CTL_ACTIVE) && p->re->active != p)
-			return;
 		rde_dump_rib_as(p, asp, req->pid, req->flags);
-	} else if (req->flags & F_CTL_ADJ_OUT) {
-		if (p->re->active != p)
-			/* only consider active prefix */
-			return;
-		if (req->peerid) {
-			if ((peer = peer_get(req->peerid)) != NULL)
-				rde_dump_filterout(peer, p, req);
-			return;
-		}
 	}
 }
 
@@ -2223,7 +2234,9 @@ rde_dump_ctx_new(struct ctl_show_rib_request *req, pid_t pid,
 		    sizeof(error));
 		return;
 	}
-	if ((rib = rib_find(req->rib)) == NULL) {
+	if (req->flags & (F_CTL_ADJ_IN | F_CTL_INVALID)) {
+		rib = &ribs[RIB_ADJ_IN].rib;
+	} else if ((rib = rib_find(req->rib)) == NULL) {
 		log_warnx("rde_dump_ctx_new: no such rib %s", req->rib);
 		error = CTL_RES_NOSUCHPEER;
 		imsg_compose(ibuf_se_ctl, IMSG_CTL_RESULT, 0, pid, -1, &error,
@@ -3769,5 +3782,4 @@ rde_mark_prefixsets_dirty(struct prefixset_head *psold,
 			}
 		}
 	}
-	return;
 }

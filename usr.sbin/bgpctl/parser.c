@@ -1,4 +1,4 @@
-/*	$OpenBSD: parser.c,v 1.82 2018/07/10 13:03:06 benno Exp $ */
+/*	$OpenBSD: parser.c,v 1.84 2018/09/05 09:50:43 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -177,6 +177,7 @@ static const struct token t_show_rib[] = {
 	{ FLAG,		"best",		F_CTL_ACTIVE,	t_show_rib},
 	{ FLAG,		"selected",	F_CTL_ACTIVE,	t_show_rib},
 	{ FLAG,		"detail",	F_CTL_DETAIL,	t_show_rib},
+	{ FLAG,		"error",	F_CTL_INVALID,	t_show_rib},
 	{ FLAG,		"ssv"	,	F_CTL_SSV,	t_show_rib},
 	{ FLAG,		"in",		F_CTL_ADJ_IN,	t_show_rib},
 	{ FLAG,		"out",		F_CTL_ADJ_OUT,	t_show_rib},
@@ -614,7 +615,7 @@ match_token(int *argc, char **argv[], const struct token table[])
 			}
 			break;
 		case ASNUM:
-			if (parse_asnum(word, wordlen, &res.as.as)) {
+			if (parse_asnum(word, wordlen, &res.as.as_min)) {
 				match++;
 				t = &table[i];
 			}

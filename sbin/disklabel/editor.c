@@ -1,4 +1,4 @@
-/*	$OpenBSD: editor.c,v 1.345 2018/08/23 13:21:27 krw Exp $	*/
+/*	$OpenBSD: editor.c,v 1.348 2018/08/30 13:07:19 krw Exp $	*/
 
 /*
  * Copyright (c) 1997-2000 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -572,6 +572,7 @@ editor_allocspace(struct disklabel *lp_org)
 	index = -1;
 again:
 	free(alloc);
+	alloc = NULL;
 	index++;
 	if (index >= alloc_table_nitems)
 		return 1;
@@ -712,7 +713,7 @@ editor_resize(struct disklabel *lp, char *p)
 	struct disklabel label;
 	struct partition *pp, *prev;
 	u_int64_t ui, sz, off;
-	int partno, i, flags;
+	int partno, i, flags, shrunk;
 
 	label = *lp;
 
@@ -776,6 +777,7 @@ editor_resize(struct disklabel *lp, char *p)
 	 * Pack partitions above the resized partition, leaving unused
 	 * partitions alone.
 	 */
+	shrunk = -1;
 	prev = pp;
 	for (i = partno + 1; i < MAXPARTITIONS; i++) {
 		if (i == RAW_PART)
@@ -798,16 +800,19 @@ editor_resize(struct disklabel *lp, char *p)
 				    get_bsize(&label, partno) == 1 ||
 				    get_cpg(&label, partno) == 1)
 					return;
-				fprintf(stderr,
-				    "Partition %c shrunk to make room\n",
-				    i + 'a');
+				shrunk = i;
 			}
 		} else {
-			fputs("No room left for all partitions\n", stderr);
+			fputs("Amount too big\n", stderr);
 			return;
 		}
 		prev = pp;
 	}
+
+	if (shrunk != -1)
+		fprintf(stderr, "Partition %c shrunk to %llu sectors to make "
+		    "room\n", 'a' + shrunk,
+		    DL_GETPSIZE(&label.d_partitions[shrunk]));
 	*lp = label;
 }
 
@@ -938,15 +943,6 @@ editor_name(struct disklabel *lp, char *p)
 
 	if (pp->p_fstype == FS_UNUSED && DL_GETPSIZE(pp) == 0) {
 		fprintf(stderr, "Partition '%c' is not in use.\n", p[0]);
-		return;
-	}
-
-	/* Not all fstypes can be named */
-	if (pp->p_fstype == FS_UNUSED || pp->p_fstype == FS_SWAP ||
-	    pp->p_fstype == FS_BOOT || pp->p_fstype == FS_OTHER ||
-	    pp->p_fstype == FS_RAID) {
-		fprintf(stderr, "You cannot name a filesystem of type %s.\n",
-		    fstypenames[lp->d_partitions[partno].p_fstype]);
 		return;
 	}
 
@@ -2120,39 +2116,46 @@ get_mp(struct disklabel *lp, int partno)
 	char *p;
 	int i;
 
-	if (fstabfile && pp->p_fstype != FS_UNUSED &&
-	    pp->p_fstype != FS_SWAP && pp->p_fstype != FS_BOOT &&
-	    pp->p_fstype != FS_OTHER) {
-		for (;;) {
-			p = getstring("mount point",
-			    "Where to mount this filesystem (ie: / /var /usr)",
-			    mountpoints[partno] ? mountpoints[partno] : "none");
-			if (p == NULL)
-				return (1);
-			if (strcasecmp(p, "none") == 0) {
-				free(mountpoints[partno]);
-				mountpoints[partno] = NULL;
-				break;
-			}
-			for (i = 0; i < MAXPARTITIONS; i++)
-				if (mountpoints[i] != NULL && i != partno &&
-				    strcmp(p, mountpoints[i]) == 0)
-					break;
-			if (i < MAXPARTITIONS) {
-				fprintf(stderr, "'%c' already being mounted at "
-				    "'%s'\n", 'a'+i, p);
-				break;
-			}
-			if (*p == '/') {
-				/* XXX - might as well realloc */
-				free(mountpoints[partno]);
-				if ((mountpoints[partno] = strdup(p)) == NULL)
-					errx(4, "out of memory");
-				break;
-			}
-			fputs("Mount points must start with '/'\n", stderr);
-		}
+	if (fstabfile == NULL ||
+	    pp->p_fstype == FS_UNUSED ||
+	    pp->p_fstype == FS_SWAP ||
+	    pp->p_fstype == FS_BOOT ||
+	    pp->p_fstype == FS_OTHER ||
+	    pp->p_fstype == FS_RAID) {
+		/* No fstabfile, no names. Not all fstypes can be named */
+		return 0;
 	}
+
+	for (;;) {
+		p = getstring("mount point",
+		    "Where to mount this filesystem (ie: / /var /usr)",
+		    mountpoints[partno] ? mountpoints[partno] : "none");
+		if (p == NULL)
+			return (1);
+		if (strcasecmp(p, "none") == 0) {
+			free(mountpoints[partno]);
+			mountpoints[partno] = NULL;
+			break;
+		}
+		for (i = 0; i < MAXPARTITIONS; i++)
+			if (mountpoints[i] != NULL && i != partno &&
+			    strcmp(p, mountpoints[i]) == 0)
+				break;
+		if (i < MAXPARTITIONS) {
+			fprintf(stderr, "'%c' already being mounted at "
+			    "'%s'\n", 'a'+i, p);
+			break;
+		}
+		if (*p == '/') {
+			/* XXX - might as well realloc */
+			free(mountpoints[partno]);
+			if ((mountpoints[partno] = strdup(p)) == NULL)
+				errx(4, "out of memory");
+			break;
+		}
+		fputs("Mount points must start with '/'\n", stderr);
+	}
+
 	return (0);
 }
 

@@ -1,6 +1,6 @@
-.\"	$OpenBSD: ompinmux.4,v 1.1 2016/10/03 02:21:51 jsg Exp $
+.\"	$OpenBSD: rkdwusb.4,v 1.1 2018/08/27 20:09:29 kettenis Exp $
 .\"
-.\" Copyright (c) 2016 Jonathan Gray <jsg@openbsd.org>
+.\" Copyright (c) 2018 Mark Kettenis <kettenis@openbsd.org>
 .\"
 .\" Permission to use, copy, modify, and distribute this software for any
 .\" purpose with or without fee is hereby granted, provided that the above
@@ -14,16 +14,31 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: October 3 2016 $
-.Dt OMPINMUX 4 armv7
+.Dd $Mdocdate: August 27 2018 $
+.Dt RKDWUSB 4
 .Os
 .Sh NAME
-.Nm ompinmux
-.Nd OMAP pin multiplexing
+.Nm rkdwusb
+.Nd Rockchip USB 3.0 glue logic
 .Sh SYNOPSIS
-.Cd "ompinmux* at fdt?"
+.Cd "rkdwusb* at fdt?"
+.Cd "xhci* at fdt?"
 .Sh DESCRIPTION
 The
 .Nm
-driver uses pin control data from the device tree to select one of
-multiple possible roles available for pins on the SoC.
+driver controls the interface logic for the Synopsys DesignWare USB
+3.0 controller on Rockchip SoCs.
+.Sh SEE ALSO
+.Xr intro 4 ,
+.Xr xhci 4
+.Sh HISTORY
+The
+.Nm
+device driver first appeared in
+.Ox 6.2 .
+.Sh AUTHORS
+.An -nosplit
+The
+.Nm
+driver was written by
+.An Mark Kettenis Aq Mt kettenis@openbsd.org .

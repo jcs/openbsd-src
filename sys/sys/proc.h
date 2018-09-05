@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.257 2018/08/25 15:38:07 anton Exp $	*/
+/*	$OpenBSD: proc.h,v 1.259 2018/08/30 03:30:25 visa Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -149,6 +149,8 @@ RBT_HEAD(unvname_rbt, unvname);
  * run-time information needed by threads.
  */
 #ifdef __need_process
+struct futex;
+LIST_HEAD(futex_list, futex);
 struct unveil;
 struct process {
 	/*
@@ -174,6 +176,7 @@ struct process {
 	struct	vmspace *ps_vmspace;	/* Address space */
 	pid_t	ps_pid;			/* Process identifier. */
 
+	struct	futex_list ps_ftlist;	/* futexes attached to this process */
 	LIST_HEAD(, kqueue) ps_kqlist;	/* kqueues attached to this process */
 
 /* The following fields are all zeroed upon creation in process_new. */
@@ -288,7 +291,7 @@ struct process {
      "\024NOBROADCASTKILL" "\025PLEDGE" "\026WXNEEDED" "\027EXECPLEDGE" )
 
 
-struct kd;
+struct kcov_dev;
 struct lock_list_entry;
 
 struct proc {
@@ -376,7 +379,7 @@ struct proc {
 
 	struct	lock_list_entry *p_sleeplocks;
 
-	struct	kd *p_kd;	/* kcov descriptor */
+	struct	kcov_dev *p_kd;
 };
 
 /* Status values. */

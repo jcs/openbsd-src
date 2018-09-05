@@ -1,4 +1,4 @@
-/* $OpenBSD: s_time.c,v 1.29 2018/08/22 20:36:24 cheloha Exp $ */
+/* $OpenBSD: s_time.c,v 1.31 2018/08/28 14:30:48 cheloha Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -242,7 +242,7 @@ s_time_main(int argc, char **argv)
 		}
 	}
 
-	s_time_meth = SSLv23_client_method();
+	s_time_meth = TLS_client_method();
 
 	verify_depth = 0;
 
@@ -376,11 +376,12 @@ run_test(SSL *scon)
 	if (s_time_config.www_path != NULL) {
 		retval = snprintf(buf, sizeof buf,
 		    "GET %s HTTP/1.0\r\n\r\n", s_time_config.www_path);
-		if ((size_t)retval >= sizeof buf) {
+		if (retval == -1 || retval >= sizeof buf) {
 			fprintf(stderr, "URL too long\n");
 			return 0;
 		}
-		SSL_write(scon, buf, strlen(buf));
+		if (SSL_write(scon, buf, retval) != retval)
+			return 0;
 		while ((i = SSL_read(scon, buf, sizeof(buf))) > 0)
 			bytes_read += i;
 	}
@@ -434,10 +435,6 @@ benchmark(int reuse_session)
 			ver = SSL_version(scon);
 			if (ver == TLS1_VERSION)
 				ver = 't';
-			else if (ver == SSL3_VERSION)
-				ver = '3';
-			else if (ver == SSL2_VERSION)
-				ver = '2';
 			else
 				ver = '*';
 		}

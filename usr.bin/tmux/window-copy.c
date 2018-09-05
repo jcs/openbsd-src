@@ -1,4 +1,4 @@
-/* $OpenBSD: window-copy.c,v 1.196 2018/08/23 15:45:05 nicm Exp $ */
+/* $OpenBSD: window-copy.c,v 1.199 2018/09/03 08:51:43 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1273,11 +1273,13 @@ window_copy_goto_line(struct window_pane *wp, const char *linestr)
 {
 	struct window_copy_mode_data	*data = wp->modedata;
 	const char			*errstr;
-	u_int				 lineno;
+	int				 lineno;
 
-	lineno = strtonum(linestr, 0, screen_hsize(data->backing), &errstr);
+	lineno = strtonum(linestr, -1, INT_MAX, &errstr);
 	if (errstr != NULL)
 		return;
+	if (lineno < 0 || (u_int)lineno > screen_hsize(data->backing))
+		lineno = screen_hsize(data->backing);
 
 	data->oy = lineno;
 	window_copy_update_selection(wp, 1);
@@ -1810,6 +1812,7 @@ window_copy_clear_selection(struct window_pane *wp)
 	screen_clear_selection(&data->screen);
 
 	data->cursordrag = CURSORDRAG_NONE;
+	data->lineflag = LINE_SEL_NONE;
 
 	py = screen_hsize(data->backing) + data->cy - data->oy;
 	px = window_copy_find_length(wp, py);
@@ -2081,7 +2084,7 @@ window_copy_cursor_up(struct window_pane *wp, int scroll_only)
 		}
 	}
 
-	if (data->screen.sel != NULL || !data->rectflag) {
+	if (data->screen.sel == NULL || !data->rectflag) {
 		py = screen_hsize(data->backing) + data->cy - data->oy;
 		px = window_copy_find_length(wp, py);
 		if ((data->cx >= data->lastsx && data->cx != px) ||

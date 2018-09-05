@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_lib.c,v 1.186 2018/08/24 20:30:21 tb Exp $ */
+/* $OpenBSD: ssl_lib.c,v 1.189 2018/09/05 16:58:59 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -191,9 +191,7 @@ SSL_clear(SSL *s)
 	BUF_MEM_free(s->internal->init_buf);
 	s->internal->init_buf = NULL;
 
-	ssl_clear_cipher_ctx(s);
-	ssl_clear_hash_ctx(&s->read_hash);
-	ssl_clear_hash_ctx(&s->internal->write_hash);
+	ssl_clear_cipher_state(s);
 
 	s->internal->first_packet = 0;
 
@@ -534,9 +532,7 @@ SSL_free(SSL *s)
 		SSL_SESSION_free(s->session);
 	}
 
-	ssl_clear_cipher_ctx(s);
-	ssl_clear_hash_ctx(&s->read_hash);
-	ssl_clear_hash_ctx(&s->internal->write_hash);
+	ssl_clear_cipher_state(s);
 
 	ssl_cert_free(s->cert);
 
@@ -809,7 +805,7 @@ SSL_pending(const SSL *s)
 	 * (Note that SSL_pending() is often used as a boolean value,
 	 * so we'd better not return -1.)
 	 */
-	return (s->method->internal->ssl_pending(s));
+	return (ssl3_pending(s));
 }
 
 X509 *
@@ -1015,10 +1011,10 @@ SSL_shutdown(SSL *s)
 		return (-1);
 	}
 
-	if ((s != NULL) && !SSL_in_init(s))
-		return (s->method->internal->ssl_shutdown(s));
-	else
-		return (1);
+	if (s != NULL && !SSL_in_init(s))
+		return (ssl3_shutdown(s));
+
+	return (1);
 }
 
 int
@@ -2431,10 +2427,7 @@ SSL_set_accept_state(SSL *s)
 	s->internal->shutdown = 0;
 	S3I(s)->hs.state = SSL_ST_ACCEPT|SSL_ST_BEFORE;
 	s->internal->handshake_func = s->method->internal->ssl_accept;
-	/* clear the current cipher */
-	ssl_clear_cipher_ctx(s);
-	ssl_clear_hash_ctx(&s->read_hash);
-	ssl_clear_hash_ctx(&s->internal->write_hash);
+	ssl_clear_cipher_state(s);
 }
 
 void
@@ -2444,10 +2437,7 @@ SSL_set_connect_state(SSL *s)
 	s->internal->shutdown = 0;
 	S3I(s)->hs.state = SSL_ST_CONNECT|SSL_ST_BEFORE;
 	s->internal->handshake_func = s->method->internal->ssl_connect;
-	/* clear the current cipher */
-	ssl_clear_cipher_ctx(s);
-	ssl_clear_hash_ctx(&s->read_hash);
-	ssl_clear_hash_ctx(&s->internal->write_hash);
+	ssl_clear_cipher_state(s);
 }
 
 int
@@ -2623,24 +2613,40 @@ SSL_dup(SSL *s)
 }
 
 void
-ssl_clear_cipher_ctx(SSL *s)
+ssl_clear_cipher_state(SSL *s)
+{
+	ssl_clear_cipher_read_state(s);
+	ssl_clear_cipher_write_state(s);
+}
+
+void
+ssl_clear_cipher_read_state(SSL *s)
 {
 	EVP_CIPHER_CTX_free(s->enc_read_ctx);
 	s->enc_read_ctx = NULL;
-	EVP_CIPHER_CTX_free(s->internal->enc_write_ctx);
-	s->internal->enc_write_ctx = NULL;
+	EVP_MD_CTX_free(s->read_hash);
+	s->read_hash = NULL;
 
 	if (s->internal->aead_read_ctx != NULL) {
 		EVP_AEAD_CTX_cleanup(&s->internal->aead_read_ctx->ctx);
 		free(s->internal->aead_read_ctx);
 		s->internal->aead_read_ctx = NULL;
 	}
+}
+
+void
+ssl_clear_cipher_write_state(SSL *s)
+{
+	EVP_CIPHER_CTX_free(s->internal->enc_write_ctx);
+	s->internal->enc_write_ctx = NULL;
+	EVP_MD_CTX_free(s->internal->write_hash);
+	s->internal->write_hash = NULL;
+
 	if (s->internal->aead_write_ctx != NULL) {
 		EVP_AEAD_CTX_cleanup(&s->internal->aead_write_ctx->ctx);
 		free(s->internal->aead_write_ctx);
 		s->internal->aead_write_ctx = NULL;
 	}
-
 }
 
 /* Fix this function so that it takes an optional type parameter */
@@ -3018,14 +3024,6 @@ SSL_set_msg_callback(SSL *ssl, void (*cb)(int write_p, int version,
     int content_type, const void *buf, size_t len, SSL *ssl, void *arg))
 {
 	SSL_callback_ctrl(ssl, SSL_CTRL_SET_MSG_CALLBACK, (void (*)(void))cb);
-}
-
-void
-ssl_clear_hash_ctx(EVP_MD_CTX **hash)
-{
-	if (*hash)
-		EVP_MD_CTX_destroy(*hash);
-	*hash = NULL;
 }
 
 void

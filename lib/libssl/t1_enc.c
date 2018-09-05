@@ -1,4 +1,4 @@
-/* $OpenBSD: t1_enc.c,v 1.109 2017/05/06 22:24:58 beck Exp $ */
+/* $OpenBSD: t1_enc.c,v 1.112 2018/09/05 16:58:59 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -397,10 +397,13 @@ tls1_change_cipher_state_aead(SSL *s, char is_read, const unsigned char *key,
 	SSL_AEAD_CTX *aead_ctx;
 
 	if (is_read) {
+		ssl_clear_cipher_read_state(s);
 		if (!tls1_aead_ctx_init(&s->internal->aead_read_ctx))
 			return 0;
 		aead_ctx = s->internal->aead_read_ctx;
 	} else {
+		/* XXX - Need to correctly handle DTLS. */
+		ssl_clear_cipher_write_state(s);
 		if (!tls1_aead_ctx_init(&s->internal->aead_write_ctx))
 			return 0;
 		aead_ctx = s->internal->aead_write_ctx;
@@ -444,11 +447,10 @@ tls1_change_cipher_state_aead(SSL *s, char is_read, const unsigned char *key,
  * tls1_change_cipher_state_cipher performs the work needed to switch cipher
  * states when using EVP_CIPHER. The argument is_read is true iff this function
  * is being called due to reading, as opposed to writing, a ChangeCipherSpec
- * message. In order to support export ciphersuites, use_client_keys indicates
- * whether the key material provided is in the "client write" direction.
+ * message.
  */
 static int
-tls1_change_cipher_state_cipher(SSL *s, char is_read, char use_client_keys,
+tls1_change_cipher_state_cipher(SSL *s, char is_read,
     const unsigned char *mac_secret, unsigned int mac_secret_size,
     const unsigned char *key, unsigned int key_len, const unsigned char *iv,
     unsigned int iv_len)
@@ -469,15 +471,12 @@ tls1_change_cipher_state_cipher(SSL *s, char is_read, char use_client_keys,
 		else
 			s->internal->mac_flags &= ~SSL_MAC_FLAG_READ_MAC_STREAM;
 
-		EVP_CIPHER_CTX_free(s->enc_read_ctx);
-		s->enc_read_ctx = NULL;
-		EVP_MD_CTX_destroy(s->read_hash);
-		s->read_hash = NULL;
+		ssl_clear_cipher_read_state(s);
 
 		if ((cipher_ctx = EVP_CIPHER_CTX_new()) == NULL)
 			goto err;
 		s->enc_read_ctx = cipher_ctx;
-		if ((mac_ctx = EVP_MD_CTX_create()) == NULL)
+		if ((mac_ctx = EVP_MD_CTX_new()) == NULL)
 			goto err;
 		s->read_hash = mac_ctx;
 	} else {
@@ -493,16 +492,13 @@ tls1_change_cipher_state_cipher(SSL *s, char is_read, char use_client_keys,
 		 * contexts that are used for DTLS - these are instead freed
 		 * by DTLS when its frees a ChangeCipherSpec fragment.
 		 */
-		if (!SSL_IS_DTLS(s)) {
-			EVP_CIPHER_CTX_free(s->internal->enc_write_ctx);
-			s->internal->enc_write_ctx = NULL;
-			EVP_MD_CTX_destroy(s->internal->write_hash);
-			s->internal->write_hash = NULL;
-		}
+		if (!SSL_IS_DTLS(s))
+			ssl_clear_cipher_write_state(s);
+
 		if ((cipher_ctx = EVP_CIPHER_CTX_new()) == NULL)
 			goto err;
 		s->internal->enc_write_ctx = cipher_ctx;
-		if ((mac_ctx = EVP_MD_CTX_create()) == NULL)
+		if ((mac_ctx = EVP_MD_CTX_new()) == NULL)
 			goto err;
 		s->internal->write_hash = mac_ctx;
 	}
@@ -560,7 +556,6 @@ tls1_change_cipher_state(SSL *s, int which)
 	const EVP_AEAD *aead;
 	char is_read, use_client_keys;
 
-
 	cipher = S3I(s)->tmp.new_sym_enc;
 	aead = S3I(s)->tmp.new_aead;
 
@@ -578,7 +573,6 @@ tls1_change_cipher_state(SSL *s, int which)
 	 */
 	use_client_keys = ((which == SSL3_CHANGE_CIPHER_CLIENT_WRITE) ||
 	    (which == SSL3_CHANGE_CIPHER_SERVER_READ));
-
 
 	/*
 	 * Reset sequence number to zero - for DTLS this is handled in
@@ -645,7 +639,7 @@ tls1_change_cipher_state(SSL *s, int which)
 		    iv, iv_len);
 	}
 
-	return tls1_change_cipher_state_cipher(s, is_read, use_client_keys,
+	return tls1_change_cipher_state_cipher(s, is_read,
 	    mac_secret, mac_secret_size, key, key_len, iv, iv_len);
 
 err2:

@@ -1,7 +1,11 @@
-#	$OpenBSD: files.fdt,v 1.69 2018/08/26 16:52:16 kettenis Exp $
+#	$OpenBSD: files.fdt,v 1.74 2018/08/27 21:09:47 kettenis Exp $
 #
 # Config file and device description for machine-independent FDT code.
 # Included by ports that need it.
+
+device	pinctrl
+attach	pinctrl at fdt
+file	dev/fdt/pinctrl.c		pinctrl
 
 device	simplefb: wsemuldisplaydev, rasops15, rasops16, rasops24, rasops32
 attach	simplefb at fdt
@@ -114,6 +118,22 @@ file	dev/fdt/xhci_fdt.c		xhci_fdt
 device	syscon: fdt
 attach	syscon at fdt
 file	dev/fdt/syscon.c		syscon
+
+device	hiclock
+attach	hiclock at fdt
+file	dev/fdt/hiclock.c		hiclock
+
+device	hidwusb: fdt
+attach	hidwusb at fdt
+file	dev/fdt/hidwusb.c		hidwusb
+
+device	hireset
+attach	hireset at fdt
+file	dev/fdt/hireset.c		hireset
+
+device	hitemp
+attach	hitemp at fdt
+file	dev/fdt/hitemp.c		hitemp
 
 device	rkclock
 attach	rkclock at fdt

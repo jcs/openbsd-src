@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.218 2018/08/25 19:05:23 gilles Exp $	*/
+/*	$OpenBSD: parse.y,v 1.220 2018/09/05 08:47:34 gilles Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -183,7 +183,7 @@ typedef struct {
 %token	KEY
 %token	LIMIT LISTEN LMTP LOCAL
 %token	MAIL_FROM MAILDIR MASK_SRC MASQUERADE MATCH MAX_MESSAGE_SIZE MAX_DEFERRED MBOX MDA MTA MX
-%token	NODSN NOVERIFY
+%token	NO_DSN NO_VERIFY
 %token	ON
 %token	PKI PORT
 %token	QUEUE
@@ -611,11 +611,11 @@ MBOX {
 } dispatcher_local_options
 | LMTP STRING {
 	asprintf(&dispatcher->u.local.command,
-	    "/usr/libexec/mail.lmtp -f \"%%{sender}\" -d %s %%{user.username}", $2);
+	    "/usr/libexec/mail.lmtp -f %%{mbox.from} -d %s %%{user.username}", $2);
 } dispatcher_local_options
 | LMTP STRING RCPT_TO {
 	asprintf(&dispatcher->u.local.command,
-	    "/usr/libexec/mail.lmtp -f \"%%{sender}\" -d %s %%{dest}", $2);
+	    "/usr/libexec/mail.lmtp -f %%{mbox.from} -d %s %%{dest}", $2);
 } dispatcher_local_options
 | MDA STRING {
 	asprintf(&dispatcher->u.local.command,
@@ -739,7 +739,7 @@ HELO STRING {
 
 	dispatcher->u.remote.smarthost = strdup(t->t_name);
 }
-| TLS NOVERIFY {
+| TLS NO_VERIFY {
 	if (dispatcher->u.remote.smarthost == NULL) {
 		yyerror("tls no-verify may not be specified without host on a dispatcher");
 		YYERROR;
@@ -1402,7 +1402,7 @@ opt_if_listen : INET4 {
 			listen_opts.options |= LO_RECEIVEDAUTH;
 			listen_opts.flags |= F_RECEIVEDAUTH;
 		}
-		| NODSN	{
+		| NO_DSN	{
 			if (listen_opts.options & LO_NODSN) {
 				yyerror("no-dsn already specified");
 				YYERROR;
@@ -1638,8 +1638,8 @@ lookup(char *s)
 		{ "mda",		MDA },
 		{ "mta",		MTA },
 		{ "mx",			MX },
-		{ "no-dsn",		NODSN },
-		{ "no-verify",		NOVERIFY },
+		{ "no-dsn",		NO_DSN },
+		{ "no-verify",		NO_VERIFY },
 		{ "on",			ON },
 		{ "pki",		PKI },
 		{ "port",		PORT },

@@ -1,4 +1,4 @@
-/* $OpenBSD: status.c,v 1.179 2018/08/22 20:06:14 nicm Exp $ */
+/* $OpenBSD: status.c,v 1.181 2018/08/29 09:50:32 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -766,6 +766,9 @@ status_prompt_clear(struct client *c)
 	free(c->prompt_buffer);
 	c->prompt_buffer = NULL;
 
+	free(c->prompt_saved);
+	c->prompt_saved = NULL;
+
 	c->tty.flags &= ~(TTY_NOCURSOR|TTY_FREEZE);
 	c->flags |= CLIENT_ALLREDRAWFLAGS; /* was frozen and may have changed */
 
@@ -1059,6 +1062,7 @@ status_prompt_key(struct client *c, key_code key)
 		free(s);
 		return (1);
 	}
+	key &= ~KEYC_XTERM;
 
 	keys = options_get_number(c->session->options, "status-keys");
 	if (keys == MODEKEY_VI) {
@@ -1216,6 +1220,12 @@ process_key:
 			}
 		}
 
+		free(c->prompt_saved);
+		c->prompt_saved = xcalloc(sizeof *c->prompt_buffer,
+		    (c->prompt_index - idx) + 1);
+		memcpy(c->prompt_saved, c->prompt_buffer + idx,
+		    (c->prompt_index - idx) * sizeof *c->prompt_buffer);
+
 		memmove(c->prompt_buffer + idx,
 		    c->prompt_buffer + c->prompt_index,
 		    (size + 1 - c->prompt_index) *
@@ -1226,6 +1236,7 @@ process_key:
 
 		goto changed;
 	case 'f'|KEYC_ESCAPE:
+	case KEYC_RIGHT|KEYC_CTRL:
 		ws = options_get_string(oo, "word-separators");
 
 		/* Find a word. */
@@ -1249,6 +1260,7 @@ process_key:
 
 		goto changed;
 	case 'b'|KEYC_ESCAPE:
+	case KEYC_LEFT|KEYC_CTRL:
 		ws = options_get_string(oo, "word-separators");
 
 		/* Find a non-separator. */
@@ -1287,22 +1299,28 @@ process_key:
 		c->prompt_index = utf8_strlen(c->prompt_buffer);
 		goto changed;
 	case '\031': /* C-y */
-		if ((pb = paste_get_top(NULL)) == NULL)
-			break;
-		bufdata = paste_buffer_data(pb, &bufsize);
-		for (n = 0; n < bufsize; n++) {
-			ch = (u_char)bufdata[n];
-			if (ch < 32 || ch >= 127)
+		if (c->prompt_saved != NULL) {
+			ud = c->prompt_saved;
+			n = utf8_strlen(c->prompt_saved);
+		} else {
+			if ((pb = paste_get_top(NULL)) == NULL)
 				break;
+			bufdata = paste_buffer_data(pb, &bufsize);
+			for (n = 0; n < bufsize; n++) {
+				ch = (u_char)bufdata[n];
+				if (ch < 32 || ch >= 127)
+					break;
+			}
+			ud = xreallocarray(NULL, n, sizeof *ud);
+			for (idx = 0; idx < n; idx++)
+				utf8_set(&ud[idx], bufdata[idx]);
 		}
 
 		c->prompt_buffer = xreallocarray(c->prompt_buffer, size + n + 1,
 		    sizeof *c->prompt_buffer);
 		if (c->prompt_index == size) {
-			for (idx = 0; idx < n; idx++) {
-				ud = &c->prompt_buffer[c->prompt_index + idx];
-				utf8_set(ud, bufdata[idx]);
-			}
+			memcpy(c->prompt_buffer + c->prompt_index, ud,
+			    n * sizeof *c->prompt_buffer);
 			c->prompt_index += n;
 			c->prompt_buffer[c->prompt_index].size = 0;
 		} else {
@@ -1310,12 +1328,13 @@ process_key:
 			    c->prompt_buffer + c->prompt_index,
 			    (size + 1 - c->prompt_index) *
 			    sizeof *c->prompt_buffer);
-			for (idx = 0; idx < n; idx++) {
-				ud = &c->prompt_buffer[c->prompt_index + idx];
-				utf8_set(ud, bufdata[idx]);
-			}
+			memcpy(c->prompt_buffer + c->prompt_index, ud,
+			    n * sizeof *c->prompt_buffer);
 			c->prompt_index += n;
 		}
+
+		if (ud != c->prompt_saved)
+			free(ud);
 		goto changed;
 	case '\024': /* C-t */
 		idx = c->prompt_index;

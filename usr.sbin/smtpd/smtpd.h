@@ -1,4 +1,4 @@
-/*	$OpenBSD: smtpd.h,v 1.556 2018/07/25 16:00:48 eric Exp $	*/
+/*	$OpenBSD: smtpd.h,v 1.558 2018/09/04 13:04:42 gilles Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -29,8 +29,6 @@
 #include "smtpd-defines.h"
 #include "smtpd-api.h"
 #include "ioev.h"
-
-#include "rfc2822.h"
 
 #define CHECK_IMSG_DATA_SIZE(imsg, expected_sz) do {			\
 	if ((imsg)->hdr.len - IMSG_HEADER_SIZE != (expected_sz))	\
@@ -981,6 +979,12 @@ enum lka_resp_status {
 enum ca_resp_status {
 	CA_OK,
 	CA_FAIL
+};
+
+enum mda_resp_status {
+	MDA_OK,
+	MDA_TEMPFAIL,
+	MDA_PERMFAIL
 };
 
 struct ca_cert_req_msg {

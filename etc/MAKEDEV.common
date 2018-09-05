@@ -1,4 +1,4 @@
-vers(a, {-$OpenBSD: MAKEDEV.common,v 1.100 2018/08/19 11:42:33 anton Exp $-})dnl
+vers(a, {-$OpenBSD: MAKEDEV.common,v 1.101 2018/08/31 02:32:29 jcs Exp $-})dnl
 dnl
 dnl Copyright (c) 2001-2006 Todd T. Fries <todd@OpenBSD.org>
 dnl

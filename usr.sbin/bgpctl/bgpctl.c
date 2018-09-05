@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpctl.c,v 1.210 2018/07/29 13:02:01 deraadt Exp $ */
+/*	$OpenBSD: bgpctl.c,v 1.212 2018/09/05 09:50:43 claudio Exp $ */
 
 /*
  * Copyright (c) 2003 Henning Brauer <henning@openbsd.org>
@@ -159,7 +159,7 @@ main(int argc, char *argv[])
 	case IRRFILTER:
 		if (!(res->flags & (F_IPV4|F_IPV6)))
 			res->flags |= (F_IPV4|F_IPV6);
-		irr_main(res->as.as, res->flags, res->irr_outdir);
+		irr_main(res->as.as_min, res->flags, res->irr_outdir);
 		break;
 	case SHOW_MRT:
 		if (pledge("stdio", NULL) == -1)
@@ -1181,8 +1181,8 @@ show_interface_msg(struct imsg *imsg)
 void
 show_rib_summary_head(void)
 {
-	printf("flags: * = Valid, > = Selected, I = via IBGP, A = Announced, "
-	    "S = Stale\n");
+	printf("flags: * = Valid, > = Selected, I = via IBGP, A = Announced,\n"
+	    "       S = Stale, E = Error\n");
 	printf("origin: i = IGP, e = EGP, ? = Incomplete\n\n");
 	printf("%-5s %-20s %-15s  %5s %5s %s\n", "flags", "destination",
 	    "gateway", "lpref", "med", "aspath origin");
@@ -1222,6 +1222,8 @@ print_flags(u_int8_t flags, int sum)
 	char	*p = flagstr;
 
 	if (sum) {
+		if (flags & F_PREF_INVALID)
+			*p++ = 'E';
 		if (flags & F_PREF_ANNOUNCE)
 			*p++ = 'A';
 		if (flags & F_PREF_INTERNAL)
@@ -2056,7 +2058,7 @@ show_mrt_dump(struct mrt_rib *mr, struct mrt_peer *mp, void *arg)
 		/* filter by AS */
 		if (req->as.type != AS_NONE &&
 		   !aspath_match(mre->aspath, mre->aspath_len,
-		   &req->as, req->as.as))
+		   &req->as, 0))
 			continue;
 
 		if (req->flags & F_CTL_DETAIL) {
@@ -2122,7 +2124,7 @@ network_mrt_dump(struct mrt_rib *mr, struct mrt_peer *mp, void *arg)
 		/* filter by AS */
 		if (req->as.type != AS_NONE &&
 		   !aspath_match(mre->aspath, mre->aspath_len,
-		   &req->as, req->as.as))
+		   &req->as, 0))
 			continue;
 
 		bzero(&net, sizeof(net));
