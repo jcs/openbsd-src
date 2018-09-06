@@ -26,9 +26,19 @@
 #include <dev/pci/pcidevs.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
-#include <dev/pci/lpssreg.h>
 
 #include <dev/ic/dwiicvar.h>
+
+/* 13.3: I2C Additional Registers Summary */
+#define LPSS_RESETS		0x204
+#define  LPSS_RESETS_I2C	(1 << 0) | (1 << 1)
+#define  LPSS_RESETS_IDMA	(1 << 2)
+#define LPSS_ACTIVELTR		0x210
+#define LPSS_IDLELTR		0x214
+#define LPSS_CAPS		0x2fc
+#define  LPSS_CAPS_NO_IDMA	(1 << 8)
+#define  LPSS_CAPS_TYPE_SHIFT	4
+#define  LPSS_CAPS_TYPE_MASK	(0xf << LPSS_CAPS_TYPE_SHIFT)
 
 int		dwiic_pci_match(struct device *, void *, void *);
 void		dwiic_pci_attach(struct device *, struct device *, void *);
@@ -83,14 +93,14 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_caps = bus_space_read_4(sc->sc_iot, sc->sc_ioh, LPSS_CAPS);
 	type = sc->sc_caps & LPSS_CAPS_TYPE_MASK;
 	type >>= LPSS_CAPS_TYPE_SHIFT;
-	if (type != LPSS_CAPS_TYPE_I2C) {
+	if (type != 0) {
 		printf(": type %d not supported\n", type);
 		return;
 	}
 
 	/* un-reset - page 958 */
 	bus_space_write_4(sc->sc_iot, sc->sc_ioh, LPSS_RESETS,
-	    (LPSS_RESETS_FUNC | LPSS_RESETS_IDMA));
+	    (LPSS_RESETS_I2C | LPSS_RESETS_IDMA));
 
 	/* fetch timing parameters */
 	sc->ss_hcnt = dwiic_read(sc, DW_IC_SS_SCL_HCNT);
@@ -154,7 +164,7 @@ dwiic_pci_activate(struct device *self, int act)
 	switch (act) {
 	case DVACT_WAKEUP:
 		bus_space_write_4(sc->sc_iot, sc->sc_ioh, LPSS_RESETS,
-		    (LPSS_RESETS_FUNC | LPSS_RESETS_IDMA));
+		    (LPSS_RESETS_I2C | LPSS_RESETS_IDMA));
 
 		dwiic_init(sc);
 

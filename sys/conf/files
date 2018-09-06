@@ -19,7 +19,6 @@ define	radiobus {}
 define	i2cbus {}
 define	gpiobus {}
 define	onewirebus {}
-define	spibus {}
 define	video {}
 
 # filesystem firmware loading attribute
@@ -535,10 +534,6 @@ file	dev/ic/aic6250.c		oaic
 # Synopsys DesignWare I2C controller
 device	dwiic: i2cbus
 file	dev/ic/dwiic.c			dwiic
-
-# Intel 100 Series SPI
-device	ispi: spibus
-file	dev/ic/ispi.c			ispi
 
 # legitimate pseudo-devices
 pseudo-device vnd: disk

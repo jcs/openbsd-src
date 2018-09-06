@@ -275,7 +275,6 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 		config_found(self, &mba, mainbus_print);
 	}
 #endif
-
 	codepatch_disable();
 }
 

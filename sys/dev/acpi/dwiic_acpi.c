@@ -385,9 +385,9 @@ dwiic_acpi_found_hid(struct aml_node *node, void *arg)
 	acpi_attach_deps(acpi_softc, node->parent);
 
 	if (dwiic_matchhids(cdev, ihidev_hids))
-		return dwiic_acpi_found_ihidev(sc, node->parent, dev, crs);
+		return dwiic_acpi_found_ihidev(sc, node, dev, crs);
 	else if (dwiic_matchhids(dev, iatp_hids))
-		return dwiic_acpi_found_iatp(sc, node->parent, dev, crs);
+		return dwiic_acpi_found_iatp(sc, node, dev, crs);
 
 	memset(&ia, 0, sizeof(ia));
 	ia.ia_tag = sc->sc_iba.iba_tag;
@@ -417,9 +417,9 @@ dwiic_acpi_found_ihidev(struct dwiic_softc *sc, struct aml_node *node,
 		0xAD, 0x05, 0xB3, 0x0A, 0x3D, 0x89, 0x38, 0xDE,
 	};
 
-	if (!aml_searchname(node, "_DSM")) {
+	if (!aml_searchname(node->parent, "_DSM")) {
 		printf("%s: couldn't find _DSM at %s\n", sc->sc_dev.dv_xname,
-		    aml_nodename(node));
+		    aml_nodename(node->parent));
 		return 0;
 	}
 
@@ -439,15 +439,15 @@ dwiic_acpi_found_ihidev(struct dwiic_softc *sc, struct aml_node *node,
 	cmd[3].type = AML_OBJTYPE_PACKAGE;
 	cmd[3].length = 0;
 
-	if (aml_evalname(acpi_softc, node, "_DSM", 4, cmd, &res)) {
+	if (aml_evalname(acpi_softc, node->parent, "_DSM", 4, cmd, &res)) {
 		printf("%s: eval of _DSM at %s failed\n",
-		    sc->sc_dev.dv_xname, aml_nodename(node));
+		    sc->sc_dev.dv_xname, aml_nodename(node->parent));
 		return 0;
 	}
 
 	if (res.type != AML_OBJTYPE_INTEGER) {
 		printf("%s: bad _DSM result at %s: %d\n",
-		    sc->sc_dev.dv_xname, aml_nodename(node), res.type);
+		    sc->sc_dev.dv_xname, aml_nodename(node->parent), res.type);
 		aml_freevalue(&res);
 		return 0;
 	}
@@ -467,7 +467,7 @@ dwiic_acpi_found_ihidev(struct dwiic_softc *sc, struct aml_node *node,
 		ia.ia_intr = &crs;
 
 	if (config_found(sc->sc_iic, &ia, dwiic_i2c_print)) {
-		node->attached = 1;
+		node->parent->attached = 1;
 		return 0;
 	}
 
@@ -481,7 +481,7 @@ dwiic_acpi_found_iatp(struct dwiic_softc *sc, struct aml_node *node, char *dev,
 	struct i2c_attach_args ia;
 	struct aml_value res;
 
-	if (aml_evalname(acpi_softc, node, "GPIO", 0, NULL, &res))
+	if (aml_evalname(acpi_softc, node->parent, "GPIO", 0, NULL, &res))
 		/* no gpio, assume this is the bootloader interface */
 		return (0);
 
@@ -494,13 +494,13 @@ dwiic_acpi_found_iatp(struct dwiic_softc *sc, struct aml_node *node, char *dev,
 
 	if (crs.irq_int <= 0 && crs.gpio_int_node == NULL) {
 		printf("%s: couldn't find irq for %s\n", sc->sc_dev.dv_xname,
-		   aml_nodename(node));
+		   aml_nodename(node->parent));
 		return 0;
 	}
 	ia.ia_intr = &crs;
 
 	if (config_found(sc->sc_iic, &ia, dwiic_i2c_print)) {
-		node->attached = 1;
+		node->parent->attached = 1;
 		return 0;
 	}
 

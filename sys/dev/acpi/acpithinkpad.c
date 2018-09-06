@@ -41,8 +41,6 @@
 #define	THINKPAD_HKEY_VERSION1		0x0100
 #define	THINKPAD_HKEY_VERSION2		0x0200
 
-#define	THINKPAD_KEYLIGHT_MASK		0x20000
-
 #define	THINKPAD_CMOS_VOLUME_DOWN	0x00
 #define	THINKPAD_CMOS_VOLUME_UP		0x01
 #define	THINKPAD_CMOS_VOLUME_MUTE	0x02
@@ -141,7 +139,6 @@ struct acpithinkpad_softc {
 	const char		*sc_thinklight_set;
 
 	uint64_t		 sc_brightness;
-	int			 sc_fw_brightness;
 };
 
 extern void acpiec_read(struct acpiec_softc *, uint8_t, int, uint8_t *);
@@ -199,17 +196,6 @@ const char *acpithinkpad_hids[] = {
 	"LEN0068",
 	"LEN0268",
 	NULL
-};
-
-/*
- * Older machines which need backlight control done in firmware/ACPI.  Newer
- * machines rely on inteldrm to do adjustments since hardware keys don't come
- * through here.
- */
-const char *acpithinkpad_fw_hids[] = {
-	"IBM0068",
-	"LEN0068",
-	0
 };
 
 int
@@ -296,9 +282,6 @@ thinkpad_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_acpi = (struct acpi_softc *)parent;
 	sc->sc_devnode = aa->aaa_node;
 
-	sc->sc_fw_brightness = acpi_matchhids(aa, acpithinkpad_fw_hids,
-	    sc->sc_dev.dv_xname);
-
 	printf("\n");
 
 #if NAUDIO > 0 && NWSKBD > 0
@@ -326,8 +309,8 @@ thinkpad_attach(struct device *parent, struct device *self, void *aux)
 		wskbd_set_backlight = thinkpad_set_backlight;
 	}
 
-	if (sc->sc_fw_brightness && aml_evalinteger(sc->sc_acpi,
-	    sc->sc_devnode, "PBLG", 0, NULL, &sc->sc_brightness) == 0) {
+	if (aml_evalinteger(sc->sc_acpi, sc->sc_devnode, "PBLG",
+	    0, NULL, &sc->sc_brightness) == 0) {
 		ws_get_param = thinkpad_get_param;
 		ws_set_param = thinkpad_set_param;
 	}
@@ -350,9 +333,6 @@ thinkpad_enable_events(struct acpithinkpad_softc *sc)
 		printf("%s: no MHKA\n", DEVNAME(sc));
 		return (1);
 	}
-
-	/* Make sure keyboard backlight events are enabled */
-	mask |= THINKPAD_KEYLIGHT_MASK;
 
 	/* Update hotkey mask */
 	bzero(args, sizeof(args));
