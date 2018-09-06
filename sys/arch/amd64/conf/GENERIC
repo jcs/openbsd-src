@@ -87,8 +87,6 @@ hyperv0	at pvbus?		# Hyper-V guest
 hvn*	at hyperv?		# Hyper-V NetVSC
 hvs*	at hyperv?		# Hyper-V StorVSC
 
-chromeec*	at mainbus?	# Chrome EC
-
 option		PCIVERBOSE
 option		USBVERBOSE
 

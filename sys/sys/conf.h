@@ -615,7 +615,6 @@ cdev_decl(fuse);
 cdev_decl(pvbus);
 cdev_decl(ipmi);
 cdev_decl(kcov);
-cdev_decl(chromeec);
 
 #endif
 
