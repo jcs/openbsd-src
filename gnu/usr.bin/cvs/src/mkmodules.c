@@ -852,7 +852,6 @@ init (argc, argv)
     char *info_v;
     /* Exit status.  */
     int err;
-    CommitId *genesis, *rootcommit;
 
     const struct admin_file *fileptr;
 
@@ -896,20 +895,6 @@ init (argc, argv)
        "/" and so on.  */
     info = xmalloc (strlen (adm) + 80);
     info_v = xmalloc (strlen (adm) + 80);
-
-    /* create random genesis hash on which to start our initial CVSROOT admin
-     * file commits */
-    /* TODO: support taking this hash from a command arg to 'cvs init' */
-    genesis = commitid_gen_start("", 0);
-    commitid_gen_add_rand(genesis, 100);
-    commitid_gen_final(genesis);
-    commitid_store(genesis);
-
-    /* create a new commitid that we'll later write back to the rcs files once
-     * we know the hash output */
-    rootcommit = commitid_gen_start(CVSROOTADM, 1);
-    rootcommit->previous = xstrdup(genesis->commitid);
-
     for (fileptr = filelist; fileptr && fileptr->filename; ++fileptr)
     {
 	if (fileptr->contents == NULL)
@@ -919,7 +904,6 @@ init (argc, argv)
 	strcat (info, fileptr->filename);
 	strcpy (info_v, info);
 	strcat (info_v, RCSEXT);
-
 	if (isfile (info_v))
 	    /* We will check out this file in the mkmodules step.
 	       Nothing else is required.  */
@@ -940,7 +924,6 @@ init (argc, argv)
 		if (fclose (fp) < 0)
 		    error (1, errno, "cannot close %s", info);
 	    }
-
 	    /* The message used to say " of " and fileptr->filename after
 	       "initial checkin" but I fail to see the point as we know what
 	       file it is from the name.  */
@@ -951,18 +934,11 @@ init (argc, argv)
 				    NULL, NULL, 0, NULL,
 
 				    NULL, 0, NULL);
-	    if (retcode == 0)
-		commitid_gen_add_diff(rootcommit, fileptr->filename, info_v,
-				      "0", "1.1", NULL);
-	    else
+	    if (retcode != 0)
 		/* add_rcs_file already printed an error message.  */
 		err = 1;
 	}
     }
-
-    /* now add hash of our 'show' output */
-    commitid_gen_add_show(rootcommit);
-    commitid_gen_final(rootcommit);
 
     /* Turn on history logging by default.  The user can remove the file
        to disable it.  */
@@ -1001,13 +977,8 @@ init (argc, argv)
         chmod (info, 0666);
     }
 
-    commitid_store(rootcommit);
-
     free (info);
     free (info_v);
-
-    commitid_free(rootcommit);
-    commitid_free(genesis);
 
     mkmodules (adm);
 

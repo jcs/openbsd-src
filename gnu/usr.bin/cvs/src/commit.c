@@ -329,8 +329,6 @@ commit (argc, argv)
     int c;
     int err = 0;
     int local = 0;
-    char *repo;
-    CommitId *genesis;
 
     if (argc == -1)
 	usage (commit_usage);
@@ -643,28 +641,6 @@ commit (argc, argv)
 #endif
 
     /*
-     * If we have a commitids file, fetch the last id and setup a new one.
-     * Otherwise setup a legacy-style commitid.
-     */
-    repo = commitid_repo_base();
-    if ((genesis = commitid_genesis()))
-    {
-	CommitId *id;
-
-	if ((id = commitid_find(repo, NULL)) == NULL)
-	    error (1, 0, "failed fetching last commitid");
-
-	global_commitid = commitid_gen_start(repo, id->changeset + 1);
-	global_commitid->previous = xstrdup(id->commitid);
-
-	commitid_free(genesis);
-    }
-    else
-    {
-	global_commitid = commitid_gen_start_legacy(repo);
-    }
-
-    /*
      * Run the recursion processor to verify the files are all up-to-date
      */
     err = start_recursion (check_fileproc, check_filesdoneproc,
@@ -691,17 +667,6 @@ commit (argc, argv)
      */
     Lock_Cleanup ();
     dellist (&mulist);
-
-    if (global_commitid != NULL) {
-	/* now add hash of our 'show' output */
-
-	/* XXX: it would be nice to keep the lock until we're done with our
-	 * show command, but we end up locking against ourself */
-
-	commitid_gen_add_show(global_commitid);
- 	commitid_gen_final(global_commitid);
- 	commitid_store(global_commitid);
-    }
 
 #ifdef SERVER_SUPPORT
     if (server_active)
@@ -1771,7 +1736,7 @@ remove_file (finfo, tag, message)
     if (corev != NULL)
 	free (corev);
 
-    retcode = RCS_checkin (finfo->rcs, finfo->file, message, NULL, rev, NULL,
+    retcode = RCS_checkin (finfo->rcs, finfo->file, message, rev,
 			   RCS_FLAGS_DEAD | RCS_FLAGS_QUIET);
     if (retcode	!= 0)
     {
@@ -2092,7 +2057,7 @@ checkaddfile (file, repository, tag, options, rcsnode)
     {
 	if (newfile)
 	{
-	    char *tmp, *finalrev = NULL;
+	    char *tmp;
 	    FILE *fp;
 
 	    /* move the new file out of the way. */
@@ -2113,7 +2078,7 @@ checkaddfile (file, repository, tag, options, rcsnode)
 	    /* commit a dead revision. */
 	    (void) sprintf (tmp, "file %s was initially added on branch %s.",
 			    file, tag);
-	    retcode = RCS_checkin (rcsfile, NULL, tmp, NULL, NULL, &finalrev,
+	    retcode = RCS_checkin (rcsfile, NULL, tmp, NULL,
 				   RCS_FLAGS_DEAD | RCS_FLAGS_QUIET);
 	    free (tmp);
 	    if (retcode != 0)
@@ -2123,10 +2088,6 @@ checkaddfile (file, repository, tag, options, rcsnode)
 		retval = 1;
 		goto out;
 	    }
-
-	    if (global_commitid != NULL)
-	        commitid_gen_add_diff(global_commitid, file,
-    		    rcsfile->path, "0", finalrev, NULL);
 
 	    /* put the new file back where it was */
 	    rename_file (fname, file);

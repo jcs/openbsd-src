@@ -4828,13 +4828,11 @@ RCS_addbranch (rcs, branch)
    or zero for success.  */
 
 int
-RCS_checkin (rcs, workfile, message, oldrev, rev, finalrev, flags)
+RCS_checkin (rcs, workfile, message, rev, flags)
     RCSNode *rcs;
     char *workfile;
     char *message;
-    char **oldrev;
     char *rev;
-    char **finalrev;
     int flags;
 {
     RCSVers *delta, *commitpt;
@@ -4851,6 +4849,7 @@ RCS_checkin (rcs, workfile, message, oldrev, rev, finalrev, flags)
 #ifdef PRESERVE_PERMISSIONS_SUPPORT
     struct stat sb;
 #endif
+    Node *np;
 
     commitpt = NULL;
 
@@ -4916,6 +4915,13 @@ RCS_checkin (rcs, workfile, message, oldrev, rev, finalrev, flags)
 	delta->state = xstrdup ("Exp");
 
     delta->other_delta = getlist();
+
+    /* save the commit ID */
+    np = getnode();
+    np->type = RCSFIELD;
+    np->key = xstrdup ("commitid");
+    np->data = xstrdup(global_session_id);
+    addnode (delta->other_delta, np);
 
 #ifdef PRESERVE_PERMISSIONS_SUPPORT
     /* If permissions should be preserved on this project, then
@@ -5072,11 +5078,6 @@ workfile);
 
 	if (!checkin_quiet)
 	    cvs_output ("done\n", 5);
-
-	if (oldrev != NULL)
-	    *oldrev = xstrdup("0");
-	if (finalrev != NULL)
-	    *finalrev = xstrdup(rcs->head);
 
 	status = 0;
 	goto checkin_done;
@@ -5420,11 +5421,6 @@ workfile);
 	cvs_output (commitpt->version, 0);
 	cvs_output ("\n", 1);
     }
-
-    if (oldrev != NULL)
-	*oldrev = xstrdup(commitpt->version);
-    if (finalrev != NULL)
-    	*finalrev = xstrdup(delta->version);
 
     RCS_rewrite (rcs, dtext, commitpt->version);
 

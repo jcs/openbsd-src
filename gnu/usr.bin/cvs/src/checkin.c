@@ -32,7 +32,6 @@ Checkin (type, finfo, rcs, rev, tag, options, message)
     Vers_TS *vers;
     int set_time;
     char *tocvsPath = NULL;
-    char *oldrev, *finalrev;
 
     /* Hmm.  This message goes to stdout and the "foo,v  <--  foo"
        message from "ci" goes to stderr.  This doesn't make a whole
@@ -57,8 +56,7 @@ Checkin (type, finfo, rcs, rev, tag, options, message)
     if (finfo->rcs == NULL)
 	finfo->rcs = RCS_parse (finfo->file, finfo->repository);
 
-    switch (RCS_checkin (finfo->rcs, NULL, message, &oldrev, rev, &finalrev,
-            RCS_FLAGS_KEEPFILE))
+    switch (RCS_checkin (finfo->rcs, NULL, message, rev, RCS_FLAGS_KEEPFILE))
     {
 	case 0:			/* everything normal */
 
@@ -120,10 +118,6 @@ Checkin (type, finfo, rcs, rev, tag, options, message)
 		      vers->options, vers->tag, vers->date, (char *) 0);
 	    history_write (type, NULL, vers->vn_rcs,
 			   finfo->file, finfo->repository);
-
-	    if (global_commitid != NULL)
-	        commitid_gen_add_diff(global_commitid, finfo->fullname,
-    		    finfo->rcs->path, oldrev, finalrev, tag);
 
 	    if (tocvsPath)
 		if (unlink_file_dir (tocvsPath) < 0)

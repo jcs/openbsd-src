@@ -3895,15 +3895,6 @@ serve_version (arg)
     do_cvs_command ("version", version);
 }
 
-static void serve_show PROTO ((char *));
-
-static void
-serve_show (arg)
-    char *arg;
-{
-    do_cvs_command ("show", show);
-}
-
 static void serve_init PROTO ((char *));
 
 static void
@@ -4939,7 +4930,6 @@ struct request requests[] =
   REQ_LINE("rannotate", serve_rannotate, 0),
   REQ_LINE("noop", serve_noop, RQ_ROOTLESS),
   REQ_LINE("version", serve_version, RQ_ROOTLESS),
-  REQ_LINE("show", serve_show, 0),
   REQ_LINE(NULL, NULL, 0)
 
 #undef REQ_LINE
@@ -6495,12 +6485,6 @@ cvs_output (str, len)
 {
     if (len == 0)
 	len = strlen (str);
-
-    if (cvs_output_capture) {
-	(cvs_output_capture)(str, len);
-	return;
-    }
-
 #ifdef SERVER_SUPPORT
     if (error_use_protocol)
     {

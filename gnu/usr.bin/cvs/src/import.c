@@ -69,8 +69,6 @@ import (argc, argv)
     List *ulist;
     Node *p;
     struct logfile_info *li;
-    CommitId *genesis, *id;
-    char *repo, *slash;
 
     if (argc == -1)
 	usage (import_usage);
@@ -306,41 +304,6 @@ import (argc, argv)
 	(void) fprintf (logfp, "%s\n\t\t", argv[i]);
     (void) fprintf (logfp, "\n");
 
-    /*
-     * Setup new commitid - repository is a full path, we want the first
-     * component after our root, minus first slash.
-     */
-    repo = strstr(repository, current_parsed_root->directory);
-    if (repo == NULL)
-    	error(1, 0, "can't find %s in %s",
-    	    current_parsed_root->directory, repository);
-    repo += (strlen(current_parsed_root->directory) + 1);
-
-    slash = strchr(repo, '/');
-    if (slash)
-    	*slash = '\0';
-
-    if ((genesis = commitid_genesis()))
-    {
-	if ((id = commitid_find(repo, NULL)) == NULL)
-	{
-	    global_commitid = commitid_gen_start(repo, 1);
-	    global_commitid->previous = xstrdup(genesis->commitid);
-	}
-	else
-	{
-	    global_commitid = commitid_gen_start(repo, id->changeset + 1);
-	    global_commitid->previous = xstrdup(id->commitid);
-	}
-
-	commitid_free(id);
-	commitid_free(genesis);
-    }
-    else
-    {
-	global_commitid = commitid_gen_start_legacy(repo);
-    }
-
     /* Just Do It.  */
     err = import_descend (message, argv[1], argc - 2, argv + 2);
     if (conflicts)
@@ -425,13 +388,6 @@ import (argc, argv)
     if (CVS_UNLINK (tmpfile) < 0 && !existence_error (errno))
 	error (0, errno, "cannot remove %s", tmpfile);
     free (tmpfile);
-
-    if (global_commitid != NULL) {
-	/* now add hash of our 'show' output */
-	commitid_gen_add_show(global_commitid);
- 	commitid_gen_final(global_commitid);
- 	commitid_store(global_commitid);
-    }
 
     if (message)
 	free (message);
@@ -747,7 +703,7 @@ add_rev (message, rcs, vfile, vers)
     char *vers;
 {
     int locked, status, ierrno;
-    char *tocvsPath, *oldrev, *finalrev;
+    char *tocvsPath;
 
     if (noexec)
 	return (0);
@@ -770,7 +726,7 @@ add_rev (message, rcs, vfile, vers)
     tocvsPath = wrap_tocvs_process_file (vfile);
 
     status = RCS_checkin (rcs, tocvsPath == NULL ? vfile : tocvsPath,
-			  message, &oldrev, vbranch, &finalrev,
+			  message, vbranch,
 			  (RCS_FLAGS_QUIET | RCS_FLAGS_KEEPFILE
 			   | (use_file_modtime ? RCS_FLAGS_MODTIME : 0)));
     ierrno = errno;
@@ -794,25 +750,6 @@ add_rev (message, rcs, vfile, vers)
 	}
 	return (1);
     }
-
-    if (global_commitid != NULL) {
-	char *rcs2 = xstrdup(rcs->path);
-	char *reporcs;
-
-	reporcs = strstr(rcs2, current_parsed_root->directory);
-	if (reporcs == NULL)
-		error(1, 0, "can't find %s in %s",
-		    current_parsed_root->directory, rcs2);
-	reporcs += (strlen(current_parsed_root->directory) + 1 +
-	    strlen(global_commitid->repo) + 1);
-	reporcs[strlen(reporcs) - strlen(RCSEXT)] = '\0';
-
-	commitid_gen_add_diff(global_commitid, reporcs, rcs->path, oldrev,
-	    finalrev, NULL);
-
-	free(rcs2);
-    }
-
     return (0);
 }
 
@@ -1261,6 +1198,9 @@ add_rcs_file (message, rcs, user, add_vhead, key_opt,
 	if (fprintf (fprcs, "next     ;\012") < 0)
 	    goto write_error;
 
+	if (fprintf (fprcs, "commitid        %s;\012", global_session_id) < 0)
+	    goto write_error;
+
 #ifdef PRESERVE_PERMISSIONS_SUPPORT
 	/* Store initial permissions if necessary. */
 	if (preserve_perms)
@@ -1316,7 +1256,8 @@ userfile);
 		fprintf (fprcs, "date     %s;  author %s;  state Exp;\012",
 			 altdate1, author) < 0 ||
 		fprintf (fprcs, "branches ;\012") < 0 ||
-		fprintf (fprcs, "next     ;\012") < 0
+		fprintf (fprcs, "next     ;\012") < 0 ||
+		fprintf (fprcs, "commitid        %s;\012", global_session_id) < 0
 		)
 		goto write_error;
 
@@ -1486,36 +1427,6 @@ userfile);
 		error (0, errno, "cannot remove %s", tocvsPath);
     if (free_opt != NULL)
 	free (free_opt);
-
-    if (global_commitid != NULL && add_vhead != NULL) {
-	char *rcs2 = xstrdup(rcs);
-	char *reporcs;
-	char *imprev;
-
-	reporcs = strstr(rcs2, current_parsed_root->directory);
-	if (reporcs == NULL)
-		error(1, 0, "can't find %s in %s",
-		    current_parsed_root->directory, rcs2);
-	reporcs += (strlen(current_parsed_root->directory) + 1 +
-	    strlen(global_commitid->repo) + 1);
-	reporcs[strlen(reporcs) - strlen(RCSEXT)] = '\0';
-
-	imprev = xmalloc(strlen(add_vbranch) + 2 + 1);
-	snprintf(imprev, strlen(add_vbranch) + 2 + 1, "%s.1", add_vbranch);
-
-	/*
-	 * add once for 0 -> 1.1, then again for 1.1 -> 1.1.1.1 since that's
-	 * what a default checkout would land on
-	 */
-	commitid_gen_add_diff(global_commitid, reporcs, rcs, "0", add_vhead,
-	    NULL);
-	commitid_gen_add_diff(global_commitid, reporcs, rcs, add_vhead, imprev,
-	    NULL);
-
-	free(imprev);
-	free(rcs2);
-    }
-
     return (err);
 
 write_error:

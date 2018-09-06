@@ -143,7 +143,8 @@ struct rcs_kw {
 #define CHECKOUT_REV_REMOVED	3
 #define CHECKOUT_REV_UPDATED	4
 
-#define RCS_COMMITID_MAXLEN 128
+/* commitids in cvs/cvsnt can be up to 64 bytes */
+#define RCS_COMMITID_MAXLEN 64
 
 typedef struct rcs_num {
 	u_int		 rn_len;

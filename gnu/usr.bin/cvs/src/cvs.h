@@ -191,8 +191,6 @@ extern int errno;
 #define CVSROOTADM_WRITERS	"writers"
 #define CVSROOTADM_PASSWD	"passwd"
 #define CVSROOTADM_CONFIG	"config"
-#define CVSROOTADM_COMMITIDS	"commitids"
-#define CVSROOTADM_COMMITID_0	"commitid_genesis"
 
 #define CVSNULLREPOS		"Emptydir"	/* an empty directory */
 
@@ -900,12 +898,9 @@ extern void tag_check_valid PROTO ((char *, int, char **, int, int, char *));
 extern void tag_check_valid_join PROTO ((char *, int, char **, int, int,
 					 char *));
 
-extern int show PROTO((int argc, char **argv));
-
 #include "server.h"
 
 /* From server.c and documented there.  */
-void (*cvs_output_capture) PROTO ((const char *, size_t));
 extern void cvs_output PROTO ((const char *, size_t));
 extern void cvs_output_binary PROTO ((char *, size_t));
 extern void cvs_outerr PROTO ((const char *, size_t));
@@ -913,27 +908,4 @@ extern void cvs_flusherr PROTO ((void));
 extern void cvs_flushout PROTO ((void));
 extern void cvs_output_tagged PROTO ((char *, char *));
 
-
-#include "commitid.h"
-
-extern struct commitid *global_commitid;
-
-extern void commitid_free PROTO((CommitId *));
-extern CommitId *commitid_gen_start PROTO ((char *, unsigned long));
-extern void commitid_gen_add_buf PROTO ((CommitId *, uint8_t *, size_t));
-extern void commitid_gen_add_diff PROTO ((CommitId *, char *, char *, char *,
-					  char *, char *));
-extern void commitid_gen_add_rand PROTO((CommitId *, size_t));
-extern void commitid_gen_add_show PROTO((CommitId *));
-extern void commitid_gen_final PROTO((CommitId *));
-extern void commitid_store PROTO((CommitId *));
-
-extern CommitId *commitid_gen_start_legacy PROTO ((char *));
-
-extern char *commitid_repo_base PROTO ((void));
-extern char *commitid_filename PROTO ((char *, int));
-extern CommitId *commitid_genesis PROTO ((void));
-extern CommitId *commitid_find PROTO ((char *, char *));
-
-
-extern int show_commitid PROTO((CommitId *));
+extern char *global_session_id;
