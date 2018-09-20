@@ -108,6 +108,9 @@
 #ifdef CPU_BIOS
 #include <machine/biosvar.h>
 #endif
+#ifdef CPU_VOLTAGE
+#include <machine/voltagevar.h>
+#endif
 
 struct ctlname topname[] = CTL_NAMES;
 struct ctlname kernname[] = CTL_KERN_NAMES;
@@ -214,6 +217,7 @@ void print_sensor(struct sensor *);
 int sysctl_chipset(char *, char **, int *, int, int *);
 #endif
 int sysctl_audio(char *, char **, int *, int, int *);
+int sysctl_voltage(char *, char **, int *, int, int *);
 void vfsinit(void);
 
 char *equ = "=";
@@ -721,6 +725,14 @@ parse(char *string, int flags)
 #ifdef CPU_CHIPSET
 		if (mib[1] == CPU_CHIPSET) {
 			len = sysctl_chipset(string, &bufp, mib, flags, &type);
+			if (len < 0)
+				return;
+			break;
+		}
+#endif
+#ifdef CPU_VOLTAGE
+		if (mib[1] == CPU_VOLTAGE) {
+			len = sysctl_voltage(string, &bufp, mib, flags, &type);
 			if (len < 0)
 				return;
 			break;
@@ -1401,6 +1413,31 @@ sysctl_bios(char *string, char **bufpp, int mib[], int flags, int *typep)
 		*typep = bioslist.list[indx].ctl_type;
 		return (3);
 	}
+}
+#endif
+
+#ifdef CPU_VOLTAGE
+struct ctlname voltagename[] = CTL_VOLTAGE_NAMES;
+struct list voltagelist = { voltagename, VOLTAGE_MAXID };
+
+/*
+ * handle voltage requests
+ */
+int
+sysctl_voltage(char *string, char **bufpp, int mib[], int flags, int *typep)
+{
+	char *name;
+	int indx;
+
+	if (*bufpp == NULL) {
+		listall(string, &voltagelist);
+		return (-1);
+	}
+	if ((indx = findname(string, "third", bufpp, &voltagelist)) == -1)
+		return (-1);
+	mib[2] = indx;
+	*typep = voltagelist.list[indx].ctl_type;
+	return (3);
 }
 #endif
 

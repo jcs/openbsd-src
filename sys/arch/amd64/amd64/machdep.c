@@ -100,6 +100,7 @@
 #include <machine/mpbiosvar.h>
 #include <machine/kcore.h>
 #include <machine/tss.h>
+#include <machine/voltagevar.h>
 
 #include <dev/isa/isareg.h>
 #include <dev/ic/i8042reg.h>
@@ -550,6 +551,9 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return (sysctl_rdquad(oldp, oldlenp, newp, tsc_frequency));
 	case CPU_INVARIANTTSC:
 		return (sysctl_rdint(oldp, oldlenp, newp, tsc_is_invariant));
+	case CPU_VOLTAGE:
+		return voltage_sysctl(name + 1, namelen - 1, oldp, oldlenp,
+		    newp, newlen, p);
 	default:
 		return (EOPNOTSUPP);
 	}
