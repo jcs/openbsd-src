@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.39 2018/07/12 14:53:37 reyk Exp $	*/
+/*	$OpenBSD: main.c,v 1.42 2018/09/13 03:53:33 ccardenas Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -63,7 +63,8 @@ int		 ctl_receive(struct parse_result *, int, char *[]);
 
 struct ctl_command ctl_commands[] = {
 	{ "console",	CMD_CONSOLE,	ctl_console,	"id" },
-	{ "create",	CMD_CREATE,	ctl_create,	"\"path\" -s size", 1 },
+	{ "create",	CMD_CREATE,	ctl_create,	
+		"\"path\" -s size [-f fmt]", 1 },
 	{ "load",	CMD_LOAD,	ctl_load,	"\"path\"" },
 	{ "log",	CMD_LOG,	ctl_log,	"(verbose|brief)" },
 	{ "reload",	CMD_RELOAD,	ctl_reload,	"" },
@@ -160,7 +161,7 @@ parse(int argc, char *argv[])
 
 	if (!ctl->has_pledge) {
 		/* pledge(2) default if command doesn't have its own pledge */
-		if (pledge("stdio rpath exec unix getpw", NULL) == -1)
+		if (pledge("stdio rpath exec unix getpw unveil", NULL) == -1)
 			err(1, "pledge");
 	}
 	if (ctl->main(&res, argc, argv) != 0)
@@ -185,6 +186,8 @@ vmmaction(struct parse_result *res)
 	unsigned int		 flags;
 
 	if (ctl_sock == -1) {
+		if (unveil(SOCKET_NAME, "r") == -1)
+			err(1, "unveil");
 		if ((ctl_sock = socket(AF_UNIX,
 		    SOCK_STREAM|SOCK_CLOEXEC, 0)) == -1)
 			err(1, "socket");
@@ -205,8 +208,8 @@ vmmaction(struct parse_result *res)
 	switch (res->action) {
 	case CMD_START:
 		ret = vm_start(res->id, res->name, res->size, res->nifs,
-		    res->nets, res->ndisks, res->disks, res->path,
-		    res->isopath, res->instance);
+		    res->nets, res->ndisks, res->disks, res->disktypes,
+		    res->path, res->isopath, res->instance);
 		if (ret) {
 			errno = ret;
 			err(1, "start VM operation failed");
@@ -334,6 +337,7 @@ parse_free(struct parse_result *res)
 	for (i = 0; i < res->ndisks; i++)
 		free(res->disks[i]);
 	free(res->disks);
+	free(res->disktypes);
 	memset(res, 0, sizeof(*res));
 }
 
@@ -398,10 +402,29 @@ parse_size(struct parse_result *res, char *word, long long val)
 	return (0);
 }
 
+#define RAW_FMT_PREFIX		"raw:"
+#define QCOW2_FMT_PREFIX	"qcow2:"
+
 int
-parse_disk(struct parse_result *res, char *word)
+parse_disktype(char *s, char **ret)
+{
+	*ret = s;
+	if (strstr(s, RAW_FMT_PREFIX) == s) {
+		*ret = s + strlen(RAW_FMT_PREFIX);
+		return VMDF_RAW;
+	}
+	if (strstr(s, QCOW2_FMT_PREFIX) == s) {
+		*ret = s + strlen(QCOW2_FMT_PREFIX);
+		return VMDF_QCOW2;
+	}
+	return VMDF_RAW;
+}
+
+int
+parse_disk(struct parse_result *res, char *word, int type)
 {
 	char		**disks;
+	int		*disktypes;
 	char		*s;
 
 	if ((disks = reallocarray(res->disks, res->ndisks + 1,
@@ -409,12 +432,19 @@ parse_disk(struct parse_result *res, char *word)
 		warn("reallocarray");
 		return (-1);
 	}
+	if ((disktypes = reallocarray(res->disktypes, res->ndisks + 1,
+	    sizeof(int))) == NULL) {
+		warn("reallocarray");
+		return -1;
+	}
 	if ((s = strdup(word)) == NULL) {
 		warn("strdup");
 		return (-1);
 	}
 	disks[res->ndisks] = s;
+	disktypes[res->ndisks] = type;
 	res->disks = disks;
+	res->disktypes = disktypes;
 	res->ndisks++;
 
 	return (0);
@@ -470,23 +500,31 @@ int
 ctl_create(struct parse_result *res, int argc, char *argv[])
 {
 	int		 ch, ret;
-	const char	*paths[2];
+	const char	*paths[2], *format;
 
 	if (argc < 2)
 		ctl_usage(res->ctl);
 
 	paths[0] = argv[1];
 	paths[1] = NULL;
+	format = "raw";
+
+	if (unveil(paths[0], "rwc") == -1)
+		err(1, "unveil");
+
 	if (pledge("stdio rpath wpath cpath", NULL) == -1)
 		err(1, "pledge");
 	argc--;
 	argv++;
 
-	while ((ch = getopt(argc, argv, "s:")) != -1) {
+	while ((ch = getopt(argc, argv, "s:f:")) != -1) {
 		switch (ch) {
 		case 's':
 			if (parse_size(res, optarg, 0) != 0)
 				errx(1, "invalid size: %s", optarg);
+			break;
+		case 'f':
+			format = optarg;
 			break;
 		default:
 			ctl_usage(res->ctl);
@@ -498,7 +536,12 @@ ctl_create(struct parse_result *res, int argc, char *argv[])
 		fprintf(stderr, "missing size argument\n");
 		ctl_usage(res->ctl);
 	}
-	ret = create_imagefile(paths[0], res->size);
+	if (strcmp(format, "raw") == 0)
+		ret = create_raw_imagefile(paths[0], res->size);
+	else if (strcmp(format, "qcow2") == 0)
+		ret = create_qc2_imagefile(paths[0], res->size);
+	else
+		errx(1, "unknown image format %s", format);
 	if (ret != 0) {
 		errno = ret;
 		err(1, "create imagefile operation failed");
@@ -580,8 +623,8 @@ ctl_reset(struct parse_result *res, int argc, char *argv[])
 int
 ctl_start(struct parse_result *res, int argc, char *argv[])
 {
-	int		 ch, i;
-	char		 path[PATH_MAX];
+	int		 ch, i, type;
+	char		 path[PATH_MAX], *s;
 
 	if (argc < 2)
 		ctl_usage(res->ctl);
@@ -628,9 +671,10 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 				errx(1, "invalid network: %s", optarg);
 			break;
 		case 'd':
-			if (realpath(optarg, path) == NULL)
+			type = parse_disktype(optarg, &s);
+			if (realpath(s, path) == NULL)
 				err(1, "invalid disk path");
-			if (parse_disk(res, path) != 0)
+			if (parse_disk(res, path, type) != 0)
 				errx(1, "invalid disk: %s", optarg);
 			break;
 		case 'i':
@@ -730,7 +774,7 @@ ctl_unpause(struct parse_result *res, int argc, char *argv[])
 int
 ctl_send(struct parse_result *res, int argc, char *argv[])
 {
-	if (pledge("stdio unix sendfd", NULL) == -1)
+	if (pledge("stdio unix sendfd unveil", NULL) == -1)
 		err(1, "pledge");
 	if (argc == 2) {
 		if (parse_vmid(res, argv[1], 0) == -1)
@@ -744,7 +788,7 @@ ctl_send(struct parse_result *res, int argc, char *argv[])
 int
 ctl_receive(struct parse_result *res, int argc, char *argv[])
 {
-	if (pledge("stdio unix sendfd", NULL) == -1)
+	if (pledge("stdio unix sendfd unveil", NULL) == -1)
 		err(1, "pledge");
 	if (argc == 2) {
 		if (parse_vmid(res, argv[1], 1) == -1)
@@ -759,6 +803,8 @@ __dead void
 ctl_openconsole(const char *name)
 {
 	closefrom(STDERR_FILENO + 1);
+	if (unveil(VMCTL_CU, "x") == -1)
+		err(1, "unveil");
 	execl(VMCTL_CU, VMCTL_CU, "-l", name, "-s", "115200", (char *)NULL);
 	err(1, "failed to open the console");
 }

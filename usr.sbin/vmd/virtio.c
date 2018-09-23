@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtio.c,v 1.64 2018/08/25 04:16:09 ccardenas Exp $	*/
+/*	$OpenBSD: virtio.c,v 1.69 2018/09/19 04:29:21 ccardenas Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -1746,13 +1746,18 @@ vmmci_io(int dir, uint16_t reg, uint32_t *data, uint8_t *intr,
 }
 
 static int
-virtio_init_disk(struct virtio_backing *file, off_t *sz, int fd)
+virtio_init_disk(struct virtio_backing *file, off_t *sz, int fd, int type)
 {
 	/* 
-	 * This is where we slot in disk type selection.
-	 *  Right now, there's only raw.
+	 * probe disk types in order of preference, first one to work wins.
+	 * TODO: provide a way of specifying the type and options.
 	 */
-	return virtio_init_raw(file, sz, fd);
+	switch (type) {
+	case VMDF_RAW:		return virtio_init_raw(file, sz, fd);
+	case VMDF_QCOW2:	return virtio_init_qcow2(file, sz, fd);
+	}
+	log_warnx("%s: invalid disk format", __func__);
+	return -1;
 }
 
 void
@@ -1833,8 +1838,11 @@ virtio_init(struct vmd_vm *vm, int child_cdrom, int *child_disks,
 			vioblk[i].vm_id = vcp->vcp_id;
 			vioblk[i].irq = pci_get_dev_irq(id);
 			if (virtio_init_disk(&vioblk[i].file, &vioblk[i].sz,
-			    child_disks[i]) == -1)
-				continue;
+			    child_disks[i], vmc->vmc_disktypes[i]) == -1) {
+				log_warnx("%s: unable to determine disk format",
+				    __func__);
+				return;
+			}
 			vioblk[i].sz /= 512;
 		}
 	}
@@ -1959,8 +1967,11 @@ virtio_init(struct vmd_vm *vm, int child_cdrom, int *child_disks,
 			vioscsi->vq[i].last_avail = 0;
 		}
 		if (virtio_init_disk(&vioscsi->file, &vioscsi->sz,
-		    child_cdrom) == -1)
+		    child_cdrom, VMDF_RAW) == -1) {
+			log_warnx("%s: unable to determine iso format",
+			    __func__);
 			return;
+		}
 		vioscsi->locked = 0;
 		vioscsi->lba = 0;
 		vioscsi->n_blocks = vioscsi->sz >> 11; /* num of 2048 blocks in file */
@@ -1998,6 +2009,17 @@ virtio_init(struct vmd_vm *vm, int child_cdrom, int *child_disks,
 	evtimer_set(&vmmci.timeout, vmmci_timeout, NULL);
 }
 
+void
+virtio_shutdown(struct vmd_vm *vm)
+{
+	int i;
+
+	/* ensure that our disks are synced */
+	vioscsi->file.close(vioscsi->file.p);
+	for (i = 0; i < nr_vioblk; i++)
+		vioblk[i].file.close(vioblk[i].file.p);
+}
+
 int
 vmmci_restore(int fd, uint32_t vm_id)
 {
@@ -2013,6 +2035,7 @@ vmmci_restore(int fd, uint32_t vm_id)
 		return (-1);
 	}
 	vmmci.vm_id = vm_id;
+	vmmci.irq = pci_get_dev_irq(vmmci.pci_id);
 	memset(&vmmci.timeout, 0, sizeof(struct event));
 	evtimer_set(&vmmci.timeout, vmmci_timeout, NULL);
 	return (0);
@@ -2032,6 +2055,7 @@ viornd_restore(int fd, struct vm_create_params *vcp)
 		return (-1);
 	}
 	viornd.vm_id = vcp->vcp_id;
+	viornd.irq = pci_get_dev_irq(viornd.pci_id);
 
 	return (0);
 }
@@ -2083,6 +2107,7 @@ vionet_restore(int fd, struct vmd_vm *vm, int *child_taps)
 			vionet[i].rx_pending = 0;
 			vionet[i].vm_id = vcp->vcp_id;
 			vionet[i].vm_vmid = vm->vm_vmid;
+			vionet[i].irq = pci_get_dev_irq(vionet[i].pci_id);
 
 			memset(&vionet[i].event, 0, sizeof(struct event));
 			event_set(&vionet[i].event, vionet[i].fd,
@@ -2098,8 +2123,9 @@ vionet_restore(int fd, struct vmd_vm *vm, int *child_taps)
 }
 
 int
-vioblk_restore(int fd, struct vm_create_params *vcp, int *child_disks)
+vioblk_restore(int fd, struct vmop_create_params *vmc, int *child_disks)
 {
+	struct vm_create_params *vcp = &vmc->vmc_params;
 	uint8_t i;
 
 	nr_vioblk = vcp->vcp_ndisks;
@@ -2123,8 +2149,13 @@ vioblk_restore(int fd, struct vm_create_params *vcp, int *child_disks)
 			return (-1);
 		}
 		if (virtio_init_disk(&vioblk[i].file, &vioblk[i].sz,
-		     child_disks[i]) == -1)
-			continue;
+		    child_disks[i], vmc->vmc_disktypes[i]) == -1)  {
+			log_warnx("%s: unable to determine disk format",
+			    __func__);
+			return (-1);
+		}
+		vioblk[i].vm_id = vcp->vcp_id;
+		vioblk[i].irq = pci_get_dev_irq(vioblk[i].pci_id);
 	}
 	return (0);
 }
@@ -2155,7 +2186,13 @@ vioscsi_restore(int fd, struct vm_create_params *vcp, int child_cdrom)
 		return (-1);
 	}
 
-	virtio_init_disk(&vioscsi->file, &vioscsi->sz, child_cdrom);
+	if (virtio_init_disk(&vioscsi->file, &vioscsi->sz, child_cdrom,
+	    VMDF_RAW) == -1) {
+		log_warnx("%s: unable to determine iso format", __func__);
+		return (-1);
+	}
+	vioscsi->vm_id = vcp->vcp_id;
+	vioscsi->irq = pci_get_dev_irq(vioscsi->pci_id);
 
 	return (0);
 }
@@ -2171,7 +2208,7 @@ virtio_restore(int fd, struct vmd_vm *vm, int child_cdrom, int *child_disks,
 	if ((ret = viornd_restore(fd, vcp)) == -1)
 		return ret;
 
-	if ((ret = vioblk_restore(fd, vcp, child_disks)) == -1)
+	if ((ret = vioblk_restore(fd, vmc, child_disks)) == -1)
 		return ret;
 
 	if ((ret = vioscsi_restore(fd, vcp, child_cdrom)) == -1)

@@ -1,4 +1,4 @@
-/*	$OpenBSD: cmpci.c,v 1.43 2018/04/11 04:48:31 ratchov Exp $	*/
+/*	$OpenBSD: cmpci.c,v 1.45 2018/09/14 08:37:34 miko Exp $	*/
 /*	$NetBSD: cmpci.c,v 1.25 2004/10/26 06:32:20 xtraeme Exp $	*/
 
 /*
@@ -92,7 +92,7 @@ void cmpci_set_mixer_gain(struct cmpci_softc *, int);
 void cmpci_set_out_ports(struct cmpci_softc *);
 int cmpci_set_in_ports(struct cmpci_softc *);
 
-int cmpci_resume(struct cmpci_softc *);
+void cmpci_resume(struct cmpci_softc *);
 
 /*
  * autoconf interface
@@ -511,25 +511,21 @@ int
 cmpci_activate(struct device *self, int act)
 {
 	struct cmpci_softc *sc = (struct cmpci_softc *)self;
-	int rv = 0;
 
 	switch (act) {
 	case DVACT_RESUME:
 		cmpci_resume(sc);
-		rv = config_activate_children(self, act);
 		break;
 	default:
-		rv = config_activate_children(self, act);
 		break;
 	}
-	return (rv);
+	return (config_activate_children(self, act));
 }
 
-int
+void
 cmpci_resume(struct cmpci_softc *sc)
 {
 	cmpci_mixerreg_write(sc, CMPCI_SB16_MIXER_RESET, 0);
-	return 0;
 }
 
 int

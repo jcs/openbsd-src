@@ -1,4 +1,4 @@
-/*	$OpenBSD: frag6.c,v 1.83 2018/08/22 19:48:48 cheloha Exp $	*/
+/*	$OpenBSD: frag6.c,v 1.85 2018/09/10 16:14:08 bluhm Exp $	*/
 /*	$KAME: frag6.c,v 1.40 2002/05/27 21:40:31 itojun Exp $	*/
 
 /*
@@ -400,6 +400,7 @@ frag6_input(struct mbuf **mp, int *offp, int proto, int af)
 			t = t->m_next;
 		t->m_next = af6->ip6af_m;
 		m_adj(t->m_next, af6->ip6af_offset);
+		m_removehdr(t->m_next);
 		pool_put(&ip6af_pool, af6);
 	}
 
@@ -430,12 +431,7 @@ frag6_input(struct mbuf **mp, int *offp, int proto, int af)
 
 	pool_put(&ip6q_pool, q6);
 
-	if (m->m_flags & M_PKTHDR) { /* Isn't it always true? */
-		int plen = 0;
-		for (t = m; t; t = t->m_next)
-			plen += t->m_len;
-		m->m_pkthdr.len = plen;
-	}
+	m_calchdrlen(m);
 
 	/*
 	 * Restore NXT to the original.

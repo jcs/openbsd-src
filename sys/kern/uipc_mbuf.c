@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_mbuf.c,v 1.256 2018/03/18 21:25:14 deraadt Exp $	*/
+/*	$OpenBSD: uipc_mbuf.c,v 1.259 2018/09/13 19:53:58 bluhm Exp $	*/
 /*	$NetBSD: uipc_mbuf.c,v 1.15.4.1 1996/06/13 17:11:44 cgd Exp $	*/
 
 /*
@@ -291,6 +291,27 @@ m_inithdr(struct mbuf *m)
 	return (m);
 }
 
+static inline void
+m_clearhdr(struct mbuf *m)
+{
+	/* delete all mbuf tags to reset the state */
+	m_tag_delete_chain(m);
+#if NPF > 0
+	pf_mbuf_unlink_state_key(m);
+	pf_mbuf_unlink_inpcb(m);
+#endif	/* NPF > 0 */
+
+	memset(&m->m_pkthdr, 0, sizeof(m->m_pkthdr));
+}
+
+void
+m_removehdr(struct mbuf *m)
+{
+	KASSERT(m->m_flags & M_PKTHDR);
+	m_clearhdr(m);
+	m->m_flags &= ~M_PKTHDR;
+}
+
 void
 m_resethdr(struct mbuf *m)
 {
@@ -299,19 +320,23 @@ m_resethdr(struct mbuf *m)
 
 	KASSERT(m->m_flags & M_PKTHDR);
 	m->m_flags &= (M_EXT|M_PKTHDR|M_EOR|M_EXTWR|M_ZEROIZE);
-
-	/* delete all mbuf tags to reset the state */
-	m_tag_delete_chain(m);
-
-#if NPF > 0
-	pf_mbuf_unlink_state_key(m);
-#endif	/* NPF > 0 */
-
+	m_clearhdr(m);
 	/* like m_inithdr(), but keep any associated data and mbufs */
-	memset(&m->m_pkthdr, 0, sizeof(m->m_pkthdr));
 	m->m_pkthdr.pf.prio = IFQ_DEFPRIO;
 	m->m_pkthdr.len = len;
 	m->m_pkthdr.ph_loopcnt = loopcnt;
+}
+
+void
+m_calchdrlen(struct mbuf *m)
+{
+	struct mbuf *n;
+	int plen = 0;
+
+	KASSERT(m->m_flags & M_PKTHDR);
+	for (n = m; n; n = n->m_next)
+		plen += n->m_len;
+	m->m_pkthdr.len = plen;
 }
 
 struct mbuf *
@@ -405,6 +430,7 @@ m_free(struct mbuf *m)
 		m_tag_delete_chain(m);
 #if NPF > 0
 		pf_mbuf_unlink_state_key(m);
+		pf_mbuf_unlink_inpcb(m);
 #endif	/* NPF > 0 */
 	}
 	if (m->m_flags & M_EXT)
@@ -1325,6 +1351,8 @@ m_dup_pkthdr(struct mbuf *to, struct mbuf *from, int wait)
 #if NPF > 0
 	to->m_pkthdr.pf.statekey = NULL;
 	pf_mbuf_link_state_key(to, from->m_pkthdr.pf.statekey);
+	to->m_pkthdr.pf.inp = NULL;
+	pf_mbuf_link_inpcb(to, from->m_pkthdr.pf.inp);
 #endif	/* NPF > 0 */
 
 	SLIST_INIT(&to->m_pkthdr.ph_tags);

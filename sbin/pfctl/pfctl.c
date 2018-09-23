@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfctl.c,v 1.356 2018/07/20 11:16:55 kn Exp $ */
+/*	$OpenBSD: pfctl.c,v 1.360 2018/09/18 12:55:19 kn Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -1612,19 +1612,17 @@ pfctl_rules(int dev, char *filename, int opts, int optimize,
 	rs->anchor = pf.anchor;
 	if (strlcpy(pf.anchor->path, anchorname,
 	    sizeof(pf.anchor->path)) >= sizeof(pf.anchor->path))
-		errx(1, "pfctl_add_rule: strlcpy");
+		errx(1, "%s: strlcpy", __func__);
 
 	if ((p = strrchr(anchorname, '/')) != NULL) {
 		if (strlen(p) == 1)
-			errx(1, "pfctl_add_rule: bad anchor name %s",
-			    anchorname);
+			errx(1, "%s: bad anchor name %s", __func__, anchorname);
 	} else
 		p = anchorname;
 
 	if (strlcpy(pf.anchor->name, p,
 	    sizeof(pf.anchor->name)) >= sizeof(pf.anchor->name))
-		errx(1, "pfctl_add_rule: strlcpy");
-
+		errx(1, "%s: strlcpy", __func__);
 
 	pf.astack[0] = pf.anchor;
 	pf.asd = 0;
@@ -2498,10 +2496,16 @@ main(int argc, char *argv[])
 		/* NOTREACHED */
 	}
 
-	if ((path = calloc(1, PATH_MAX)) == NULL)
-		errx(1, "pfctl: calloc");
 	memset(anchorname, 0, sizeof(anchorname));
 	if (anchoropt != NULL) {
+		if (mode == O_RDONLY && showopt == NULL && tblcmdopt == NULL) {
+			warnx("anchors apply to -f, -F, -s, and -T only");
+			usage();
+		}
+		if (mode == O_RDWR && tblcmdopt == NULL &&
+		    (anchoropt[0] == '_' || strstr(anchoropt, "/_") != NULL))
+			errx(1, "anchor names beginning with '_' cannot "
+			    "be modified from the command line");
 		int len = strlen(anchoropt);
 
 		if (anchoropt[len - 1] == '*') {
@@ -2534,6 +2538,9 @@ main(int argc, char *argv[])
 	if (opts & PF_OPT_DISABLE)
 		if (pfctl_disable(dev, opts))
 			error = 1;
+
+	if ((path = calloc(1, PATH_MAX)) == NULL)
+		errx(1, "%s: calloc", __func__);
 
 	if (showopt != NULL) {
 		switch (*showopt) {
@@ -2605,10 +2612,6 @@ main(int argc, char *argv[])
 		    anchorname, 0, 0, -1);
 
 	if (clearopt != NULL) {
-		if (anchorname[0] == '_' || strstr(anchorname, "/_") != NULL)
-			errx(1, "anchor names beginning with '_' cannot "
-			    "be modified from the command line");
-
 		switch (*clearopt) {
 		case 'r':
 			pfctl_clear_rules(dev, opts, anchorname);
@@ -2687,9 +2690,6 @@ main(int argc, char *argv[])
 	}
 
 	if (rulesopt != NULL) {
-		if (anchorname[0] == '_' || strstr(anchorname, "/_") != NULL)
-			errx(1, "anchor names beginning with '_' cannot "
-			    "be modified from the command line");
 		if (pfctl_rules(dev, rulesopt, opts, optimize,
 		    anchorname, NULL))
 			error = 1;

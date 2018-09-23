@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_filter.c,v 1.100 2018/09/05 09:49:57 claudio Exp $ */
+/*	$OpenBSD: rde_filter.c,v 1.108 2018/09/20 11:45:59 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -98,8 +98,8 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 			break;
 		case ACTION_SET_RELATIVE_WEIGHT:
 			if (set->action.relative > 0) {
-				if (set->action.relative + state->aspath.weight <
-				    state->aspath.weight)
+				if (set->action.relative + state->aspath.weight
+				    < state->aspath.weight)
 					state->aspath.weight = UINT_MAX;
 				else
 					state->aspath.weight +=
@@ -145,7 +145,7 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 			switch (set->action.community.as) {
 			case COMMUNITY_ERROR:
 			case COMMUNITY_ANY:
-				fatalx("rde_apply_set bad community string");
+				fatalx("%s: bad community string", __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				as = peer->conf.remote_as;
 				break;
@@ -160,7 +160,7 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 			switch (set->action.community.type) {
 			case COMMUNITY_ERROR:
 			case COMMUNITY_ANY:
-				fatalx("rde_apply_set bad community string");
+				fatalx("%s: bad community string", __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				type = peer->conf.remote_as;
 				break;
@@ -177,7 +177,7 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 		case ACTION_DEL_COMMUNITY:
 			switch (set->action.community.as) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad community string");
+				fatalx("%s: bad community string", __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				as = peer->conf.remote_as;
 				break;
@@ -192,7 +192,7 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 
 			switch (set->action.community.type) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad community string");
+				fatalx("%s: bad community string", __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				type = peer->conf.remote_as;
 				break;
@@ -210,7 +210,8 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 		case ACTION_SET_LARGE_COMMUNITY:
 			switch (set->action.large_community.as) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad large community string");
+				fatalx("%s: bad large community string",
+				    __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				las = peer->conf.remote_as;
 				break;
@@ -225,7 +226,8 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 
 			switch (set->action.large_community.ld1) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad large community string");
+				fatalx("%s: bad large community string",
+				    __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				ld1 = peer->conf.remote_as;
 				break;
@@ -240,7 +242,8 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 
 			switch (set->action.large_community.ld2) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad large community string");
+				fatalx("%s: bad large community string",
+				    __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				ld2 = peer->conf.remote_as;
 				break;
@@ -258,7 +261,8 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 		case ACTION_DEL_LARGE_COMMUNITY:
 			switch (set->action.large_community.as) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad large community string");
+				fatalx("%s: bad large community string",
+				    __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				las = peer->conf.remote_as;
 				break;
@@ -273,7 +277,8 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 
 			switch (set->action.large_community.ld1) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad large community string");
+				fatalx("%s: bad large community string",
+				    __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				ld1 = peer->conf.remote_as;
 				break;
@@ -288,7 +293,8 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 
 			switch (set->action.large_community.ld2) {
 			case COMMUNITY_ERROR:
-				fatalx("rde_apply_set bad large community string");
+				fatalx("%s: bad large community string",
+				    __func__);
 			case COMMUNITY_NEIGHBOR_AS:
 				ld2 = peer->conf.remote_as;
 				break;
@@ -325,11 +331,13 @@ rde_apply_set(struct filter_set_head *sh, struct filterstate *state,
 			state->aspath.origin = set->action.origin;
 			break;
 		case ACTION_SET_EXT_COMMUNITY:
-			community_ext_set(&state->aspath, &set->action.ext_community,
+			community_ext_set(&state->aspath,
+			    &set->action.ext_community,
 			    peer->conf.remote_as);
 			break;
 		case ACTION_DEL_EXT_COMMUNITY:
-			community_ext_delete(&state->aspath, &set->action.ext_community,
+			community_ext_delete(&state->aspath,
+			    &set->action.ext_community,
 			    peer->conf.remote_as);
 			break;
 		}
@@ -342,7 +350,6 @@ rde_filter_match(struct filter_rule *f, struct rde_peer *peer,
 {
 	int		cas, type;
 	int64_t		las, ld1, ld2;
-	struct prefixset_item	*psi;
 	struct rde_aspath	*asp = NULL;
 
 	if (state != NULL)
@@ -479,21 +486,18 @@ rde_filter_match(struct filter_rule *f, struct rde_peer *peer,
 	}
 
 	/*
-	 * XXX must be second to last because we unconditionally return here.
 	 * prefixset and prefix filter rules are mutual exclusive
 	 */
 	if (f->match.prefixset.flags != 0) {
-		log_debug("%s: processing filter for prefixset %s",
-		    __func__, f->match.prefixset.name);
-		SIMPLEQ_FOREACH(psi, &f->match.prefixset.ps->psitems, entry) {
-			if (rde_prefix_match(&psi->p, p)) {
-				log_debug("%s: prefixset %s matched %s",
-				    __func__, f->match.prefixset.ps->name,
-				    log_addr(&psi->p.addr));
-				return (1);
-			}
-		}
-		return (0);
+		struct bgpd_addr addr, *prefix = &addr;
+		u_int8_t plen;
+
+		pt_getaddr(p->re->prefix, prefix);
+		plen = p->re->prefix->prefixlen;
+		if (f->match.prefixset.ps == NULL ||
+		    !trie_match(&f->match.prefixset.ps->th, prefix, plen,
+		    (f->match.prefixset.flags & PREFIXSET_FLAG_LONGER)))
+			return (0);
 	} else if (f->match.prefix.addr.aid != 0)
 		return (rde_prefix_match(&f->match.prefix, p));
 
@@ -532,16 +536,10 @@ rde_prefix_match(struct filter_prefix *fp, struct prefix *p)
 	case OP_XRANGE:
 		return ((plen < fp->len_min) ||
 		    (plen > fp->len_max));
-	case OP_LE:
-		return (plen <= fp->len_min);
-	case OP_LT:
-		return (plen < fp->len_min);
-	case OP_GE:
-		return (plen >= fp->len_min);
-	case OP_GT:
-		return (plen > fp->len_min);
+	default:
+		log_warnx("%s: unsupported prefix operation", __func__);
+		return (0);
 	}
-	return (0); /* should not be reached */
 }
 
 /* return true when the rule f can never match for this peer */
@@ -577,10 +575,12 @@ rde_filter_skip_rule(struct rde_peer *peer, struct filter_rule *f)
 
 int
 rde_filter_equal(struct filter_head *a, struct filter_head *b,
-    struct rde_peer *peer, struct prefixset_head *psh)
+    struct rde_peer *peer)
 {
 	struct filter_rule	*fa, *fb;
-	struct prefixset	*psa, *psb;
+	struct rde_prefixset	*psa, *psb;
+	struct as_set		*asa, *asb;
+	int			 r;
 
 	fa = a ? TAILQ_FIRST(a) : NULL;
 	fb = b ? TAILQ_FIRST(b) : NULL;
@@ -609,18 +609,30 @@ rde_filter_equal(struct filter_head *a, struct filter_head *b,
 		/* compare filter_rule.match without the prefixset pointer */
 		psa = fa->match.prefixset.ps;
 		psb = fb->match.prefixset.ps;
+		asa = fa->match.as.aset;
+		asb = fb->match.as.aset;
 		fa->match.prefixset.ps = fb->match.prefixset.ps = NULL;
-		if (memcmp(&fa->match, &fb->match, sizeof(fa->match)))
-			return (0);
+		fa->match.as.aset = fb->match.as.aset = NULL;
+		r = memcmp(&fa->match, &fb->match, sizeof(fa->match));
+		/* fixup the struct again */
 		fa->match.prefixset.ps = psa;
 		fb->match.prefixset.ps = psb;
-
-		if ((fa->match.prefixset.flags != 0) &&
-		    (fa->match.prefixset.ps != NULL) &&
-		    ((fa->match.prefixset.ps->sflags
-		    & PREFIXSET_FLAG_DIRTY) != 0)) {
+		fa->match.as.aset = asa;
+		fb->match.as.aset = asb;
+		if (r != 0)
+			return (0);
+		if (fa->match.prefixset.flags != 0 &&
+		    fa->match.prefixset.ps != NULL &&
+		    fa->match.prefixset.ps->dirty) {
 			log_debug("%s: prefixset %s has changed",
 			    __func__, fa->match.prefixset.name);
+			return (0);
+		}
+
+		if ((fa->match.as.flags & AS_FLAG_AS_SET) &&
+		    fa->match.as.aset->dirty) {
+			log_debug("%s: as-set %s has changed",
+			    __func__, fa->match.as.name);
 			return (0);
 		}
 
@@ -752,17 +764,10 @@ filterset_cmp(struct filter_set *a, struct filter_set *b)
 void
 filterset_move(struct filter_set_head *source, struct filter_set_head *dest)
 {
-	struct filter_set	*s;
-
 	TAILQ_INIT(dest);
-
 	if (source == NULL)
 		return;
-
-	while ((s = TAILQ_FIRST(source)) != NULL) {
-		TAILQ_REMOVE(source, s, entry);
-		TAILQ_INSERT_TAIL(dest, s, entry);
-	}
+	TAILQ_CONCAT(dest, source, entry);
 }
 
 int
@@ -1015,7 +1020,7 @@ rde_filter(struct filter_head *rules, struct rde_peer *peer,
 
 	if (state && state->aspath.flags & F_ATTR_PARSE_ERR)
 		/*
-	 	 * don't try to filter bad updates just deny them
+		 * don't try to filter bad updates just deny them
 		 * so they act as implicit withdraws
 		 */
 		return (ACTION_DENY);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: editor.c,v 1.348 2018/08/30 13:07:19 krw Exp $	*/
+/*	$OpenBSD: editor.c,v 1.351 2018/09/21 14:07:34 solene Exp $	*/
 
 /*
  * Copyright (c) 1997-2000 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -88,9 +88,9 @@ struct space_allocation alloc_big[] = {
 	{   MEG(80),         GIG(4),  13, "/var"	},
 	{  MEG(900),         GIG(2),   5, "/usr"	},
 	{  MEG(384),         GIG(1),   3, "/usr/X11R6"	},
-	{    GIG(1),        GIG(10),  15, "/usr/local"	},
+	{    GIG(1),        GIG(20),  15, "/usr/local"	},
 	{ MEG(1300),         GIG(2),   2, "/usr/src"	},
-	{    GIG(3),         GIG(6),   4, "/usr/obj"	},
+	{    GIG(5),         GIG(6),   4, "/usr/obj"	},
 	{    GIG(1),       GIG(300),  35, "/home"	}
 	/* Anything beyond this leave for the user to decide */
 };
@@ -2505,25 +2505,34 @@ alignpartition(struct disklabel *lp, int partno, u_int64_t startalign,
 			break;
 	}
 	if (chunks[i].stop == 0) {
-		fprintf(stderr, "offset %llu is outside the OpenBSD bounds "
-		    "or inside another partition\n", start);
+		fprintf(stderr, "'%c' aligned offset %llu lies outside "
+		    "the OpenBSD bounds or inside another partition\n",
+		    'a' + partno, start);
 		return (1);
 	}
-	maxstop = (chunks[i].stop / stopalign) * stopalign;
 
 	/* Calculate the new 'stop' sector, the sector after the partition. */
+	if ((flags & ROUND_SIZE_OVERLAP) == 0)
+		maxstop = (chunks[i].stop / stopalign) * stopalign;
+	else
+		maxstop = (ending_sector / stopalign) * stopalign;
+
 	stop = DL_GETPOFFSET(pp) + DL_GETPSIZE(pp);
 	if ((flags & ROUND_SIZE_UP) == ROUND_SIZE_UP)
 		stop = ((stop + stopalign - 1) / stopalign) * stopalign;
 	else if ((flags & ROUND_SIZE_DOWN) == ROUND_SIZE_DOWN)
 		stop = (stop / stopalign) * stopalign;
-
-	if (((flags & ROUND_SIZE_OVERLAP) == 0) && stop  > maxstop)
+	if (stop > maxstop)
 		stop = maxstop;
+
+	if (stop <= start) {
+		fprintf(stderr, "'%c' aligned size <= 0\n", 'a' + partno);
+		return (1);
+	}
 
 	if (start != DL_GETPOFFSET(pp))
 		DL_SETPOFFSET(pp, start);
-	if (stop > start && stop != DL_GETPOFFSET(pp) + DL_GETPSIZE(pp))
+	if (stop != DL_GETPOFFSET(pp) + DL_GETPSIZE(pp))
 		DL_SETPSIZE(pp, stop - start);
 
 	return (0);

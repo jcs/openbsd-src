@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.8 2018/08/03 13:14:46 florian Exp $	*/
+/*	$OpenBSD: parse.y,v 1.10 2018/09/16 18:58:36 bluhm Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -268,6 +268,8 @@ ra_ifaceoptsl	: NO AUTO PREFIX {
 				free($2);
 				YYERROR;
 			}
+			if (prefixlen == 128 && strchr($2, '/') == NULL)
+				prefixlen = 64;
 			mask_prefix(&addr, prefixlen);
 			ra_prefix_conf = conf_get_ra_prefix(&addr, prefixlen);
 		} ra_prefix_block {
@@ -914,17 +916,12 @@ cmdline_symset(char *s)
 {
 	char	*sym, *val;
 	int	ret;
-	size_t	len;
 
 	if ((val = strrchr(s, '=')) == NULL)
 		return (-1);
-
-	len = strlen(s) - strlen(val) + 1;
-	if ((sym = malloc(len)) == NULL)
-		errx(1, "cmdline_symset: malloc");
-
-	strlcpy(sym, s, len);
-
+	sym = strndup(s, val - s);
+	if (sym == NULL)
+		errx(1, "%s: strndup", __func__);
 	ret = symset(sym, val + 1, 1);
 	free(sym);
 

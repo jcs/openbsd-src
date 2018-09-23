@@ -1,4 +1,4 @@
-/*      $OpenBSD: eap.c,v 1.54 2018/04/11 04:48:31 ratchov Exp $ */
+/*      $OpenBSD: eap.c,v 1.56 2018/09/14 08:37:34 miko Exp $ */
 /*	$NetBSD: eap.c,v 1.46 2001/09/03 15:07:37 reinoud Exp $ */
 
 /*
@@ -167,7 +167,7 @@ int	eap_trigger_input(void *, void *, void *, int, void (*)(void *),
 	    void *, struct audio_params *);
 int	eap_halt_output(void *);
 int	eap_halt_input(void *);
-int	eap_resume(struct eap_softc *);
+void	eap_resume(struct eap_softc *);
 void    eap1370_write_codec(struct eap_softc *, int, int);
 int	eap1370_mixer_set_port(void *, mixer_ctrl_t *);
 int	eap1370_mixer_get_port(void *, mixer_ctrl_t *);
@@ -273,18 +273,15 @@ int
 eap_activate(struct device *self, int act)
 {
 	struct eap_softc *sc = (struct eap_softc *)self;
-	int rv = 0;
 
 	switch (act) {
 	case DVACT_RESUME:
 		eap_resume(sc);
-		rv = config_activate_children(self, act);
 		break;
 	default:
-		rv = config_activate_children(self, act);
 		break;
 	}
-	return (rv);
+	return (config_activate_children(self, act));
 }
 
 void
@@ -597,7 +594,7 @@ eap_attach(struct device *parent, struct device *self, void *aux)
 #endif
 }
 
-int
+void
 eap_resume(struct eap_softc *sc)
 {
 	int i;
@@ -653,8 +650,6 @@ eap_resume(struct eap_softc *sc)
 		/* Interrupt enable */
 		EWRITE4(sc, EAP_SIC, EAP_P2_INTR_EN | EAP_R1_INTR_EN);
 	}
-
-	return (0);
 }
 
 

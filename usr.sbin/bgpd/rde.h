@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.186 2018/08/08 13:08:54 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.193 2018/09/20 11:45:59 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -34,6 +34,12 @@ enum peer_state {
 	PEER_DOWN,
 	PEER_UP,
 	PEER_ERR	/* error occurred going to PEER_DOWN state */
+};
+
+enum roa_state {
+	ROA_UNKNOWN,
+	ROA_INVALID,
+	ROA_VALID
 };
 
 /*
@@ -168,7 +174,6 @@ struct mpattr {
 #define	F_ANN_DYNAMIC		0x00800
 #define	F_ATTR_PARSE_ERR	0x10000 /* parse error, not eligable */
 #define	F_ATTR_LINKED		0x20000 /* if set path is on various lists */
-#define	F_ATTR_UPDATE		0x20000 /* if set linked on update_l */
 
 
 #define ORIGIN_IGP		0
@@ -179,8 +184,8 @@ struct mpattr {
 
 struct rde_aspath {
 	LIST_ENTRY(rde_aspath)		 path_l;
-	TAILQ_ENTRY(rde_aspath)		 peer_l, update_l;
-	struct prefix_queue		 prefixes, updates;
+	TAILQ_ENTRY(rde_aspath)		 peer_l;
+	struct prefix_queue		 prefixes;
 	struct attr			**others;
 	struct rde_peer			*peer;
 	struct aspath			*aspath;
@@ -290,7 +295,7 @@ struct rib_desc {
 	struct rib_context	ribctx;
 	struct filter_head	*in_rules;
 	struct filter_head	*in_rules_tmp;
-	enum reconf_action 	state;
+	enum reconf_action	state;
 	u_int8_t		dumping;
 };
 
@@ -306,11 +311,8 @@ struct prefix {
 	struct rde_peer			*peer;
 	struct nexthop			*nexthop;	/* may be NULL */
 	time_t				 lastchange;
-	u_int8_t			 flags;
 	u_int8_t			 nhflags;
 };
-
-#define F_PREFIX_USE_UPDATES	0x01	/* linked onto the updates list */
 
 #define	NEXTHOP_SELF		0x01
 #define	NEXTHOP_REJECT		0x02
@@ -322,6 +324,24 @@ struct filterstate {
 	struct nexthop		*nexthop;
 	u_int8_t		 nhflags;
 };
+
+struct tentry_v4;
+struct tentry_v6;
+struct trie_head {
+	struct tentry_v4	*root_v4;
+	struct tentry_v6	*root_v6;
+	int			 match_default_v4;
+	int			 match_default_v6;
+};
+
+struct rde_prefixset {
+	char				name[SET_NAME_LEN];
+	struct trie_head		th;
+	SIMPLEQ_ENTRY(rde_prefixset)	entry;
+	int				dirty;
+	int				roa;
+};
+SIMPLEQ_HEAD(rde_prefixset_head, rde_prefixset);
 
 extern struct rde_memstats rdemem;
 
@@ -412,7 +432,7 @@ enum filter_actions rde_filter(struct filter_head *, struct rde_peer *,
 void		 rde_apply_set(struct filter_set_head *, struct filterstate *,
 		     u_int8_t, struct rde_peer *, struct rde_peer *);
 int		 rde_filter_equal(struct filter_head *, struct filter_head *,
-		     struct rde_peer *, struct prefixset_head *);
+		     struct rde_peer *);
 void		 rde_filter_calc_skip_steps(struct filter_head *);
 
 /* rde_prefix.c */
@@ -481,7 +501,7 @@ void		 path_init(u_int32_t);
 void		 path_shutdown(void);
 void		 path_hash_stats(struct rde_hashstats *);
 int		 path_update(struct rib *, struct rde_peer *,
-		     struct filterstate *, struct bgpd_addr *, int, int);
+		     struct filterstate *, struct bgpd_addr *, int);
 int		 path_compare(struct rde_aspath *, struct rde_aspath *);
 void		 path_remove(struct rde_aspath *);
 u_int32_t	 path_remove_stale(struct rde_aspath *, u_int8_t, time_t);
@@ -495,17 +515,16 @@ void		 path_put(struct rde_aspath *);
 
 #define	PREFIX_SIZE(x)	(((x) + 7) / 8 + 1)
 struct prefix	*prefix_get(struct rib *, struct rde_peer *,
-		    struct bgpd_addr *, int, u_int32_t);
+		    struct bgpd_addr *, int);
 int		 prefix_remove(struct rib *, struct rde_peer *,
-		    struct bgpd_addr *, int, u_int32_t);
+		    struct bgpd_addr *, int);
 int		 prefix_write(u_char *, int, struct bgpd_addr *, u_int8_t, int);
 int		 prefix_writebuf(struct ibuf *, struct bgpd_addr *, u_int8_t);
-struct prefix	*prefix_bypeer(struct rib_entry *, struct rde_peer *,
-		     u_int32_t);
+struct prefix	*prefix_bypeer(struct rib_entry *, struct rde_peer *);
 void		 prefix_updateall(struct prefix *, enum nexthop_state,
 		     enum nexthop_state);
 void		 prefix_destroy(struct prefix *);
-void		 prefix_network_clean(struct rde_peer *, time_t, u_int32_t);
+void		 prefix_network_clean(struct rde_peer *);
 void		 prefix_relink(struct prefix *, struct rde_aspath *, int);
 
 static inline struct rde_peer *
@@ -562,5 +581,17 @@ u_char		*up_dump_mp_unreach(u_char *, u_int16_t *, struct rde_peer *,
 		     u_int8_t);
 int		 up_dump_mp_reach(u_char *, u_int16_t *, struct rde_peer *,
 		     u_int8_t);
+
+/* rde_trie.c */
+int	trie_add(struct trie_head *, struct bgpd_addr *, u_int8_t, u_int8_t,
+	    u_int8_t);
+int	trie_roa_add(struct trie_head *, struct bgpd_addr *, u_int8_t,
+	    struct set_table *);
+void	trie_free(struct trie_head *);
+int	trie_match(struct trie_head *, struct bgpd_addr *, u_int8_t, int);
+int	trie_roa_check(struct trie_head *, struct bgpd_addr *, u_int8_t,
+	    u_int32_t);
+void	trie_dump(struct trie_head *);
+int	trie_equal(struct trie_head *, struct trie_head *);
 
 #endif /* __RDE_H__ */

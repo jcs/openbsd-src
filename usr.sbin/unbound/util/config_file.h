@@ -53,6 +53,14 @@ struct sock_list;
 struct ub_packed_rrset_key;
 struct regional;
 
+/** List head for strlist processing, used for append operation. */
+struct config_strlist_head {
+	/** first in list of text items */
+	struct config_strlist* first;
+	/** last in list of text items */
+	struct config_strlist* last;
+};
+
 /**
  * The configuration options.
  * Strings are malloced.
@@ -91,6 +99,12 @@ struct config_file {
 	int tcp_mss;
 	/** maximum segment size of tcp socket for outgoing queries */
 	int outgoing_tcp_mss;
+	/** tcp idle timeout, in msec */
+	int tcp_idle_timeout;
+	/** do edns tcp keepalive */
+	int do_tcp_keepalive;
+	/** tcp keepalive timeout, in msec */
+	int tcp_keepalive_timeout;
 
 	/** private key file for dnstcp-ssl service (enabled if not NULL) */
 	char* ssl_service_key;
@@ -102,6 +116,10 @@ struct config_file {
 	int ssl_upstream;
 	/** cert bundle for outgoing connections */
 	char* tls_cert_bundle;
+	/** should the system certificate store get added to the cert bundle */
+	int tls_win_cert;
+	/** additional tls ports */
+	struct config_strlist* tls_additional_port;
 
 	/** outgoing port range number of ports (per thread) */
 	int outgoing_num_ports;
@@ -141,6 +159,10 @@ struct config_file {
 
 	/** the target fetch policy for the iterator */
 	char* target_fetch_policy;
+	/** percent*10, how many times in 1000 to pick low rtt destinations */
+	int low_rtt_permil;
+	/** what time in msec is a low rtt destination */
+	int low_rtt;
 
 	/** automatic interface for incoming messages. Uses ipv6 remapping,
 	 * and recvmsg/sendmsg ancillary data to detect interfaces, boolean */
@@ -198,6 +220,9 @@ struct config_file {
 	/** use default localhost donotqueryaddr entries */
 	int donotquery_localhost;
 
+	/** list of tcp connection limitss, linked list */
+	struct config_str2list* tcp_connection_limits;
+
 	/** harden against very small edns buffer sizes */
 	int harden_short_bufsize;
 	/** harden against very large query sizes */
@@ -252,6 +277,10 @@ struct config_file {
 	int log_queries;
 	/** log replies with one line per reply */
 	int log_replies;
+	/** log every local-zone hit **/
+	int log_local_actions;
+	/** log servfails with a reason */
+	int log_servfail;
 	/** log identity to report */
 	char* log_identity;
 
@@ -285,6 +314,8 @@ struct config_file {
 	struct config_strlist* domain_insecure;
 	/** send key tag query */
 	int trust_anchor_signaling;
+	/** enable root key sentinel */
+	int root_key_sentinel;
 
 	/** if not 0, this value is the validation date for RRSIGs */
 	int32_t val_date_override;
@@ -308,6 +339,10 @@ struct config_file {
 	int ignore_cd;
 	/** serve expired entries and prefetch them */
 	int serve_expired;
+	/** serve expired entries until TTL after expiration */
+	int serve_expired_ttl;
+	/** reset serve expired TTL after failed update attempt */
+	int serve_expired_ttl_reset;
 	/** nsec3 maximum iterations per key size, string */
 	char* val_nsec3_key_iterations;
 	/** autotrust add holddown time, in seconds */
@@ -364,11 +399,11 @@ struct config_file {
 	/** remote control section. enable toggle. */
 	int remote_control_enable;
 	/** the interfaces the remote control should listen on */
-	struct config_strlist* control_ifs;
+	struct config_strlist_head control_ifs;
+	/** if the use-cert option is set */
+	int control_use_cert;
 	/** port number for the control port */
 	int control_port;
-	/** use certificates for remote control */
-	int remote_control_use_cert;
 	/** private key file for server */
 	char* server_key_file;
 	/** certificate file for server */
@@ -401,6 +436,8 @@ struct config_file {
 
 	/* Synthetize all AAAA record despite the presence of an authoritative one */
 	int dns64_synthall;
+	/** ignore AAAAs for these domain names and use A record anyway */
+	struct config_strlist* dns64_ignore_aaaa;
 
 	/** true to enable dnstap support */
 	int dnstap;
@@ -507,6 +544,14 @@ struct config_file {
 	char* cachedb_backend;
 	/** secret seed for hash key calculation */
 	char* cachedb_secret;
+#ifdef USE_REDIS
+	/** redis server's IP address or host name */
+	char* redis_server_host;
+	/** redis server's TCP port */
+	int redis_server_port;
+	/** timeout (in ms) for communication with the redis server */
+	int redis_timeout;
+#endif
 #endif
 };
 
@@ -535,6 +580,8 @@ struct config_stub {
 	int isfirst;
 	/** use SSL for queries to this stub */
 	int ssl_upstream;
+	/*** no cache */
+	int no_cache;
 };
 
 /**
@@ -549,6 +596,8 @@ struct config_auth {
 	struct config_strlist* masters;
 	/** list of urls */
 	struct config_strlist* urls;
+	/** list of allow-notify */
+	struct config_strlist* allow_notify;
 	/** zonefile (or NULL) */
 	char* zonefile;
 	/** provide downstream answers */
@@ -631,14 +680,6 @@ struct config_strbytelist {
 	/** second bytestring */
 	uint8_t* str2;
 	size_t str2len;
-};
-
-/** List head for strlist processing, used for append operation. */
-struct config_strlist_head {
-	/** first in list of text items */
-	struct config_strlist* first;
-	/** last in list of text items */
-	struct config_strlist* last;
 };
 
 /**
@@ -874,6 +915,10 @@ void config_delview(struct config_view* p);
  */
 void config_delviews(struct config_view* list);
 
+/** check if config for remote control turns on IP-address interface
+ * with certificates or a named pipe without certificates. */
+int options_remote_is_address(struct config_file* cfg);
+
 /**
  * Convert 14digit to time value
  * @param str: string of 14 digits
@@ -1041,12 +1086,20 @@ void errinf_dname(struct module_qstate* qstate, const char* str,
 	uint8_t* dname);
 
 /**
- * Create error info in string
+ * Create error info in string.  For validation failures.
  * @param qstate: query state.
  * @return string or NULL on malloc failure (already logged).
  *    This string is malloced and has to be freed by caller.
  */
-char* errinf_to_str(struct module_qstate* qstate);
+char* errinf_to_str_bogus(struct module_qstate* qstate);
+
+/**
+ * Create error info in string.  For other servfails.
+ * @param qstate: query state.
+ * @return string or NULL on malloc failure (already logged).
+ *    This string is malloced and has to be freed by caller.
+ */
+char* errinf_to_str_servfail(struct module_qstate* qstate);
 
 /**
  * Used during options parsing

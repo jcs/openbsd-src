@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.c,v 1.12 2015/12/26 13:48:38 mestre Exp $	*/
+/*	$OpenBSD: parse.c,v 1.14 2018/09/18 06:56:09 deraadt Exp $	*/
 /*	$NetBSD: parse.c,v 1.6 1995/03/21 09:03:10 cgd Exp $	*/
 
 /*-

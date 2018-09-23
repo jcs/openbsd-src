@@ -1,4 +1,4 @@
-/*	$OpenBSD: lex.c,v 1.25 2017/08/30 07:54:54 anton Exp $	*/
+/*	$OpenBSD: lex.c,v 1.29 2018/09/19 18:48:55 millert Exp $	*/
 /*	$NetBSD: lex.c,v 1.9 1995/09/27 00:38:46 jtc Exp $	*/
 
 /*-
@@ -1287,7 +1287,7 @@ top:
 	}
     }
     if (alvec) {
-	if ((alvecp = *alvec) != '\0') {
+	if ((alvecp = *alvec) != NULL) {
 	    alvec++;
 	    goto top;
 	}
@@ -1310,7 +1310,7 @@ top:
 	    doneinp = 1;
 	    reset();
 	}
-	if ((evalp = *evalvec) != '\0') {
+	if ((evalp = *evalvec) != NULL) {
 	    evalvec++;
 	    goto top;
 	}

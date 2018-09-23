@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.71 2018/09/04 10:48:39 claudio Exp $ */
+/*	$OpenBSD: config.c,v 1.76 2018/09/21 20:45:50 kn Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -37,8 +37,7 @@
 #include "log.h"
 
 u_int32_t	get_bgpid(void);
-int		host_v4(const char *, struct bgpd_addr *, u_int8_t *);
-int		host_v6(const char *, struct bgpd_addr *);
+int		host_ip(const char *, struct bgpd_addr *, u_int8_t *);
 void		free_networks(struct network_head *);
 void		free_rdomains(struct rdomain_head *);
 
@@ -67,6 +66,10 @@ new_config(void)
 	if ((conf->prefixsets = calloc(1, sizeof(struct prefixset_head)))
 	    == NULL)
 		fatal(NULL);
+	if ((conf->roasets = calloc(1, sizeof(struct prefixset_head))) == NULL)
+		fatal(NULL);
+	if ((conf->as_sets = calloc(1, sizeof(struct as_set_head))) == NULL)
+		fatal(NULL);
 	if ((conf->filters = calloc(1, sizeof(struct filter_head))) == NULL)
 		fatal(NULL);
 	if ((conf->listen_addrs = calloc(1, sizeof(struct listen_addrs))) ==
@@ -79,6 +82,8 @@ new_config(void)
 	TAILQ_INIT(&conf->networks);
 	SIMPLEQ_INIT(&conf->rdomains);
 	SIMPLEQ_INIT(conf->prefixsets);
+	SIMPLEQ_INIT(conf->roasets);
+	SIMPLEQ_INIT(conf->as_sets);
 
 	TAILQ_INIT(conf->filters);
 	TAILQ_INIT(conf->listen_addrs);
@@ -117,21 +122,22 @@ void
 free_prefixsets(struct prefixset_head *psh)
 {
 	struct prefixset	*ps;
-	struct prefixset_item	*psi;
+	struct prefixset_item	*psi, *npsi;
 
 	if (psh == NULL)
 		return;
 
 	while (!SIMPLEQ_EMPTY(psh)) {
 		ps = SIMPLEQ_FIRST(psh);
-		while (!SIMPLEQ_EMPTY(&ps->psitems)) {
-			psi = SIMPLEQ_FIRST(&ps->psitems);
-			SIMPLEQ_REMOVE_HEAD(&ps->psitems, entry);
+		RB_FOREACH_SAFE(psi, prefixset_tree, &ps->psitems, npsi) {
+			RB_REMOVE(prefixset_tree, &ps->psitems, psi);
+			set_free(psi->set);
 			free(psi);
 		}
 		SIMPLEQ_REMOVE_HEAD(psh, entry);
 		free(ps);
 	}
+	free(psh);
 }
 
 void
@@ -144,6 +150,8 @@ free_config(struct bgpd_config *conf)
 	free_networks(&conf->networks);
 	filterlist_free(conf->filters);
 	free_prefixsets(conf->prefixsets);
+	free_prefixsets(conf->roasets);
+	as_sets_free(conf->as_sets);
 
 	while ((la = TAILQ_FIRST(conf->listen_addrs)) != NULL) {
 		TAILQ_REMOVE(conf->listen_addrs, la, entry);
@@ -169,8 +177,6 @@ merge_config(struct bgpd_config *xconf, struct bgpd_config *conf,
 {
 	struct listen_addr	*nla, *ola, *next;
 	struct network		*n;
-	struct rdomain		*rd;
-	struct prefixset	*ps;
 
 	/*
 	 * merge the freshly parsed conf into the running xconf
@@ -220,10 +226,19 @@ merge_config(struct bgpd_config *xconf, struct bgpd_config *conf,
 
 	/* switch the prefixsets, first remove the old ones */
 	free_prefixsets(xconf->prefixsets);
-	while ((ps = SIMPLEQ_FIRST(conf->prefixsets)) != NULL) {
-		SIMPLEQ_REMOVE_HEAD(conf->prefixsets, entry);
-		SIMPLEQ_INSERT_TAIL(xconf->prefixsets, ps, entry);
-	}
+	xconf->prefixsets = conf->prefixsets;
+	conf->prefixsets = NULL;
+
+	/* switch the roasets, first remove the old ones */
+	free_prefixsets(xconf->roasets);
+	xconf->roasets = conf->roasets;
+	conf->roasets = NULL;
+
+	/* switch the as_sets, first remove the old ones */
+	as_sets_free(xconf->as_sets);
+	xconf->as_sets = conf->as_sets;
+	conf->as_sets = NULL;
+
 	/* switch the network statements, but first remove the old ones */
 	free_networks(&xconf->networks);
 	while ((n = TAILQ_FIRST(&conf->networks)) != NULL) {
@@ -233,10 +248,7 @@ merge_config(struct bgpd_config *xconf, struct bgpd_config *conf,
 
 	/* switch the rdomain configs, first remove the old ones */
 	free_rdomains(&xconf->rdomains);
-	while ((rd = SIMPLEQ_FIRST(&conf->rdomains)) != NULL) {
-		SIMPLEQ_REMOVE_HEAD(&conf->rdomains, entry);
-		SIMPLEQ_INSERT_TAIL(&xconf->rdomains, rd, entry);
-	}
+	SIMPLEQ_CONCAT(&xconf->rdomains, &conf->rdomains);
 
 	/*
 	 * merge new listeners:
@@ -313,80 +325,58 @@ get_bgpid(void)
 int
 host(const char *s, struct bgpd_addr *h, u_int8_t *len)
 {
-	int			 done = 0;
-	int			 mask;
+	int			 mask = 128;
 	char			*p, *ps;
 	const char		*errstr;
 
-	if ((p = strrchr(s, '/')) != NULL) {
-		mask = strtonum(p + 1, 0, 128, &errstr);
+	if ((ps = strdup(s)) == NULL)
+		fatal("%s: strdup", __func__);
+
+	if ((p = strrchr(ps, '/')) != NULL) {
+		mask = strtonum(p+1, 0, 128, &errstr);
 		if (errstr) {
-			log_warnx("prefixlen is %s: %s", errstr, p + 1);
+			log_warnx("prefixlen is %s: %s", errstr, p);
 			return (0);
 		}
-		if ((ps = malloc(strlen(s) - strlen(p) + 1)) == NULL)
-			fatal("host: malloc");
-		strlcpy(ps, s, strlen(s) - strlen(p) + 1);
-	} else {
-		if ((ps = strdup(s)) == NULL)
-			fatal("host: strdup");
-		mask = 128;
+		p[0] = '\0';
 	}
 
-	bzero(h, sizeof(struct bgpd_addr));
+	bzero(h, sizeof(*h));
 
-	/* IPv4 address? */
-	if (!done)
-		done = host_v4(s, h, len);
+	if (host_ip(ps, h, len) == 0) {
+		free(ps);
+		return (0);
+	}
 
-	/* IPv6 address? */
-	if (!done) {
-		done = host_v6(ps, h);
+	if (p != NULL)
 		*len = mask;
-	}
 
 	free(ps);
-
-	return (done);
-}
-
-int
-host_v4(const char *s, struct bgpd_addr *h, u_int8_t *len)
-{
-	struct in_addr		 ina = { 0 };
-	int			 bits = 32;
-
-	if (strrchr(s, '/') != NULL) {
-		if ((bits = inet_net_pton(AF_INET, s, &ina, sizeof(ina))) == -1)
-			return (0);
-	} else {
-		if (inet_pton(AF_INET, s, &ina) != 1)
-			return (0);
-	}
-
-	h->aid = AID_INET;
-	h->v4.s_addr = ina.s_addr;
-	*len = bits;
-
 	return (1);
 }
 
 int
-host_v6(const char *s, struct bgpd_addr *h)
+host_ip(const char *s, struct bgpd_addr *h, u_int8_t *len)
 {
 	struct addrinfo		 hints, *res;
+	int			 bits;
 
 	bzero(&hints, sizeof(hints));
-	hints.ai_family = AF_INET6;
+	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_DGRAM; /*dummy*/
 	hints.ai_flags = AI_NUMERICHOST;
-	if (getaddrinfo(s, "0", &hints, &res) == 0) {
+	if (getaddrinfo(s, NULL, &hints, &res) == 0) {
+		*len = res->ai_family == AF_INET6 ? 128 : 32;
 		sa2addr(res->ai_addr, h);
 		freeaddrinfo(res);
-		return (1);
+	} else {	/* ie. for 10/8 parsing */
+		if ((bits = inet_net_pton(AF_INET, s, &h->v4, sizeof(h->v4))) == -1)
+			return (0);
+		*len = bits;
+		h->aid = AID_INET;
 	}
 
-	return (0);
+	return (1);
 }
 
 void
@@ -493,3 +483,97 @@ get_mpe_label(struct rdomain *r)
 	r->label = shim.shim_label;
 	return (0);
 }
+
+void
+copy_filterset(struct filter_set_head *source, struct filter_set_head *dest)
+{
+	struct filter_set	*s, *t;
+
+	if (source == NULL)
+		return;
+
+	TAILQ_FOREACH(s, source, entry) {
+		if ((t = malloc(sizeof(struct filter_set))) == NULL)
+			fatal(NULL);
+		memcpy(t, s, sizeof(struct filter_set));
+		TAILQ_INSERT_TAIL(dest, t, entry);
+	}
+}
+
+void
+expand_networks(struct bgpd_config *c)
+{
+	struct network		*n, *m, *tmp;
+	struct network_head	*nw = &c->networks;
+	struct prefixset	*ps;
+	struct prefixset_item	*psi;
+
+	TAILQ_FOREACH_SAFE(n, nw, entry, tmp) {
+		if (n->net.type == NETWORK_PREFIXSET) {
+			TAILQ_REMOVE(nw, n, entry);
+			if ((ps = find_prefixset(n->net.psname, c->prefixsets))
+			    == NULL)
+				fatal("%s: prefixset %s not found", __func__,
+				    n->net.psname);
+			RB_FOREACH(psi, prefixset_tree, &ps->psitems) {
+				if ((m = calloc(1, sizeof(struct network)))
+				    == NULL)
+					fatal(NULL);
+				memcpy(&m->net.prefix, &psi->p.addr,
+				    sizeof(m->net.prefix));
+				m->net.prefixlen = psi->p.len;
+				TAILQ_INIT(&m->net.attrset);
+				copy_filterset(&n->net.attrset,
+				    &m->net.attrset);
+				TAILQ_INSERT_TAIL(nw, m, entry);
+			}
+			filterset_free(&n->net.attrset);
+			free(n);
+		}
+	}
+}
+
+int
+prefixset_cmp(struct prefixset_item *a, struct prefixset_item *b)
+{
+	int i;
+
+	if (a->p.addr.aid < b->p.addr.aid)
+		return (-1);
+	if (a->p.addr.aid > b->p.addr.aid)
+		return (1);
+
+	switch (a->p.addr.aid) {
+	case AID_INET:
+		if (ntohl(a->p.addr.v4.s_addr) < ntohl(b->p.addr.v4.s_addr))
+			return (-1);
+		if (ntohl(a->p.addr.v4.s_addr) > ntohl(b->p.addr.v4.s_addr))
+			return (1);
+		break;
+	case AID_INET6:
+		i = memcmp(&a->p.addr.v6, &b->p.addr.v6,
+		    sizeof(struct in6_addr));
+		if (i > 0)
+			return (1);
+		if (i < 0)
+			return (-1);
+		break;
+	default:
+		fatalx("%s: unknown af", __func__);
+	}
+	if (a->p.len < b->p.len)
+		return (-1);
+	if (a->p.len > b->p.len)
+		return (1);
+	if (a->p.len_min < b->p.len_min)
+		return (-1);
+	if (a->p.len_min > b->p.len_min)
+		return (1);
+	if (a->p.len_max < b->p.len_max)
+		return (-1);
+	if (a->p.len_max > b->p.len_max)
+		return (1);
+	return (0);
+}
+
+RB_GENERATE(prefixset_tree, prefixset_item, entry, prefixset_cmp);

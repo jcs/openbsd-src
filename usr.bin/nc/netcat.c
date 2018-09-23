@@ -1,4 +1,4 @@
-/* $OpenBSD: netcat.c,v 1.192 2018/08/10 17:15:22 deraadt Exp $ */
+/* $OpenBSD: netcat.c,v 1.194 2018/09/07 09:55:29 bluhm Exp $ */
 /*
  * Copyright (c) 2001 Eric Jackson <ericj@monkey.org>
  * Copyright (c) 2015 Bob Beck.  All rights reserved.
@@ -122,7 +122,7 @@ void	atelnet(int, unsigned char *, unsigned int);
 int	strtoport(char *portstr, int udp);
 void	build_ports(char *);
 void	help(void) __attribute__((noreturn));
-int	local_listen(char *, char *, struct addrinfo);
+int	local_listen(const char *, const char *, struct addrinfo);
 void	readwrite(int, struct tls *);
 void	fdpass(int nfd) __attribute__((noreturn));
 int	remote_connect(const char *, const char *, struct addrinfo);
@@ -564,8 +564,11 @@ main(int argc, char *argv[])
 		}
 		/* Allow only one connection at a time, but stay alive. */
 		for (;;) {
-			if (family != AF_UNIX)
+			if (family != AF_UNIX) {
+				if (s != -1)
+					close(s);
 				s = local_listen(host, uport, hints);
+			}
 			if (s < 0)
 				err(1, NULL);
 			if (uflag && kflag) {
@@ -622,9 +625,7 @@ main(int argc, char *argv[])
 				}
 				close(connfd);
 			}
-			if (family != AF_UNIX)
-				close(s);
-			else if (uflag) {
+			if (family == AF_UNIX && uflag) {
 				if (connect(s, NULL, 0) < 0)
 					err(1, "connect");
 			}
@@ -993,7 +994,7 @@ timeout_connect(int s, const struct sockaddr *name, socklen_t namelen)
  * address. Returns -1 on failure.
  */
 int
-local_listen(char *host, char *port, struct addrinfo hints)
+local_listen(const char *host, const char *port, struct addrinfo hints)
 {
 	struct addrinfo *res, *res0;
 	int s = -1, ret, x = 1, save_errno;

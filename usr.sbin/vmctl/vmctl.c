@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmctl.c,v 1.55 2018/08/23 06:04:53 reyk Exp $	*/
+/*	$OpenBSD: vmctl.c,v 1.58 2018/09/16 02:43:11 millert Exp $	*/
 
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
@@ -70,8 +70,8 @@ int info_console;
  */
 int
 vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
-    char **nics, int ndisks, char **disks, char *kernel, char *iso,
-    char *instance)
+    char **nics, int ndisks, char **disks, int *disktypes, char *kernel,
+    char *iso, char *instance)
 {
 	struct vmop_create_params *vmc;
 	struct vm_create_params *vcp;
@@ -128,11 +128,13 @@ vm_start(uint32_t start_id, const char *name, int memsize, int nnics,
 	vcp->vcp_nnics = nnics;
 	vcp->vcp_id = start_id;
 
-	for (i = 0 ; i < ndisks; i++)
+	for (i = 0 ; i < ndisks; i++) {
 		if (strlcpy(vcp->vcp_disks[i], disks[i],
 		    sizeof(vcp->vcp_disks[i])) >=
 		    sizeof(vcp->vcp_disks[i]))
 			errx(1, "disk path too long");
+		vmc->vmc_disktypes[i] = disktypes[i];
+	}
 	for (i = 0 ; i < nnics; i++) {
 		vmc->vmc_ifflags[i] = VMIFF_UP;
 
@@ -629,8 +631,7 @@ print_vm_info(struct vmop_info_result *list, size_t ct)
 	char curmem[FMT_SCALED_STRSIZE];
 	char maxmem[FMT_SCALED_STRSIZE];
 	char user[16], group[16];
-	struct passwd *pw;
-	struct group *gr;
+	const char *name;
 
 	printf("%5s %5s %5s %7s %7s %7s %12s %s\n", "ID", "PID", "VCPUS",
 	    "MAXMEM", "CURMEM", "TTY", "OWNER", "NAME");
@@ -640,22 +641,23 @@ print_vm_info(struct vmop_info_result *list, size_t ct)
 		vir = &vmi->vir_info;
 		if (check_info_id(vir->vir_name, vir->vir_id)) {
 			/* get user name */
-			if ((pw = getpwuid(vmi->vir_uid)) == NULL)
+			name = user_from_uid(vmi->vir_uid, 1);
+			if (name == NULL)
 				(void)snprintf(user, sizeof(user),
 				    "%d", vmi->vir_uid);
 			else
-				(void)strlcpy(user, pw->pw_name,
-				    sizeof(user));
+				(void)strlcpy(user, name, sizeof(user));
 			/* get group name */
 			if (vmi->vir_gid != -1) {
 				if (vmi->vir_uid == 0)
 					*user = '\0';
-				if ((gr = getgrgid(vmi->vir_gid)) == NULL)
+				name = group_from_gid(vmi->vir_gid, 1);
+				if (name == NULL)
 					(void)snprintf(group, sizeof(group),
 					    ":%lld", vmi->vir_gid);
 				else
 					(void)snprintf(group, sizeof(group),
-					    ":%s", gr->gr_name);
+					    ":%s", name);
 				(void)strlcat(user, group, sizeof(user));
 			}
 
@@ -735,7 +737,7 @@ vm_console(struct vmop_info_result *list, size_t ct)
 }
 
 /*
- * create_imagefile
+ * create_raw_imagefile
  *
  * Create an empty imagefile with the specified path and size.
  *
@@ -749,7 +751,7 @@ vm_console(struct vmop_info_result *list, size_t ct)
  *  Exxxx : Various other Exxxx errno codes due to other I/O errors
  */
 int
-create_imagefile(const char *imgfile_path, long imgsize)
+create_raw_imagefile(const char *imgfile_path, long imgsize)
 {
 	int fd, ret;
 
@@ -769,4 +771,124 @@ create_imagefile(const char *imgfile_path, long imgsize)
 
 	ret = close(fd);
 	return (ret);
+}
+
+/*
+ * create_imagefile
+ *
+ * Create an empty qcow2 imagefile with the specified path and size.
+ *
+ * Parameters:
+ *  imgfile_path: path to the image file to create
+ *  imgsize     : size of the image file to create (in MB)
+ *
+ * Return:
+ *  EEXIST: The requested image file already exists
+ *  0     : Image file successfully created
+ *  Exxxx : Various other Exxxx errno codes due to other I/O errors
+ */
+#define ALIGN(sz, align) \
+	((sz + align - 1) & ~(align - 1))
+int
+create_qc2_imagefile(const char *imgfile_path, long imgsize)
+{
+	struct qcheader {
+		char magic[4];
+		uint32_t version;
+		uint64_t backingoff;
+		uint32_t backingsz;
+		uint32_t clustershift;
+		uint64_t disksz;
+		uint32_t cryptmethod;
+		uint32_t l1sz;
+		uint64_t l1off;
+		uint64_t refoff;
+		uint32_t refsz;
+		uint32_t snapcount;
+		uint64_t snapsz;
+		/* v3 additions */
+		uint64_t incompatfeatures;
+		uint64_t compatfeatures;
+		uint64_t autoclearfeatures;
+		uint32_t reforder;
+		uint32_t headersz;
+	} __packed hdr;
+	int fd, ret;
+	uint64_t l1sz, refsz, disksz, initsz, clustersz;
+	uint64_t l1off, refoff, v, i;
+	uint16_t refs;
+
+	disksz = 1024*1024*imgsize;
+	clustersz = (1<<16);
+	l1off = ALIGN(sizeof hdr, clustersz);
+	l1sz = disksz / (clustersz*clustersz/8);
+	if (l1sz == 0)
+		l1sz = 1;
+
+	refoff = ALIGN(l1off + 8*l1sz, clustersz);
+	refsz = disksz / (clustersz*clustersz*clustersz/2);
+	if (refsz == 0)
+		refsz = 1;
+
+	initsz = ALIGN(refoff + refsz*clustersz, clustersz);
+
+	memcpy(hdr.magic, "QFI\xfb", 4);
+	hdr.version		= htobe32(3);
+	hdr.backingoff		= htobe64(0);
+	hdr.backingsz		= htobe32(0);
+	hdr.clustershift	= htobe32(16);
+	hdr.disksz		= htobe64(disksz);
+	hdr.cryptmethod		= htobe32(0);
+	hdr.l1sz		= htobe32(l1sz);
+	hdr.l1off		= htobe64(l1off);
+	hdr.refoff		= htobe64(refoff);
+	hdr.refsz		= htobe32(refsz);
+	hdr.snapcount		= htobe32(0);
+	hdr.snapsz		= htobe64(0);
+	hdr.incompatfeatures	= htobe64(0);
+	hdr.compatfeatures	= htobe64(0);
+	hdr.autoclearfeatures	= htobe64(0);
+	hdr.reforder		= htobe32(4);
+	hdr.headersz		= htobe32(sizeof hdr);
+
+	/* Refuse to overwrite an existing image */
+	fd = open(imgfile_path, O_RDWR | O_CREAT | O_TRUNC | O_EXCL,
+	    S_IRUSR | S_IWUSR);
+	if (fd == -1)
+		return (errno);
+
+	/* Write out the header */
+	if (write(fd, &hdr, sizeof hdr) != sizeof hdr)
+		goto error;
+
+	/* Extend to desired size, and add one refcount cluster */
+	if (ftruncate(fd, (off_t)initsz + clustersz) == -1)
+		goto error;
+
+	/* 
+	 * Paranoia: if our disk image takes more than one cluster
+	 * to refcount the initial image, fail.
+	 */
+	if (initsz/clustersz > clustersz/2) {
+		errno = ERANGE;
+		goto error;
+	}
+
+	/* Add a refcount block, and refcount ourselves. */
+	v = htobe64(initsz);
+	if (pwrite(fd, &v, 8, refoff) != 8)
+		goto error;
+	for (i = 0; i < initsz/clustersz + 1; i++) {
+		refs = htobe16(1);
+		if (pwrite(fd, &refs, 2, initsz + 2*i) != 2)
+			goto error;
+	}
+
+	ret = close(fd);
+	return (ret);
+error:
+	ret = errno;
+	close(fd);
+	unlink(imgfile_path);
+	return (errno);
 }

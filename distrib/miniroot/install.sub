@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1102 2018/08/29 11:30:48 krw Exp $
+#	$OpenBSD: install.sub,v 1.1104 2018/09/22 09:12:36 fcambus Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -261,6 +261,11 @@ lease_value() {
 			-e '/^"(.*)"$/{s//\1/;s/\\(.)/\1/g;};q' "$_lf" \
 			| grep ^ && return
 	done
+}
+
+# Extract one boot's worth of dmesg.
+dmesgtail() {
+	dmesg | sed -n 'H;/^OpenBSD/h;${g;p;}'
 }
 
 # ------------------------------------------------------------------------------
@@ -546,8 +551,8 @@ start_dmesg_listener() {
 		# the update file and sends a signal to the parent process (that
 		# is the installer script) if the dmesg output differs from the
 		# contents of that file.
-		if [[ -e $_update && "$(dmesg)" != "$(<$_update)" ]]; then
-			dmesg >$_update
+		if [[ -e $_update && "$(dmesgtail)" != "$(<$_update)" ]]; then
+			dmesgtail >$_update
 			kill -TERM 2>/dev/null $$ || exit 1
 		fi
 		unlock
@@ -708,7 +713,7 @@ _autorespond() {
 _ask() {
 	local _q=$1 _def=$2 _int _redo=0 _pid
 
-	lock; dmesg >/tmp/i/update; unlock
+	lock; dmesgtail >/tmp/i/update; unlock
 	echo -n "${_q:+$_q }${_def:+[$_def] }"
 	_autorespond "$_q" "$_def" && echo "$resp" && return
 	trap "_int=1" INT
@@ -2517,10 +2522,10 @@ check_fs() {
 		((_passno > 0)) || continue
 		echo -n "fsck -${_f}p $_dev..."
 		if ! fsck -${_f}p $_dev >/dev/null 2>&1; then
-			echo "FAILED. You must fsck $_dev manually."
+			echo " FAILED. You must fsck $_dev manually."
 			_fail=y
 		else
-			echo "OK."
+			echo " OK."
 		fi
 	done </etc/fstab
 
@@ -2725,7 +2730,7 @@ finish_up() {
 			sh MAKEDEV $_dev
 		done
 	)
-	echo "done."
+	echo " done."
 
 	# We may run some programs in chroot, and some of them might be
 	# dynamic.  That is highly discouraged, but let us play it safe.
@@ -2770,7 +2775,7 @@ finish_up() {
 		rm -f $_kernel_dir.tgz
 		chroot /mnt /bin/ksh -e -c "cd ${_kernel_dir#/mnt}/$_kernel; \
 			make newbsd; make newinstall"
-		) >/dev/null 2>&1 && echo "done." || echo "failed."
+		) >/dev/null 2>&1 && echo " done." || echo " failed."
 	fi
 
 	# Ensure that sysmerge in batch mode is run on reboot.
@@ -2792,8 +2797,8 @@ set -A _KERNV -- \$(sysctl -n kern.version |
 	sed 's/^OpenBSD \([0-9]\.[0-9]\)\([^ ]*\).*/\1 \2/;q')
 if ((\${#_KERNV[*]} == 1)) && [[ -s /etc/installurl ]] &&
 	_CKPATCH=\$(mktemp /tmp/_ckpatch.XXXXXXXXXX); then
-	echo -n "Checking for available binary patches... "
-	syspatch -c > \$_CKPATCH && echo -n "done."
+	echo -n "Checking for available binary patches..."
+	syspatch -c > \$_CKPATCH && echo -n " done."
 	echo
 	if [[ -s \$_CKPATCH ]]; then
 		echo "Run syspatch(8) to install:"
@@ -3071,7 +3076,7 @@ do_install() {
 		[[ -f $_f && -s $_f ]] && mv $_f /mnt/etc/.
 	done)
 
-	echo "done."
+	echo " done."
 
 	# Apply configuration settings based on information from questions().
 	apply
@@ -3125,11 +3130,11 @@ do_upgrade() {
 
 	echo -n "Checking root filesystem (fsck -fp /dev/$ROOTDEV)..."
 	fsck -fp /dev/$ROOTDEV >/dev/null 2>&1 || { echo "FAILED."; exit; }
-	echo "OK."
+	echo " OK."
 
 	echo -n "Mounting root filesystem (mount -o ro /dev/$ROOTDEV /mnt)..."
 	mount -o ro /dev/$ROOTDEV /mnt || { echo "FAILED."; exit; }
-	echo "OK."
+	echo " OK."
 
 	# The fstab and myname files are required.
 	for _f in /mnt/etc/{fstab,myname}; do
@@ -3267,8 +3272,8 @@ V4_DHCPCONF=false
 V6_AUTOCONF=false
 WLANLIST=/tmp/i/wlanlist
 
-# Extract and save one boot's worth of dmesg.
-dmesg | sed -n '/^OpenBSD /h;/^OpenBSD /!H;${g;p;}' >/var/run/dmesg.boot
+# Save one boot's worth of dmesg.
+dmesgtail >/var/run/dmesg.boot
 
 # Are we in a real release, or a snapshot?  If this is a snapshot
 # install media, default us to a snapshot directory.

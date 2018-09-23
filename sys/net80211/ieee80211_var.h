@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_var.h,v 1.88 2018/09/01 08:20:56 stsp Exp $	*/
+/*	$OpenBSD: ieee80211_var.h,v 1.91 2018/09/11 18:16:26 krw Exp $	*/
 /*	$NetBSD: ieee80211_var.h,v 1.7 2004/05/06 03:07:10 dyoung Exp $	*/
 
 /*-
@@ -339,9 +339,6 @@ struct ieee80211com {
 #define	ic_if		ic_ac.ac_if
 #define	ic_softc	ic_if.if_softc
 
-LIST_HEAD(ieee80211com_head, ieee80211com);
-extern struct ieee80211com_head ieee80211com_head;
-
 /* list of APs we want to automatically use */
 /* all data is copied from struct ieee80211com */
 struct ieee80211_ess {
@@ -452,9 +449,10 @@ enum ieee80211_phymode ieee80211_chan2mode(struct ieee80211com *,
 		const struct ieee80211_channel *);
 void	ieee80211_disable_wep(struct ieee80211com *); 
 void	ieee80211_disable_rsn(struct ieee80211com *); 
-int	ieee80211_add_ess(struct ieee80211com *, int, int);
+int	ieee80211_add_ess(struct ieee80211com *, struct ieee80211_join *);
 void	ieee80211_del_ess(struct ieee80211com *, char *, int);
-void	ieee80211_set_ess(struct ieee80211com *, char *);
+void	ieee80211_set_ess(struct ieee80211com *, char *, int);
+struct ieee80211_ess *ieee80211_get_ess(struct ieee80211com *, const char *, int);
 
 extern	int ieee80211_cache_size;
 

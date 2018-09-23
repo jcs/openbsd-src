@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.33 2018/09/05 09:49:57 claudio Exp $ */
+/*	$OpenBSD: util.c,v 1.39 2018/09/20 11:45:59 claudio Exp $ */
 
 /*
  * Copyright (c) 2006 Claudio Jeker <claudio@openbsd.org>
@@ -317,6 +317,11 @@ as_compare(struct filter_as *f, u_int32_t as, u_int32_t neighas)
 {
 	u_int32_t match;
 
+	if (f->flags & AS_FLAG_AS_SET_NAME)	/* should not happen */
+		return (0);
+	if (f->flags & AS_FLAG_AS_SET)
+		return (as_set_match(f->aset, as));
+
 	if (f->flags & AS_FLAG_NEIGHBORAS)
 		match = neighas;
 	else
@@ -333,11 +338,11 @@ as_compare(struct filter_as *f, u_int32_t as, u_int32_t neighas)
 			return (1);
 		break;
 	case OP_RANGE:
-	    	if (as >= f->as_min && as <= f->as_max)
+		if (as >= f->as_min && as <= f->as_max)
 			return (1);
 		break;
 	case OP_XRANGE:
-	    	if (as < f->as_min || as > f->as_max)
+		if (as < f->as_min || as > f->as_max)
 			return (1);
 		break;
 	}
@@ -446,13 +451,17 @@ aspath_verify(void *data, u_int16_t len, int as4byte)
 		as_size = 4;
 
 	for (; len > 0; len -= seg_size, seg += seg_size) {
-		const u_char    *ptr;
+		const u_int8_t	*ptr;
 		int		 pos;
 
 		if (len < 2)	/* header length check */
 			return (AS_ERR_BAD);
 		seg_type = seg[0];
 		seg_len = seg[1];
+
+		if (seg_len == 0)
+			/* empty aspath segments are not allowed */
+			return (AS_ERR_BAD);
 
 		/*
 		 * BGP confederations should not show up but consider them
@@ -470,19 +479,15 @@ aspath_verify(void *data, u_int16_t len, int as4byte)
 		if (seg_size > len)
 			return (AS_ERR_LEN);
 
-		if (seg_size == 0)
-			/* empty aspath segments are not allowed */
-			return (AS_ERR_BAD);
-
 		/* RFC 7607 - AS 0 is considered malformed */
 		ptr = seg + 2;
 		for (pos = 0; pos < seg_len; pos++) {
-			u_int32_t	 as = 0;
+			u_int32_t as;
 
-			ptr += as_size;
 			memcpy(&as, ptr, as_size);
 			if (as == 0)
 				error = AS_ERR_SOFT;
+			ptr += as_size;
 		}
 	}
 	return (error);	/* aspath is valid but probably not loop free */
@@ -955,4 +960,3 @@ get_baudrate(u_int64_t baudrate, char *unit)
 
 	return (bbuf);
 }
-

@@ -1,4 +1,4 @@
-/*	$OpenBSD: in_pcb.h,v 1.109 2018/06/03 21:00:15 bluhm Exp $	*/
+/*	$OpenBSD: in_pcb.h,v 1.114 2018/09/20 18:59:10 bluhm Exp $	*/
 /*	$NetBSD: in_pcb.h,v 1.14 1996/02/13 23:42:00 christos Exp $	*/
 
 /*
@@ -64,7 +64,9 @@
 #ifndef _NETINET_IN_PCB_H_
 #define _NETINET_IN_PCB_H_
 
+#include <sys/mutex.h>
 #include <sys/queue.h>
+#include <sys/refcnt.h>
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
 #include <netinet/icmp6.h>
@@ -83,6 +85,12 @@ union inpaddru {
 };
 
 /*
+ *  Locks used to protect struct members in this file:
+ *	I	immutable after creation
+ *	t	protected by internet table mutex inpcbtable_mtx
+ *	p	protected by internet PCB mutex inp_mtx
+ */
+/*
  * Common structure pcb for internet protocol implementation.
  * Here are stored pointers to local and foreign host table
  * entries, local and foreign socket numbers, and pointers
@@ -90,10 +98,11 @@ union inpaddru {
  * control block.
  */
 struct inpcb {
-	LIST_ENTRY(inpcb) inp_hash;
-	LIST_ENTRY(inpcb) inp_lhash;		/* extra hash for lport */
-	TAILQ_ENTRY(inpcb) inp_queue;
-	struct	  inpcbtable *inp_table;
+	LIST_ENTRY(inpcb) inp_hash;		/* [t] local and foreign hash */
+	LIST_ENTRY(inpcb) inp_lhash;		/* [t] local port hash */
+	TAILQ_ENTRY(inpcb) inp_queue;		/* [t] inet PCB queue */
+	struct	  inpcbtable *inp_table;	/* [I] inet queue/hash table */
+	struct	  mutex inp_mtx;		/* protect PCB and socket */
 	union	  inpaddru inp_faddru;		/* Foreign address. */
 	union	  inpaddru inp_laddru;		/* Local address. */
 #define	inp_faddr	inp_faddru.iau_a4u.inaddr
@@ -102,14 +111,15 @@ struct inpcb {
 #define	inp_laddr6	inp_laddru.iau_addr6
 	u_int16_t inp_fport;		/* foreign port */
 	u_int16_t inp_lport;		/* local port */
-	struct	  socket *inp_socket;	/* back pointer to socket */
-	caddr_t	  inp_ppcb;		/* pointer to per-protocol pcb */
+	struct	  socket *inp_socket;	/* [p] back pointer to socket */
+	caddr_t	  inp_ppcb;		/* [p] pointer to per-protocol pcb */
 	union {				/* Route (notice increased size). */
 		struct route ru_route;
 		struct route_in6 ru_route6;
 	} inp_ru;
 #define	inp_route	inp_ru.ru_route
 #define	inp_route6	inp_ru.ru_route6
+	struct    refcnt inp_refcnt;	/* refcount PCB, delay memory free */
 	int	  inp_flags;		/* generic IP/datagram flags */
 	union {				/* Header prototype. */
 		struct ip hu_ip;
@@ -148,11 +158,12 @@ struct inpcb {
 LIST_HEAD(inpcbhead, inpcb);
 
 struct inpcbtable {
-	TAILQ_HEAD(inpthead, inpcb) inpt_queue;
-	struct inpcbhead *inpt_hashtbl, *inpt_lhashtbl;
-	SIPHASH_KEY inpt_key;
-	u_long	  inpt_mask, inpt_lmask;
-	int	  inpt_count, inpt_size;
+	TAILQ_HEAD(inpthead, inpcb) inpt_queue;	/* [t] inet PCB queue */
+	struct	inpcbhead *inpt_hashtbl;	/* [t] local and foreign hash */
+	struct	inpcbhead *inpt_lhashtbl;	/* [t] local port hash */
+	SIPHASH_KEY inpt_key, inpt_lkey;	/* [t] secrets for hashes */
+	u_long	inpt_mask, inpt_lmask;		/* [t] hash masks */
+	int	inpt_count, inpt_size;		/* [t] queue count, hash size */
 };
 
 /* flags in inp_flags: */
@@ -246,9 +257,11 @@ struct baddynamicports {
 
 #ifdef _KERNEL
 
+extern struct mutex inpcbtable_mtx;
 extern struct inpcbtable rawcbtable, rawin6pcbtable;
 extern struct baddynamicports baddynamicports;
 extern struct baddynamicports rootonlyports;
+extern int in_pcbnotifymiss;
 
 #define sotopf(so)  (so->so_proto->pr_domain->dom_family)
 
@@ -259,6 +272,9 @@ int	 in_pcbaddrisavail(struct inpcb *, struct sockaddr_in *, int,
 	    struct proc *);
 int	 in_pcbconnect(struct inpcb *, struct mbuf *);
 void	 in_pcbdetach(struct inpcb *);
+struct inpcb *
+	 in_pcbref(struct inpcb *);
+void	 in_pcbunref(struct inpcb *);
 void	 in_pcbdisconnect(struct inpcb *);
 struct inpcb *
 	 in_pcbhashlookup(struct inpcbtable *, struct in_addr,
@@ -267,6 +283,9 @@ struct inpcb *
 	 in_pcblookup_listen(struct inpcbtable *, struct in_addr, u_int,
 	    struct mbuf *, u_int);
 #ifdef INET6
+struct inpcbhead *
+	 in6_pcbhash(struct inpcbtable *, int, const struct in6_addr *,
+	    u_short, const struct in6_addr *, u_short);
 struct inpcb *
 	 in6_pcbhashlookup(struct inpcbtable *, const struct in6_addr *,
 			       u_int, const struct in6_addr *, u_int, u_int);

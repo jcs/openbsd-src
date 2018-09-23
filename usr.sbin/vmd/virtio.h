@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtio.h,v 1.27 2018/08/25 04:16:09 ccardenas Exp $	*/
+/*	$OpenBSD: virtio.h,v 1.29 2018/09/19 04:29:21 ccardenas Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -258,6 +258,7 @@ struct ioinfo {
 
 /* virtio.c */
 void virtio_init(struct vmd_vm *, int, int *, int *);
+void virtio_shutdown(struct vmd_vm *);
 int virtio_dump(int);
 int virtio_restore(int, struct vmd_vm *, int, int *, int *);
 uint32_t vring_size(uint32_t);
@@ -270,10 +271,11 @@ void viornd_update_qa(void);
 int viornd_notifyq(void);
 
 int virtio_init_raw(struct virtio_backing *dev, off_t *sz, int fd);
+int virtio_init_qcow2(struct virtio_backing *dev, off_t *sz, int fd);
 
 int virtio_blk_io(int, uint16_t, uint32_t *, uint8_t *, void *, uint8_t);
 int vioblk_dump(int);
-int vioblk_restore(int, struct vm_create_params *, int *);
+int vioblk_restore(int, struct vmop_create_params *, int *);
 void vioblk_update_qs(struct vioblk_dev *);
 void vioblk_update_qa(struct vioblk_dev *);
 int vioblk_notifyq(struct vioblk_dev *);

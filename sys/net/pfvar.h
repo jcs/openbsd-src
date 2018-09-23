@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfvar.h,v 1.482 2018/07/22 09:09:18 sf Exp $ */
+/*	$OpenBSD: pfvar.h,v 1.486 2018/09/13 19:53:58 bluhm Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -118,6 +118,19 @@ enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
  * Otherwise older fragments are considered stale and are dropped.
  */
 #define PF_FRAG_STALE			200
+
+/*
+ * Limit the length of the fragment queue traversal.  Remember
+ * search entry points based on the fragment offset.
+ */
+#define PF_FRAG_ENTRY_POINTS		16
+
+/*
+ * The number of entries in the fragment queue must be limited
+ * to avoid DoS by linear seaching.  Instead of a global limit,
+ * use a limit per entry point.  For large packets these sum up.
+ */
+#define PF_FRAG_ENTRY_LIMIT		64
 
 enum	{ PF_NOPFROUTE, PF_ROUTETO, PF_DUPTO, PF_REPLYTO };
 enum	{ PF_LIMIT_STATES, PF_LIMIT_SRC_NODES, PF_LIMIT_FRAGS,
@@ -748,6 +761,7 @@ struct pf_state {
 
 	TAILQ_ENTRY(pf_state)	 sync_list;
 	TAILQ_ENTRY(pf_state)	 entry_list;
+	SLIST_ENTRY(pf_state)	 gc_list;
 	RB_ENTRY(pf_state)	 entry_id;
 	struct pf_state_peer	 src;
 	struct pf_state_peer	 dst;
@@ -792,6 +806,7 @@ struct pf_state {
 	u_int16_t		 max_mss;
 	u_int16_t		 if_index_in;
 	u_int16_t		 if_index_out;
+	pf_refcnt_t		 refcnt;
 	u_int16_t		 delay;
 };
 
@@ -1946,6 +1961,8 @@ int			 pf_postprocess_addr(struct pf_state *);
 void			 pf_mbuf_link_state_key(struct mbuf *,
 			    struct pf_state_key *);
 void			 pf_mbuf_unlink_state_key(struct mbuf *);
+void			 pf_mbuf_link_inpcb(struct mbuf *, struct inpcb *);
+void			 pf_mbuf_unlink_inpcb(struct mbuf *);
 
 u_int8_t*		 pf_find_tcpopt(u_int8_t *, u_int8_t *, size_t,
 			    u_int8_t, u_int8_t);

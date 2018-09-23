@@ -1,4 +1,4 @@
-.\" $OpenBSD: bgpd.conf.5,v 1.171 2018/07/11 14:08:46 benno Exp $
+.\" $OpenBSD: bgpd.conf.5,v 1.178 2018/09/09 17:11:26 jmc Exp $
 .\"
 .\" Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
 .\" Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -16,7 +16,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: July 11 2018 $
+.Dd $Mdocdate: September 9 2018 $
 .Dt BGPD.CONF 5
 .Os
 .Sh NAME
@@ -143,6 +143,19 @@ or as a large number (ASPLAIN format), for example:
 .Bd -literal -offset indent
 AS 196618
 .Ed
+.Pp
+.It Xo
+.Ic as-set Ar name
+.Ic { Ar as-number ... Ic }
+.Xc
+An
+.Ic as-set
+holds a collection of AS numbers and can be used with the AS specific
+parameter in
+.Sx FILTER
+rules.
+Lookups against as-sets are more efficient than a large number of rules
+which differ only in the AS number.
 .Pp
 .It Ic connect-retry Ar seconds
 Set the number of seconds before retrying to open a connection.
@@ -278,12 +291,11 @@ Log received and sent updates.
 .Pq Ic inet Ns | Ns Ic inet6
 .Ic priority Ar number Op Ic set ...\&
 .Xc
-.\" NOT IMPLEMENTED. DO WE WANT THIS?
-.\" .It Xo
-.\" .Ic network prefix-set
-.\" .Ar name
-.\" .Op Ic set ...\&
-.\" .Xc
+.It Xo
+.Ic network prefix-set
+.Ar name
+.Op Ic set ...\&
+.Xc
 Announce the specified network as belonging to our AS.
 If set to
 .Ic connected ,
@@ -301,6 +313,9 @@ If set to
 routes with the specified
 .Ar priority
 will be announced.
+If a prefix-set
+.Ar name
+is specified, all networks in the prefix-set will be announced.
 .Bd -literal -offset indent
 network 192.168.7.0/24
 .Ed
@@ -1115,17 +1130,21 @@ matching attributes.
 .Ar as-type Op Ar operator
 .Ar as-number
 .Xc
+.It Ar as-type Ic as-set Ar name
 This rule applies only to
 .Em UPDATES
 where the
 .Em AS path
 matches.
 The
-.Ar as-number
-is matched against a part of the
+part of the
 .Em AS path
 specified by the
-.Ar as-type :
+.Ar as-type
+is matched against the
+.Ar as-number
+or the
+.Ic as-set Ar name :
 .Pp
 .Bl -tag -width transmit-as -compact
 .It Ic AS
@@ -1147,9 +1166,14 @@ which is expanded to the current neighbor remote AS number, or
 .Ic local-as ,
 which is expanded to the locally assigned AS number.
 .Pp
+When specifying an
+.Ic as-set Ar name
+the AS path will instead be matched against all the AS numbers in the set.
+.Pp
 The
 .Ar operator
-can be unspecified (this case is identical to the equality operator), or one of the numerical operators
+can be unspecified (this case is identical to the equality operator), or one
+of the numerical operators
 .Bd -literal -offset indent
 =	(equal)
 !=	(unequal)
@@ -1425,11 +1449,19 @@ is a shorthand for:
 .Ic prefix Ar address Ns Li / Ns Ar len Ic prexiflen Ic >= Ar len
 .Ed
 .Pp
-.It Ic prefix-set Ar name
+.It Ic prefix-set Ar name Op Ic or-longer
 This rule applies only to
 .Em UPDATES
 that match the given prefix-set
 .Ar name .
+With
+.Ic or-longer ,
+the
+.Em UPDATES
+will match any prefix in the prefix-set where
+.Bd -literal -offset indent
+.Ic address Ns Li / Ns Ar len Ic prexiflen Ic >= Ar len
+.Ed
 .Pp
 .It Ic quick
 If an

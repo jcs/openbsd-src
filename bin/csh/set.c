@@ -1,4 +1,4 @@
-/*	$OpenBSD: set.c,v 1.19 2015/12/26 13:48:38 mestre Exp $	*/
+/*	$OpenBSD: set.c,v 1.21 2018/09/18 06:56:09 deraadt Exp $	*/
 /*	$NetBSD: set.c,v 1.8 1995/03/21 18:35:52 mycroft Exp $	*/
 
 /*-

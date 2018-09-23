@@ -1,4 +1,4 @@
-/*	$OpenBSD: in6_pcb.c,v 1.104 2018/06/14 17:00:58 bluhm Exp $	*/
+/*	$OpenBSD: in6_pcb.c,v 1.107 2018/09/20 18:59:10 bluhm Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -99,56 +99,45 @@
  *
  */
 
+#include "pf.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/mbuf.h>
-#include <sys/domain.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
-#include <sys/errno.h>
-#include <sys/time.h>
-#include <sys/proc.h>
-#include <sys/pledge.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
-#include <net/route.h>
+#include <net/pfvar.h>
 
 #include <netinet/in.h>
 #include <netinet/ip.h>
-#include <netinet/in_pcb.h>
 #include <netinet/ip_var.h>
+#include <netinet/in_pcb.h>
 
 #include <netinet6/in6_var.h>
-#include <netinet/ip6.h>
-#include <netinet6/ip6_var.h>
-
-/*
- * External globals
- */
-
-/*
- * Globals
- */
 
 const struct in6_addr zeroin6_addr;
 
-/*
- * Keep separate inet6ctlerrmap, because I may remap some of these.
- * I also put it here, because, quite frankly, it belongs here, not in
- * ip{v6,}_input().
- */
-#if 0
-u_char inet6ctlerrmap[PRC_NCMDS] = {
-	0,		0,		0,		0,
-	0,		EMSGSIZE,	EHOSTDOWN,	EHOSTUNREACH,
-	EHOSTUNREACH,	EHOSTUNREACH,	ECONNREFUSED,	ECONNREFUSED,
-	EMSGSIZE,	EHOSTUNREACH,	0,		0,
-	0,		0,		0,		0,
-	ENOPROTOOPT
-};
-#endif
+struct inpcbhead *
+in6_pcbhash(struct inpcbtable *table, int rdom,
+    const struct in6_addr *faddr, u_short fport,
+    const struct in6_addr *laddr, u_short lport)
+{
+	SIPHASH_CTX ctx;
+	u_int32_t nrdom = htonl(rdom);
+
+	SipHash24_Init(&ctx, &table->inpt_key);
+	SipHash24_Update(&ctx, &nrdom, sizeof(nrdom));
+	SipHash24_Update(&ctx, faddr, sizeof(*faddr));
+	SipHash24_Update(&ctx, &fport, sizeof(fport));
+	SipHash24_Update(&ctx, laddr, sizeof(*laddr));
+	SipHash24_Update(&ctx, &lport, sizeof(lport));
+
+	return (&table->inpt_hashtbl[SipHash24_End(&ctx) & table->inpt_mask]);
+}
 
 int
 in6_pcbaddrisavail(struct inpcb *inp, struct sockaddr_in6 *sin6, int wild,
@@ -313,6 +302,52 @@ in6_pcbconnect(struct inpcb *inp, struct mbuf *nam)
 }
 
 /*
+ * Get the local address/port, and put it in a sockaddr_in6.
+ * This services the getsockname(2) call.
+ */
+int
+in6_setsockaddr(struct inpcb *inp, struct mbuf *nam)
+{
+	struct sockaddr_in6 *sin6;
+
+	nam->m_len = sizeof(struct sockaddr_in6);
+	sin6 = mtod(nam,struct sockaddr_in6 *);
+
+	bzero ((caddr_t)sin6,sizeof(struct sockaddr_in6));
+	sin6->sin6_family = AF_INET6;
+	sin6->sin6_len = sizeof(struct sockaddr_in6);
+	sin6->sin6_port = inp->inp_lport;
+	sin6->sin6_addr = inp->inp_laddr6;
+	/* KAME hack: recover scopeid */
+	in6_recoverscope(sin6, &inp->inp_laddr6);
+
+	return 0;
+}
+
+/*
+ * Get the foreign address/port, and put it in a sockaddr_in6.
+ * This services the getpeername(2) call.
+ */
+int
+in6_setpeeraddr(struct inpcb *inp, struct mbuf *nam)
+{
+	struct sockaddr_in6 *sin6;
+
+	nam->m_len = sizeof(struct sockaddr_in6);
+	sin6 = mtod(nam,struct sockaddr_in6 *);
+
+	bzero ((caddr_t)sin6,sizeof(struct sockaddr_in6));
+	sin6->sin6_family = AF_INET6;
+	sin6->sin6_len = sizeof(struct sockaddr_in6);
+	sin6->sin6_port = inp->inp_fport;
+	sin6->sin6_addr = inp->inp_faddr6;
+	/* KAME hack: recover scopeid */
+	in6_recoverscope(sin6, &inp->inp_faddr6);
+
+	return 0;
+}
+
+/*
  * Pass some notification to all connections of a protocol
  * associated with address dst.  The local address and/or port numbers
  * may be specified to limit the search.  The "usual action" will be
@@ -376,6 +411,8 @@ in6_pcbnotify(struct inpcbtable *table, struct sockaddr_in6 *dst,
 	errno = inet6ctlerrmap[cmd];
 
 	rdomain = rtable_l2(rtable);
+	KERNEL_LOCK();
+	mtx_enter(&inpcbtable_mtx);
 	TAILQ_FOREACH_SAFE(inp, &table->inpt_queue, inp_queue, ninp) {
 		if ((inp->inp_flags & INP_IPV6) == 0)
 			continue;
@@ -439,7 +476,7 @@ in6_pcbnotify(struct inpcbtable *table, struct sockaddr_in6 *dst,
 		else if (!IN6_ARE_ADDR_EQUAL(&inp->inp_faddr6,
 					     &dst->sin6_addr) ||
 			 rtable_l2(inp->inp_rtableid) != rdomain ||
-			 inp->inp_socket == 0 ||
+			 inp->inp_socket == NULL ||
 			 (lport && inp->inp_lport != lport) ||
 			 (!IN6_IS_ADDR_UNSPECIFIED(&sa6_src.sin6_addr) &&
 			  !IN6_ARE_ADDR_EQUAL(&inp->inp_laddr6,
@@ -449,54 +486,143 @@ in6_pcbnotify(struct inpcbtable *table, struct sockaddr_in6 *dst,
 		}
 	  do_notify:
 		nmatch++;
+		/*
+		 * The notify functions may grab the kernel lock.  Sometimes
+		 * we already hold the kernel lock when we acquire the pcb
+		 * mutex.  So do an extra kernel lock before the mutex outside
+		 * of this loop.  XXXSMP
+		 */
 		if (notify)
 			(*notify)(inp, errno);
 	}
+	mtx_leave(&inpcbtable_mtx);
+	KERNEL_UNLOCK();
+
 	return (nmatch);
 }
 
-/*
- * Get the local address/port, and put it in a sockaddr_in6.
- * This services the getsockname(2) call.
- */
-int
-in6_setsockaddr(struct inpcb *inp, struct mbuf *nam)
+struct inpcb *
+in6_pcbhashlookup(struct inpcbtable *table, const struct in6_addr *faddr,
+    u_int fport_arg, const struct in6_addr *laddr, u_int lport_arg,
+    u_int rtable)
 {
-	struct sockaddr_in6 *sin6;
+	struct inpcbhead *head;
+	struct inpcb *inp;
+	u_int16_t fport = fport_arg, lport = lport_arg;
+	u_int rdomain;
 
-	nam->m_len = sizeof(struct sockaddr_in6);
-	sin6 = mtod(nam,struct sockaddr_in6 *);
-
-	bzero ((caddr_t)sin6,sizeof(struct sockaddr_in6));
-	sin6->sin6_family = AF_INET6;
-	sin6->sin6_len = sizeof(struct sockaddr_in6);
-	sin6->sin6_port = inp->inp_lport;
-	sin6->sin6_addr = inp->inp_laddr6;
-	/* KAME hack: recover scopeid */
-	in6_recoverscope(sin6, &inp->inp_laddr6);
-
-	return 0;
+	rdomain = rtable_l2(rtable);
+	mtx_enter(&inpcbtable_mtx);
+	head = in6_pcbhash(table, rdomain, faddr, fport, laddr, lport);
+	LIST_FOREACH(inp, head, inp_hash) {
+		if (!(inp->inp_flags & INP_IPV6))
+			continue;
+		if (IN6_ARE_ADDR_EQUAL(&inp->inp_faddr6, faddr) &&
+		    inp->inp_fport == fport && inp->inp_lport == lport &&
+		    IN6_ARE_ADDR_EQUAL(&inp->inp_laddr6, laddr) &&
+		    rtable_l2(inp->inp_rtableid) == rdomain) {
+			/*
+			 * Move this PCB to the head of hash chain so that
+			 * repeated accesses are quicker.  This is analogous to
+			 * the historic single-entry PCB cache.
+			 */
+			if (inp != LIST_FIRST(head)) {
+				LIST_REMOVE(inp, inp_hash);
+				LIST_INSERT_HEAD(head, inp, inp_hash);
+			}
+			break;
+		}
+	}
+	mtx_leave(&inpcbtable_mtx);
+#ifdef DIAGNOSTIC
+	if (inp == NULL && in_pcbnotifymiss) {
+		printf("%s: faddr= fport=%d laddr= lport=%d rdom=%u\n",
+		    __func__, ntohs(fport), ntohs(lport), rdomain);
+	}
+#endif
+	return (inp);
 }
 
-/*
- * Get the foreign address/port, and put it in a sockaddr_in6.
- * This services the getpeername(2) call.
- */
-int
-in6_setpeeraddr(struct inpcb *inp, struct mbuf *nam)
+struct inpcb *
+in6_pcblookup_listen(struct inpcbtable *table, struct in6_addr *laddr,
+    u_int lport_arg, struct mbuf *m, u_int rtable)
 {
-	struct sockaddr_in6 *sin6;
+	struct inpcbhead *head;
+	const struct in6_addr *key1, *key2;
+	struct inpcb *inp;
+	u_int16_t lport = lport_arg;
+	u_int rdomain;
 
-	nam->m_len = sizeof(struct sockaddr_in6);
-	sin6 = mtod(nam,struct sockaddr_in6 *);
+	key1 = laddr;
+	key2 = &zeroin6_addr;
+#if NPF > 0
+	if (m && m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) {
+		struct pf_divert *divert;
 
-	bzero ((caddr_t)sin6,sizeof(struct sockaddr_in6));
-	sin6->sin6_family = AF_INET6;
-	sin6->sin6_len = sizeof(struct sockaddr_in6);
-	sin6->sin6_port = inp->inp_fport;
-	sin6->sin6_addr = inp->inp_faddr6;
-	/* KAME hack: recover scopeid */
-	in6_recoverscope(sin6, &inp->inp_faddr6);
+		divert = pf_find_divert(m);
+		KASSERT(divert != NULL);
+		switch (divert->type) {
+		case PF_DIVERT_TO:
+			key1 = key2 = &divert->addr.v6;
+			lport = divert->port;
+			break;
+		case PF_DIVERT_REPLY:
+			return (NULL);
+		default:
+			panic("%s: unknown divert type %d, mbuf %p, divert %p",
+			    __func__, divert->type, m, divert);
+		}
+	} else if (m && m->m_pkthdr.pf.flags & PF_TAG_TRANSLATE_LOCALHOST) {
+		/*
+		 * Redirected connections should not be treated the same
+		 * as connections directed to ::1 since localhost
+		 * can only be accessed from the host itself.
+		 */
+		key1 = &zeroin6_addr;
+		key2 = laddr;
+	}
+#endif
 
-	return 0;
+	rdomain = rtable_l2(rtable);
+	mtx_enter(&inpcbtable_mtx);
+	head = in6_pcbhash(table, rdomain, &zeroin6_addr, 0, key1, lport);
+	LIST_FOREACH(inp, head, inp_hash) {
+		if (!(inp->inp_flags & INP_IPV6))
+			continue;
+		if (inp->inp_lport == lport && inp->inp_fport == 0 &&
+		    IN6_ARE_ADDR_EQUAL(&inp->inp_laddr6, key1) &&
+		    IN6_IS_ADDR_UNSPECIFIED(&inp->inp_faddr6) &&
+		    rtable_l2(inp->inp_rtableid) == rdomain)
+			break;
+	}
+	if (inp == NULL && ! IN6_ARE_ADDR_EQUAL(key1, key2)) {
+		head = in6_pcbhash(table, rdomain,
+		    &zeroin6_addr, 0, key2, lport);
+		LIST_FOREACH(inp, head, inp_hash) {
+			if (!(inp->inp_flags & INP_IPV6))
+				continue;
+			if (inp->inp_lport == lport && inp->inp_fport == 0 &&
+			    IN6_ARE_ADDR_EQUAL(&inp->inp_laddr6, key2) &&
+			    IN6_IS_ADDR_UNSPECIFIED(&inp->inp_faddr6) &&
+			    rtable_l2(inp->inp_rtableid) == rdomain)
+				break;
+		}
+	}
+	/*
+	 * Move this PCB to the head of hash chain so that
+	 * repeated accesses are quicker.  This is analogous to
+	 * the historic single-entry PCB cache.
+	 */
+	if (inp != NULL && inp != LIST_FIRST(head)) {
+		LIST_REMOVE(inp, inp_hash);
+		LIST_INSERT_HEAD(head, inp, inp_hash);
+	}
+	mtx_leave(&inpcbtable_mtx);
+#ifdef DIAGNOSTIC
+	if (inp == NULL && in_pcbnotifymiss) {
+		printf("%s: laddr= lport=%d rdom=%u\n",
+		    __func__, ntohs(lport), rdomain);
+	}
+#endif
+	return (inp);
 }

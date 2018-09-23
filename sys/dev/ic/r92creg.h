@@ -1,4 +1,4 @@
-/*	$OpenBSD: r92creg.h,v 1.16 2017/09/22 13:41:56 kevlo Exp $	*/
+/*	$OpenBSD: r92creg.h,v 1.18 2018/09/21 01:45:53 jmatthew Exp $	*/
 
 /*-
  * Copyright (c) 2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -58,6 +58,8 @@
 #define R92C_FSISR			0x054
 #define R92C_HSIMR			0x058
 #define R92C_HSISR			0x05c
+#define R92C_AFE_XTAL_CTRL_EXT		0x078
+#define R88E_XCK_OUT_CTRL		0x07c
 #define R92C_MCUFWDL			0x080
 #define R92C_HMEBOX_EXT(idx)		(0x088 + (idx) * 2)
 #define R88E_HIMR			0x0b0
@@ -96,6 +98,7 @@
 #define R92C_MBIST_START		0x174
 #define R92C_MBIST_DONE			0x178
 #define R92C_MBIST_FAIL			0x17c
+#define R88E_32K_CTRL			0x194
 #define R92C_C2HEVT_MSG			0x1a0
 #define R92C_C2HEVT_CLEAR		0x1af
 #define R92C_C2HEVT_MSG_TEST		0x1b8
@@ -117,6 +120,7 @@
 /* Rx DMA Configuration. */
 #define R92C_RXDMA_AGG_PG_TH		0x280
 #define R92C_RXPKT_NUM			0x284
+#define R88E_RXDMA_CTRL			0x286
 #define R92C_RXDMA_STATUS		0x288
 
 #define R92C_PCIE_CTRL_REG		0x300
@@ -165,8 +169,9 @@
 #define R92C_RD_RESP_PKT_TH		0x463
 #define R92C_INIRTS_RATE_SEL		0x480
 #define R92C_INIDATA_RATE_SEL(macid)	(0x484 + (macid))
-#define R88E_TX_RPT_CTRL		0x4ec
 #define R92C_MAX_AGGR_NUM		0x4ca
+#define R88E_TX_RPT_CTRL		0x4ec
+#define R88E_TX_RPT_TIME		0x4f0
 /* EDCA Configuration. */
 #define R92C_EDCA_VO_PARAM		0x500
 #define R92C_EDCA_VI_PARAM		0x504
@@ -329,6 +334,9 @@
 #define R92C_AFE_XTAL_CTRL_ADDR_M	0x007ff800
 #define R92C_AFE_XTAL_CTRL_ADDR_S	11
 
+/* Bits for R88E_XCK_OUT_CTRL. */
+#define R88E_XCK_OUT_CTRL_EN		1
+
 /* Bits for R92C_EFUSE_CTRL. */
 #define R92C_EFUSE_CTRL_DATA_M	0x000000ff
 #define R92C_EFUSE_CTRL_DATA_S	0
@@ -339,6 +347,7 @@
 /* Bits for R92C_GPIO_MUXCFG. */
 #define R92C_GPIO_MUXCFG_RFKILL	0x0008
 #define R92C_GPIO_MUXCFG_ENBT	0x0020
+#define R92C_GPIO_MUXCFG_ENSIC	0x1000
 
 /* Bits for R92C_GPIO_IO_SEL. */
 #define R92C_GPIO_IO_SEL_RFKILL	0x0008
@@ -365,16 +374,43 @@
 #define R92C_MCUFWDL_CPRST		0x00800000
 
 /* Bits for R88E_HIMR. */
+#define R88E_HIMR_ROK			0x00000001
+#define R88E_HIMR_RDU			0x00000002
+#define R88E_HIMR_VODOK			0x00000004
+#define R88E_HIMR_VIDOK			0x00000008
+#define R88E_HIMR_BEDOK			0x00000010
+#define R88E_HIMR_BKDOK			0x00000020
+#define R88E_HIMR_MGNTDOK		0x00000040
+#define R88E_HIMR_HIGHDOK		0x00000080
 #define R88E_HIMR_CPWM			0x00000100
 #define R88E_HIMR_CPWM2			0x00000200
+#define R88E_HIMR_C2HCMD		0x00000400
+#define R88E_HIMR_HISR1_IND_INT		0x00000800
+#define R88E_HIMR_ATIMEND		0x00001000
+#define R88E_HIMR_BCNDMAINT_E		0x00004000
+#define R88E_HIMR_HSISR_IND_ON_INT	0x00008000
+#define R88E_HIMR_BCNDOK0		0x00010000
+#define R88E_HIMR_BCNDMAINT0		0x00100000
+#define R88E_HIMR_TSF_BIT32_TOGGLE	0x01000000
+#define R88E_HIMR_TBDOK			0x02000000
 #define R88E_HIMR_TBDER			0x04000000
+#define R88E_HIMR_GTINT3		0x08000000
+#define R88E_HIMR_GTINT4		0x10000000
 #define R88E_HIMR_PSTIMEOUT		0x20000000
+#define R88E_HIMR_TXCCK			0x40000000
 
 /* Bits for R88E_HIMRE.*/
 #define R88E_HIMRE_RXFOVW		0x00000100
 #define R88E_HIMRE_TXFOVW		0x00000200
 #define R88E_HIMRE_RXERR		0x00000400
 #define R88E_HIMRE_TXERR		0x00000800
+
+/* Bits for R88E_HSIMR */
+#define R88E_HSIMR_GPIO12_0_INT_EN	0x00000001
+#define R88E_HSIMR_SPS_OCP_INT_EN	0x00000020
+#define R88E_HSIMR_RON_INT_EN		0x00000040
+#define R88E_HSIMR_PDN_INT_EN		0x00000080
+#define R88E_HSIMR_GPIO9_INT_EN		0x02000000
 
 /* Bits for R92C_EFUSE_ACCESS. */
 #define R92C_EFUSE_ACCESS_OFF		0x00
@@ -580,6 +616,10 @@
 #define R92C_TCR_ACRC		0x00000100
 #define R92C_TCR_CFENDFORM	0x00000200
 #define R92C_TCR_ICV		0x00000400
+#define R92C_TCR_ERRSTEN0	0x00001000
+#define R92C_TCR_ERRSTEN1	0x00002000
+#define R92C_TCR_ERRSTEN2	0x00004000
+#define R92C_TCR_ERRSTEN3	0x00008000
 
 /* Bits for R92C_RCR. */
 #define R92C_RCR_AAP		0x00000001
@@ -1041,7 +1081,7 @@ struct r92c_fw_cmd_macid_cfg {
  * RTL8192CU ROM image.
  */
 struct r92c_rom {
-	uint16_t	id;		/* 0x8192 */
+	uint16_t	id;		/* 0x8129 */
 	uint8_t		reserved1[5];
 	uint8_t		dbg_sel;
 	uint16_t	reserved2;
@@ -1096,10 +1136,11 @@ struct r88e_tx_pwr {
 } __packed;
 
 /*
- * RTL8188EU ROM image.
+ * RTL8188E ROM images.
  */
 struct r88e_rom {
-	uint8_t			reserved1[16];
+	uint16_t		id;
+	uint8_t			reserved1[14];
 	struct r88e_tx_pwr	txpwr;
 	uint8_t			reserved2[156];
 	uint8_t			channel_plan;
@@ -1114,6 +1155,18 @@ struct r88e_rom {
 	uint8_t			reserved4[3];
 	uint8_t			rf_ant_opt;
 	uint8_t			reserved5[6];
+} __packed;
+
+struct r88e_pci_rom {
+	uint8_t			macaddr[IEEE80211_ADDR_LEN];
+	uint16_t 		vid;
+	uint16_t 		did;
+	uint16_t 		svid;
+	uint16_t 		smid;
+	uint8_t			reserved[290];
+} __packed;
+
+struct r88e_usb_rom {
 	uint16_t		vid;
 	uint16_t		pid;
 	uint8_t			usb_opt;
@@ -1980,7 +2033,7 @@ static const uint32_t rtl8188eu_agc_vals[] = {
 	0x403c0001, 0x403d0001, 0x403e0001, 0x403f0001, 0xfb400001,
 	0xfb410001, 0xfb420001, 0xfb430001, 0xfb440001, 0xfb450001,
 	0xfb460001, 0xfb470001, 0xfb480001, 0xfa490001, 0xf94a0001,
-	0xf84B0001, 0xf74c0001, 0xf64d0001, 0xf54e0001, 0xf44f0001,
+	0xf84b0001, 0xf74c0001, 0xf64d0001, 0xf54e0001, 0xf44f0001,
 	0xf3500001, 0xf2510001, 0xf1520001, 0xf0530001, 0xef540001,
 	0xee550001, 0xed560001, 0xec570001, 0xeb580001, 0xea590001,
 	0xe95a0001, 0xe85b0001, 0xe75c0001, 0xe65d0001, 0xe55e0001,

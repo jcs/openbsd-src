@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bnxt.c,v 1.11 2018/08/30 11:18:21 jmatthew Exp $	*/
+/*	$OpenBSD: if_bnxt.c,v 1.17 2018/09/19 10:26:17 jmatthew Exp $	*/
 /*-
  * Broadcom NetXtreme-C/E network driver.
  *
@@ -125,7 +125,6 @@ struct bnxt_ring {
 	uint32_t		ring_size;
 	uint16_t		id;
 	uint16_t		phys_id;
-	struct bnxt_full_tpa_start *tpa_start;
 };
 
 struct bnxt_cp_ring {
@@ -210,6 +209,7 @@ struct bnxt_softc {
 
 	void			*sc_ih;
 
+	int			sc_hwrm_ver;
 	int			sc_max_tc;
 	struct bnxt_cos_queue	sc_q_info[BNXT_MAX_QUEUE];
 
@@ -277,6 +277,7 @@ int		bnxt_intr(void *);
 void		bnxt_watchdog(struct ifnet *);
 void		bnxt_media_status(struct ifnet *, struct ifmediareq *);
 int		bnxt_media_change(struct ifnet *);
+int		bnxt_media_autonegotiate(struct bnxt_softc *);
 
 struct cmpl_base *bnxt_cpr_next_cmpl(struct bnxt_softc *, struct bnxt_cp_ring *);
 void		bnxt_cpr_commit(struct bnxt_softc *, struct bnxt_cp_ring *);
@@ -538,7 +539,7 @@ bnxt_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	sc->sc_cp_ring.stats_ctx_id = HWRM_NA_SIGNATURE;
-	sc->sc_cp_ring.ring.phys_id = HWRM_NA_SIGNATURE;
+	sc->sc_cp_ring.ring.phys_id = (uint16_t)HWRM_NA_SIGNATURE;
 	sc->sc_cp_ring.softc = sc;
 	sc->sc_cp_ring.ring.id = 0;
 	sc->sc_cp_ring.ring.doorbell = sc->sc_cp_ring.ring.id * 0x80;
@@ -608,6 +609,7 @@ bnxt_attach(struct device *parent, struct device *self, void *aux)
 
 	timeout_set(&sc->sc_rx_refill, bnxt_refill, sc);
 
+	bnxt_media_autonegotiate(sc);
 	bnxt_hwrm_port_phy_qcfg(sc, NULL);
 	return;
 
@@ -679,7 +681,7 @@ bnxt_up(struct bnxt_softc *sc)
 		goto free_mc;
 	}
 
-	sc->sc_tx_ring.phys_id = HWRM_NA_SIGNATURE;
+	sc->sc_tx_ring.phys_id = (uint16_t)HWRM_NA_SIGNATURE;
 	sc->sc_tx_ring.id = BNXT_TX_RING_ID;
 	sc->sc_tx_ring.doorbell = sc->sc_tx_ring.id * 0x80;
 	sc->sc_tx_ring.ring_size = PAGE_SIZE / sizeof(struct tx_bd_short);
@@ -694,7 +696,7 @@ bnxt_up(struct bnxt_softc *sc)
 	}
 	bnxt_write_tx_doorbell(sc, &sc->sc_tx_ring, 0);
 
-	sc->sc_rx_ring.phys_id = HWRM_NA_SIGNATURE;
+	sc->sc_rx_ring.phys_id = (uint16_t)HWRM_NA_SIGNATURE;
 	sc->sc_rx_ring.id = BNXT_RX_RING_ID;
 	sc->sc_rx_ring.doorbell = sc->sc_rx_ring.id * 0x80;
 	sc->sc_rx_ring.ring_size = PAGE_SIZE / sizeof(struct rx_prod_pkt_bd);
@@ -709,7 +711,7 @@ bnxt_up(struct bnxt_softc *sc)
 	}
 	bnxt_write_rx_doorbell(sc, &sc->sc_rx_ring, 0);
 
-	sc->sc_rx_ag_ring.phys_id = HWRM_NA_SIGNATURE;
+	sc->sc_rx_ag_ring.phys_id = (uint16_t)HWRM_NA_SIGNATURE;
 	sc->sc_rx_ag_ring.id = BNXT_AG_RING_ID;
 	sc->sc_rx_ag_ring.doorbell = sc->sc_rx_ag_ring.id * 0x80;
 	sc->sc_rx_ag_ring.ring_size = PAGE_SIZE / sizeof(struct rx_prod_pkt_bd);
@@ -735,14 +737,14 @@ bnxt_up(struct bnxt_softc *sc)
 		goto dealloc_ag;
 	}
 
-	sc->sc_vnic.rss_id = HWRM_NA_SIGNATURE;
+	sc->sc_vnic.rss_id = (uint16_t)HWRM_NA_SIGNATURE;
 	if (bnxt_hwrm_vnic_ctx_alloc(sc, &sc->sc_vnic.rss_id) != 0) {
 		printf("%s: failed to allocate vnic rss context\n",
 		    DEVNAME(sc));
 		goto dealloc_ring_group;
 	}
 
-	sc->sc_vnic.id = HWRM_NA_SIGNATURE;
+	sc->sc_vnic.id = (uint16_t)HWRM_NA_SIGNATURE;
 	sc->sc_vnic.def_ring_grp = sc->sc_ring_group.grp_id;
 	sc->sc_vnic.mru = BNXT_MAX_MTU;
 	sc->sc_vnic.cos_rule = (uint16_t)HWRM_NA_SIGNATURE;
@@ -1239,13 +1241,8 @@ bnxt_intr(void *xsc)
 	struct bnxt_cp_ring *cpr = &sc->sc_cp_ring;
 	struct cmpl_base *cmpl;
 	struct mbuf_list ml = MBUF_LIST_INITIALIZER();
-	uint32_t cons;
-	int v_bit;
 	uint16_t type;
 	int rxfree, txfree, agfree, rv, rollback;
-
-	cons = cpr->cons;
-	v_bit = cpr->v_bit;
 
 	bnxt_write_cp_doorbell(sc, &cpr->ring, 0);
 	rxfree = 0;
@@ -1329,6 +1326,7 @@ uint64_t
 bnxt_get_media_type(uint64_t speed, int phy_type)
 {
 	switch (phy_type) {
+	case HWRM_PORT_PHY_QCFG_OUTPUT_PHY_TYPE_UNKNOWN:
 	case HWRM_PORT_PHY_QCFG_OUTPUT_PHY_TYPE_BASECR:
 	case HWRM_PORT_PHY_QCFG_OUTPUT_PHY_TYPE_25G_BASECR_CA_L:
 	case HWRM_PORT_PHY_QCFG_OUTPUT_PHY_TYPE_25G_BASECR_CA_S:
@@ -1514,11 +1512,12 @@ bnxt_hwrm_port_phy_qcfg(struct bnxt_softc *softc, struct ifmediareq *ifmr)
 	struct hwrm_port_phy_qcfg_output *resp =
 	    BNXT_DMA_KVA(softc->sc_cmd_resp);
 	int link_state = LINK_STATE_DOWN;
-	int speeds[] = {
+	uint64_t speeds[] = {
 		IF_Gbps(1), IF_Gbps(2), IF_Mbps(2500), IF_Gbps(10), IF_Gbps(20),
 		IF_Gbps(25), IF_Gbps(40), IF_Gbps(50), IF_Gbps(100)
 	};
 	uint64_t media_type;
+	int duplex;
 	int rc = 0;
 	int i;
 
@@ -1531,8 +1530,13 @@ bnxt_hwrm_port_phy_qcfg(struct bnxt_softc *softc, struct ifmediareq *ifmr)
 		goto exit;
 	}
 
+	if (softc->sc_hwrm_ver > 0x10800)
+		duplex = resp->duplex_state;
+	else
+		duplex = resp->duplex_cfg;
+
 	if (resp->link == HWRM_PORT_PHY_QCFG_OUTPUT_LINK_LINK) {
-		if (resp->duplex_state == HWRM_PORT_PHY_QCFG_OUTPUT_DUPLEX_STATE_HALF)
+		if (duplex == HWRM_PORT_PHY_QCFG_OUTPUT_DUPLEX_STATE_HALF)
 			link_state = LINK_STATE_HALF_DUPLEX;
 		else
 			link_state = LINK_STATE_FULL_DUPLEX;
@@ -1593,7 +1597,7 @@ bnxt_hwrm_port_phy_qcfg(struct bnxt_softc *softc, struct ifmediareq *ifmr)
 				ifmr->ifm_active |= IFM_ETH_TXPAUSE;
 			if (resp->pause & HWRM_PORT_PHY_QCFG_OUTPUT_PAUSE_RX)
 				ifmr->ifm_active |= IFM_ETH_RXPAUSE;
-			if (resp->duplex_state == HWRM_PORT_PHY_QCFG_OUTPUT_DUPLEX_STATE_HALF)
+			if (duplex == HWRM_PORT_PHY_QCFG_OUTPUT_DUPLEX_STATE_HALF)
 				ifmr->ifm_active |= IFM_HDX;
 			else
 				ifmr->ifm_active |= IFM_FDX;
@@ -1697,6 +1701,8 @@ bnxt_media_change(struct ifnet *ifp)
 		link_speed = 0;
 	}
 
+	req.enables |= htole32(HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_DUPLEX);
+	req.auto_duplex = HWRM_PORT_PHY_CFG_INPUT_AUTO_DUPLEX_BOTH;
 	if (link_speed == 0) {
 		req.auto_mode |=
 		    HWRM_PORT_PHY_CFG_INPUT_AUTO_MODE_ALL_SPEEDS;
@@ -1712,6 +1718,26 @@ bnxt_media_change(struct ifnet *ifp)
 
 	return hwrm_send_message(sc, &req, sizeof(req));
 }
+
+int
+bnxt_media_autonegotiate(struct bnxt_softc *sc)
+{
+	struct hwrm_port_phy_cfg_input req = {0};
+
+	if (sc->sc_flags & BNXT_FLAG_NPAR)
+		return ENODEV;
+
+	bnxt_hwrm_cmd_hdr_init(sc, &req, HWRM_PORT_PHY_CFG);
+	req.auto_mode |= HWRM_PORT_PHY_CFG_INPUT_AUTO_MODE_ALL_SPEEDS;
+	req.auto_duplex = HWRM_PORT_PHY_CFG_INPUT_AUTO_DUPLEX_BOTH;
+	req.enables |= htole32(HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_MODE |
+	    HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_DUPLEX);
+	req.flags |= htole32(HWRM_PORT_PHY_CFG_INPUT_FLAGS_RESTART_AUTONEG);
+	req.flags |= htole32(HWRM_PORT_PHY_CFG_INPUT_FLAGS_RESET_PHY);
+
+	return hwrm_send_message(sc, &req, sizeof(req));
+}
+
 
 void
 bnxt_mark_cpr_invalid(struct bnxt_cp_ring *cpr)
@@ -2007,7 +2033,6 @@ _hwrm_send_message(struct bnxt_softc *softc, void *msg, uint32_t msg_len)
 	struct hwrm_err_output *resp = BNXT_DMA_KVA(softc->sc_cmd_resp);
 	uint32_t *data = msg;
 	int i;
-	uint16_t cp_ring_id;
 	uint8_t *valid;
 	uint16_t err;
 	uint16_t max_req_len = HWRM_MAX_REQ_LEN;
@@ -2016,7 +2041,6 @@ _hwrm_send_message(struct bnxt_softc *softc, void *msg, uint32_t msg_len)
 	/* TODO: DMASYNC in here. */
 	req->seq_id = htole16(softc->sc_cmd_seq++);
 	memset(resp, 0, PAGE_SIZE);
-	cp_ring_id = le16toh(req->cmpl_ring);
 
 	if (softc->sc_flags & BNXT_FLAG_SHORT_CMD) {
 		void *short_cmd_req = BNXT_DMA_KVA(softc->sc_cmd_resp);
@@ -2123,7 +2147,7 @@ bnxt_hwrm_queue_qportcfg(struct bnxt_softc *softc)
 	struct hwrm_queue_qportcfg_output *resp =
 	    BNXT_DMA_KVA(softc->sc_cmd_resp);
 
-	int	rc = 0;
+	int	i, rc = 0;
 	uint8_t	*qptr;
 
 	bnxt_hwrm_cmd_hdr_init(softc, &req, HWRM_QUEUE_QPORTCFG);
@@ -2142,7 +2166,7 @@ bnxt_hwrm_queue_qportcfg(struct bnxt_softc *softc)
 		softc->sc_max_tc = BNXT_MAX_QUEUE;
 
 	qptr = &resp->queue_id0;
-	for (int i = 0; i < softc->sc_max_tc; i++) {
+	for (i = 0; i < softc->sc_max_tc; i++) {
 		softc->sc_q_info[i].id = *qptr++;
 		softc->sc_q_info[i].profile = *qptr++;
 	}
@@ -2180,6 +2204,9 @@ bnxt_hwrm_ver_get(struct bnxt_softc *softc)
 
 	printf(": fw ver %d.%d.%d, ", resp->hwrm_fw_maj, resp->hwrm_fw_min,
 	    resp->hwrm_fw_bld);
+
+	softc->sc_hwrm_ver = (resp->hwrm_intf_maj << 16) |
+	    (resp->hwrm_intf_min << 8) | resp->hwrm_intf_upd;
 #if 0
 	snprintf(softc->ver_info->hwrm_if_ver, BNXT_VERSTR_SIZE, "%d.%d.%d",
 	    resp->hwrm_intf_maj, resp->hwrm_intf_min, resp->hwrm_intf_upd);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: udp_usrreq.c,v 1.250 2018/07/05 21:16:52 bluhm Exp $	*/
+/*	$OpenBSD: udp_usrreq.c,v 1.252 2018/09/20 18:59:10 bluhm Exp $	*/
 /*	$NetBSD: udp_usrreq.c,v 1.28 1996/03/16 23:54:03 christos Exp $	*/
 
 /*
@@ -380,6 +380,7 @@ udp_input(struct mbuf **mp, int *offp, int proto, int af)
 		 */
 		last = NULL;
 		NET_ASSERT_LOCKED();
+		mtx_enter(&inpcbtable_mtx);
 		TAILQ_FOREACH(inp, &udbtable.inpt_queue, inp_queue) {
 			if (inp->inp_socket->so_state & SS_CANTRCVMORE)
 				continue;
@@ -455,6 +456,7 @@ udp_input(struct mbuf **mp, int *offp, int proto, int af)
 			    SO_REUSEADDR)) == 0)
 				break;
 		}
+		mtx_leave(&inpcbtable_mtx);
 
 		if (last == NULL) {
 			/*
@@ -998,7 +1000,7 @@ udp_output(struct inpcb *inp, struct mbuf *m, struct mbuf *addr,
 
 #if NPF > 0
 	if (inp->inp_socket->so_state & SS_ISCONNECTED)
-		m->m_pkthdr.pf.inp = inp;
+		pf_mbuf_link_inpcb(m, inp);
 #endif
 
 	error = ip_output(m, inp->inp_options, &inp->inp_route,
