@@ -255,8 +255,9 @@ voltage_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp
 			if (err)
 				return err;
 
-			if (newval != voltages[i].val) {
-				voltage_write(i, newval);
+			if (newlen > 0) {
+				if (newval != voltages[i].val)
+					voltage_write(i, newval);
 				return 0;
 			}
 
@@ -278,9 +279,11 @@ voltage_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp
 			if (err)
 				return err;
 
-			if (newval != power_limits[i].limit) {
-				power_limits[i].limit = newval;
-				voltage_write_limits();
+			if (newlen > 0) {
+				if (newval != power_limits[i].limit) {
+					power_limits[i].limit = newval;
+					voltage_write_limits();
+				}
 				return 0;
 			}
 
