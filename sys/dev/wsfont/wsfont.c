@@ -1,4 +1,4 @@
-/*	$OpenBSD: wsfont.c,v 1.52 2017/09/08 05:36:53 deraadt Exp $ */
+/*	$OpenBSD: wsfont.c,v 1.53 2018/09/24 11:10:34 fcambus Exp $ */
 /*	$NetBSD: wsfont.c,v 1.17 2001/02/07 13:59:24 ad Exp $	*/
 
 /*-
@@ -44,7 +44,26 @@
 #undef HAVE_FONT
 
 #define	FONT_DOS4378x16
+#define HAVE_FONT 1
 #include <dev/wsfont/dos4378x16.h>
+
+#ifdef FONT_SPLEEN5x8
+#define HAVE_FONT 1
+#include <dev/wsfont/spleen5x8.h>
+#endif
+
+#ifdef FONT_BOLD8x16
+#define HAVE_FONT 1
+#include <dev/wsfont/bold8x16.h>
+#endif
+
+#ifdef FONT_GALLANT12x22
+#define HAVE_FONT 1
+#endif
+
+#ifdef FONT_BOLD8x16_ISO1
+#define HAVE_FONT 1
+#endif
 
 /*
  * Make sure we always have at least one font.
@@ -79,6 +98,9 @@ static struct font builtin_fonts[] = {
 #endif
 #ifdef FONT_DOS43716x32
 	BUILTIN_FONT(dos43716x32, 2),
+#endif
+#ifdef FONT_SPLEEN5x8
+	BUILTIN_FONT(spleen5x8, 4),
 #endif
 #undef BUILTIN_FONT
 };

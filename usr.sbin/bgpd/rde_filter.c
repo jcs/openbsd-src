@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_filter.c,v 1.108 2018/09/20 11:45:59 claudio Exp $ */
+/*	$OpenBSD: rde_filter.c,v 1.111 2018/09/26 15:48:01 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -360,7 +360,7 @@ rde_filter_match(struct filter_rule *f, struct rde_peer *peer,
 	if (f->peer.ibgp && peer->conf.ebgp)
 		return (0);
 
-	if (asp != NULL && f->match.as.type != AS_NONE) {
+	if (asp != NULL && f->match.as.type != AS_UNDEF) {
 		if (aspath_match(asp->aspath->data, asp->aspath->len,
 		    &f->match.as, peer->conf.remote_as) == 0)
 			return (0);
@@ -993,7 +993,7 @@ rde_filter_calc_skip_steps(struct filter_head *rules)
 			RDE_FILTER_SET_SKIP_STEPS(RDE_FILTER_SKIP_GROUPID);
 		if (cur->peer.remote_as != prev->peer.remote_as)
 			RDE_FILTER_SET_SKIP_STEPS(RDE_FILTER_SKIP_REMOTE_AS);
-		 if (cur->peer.peerid != prev->peer.peerid)
+		if (cur->peer.peerid != prev->peer.peerid)
 			RDE_FILTER_SET_SKIP_STEPS(RDE_FILTER_SKIP_PEERID);
 		prev = cur;
 		cur = TAILQ_NEXT(cur, entry);
@@ -1017,6 +1017,9 @@ rde_filter(struct filter_head *rules, struct rde_peer *peer,
 {
 	struct filter_rule	*f;
 	enum filter_actions	 action = ACTION_DENY; /* default deny */
+
+	if (state == NULL) /* withdraw should be accepted by default */
+		action = ACTION_ALLOW;
 
 	if (state && state->aspath.flags & F_ATTR_PARSE_ERR)
 		/*
