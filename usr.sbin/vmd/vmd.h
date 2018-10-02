@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.h,v 1.79 2018/09/09 04:09:32 ccardenas Exp $	*/
+/*	$OpenBSD: vmd.h,v 1.81 2018/10/01 09:31:15 reyk Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -66,6 +66,9 @@
 #define VMD_VM_STOP_INVALID	1004
 #define VMD_CDROM_MISSING	1005
 #define VMD_CDROM_INVALID	1006
+
+/* Image file signatures */
+#define VM_MAGIC_QCOW		"QFI\xfb"
 
 /* 100.64.0.0/10 from rfc6598 (IPv4 Prefix for Shared Address Space) */
 #define VMD_DHCP_PREFIX		"100.64.0.0/10"
@@ -205,7 +208,9 @@ struct vmboot_params {
 	char			 vbp_image[PATH_MAX];
 	uint32_t		 vbp_bootdev;
 	uint32_t		 vbp_howto;
-	char			*vbp_arg;
+	unsigned int		 vbp_type;
+	void			*vbp_arg;
+	char			*vbp_buf;
 };
 
 struct vmd_if {
@@ -402,7 +407,7 @@ int	 config_getif(struct privsep *, struct imsg *);
 int	 config_getcdrom(struct privsep *, struct imsg *);
 
 /* vmboot.c */
-FILE	*vmboot_open(int, int, struct vmboot_params *);
+FILE	*vmboot_open(int, int, unsigned int, struct vmboot_params *);
 void	 vmboot_close(FILE *, struct vmboot_params *);
 
 /* parse.y */

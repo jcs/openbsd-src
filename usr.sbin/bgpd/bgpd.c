@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.c,v 1.202 2018/09/25 07:58:11 claudio Exp $ */
+/*	$OpenBSD: bgpd.c,v 1.204 2018/09/29 08:11:11 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -506,15 +506,15 @@ reconfigure(char *conffile, struct bgpd_config *conf, struct peer **peer_l)
 		return (-1);
 
 	/* prefixsets for filters in the RDE */
-	while ((ps = SIMPLEQ_FIRST(conf->prefixsets)) != NULL) {
-		SIMPLEQ_REMOVE_HEAD(conf->prefixsets, entry);
-		if (imsg_compose(ibuf_rde, IMSG_RECONF_PREFIXSET, 0, 0, -1,
+	while ((ps = SIMPLEQ_FIRST(&conf->prefixsets)) != NULL) {
+		SIMPLEQ_REMOVE_HEAD(&conf->prefixsets, entry);
+		if (imsg_compose(ibuf_rde, IMSG_RECONF_PREFIX_SET, 0, 0, -1,
 		    ps->name, sizeof(ps->name)) == -1)
 			return (-1);
 		RB_FOREACH_SAFE(psi, prefixset_tree, &ps->psitems, npsi) {
 			RB_REMOVE(prefixset_tree, &ps->psitems, psi);
-			if (imsg_compose(ibuf_rde, IMSG_RECONF_PREFIXSETITEM, 0,
-			    0, -1, psi, sizeof(*psi)) == -1)
+			if (imsg_compose(ibuf_rde, IMSG_RECONF_PREFIX_SET_ITEM,
+			    0, 0, -1, psi, sizeof(*psi)) == -1)
 				return (-1);
 			set_free(psi->set);
 			free(psi);
@@ -522,10 +522,10 @@ reconfigure(char *conffile, struct bgpd_config *conf, struct peer **peer_l)
 		free(ps);
 	}
 
-	/* roasets for filters in the RDE */
-	while ((ps = SIMPLEQ_FIRST(conf->roasets)) != NULL) {
-		SIMPLEQ_REMOVE_HEAD(conf->roasets, entry);
-		if (imsg_compose(ibuf_rde, IMSG_RECONF_ROA_SET, 0, 0, -1,
+	/* originsets for filters in the RDE */
+	while ((ps = SIMPLEQ_FIRST(&conf->originsets)) != NULL) {
+		SIMPLEQ_REMOVE_HEAD(&conf->originsets, entry);
+		if (imsg_compose(ibuf_rde, IMSG_RECONF_ORIGIN_SET, 0, 0, -1,
 		    ps->name, sizeof(ps->name)) == -1)
 			return (-1);
 		RB_FOREACH_SAFE(psi, prefixset_tree, &ps->psitems, npsi) {
@@ -536,17 +536,41 @@ reconfigure(char *conffile, struct bgpd_config *conf, struct peer **peer_l)
 			for (i = 0; i < n; i += l) {
 				l = (n - i > 1024 ? 1024 : n - i);
 				if (imsg_compose(ibuf_rde,
-				    IMSG_RECONF_ROA_AS_SET_ITEMS,
+				    IMSG_RECONF_ROA_SET_ITEMS,
 				    0, 0, -1, rs + i, l * sizeof(*rs)) == -1)
 					return -1;
 			}
-			if (imsg_compose(ibuf_rde, IMSG_RECONF_PREFIXSETITEM, 0,
-			    0, -1, psi, sizeof(*psi)) == -1)
+			if (imsg_compose(ibuf_rde, IMSG_RECONF_PREFIX_SET_ITEM,
+			    0, 0, -1, psi, sizeof(*psi)) == -1)
 				return (-1);
 			set_free(psi->set);
 			free(psi);
 		}
 		free(ps);
+	}
+
+	if (!RB_EMPTY(&conf->roa)) {
+		if (imsg_compose(ibuf_rde, IMSG_RECONF_ROA_SET, 0, 0, -1,
+		    NULL, 0) == -1)
+			return (-1);
+		RB_FOREACH_SAFE(psi, prefixset_tree, &conf->roa, npsi) {
+			struct roa_set *rs;
+			size_t i, l, n;
+			RB_REMOVE(prefixset_tree, &conf->roa, psi);
+			rs = set_get(psi->set, &n);
+			for (i = 0; i < n; i += l) {
+				l = (n - i > 1024 ? 1024 : n - i);
+				if (imsg_compose(ibuf_rde,
+				    IMSG_RECONF_ROA_SET_ITEMS,
+				    0, 0, -1, rs + i, l * sizeof(*rs)) == -1)
+					return -1;
+			}
+			if (imsg_compose(ibuf_rde, IMSG_RECONF_PREFIX_SET_ITEM,
+			    0, 0, -1, psi, sizeof(*psi)) == -1)
+				return (-1);
+			set_free(psi->set);
+			free(psi);
+		}
 	}
 
 	/* as-sets for filters in the RDE */
@@ -632,8 +656,10 @@ reconfigure(char *conffile, struct bgpd_config *conf, struct peer **peer_l)
 		free(rd);
 	}
 
-	/* signal the SE first then the RDE to activate the new config */
-	if (imsg_compose(ibuf_se, IMSG_RECONF_DONE, 0, 0, -1, NULL, 0) == -1)
+	/* send a drain message to know when all messages where processed */
+	if (imsg_compose(ibuf_se, IMSG_RECONF_DRAIN, 0, 0, -1, NULL, 0) == -1)
+		return (-1);
+	if (imsg_compose(ibuf_rde, IMSG_RECONF_DRAIN, 0, 0, -1, NULL, 0) == -1)
 		return (-1);
 
 	/* mrt changes can be sent out of bound */
@@ -785,9 +811,11 @@ dispatch_imsg(struct imsgbuf *ibuf, int idx, struct bgpd_config *conf)
 			log_setverbose(verbose);
 			break;
 		case IMSG_RECONF_DONE:
-			if (reconfpending == 0)
+			if (reconfpending == 0) {
 				log_warnx("unexpected RECONF_DONE received");
-			else if (reconfpending == 2) {
+				break;
+			}
+			if (idx == PFD_PIPE_SESSION) {
 				imsg_compose(ibuf_rde, IMSG_RECONF_DONE, 0,
 				    0, -1, NULL, 0);
 
@@ -798,6 +826,22 @@ dispatch_imsg(struct imsgbuf *ibuf, int idx, struct bgpd_config *conf)
 				kr_reload();
 			}
 			reconfpending--;
+			break;
+		case IMSG_RECONF_DRAIN:
+			if (reconfpending == 0) {
+				log_warnx("unexpected RECONF_DRAIN received");
+				break;
+			}
+			reconfpending--;
+			if (reconfpending == 0) {
+				/*
+				 * SE goes first to bring templated neighbors
+				 * in sync.
+				 */
+				imsg_compose(ibuf_se, IMSG_RECONF_DONE, 0,
+				    0, -1, NULL, 0);
+				reconfpending = 2; /* expecting 2 DONE msg */
+			}
 			break;
 		default:
 			break;
