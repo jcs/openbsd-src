@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.c,v 1.431 2018/09/30 10:56:47 denis Exp $ */
+/*	$OpenBSD: rde.c,v 1.433 2018/10/03 11:36:39 denis Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -126,6 +126,7 @@ void		 network_dump_upcall(struct rib_entry *, void *);
 
 void		 rde_shutdown(void);
 int		 sa_cmp(struct bgpd_addr *, struct sockaddr *);
+int		 ovs_match(struct prefix *, u_int32_t);
 
 volatile sig_atomic_t	 rde_quit = 0;
 struct bgpd_config	*conf, *nconf;
@@ -2177,6 +2178,7 @@ rde_dump_rib_as(struct prefix *p, struct rde_aspath *asp, pid_t pid, int flags)
 	pt_getaddr(p->re->prefix, &rib.prefix);
 	rib.prefixlen = p->re->prefix->prefixlen;
 	rib.origin = asp->origin;
+	rib.validation_state = p->validation_state;
 	rib.flags = 0;
 	if (p->re->active == p)
 		rib.flags |= F_PREF_ACTIVE;
@@ -2284,6 +2286,8 @@ rde_dump_filter(struct prefix *p, struct ctl_show_rib_request *req)
 		if (req->type == IMSG_CTL_SHOW_RIB_LARGECOMMUNITY &&
 		    !community_large_match(asp, req->large_community.as,
 		    req->large_community.ld1, req->large_community.ld2))
+			return;
+		if (!ovs_match(p, req->flags))
 			return;
 		rde_dump_rib_as(p, asp, req->pid, req->flags);
 	}
@@ -3957,4 +3961,29 @@ rde_roa_validity(struct rde_prefixset *ps, struct bgpd_addr *prefix,
 
 	r = trie_roa_check(&ps->th, prefix, plen, as);
 	return (r & ROA_MASK);
+}
+
+int
+ovs_match(struct prefix *p, u_int32_t flag)
+{
+	if (flag & (F_CTL_OVS_VALID|F_CTL_OVS_INVALID|F_CTL_OVS_NOTFOUND)) {
+		switch (prefix_vstate(p)) {
+		case ROA_VALID:
+			if (!(flag & F_CTL_OVS_VALID))
+				return 0;
+			break;
+		case ROA_INVALID:
+			if (!(flag & F_CTL_OVS_INVALID))
+				return 0;
+			break;
+		case ROA_NOTFOUND:
+			if (!(flag & F_CTL_OVS_NOTFOUND))
+				return 0;
+			break;
+		default:
+			break;
+		}
+	}
+
+	return 1;
 }

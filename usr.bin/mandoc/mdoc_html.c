@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_html.c,v 1.186 2018/08/17 20:31:52 schwarze Exp $ */
+/*	$OpenBSD: mdoc_html.c,v 1.190 2018/10/04 13:22:35 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2014,2015,2016,2017,2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -505,9 +505,57 @@ cond_id(const struct roff_node *n)
 static int
 mdoc_sh_pre(MDOC_ARGS)
 {
-	char	*id;
+	struct roff_node	*sn, *subn;
+	struct tag		*t, *tsec, *tsub;
+	char			*id;
+	int			 sc;
 
 	switch (n->type) {
+	case ROFFT_BLOCK:
+		if ((h->oflags & HTML_TOC) == 0 ||
+		    h->flags & HTML_TOCDONE ||
+		    n->sec <= SEC_SYNOPSIS)
+			break;
+		h->flags |= HTML_TOCDONE;
+		sc = 0;
+		for (sn = n->next; sn != NULL; sn = sn->next)
+			if (sn->sec == SEC_CUSTOM)
+				if (++sc == 2)
+					break;
+		if (sc < 2)
+			break;
+		t = print_otag(h, TAG_H1, "c", "Sh");
+		print_text(h, "TABLE OF CONTENTS");
+		print_tagq(h, t);
+		t = print_otag(h, TAG_UL, "c", "Bl-compact");
+		for (sn = n; sn != NULL; sn = sn->next) {
+			tsec = print_otag(h, TAG_LI, "");
+			id = html_make_id(sn->head, 0);
+			print_otag(h, TAG_A, "hR", id);
+			free(id);
+			print_mdoc_nodelist(meta, sn->head->child, h);
+			tsub = NULL;
+			for (subn = sn->body->child; subn != NULL;
+			    subn = subn->next) {
+				if (subn->tok != MDOC_Ss)
+					continue;
+				id = html_make_id(subn->head, 0);
+				if (id == NULL)
+					continue;
+				if (tsub == NULL)
+					print_otag(h, TAG_UL,
+					    "c", "Bl-compact");
+				tsub = print_otag(h, TAG_LI, "");
+				print_otag(h, TAG_A, "hR", id);
+				free(id);
+				print_mdoc_nodelist(meta,
+				    subn->head->child, h);
+				print_tagq(h, tsub);
+			}
+			print_tagq(h, tsec);
+		}
+		print_tagq(h, t);
+		break;
 	case ROFFT_HEAD:
 		id = html_make_id(n, 1);
 		print_otag(h, TAG_H1, "cTi", "Sh", id);
@@ -609,7 +657,7 @@ mdoc_xr_pre(MDOC_ARGS)
 	if (NULL == n->child)
 		return 0;
 
-	if (h->base_man)
+	if (h->base_man1)
 		print_otag(h, TAG_A, "cThM", "Xr",
 		    n->child->string, n->child->next == NULL ?
 		    NULL : n->child->next->string);
