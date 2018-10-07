@@ -241,15 +241,13 @@ hidms_setup(struct device *self, struct hidms *ms, uint32_t quirks,
 			h.usage, h.logical_minimum, h.logical_maximum));
 		switch (HID_GET_USAGE(h.usage)) {
 		case HUG_X:
-			if (ms->sc_flags & HIDMS_ABSX &&
-			    !ms->sc_tsscale.minx && !ms->sc_tsscale.maxy) {
+			if (ms->sc_flags & HIDMS_ABSX) {
 				ms->sc_tsscale.minx = h.logical_minimum;
 				ms->sc_tsscale.maxx = h.logical_maximum;
 			}
 			break;
 		case HUG_Y:
-			if (ms->sc_flags & HIDMS_ABSY &&
-			    !ms->sc_tsscale.miny && !ms->sc_tsscale.maxy) {
+			if (ms->sc_flags & HIDMS_ABSY) {
 				ms->sc_tsscale.miny = h.logical_minimum;
 				ms->sc_tsscale.maxy = h.logical_maximum;
 			}
