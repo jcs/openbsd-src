@@ -1,4 +1,4 @@
-/* $OpenBSD: sshkey.c,v 1.70 2018/09/14 04:17:44 djm Exp $ */
+/* $OpenBSD: sshkey.c,v 1.72 2018/10/11 00:52:46 djm Exp $ */
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
  * Copyright (c) 2008 Alexander von Gernler.  All rights reserved.
@@ -109,9 +109,9 @@ static const struct keytype keytypes[] = {
 	{ "ssh-rsa-cert-v01@openssh.com", "RSA-CERT", NULL,
 	    KEY_RSA_CERT, 0, 1, 0 },
 	{ "rsa-sha2-256-cert-v01@openssh.com", "RSA-CERT",
-	    "ssh-rsa-sha2-256", KEY_RSA_CERT, 0, 1, 1 },
+	    "rsa-sha2-256", KEY_RSA_CERT, 0, 1, 1 },
 	{ "rsa-sha2-512-cert-v01@openssh.com", "RSA-CERT",
-	    "ssh-rsa-sha2-512", KEY_RSA_CERT, 0, 1, 1 },
+	    "rsa-sha2-512", KEY_RSA_CERT, 0, 1, 1 },
 	{ "ssh-dss-cert-v01@openssh.com", "DSA-CERT", NULL,
 	    KEY_DSA_CERT, 0, 1, 0 },
 	{ "ecdsa-sha2-nistp256-cert-v01@openssh.com", "ECDSA-CERT", NULL,
@@ -3866,7 +3866,16 @@ sshkey_parse_private_pem_fileblob(struct sshbuf *blob, int type,
 	clear_libcrypto_errors();
 	if ((pk = PEM_read_bio_PrivateKey(bio, NULL, NULL,
 	    (char *)passphrase)) == NULL) {
-		r = convert_libcrypto_error();
+	       /*
+		* libcrypto may return various ASN.1 errors when attempting
+		* to parse a key with an incorrect passphrase.
+		* Treat all format errors as "incorrect passphrase" if a
+		* passphrase was supplied.
+		*/
+		if (passphrase != NULL && *passphrase != '\0')
+			r = SSH_ERR_KEY_WRONG_PASSPHRASE;
+		else
+			r = convert_libcrypto_error();
 		goto out;
 	}
 	if (EVP_PKEY_base_id(pk) == EVP_PKEY_RSA &&
