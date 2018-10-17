@@ -1,4 +1,4 @@
-/*	$OpenBSD: ping.c,v 1.228 2018/07/21 07:27:54 claudio Exp $	*/
+/*	$OpenBSD: ping.c,v 1.230 2018/10/14 19:47:53 kn Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -178,7 +178,7 @@ u_char *outpack = outpackhdr+sizeof(struct ip);
 char BSPACE = '\b';		/* characters written for flood */
 char DOT = '.';
 char *hostname;
-int ident;			/* process id to identify our packets */
+int ident;			/* random number to identify our packets */
 int v6flag;			/* are we ping6? */
 
 /* counters */
@@ -449,14 +449,10 @@ main(int argc, char *argv[])
 
 	switch (res->ai_family) {
 	case AF_INET:
-		if (res->ai_addrlen != sizeof(dst4))
-			errx(1, "size of sockaddr mismatch");
 		dst = (struct sockaddr *)&dst4;
 		from = (struct sockaddr *)&from4;
 		break;
 	case AF_INET6:
-		if (res->ai_addrlen != sizeof(dst6))
-			errx(1, "size of sockaddr mismatch");
 		dst = (struct sockaddr *)&dst6;
 		from = (struct sockaddr *)&from6;
 		break;
@@ -488,8 +484,6 @@ main(int argc, char *argv[])
 		hints.ai_family = dst->sa_family;
 		if ((error = getaddrinfo(source, NULL, &hints, &res)))
 			errx(1, "%s: %s", source, gai_strerror(error));
-		if (res->ai_addrlen != dst->sa_len)
-			errx(1, "size of sockaddr mismatch");
 		memcpy(from, res->ai_addr, res->ai_addrlen);
 		freeaddrinfo(res);
 
@@ -1022,7 +1016,7 @@ retransmit(int s)
 /*
  * pinger --
  *	Compose and transmit an ICMP ECHO REQUEST packet.  The IP packet
- * will be added on by the kernel.  The ID field is our UNIX process ID,
+ * will be added on by the kernel.  The ID field is a random number,
  * and the sequence number is an ascending integer.  The first 8 bytes
  * of the data portion are used to hold a UNIX "timeval" struct in VAX
  * byte-order, to compute the round-trip time.
@@ -1054,7 +1048,7 @@ pinger(int s)
 		icp->icmp_code = 0;
 		icp->icmp_cksum = 0;
 		icp->icmp_seq = seq;
-		icp->icmp_id = ident;			/* ID */
+		icp->icmp_id = ident;
 	}
 	CLR(ntohs(seq) % mx_dup_ck);
 
