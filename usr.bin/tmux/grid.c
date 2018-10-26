@@ -1,4 +1,4 @@
-/* $OpenBSD: grid.c,v 1.86 2018/07/11 06:51:39 nicm Exp $ */
+/* $OpenBSD: grid.c,v 1.88 2018/10/25 15:13:38 nicm Exp $ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -418,7 +418,7 @@ static void
 grid_empty_line(struct grid *gd, u_int py, u_int bg)
 {
 	memset(&gd->linedata[py], 0, sizeof gd->linedata[py]);
-	if (bg != 8)
+	if (!COLOUR_DEFAULT(bg))
 		grid_expand_line(gd, py, gd->sx, bg);
 }
 
@@ -524,7 +524,8 @@ grid_set_cells(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc,
 void
 grid_clear(struct grid *gd, u_int px, u_int py, u_int nx, u_int ny, u_int bg)
 {
-	u_int	xx, yy;
+	struct grid_line	*gl;
+	u_int			 xx, yy;
 
 	if (nx == 0 || ny == 0)
 		return;
@@ -540,12 +541,13 @@ grid_clear(struct grid *gd, u_int px, u_int py, u_int nx, u_int ny, u_int bg)
 		return;
 
 	for (yy = py; yy < py + ny; yy++) {
-		if (px + nx >= gd->sx && px < gd->linedata[yy].cellused)
-			gd->linedata[yy].cellused = px;
-		if (px > gd->linedata[yy].cellsize && bg == 8)
+		gl = &gd->linedata[yy];
+		if (px + nx >= gd->sx && px < gl->cellused)
+			gl->cellused = px;
+		if (px > gl->cellsize && COLOUR_DEFAULT(bg))
 			continue;
-		if (px + nx >= gd->linedata[yy].cellsize && bg == 8) {
-			gd->linedata[yy].cellsize = px;
+		if (px + nx >= gl->cellsize && COLOUR_DEFAULT(bg)) {
+			gl->cellsize = px;
 			continue;
 		}
 		grid_expand_line(gd, yy, px + nx, 8); /* default bg first */
@@ -764,7 +766,11 @@ grid_string_cells_code(const struct grid_cell *lastgc,
 		{ GRID_ATTR_BLINK, 5 },
 		{ GRID_ATTR_REVERSE, 7 },
 		{ GRID_ATTR_HIDDEN, 8 },
-		{ GRID_ATTR_STRIKETHROUGH, 9 }
+		{ GRID_ATTR_STRIKETHROUGH, 9 },
+		{ GRID_ATTR_UNDERSCORE_2, 42 },
+		{ GRID_ATTR_UNDERSCORE_3, 43 },
+		{ GRID_ATTR_UNDERSCORE_4, 44 },
+		{ GRID_ATTR_UNDERSCORE_5, 45 },
 	};
 	n = 0;
 
@@ -790,11 +796,15 @@ grid_string_cells_code(const struct grid_cell *lastgc,
 		else
 			strlcat(buf, "\033[", len);
 		for (i = 0; i < n; i++) {
-			if (i + 1 < n)
-				xsnprintf(tmp, sizeof tmp, "%d;", s[i]);
-			else
+			if (s[i] < 10)
 				xsnprintf(tmp, sizeof tmp, "%d", s[i]);
+			else {
+				xsnprintf(tmp, sizeof tmp, "%d:%d", s[i] / 10,
+				    s[i] % 10);
+			}
 			strlcat(buf, tmp, len);
+			if (i + 1 < n)
+				strlcat(buf, ";", len);
 		}
 		strlcat(buf, "m", len);
 	}

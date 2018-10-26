@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gre.c,v 1.125 2018/10/16 03:00:27 dlg Exp $ */
+/*	$OpenBSD: if_gre.c,v 1.131 2018/10/25 01:05:19 dlg Exp $ */
 /*	$NetBSD: if_gre.c,v 1.9 1999/10/25 19:18:11 drochner Exp $ */
 
 /*
@@ -1103,11 +1103,9 @@ gre_input_key(struct mbuf **mp, int *offp, int type, int af,
 			goto decline;
 		}
 
-#if NBPFILTER > 0
-		bpf_af = AF_UNSPEC;
-#endif
-		input = gre_keepalive_recv;
-		break;
+		m_adj(m, hlen);
+		gre_keepalive_recv(ifp, m);
+		return (IPPROTO_DONE);
 
 	default:
 		goto decline;
@@ -2165,7 +2163,8 @@ gre_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 
 	case SIOCSETKALIVE:
 		if (ikar->ikar_timeo < 0 || ikar->ikar_timeo > 86400 ||
-		    ikar->ikar_cnt < 0 || ikar->ikar_cnt > 256)
+		    ikar->ikar_cnt < 0 || ikar->ikar_cnt > 256 ||
+		    (ikar->ikar_timeo == 0) != (ikar->ikar_cnt == 0))
 			return (EINVAL);
 
 		if (ikar->ikar_timeo == 0 || ikar->ikar_cnt == 0) {
@@ -2176,6 +2175,15 @@ gre_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			sc->sc_ka_count = ikar->ikar_cnt;
 			sc->sc_ka_timeo = ikar->ikar_timeo;
 			sc->sc_ka_state = GRE_KA_DOWN;
+
+			arc4random_buf(&sc->sc_ka_key, sizeof(sc->sc_ka_key));
+			sc->sc_ka_bias = arc4random();
+			sc->sc_ka_holdmax = sc->sc_ka_count;
+
+			sc->sc_ka_recvtm = ticks - hz;
+			timeout_add(&sc->sc_ka_send, 1);
+			timeout_add_sec(&sc->sc_ka_hold,
+			    sc->sc_ka_timeo * sc->sc_ka_count);
 		}
 		break;
 
@@ -2748,15 +2756,8 @@ gre_up(struct gre_softc *sc)
 	NET_ASSERT_LOCKED();
 	SET(sc->sc_if.if_flags, IFF_RUNNING);
 
-	if (sc->sc_ka_state != GRE_KA_NONE) {
-		arc4random_buf(&sc->sc_ka_key, sizeof(sc->sc_ka_key));
-		sc->sc_ka_bias = arc4random();
-
-		sc->sc_ka_recvtm = ticks - hz;
-		sc->sc_ka_holdmax = sc->sc_ka_count;
-
+	if (sc->sc_ka_state != GRE_KA_NONE)
 		gre_keepalive_send(sc);
-	}
 
 	return (0);
 }
@@ -2817,8 +2818,16 @@ gre_keepalive_send(void *arg)
 	uint16_t proto;
 	uint8_t ttl;
 
+	/*
+	 * re-schedule immediately, so we deal with incomplete configuation
+	 * or temporary errors.
+	 */
+	if (sc->sc_ka_timeo)
+		timeout_add_sec(&sc->sc_ka_send, sc->sc_ka_timeo);
+
 	if (!ISSET(sc->sc_if.if_flags, IFF_RUNNING) ||
 	    sc->sc_ka_state == GRE_KA_NONE ||
+	    sc->sc_tunnel.t_af == AF_UNSPEC ||
 	    sc->sc_tunnel.t_rtableid != sc->sc_if.if_rdomain)
 		return;
 
@@ -2889,6 +2898,9 @@ gre_keepalive_send(void *arg)
 		proto = htons(ETHERTYPE_IPV6);
 		break;
 #endif
+	default:
+		m_freem(m);
+		return;
 	}
 
 	/*
@@ -2900,8 +2912,6 @@ gre_keepalive_send(void *arg)
 		return;
 
 	gre_ip_output(&sc->sc_tunnel, m);
-
-	timeout_add_sec(&sc->sc_ka_send, sc->sc_ka_timeo);
 }
 
 static void
@@ -3167,6 +3177,8 @@ mgre_up(struct mgre_softc *sc)
 		hlen = sizeof(struct ip6_hdr);
 		break;
 #endif /* INET6 */
+	default:
+		unhandled_af(sc->sc_tunnel.t_af);
 	}
 
 	hlen += sizeof(struct gre_header);
@@ -3328,6 +3340,8 @@ delmulti:
 		in6_delmulti(inm);
 		break;
 #endif
+	default:
+		unhandled_af(tunnel->t_af);
 	}
 remove_ucast:
 	RBT_REMOVE(nvgre_ucast_tree, &nvgre_ucast_tree, sc);
@@ -3377,6 +3391,8 @@ nvgre_down(struct nvgre_softc *sc)
 		in6_delmulti(sc->sc_inm);
 		break;
 #endif
+	default:
+		unhandled_af(tunnel->t_af);
 	}
 
 	RBT_REMOVE(nvgre_ucast_tree, &nvgre_ucast_tree, sc);

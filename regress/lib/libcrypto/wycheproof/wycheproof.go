@@ -1,4 +1,4 @@
-/* $OpenBSD: wycheproof.go,v 1.81 2018/10/07 04:40:14 tb Exp $ */
+/* $OpenBSD: wycheproof.go,v 1.86 2018/10/20 16:02:05 tb Exp $ */
 /*
  * Copyright (c) 2018 Joel Sing <jsing@openbsd.org>
  * Copyright (c) 2018 Theo Buehler <tb@openbsd.org>
@@ -24,6 +24,7 @@ package main
 
 #include <string.h>
 
+#include <openssl/aes.h>
 #include <openssl/bio.h>
 #include <openssl/bn.h>
 #include <openssl/cmac.h>
@@ -235,6 +236,22 @@ type wycheproofTestGroupECDSAWebCrypto struct {
 	Tests  []*wycheproofTestECDSA `json:"tests"`
 }
 
+type wycheproofTestKW struct {
+	TCID    int      `json:"tcId"`
+	Comment string   `json:"comment"`
+	Key     string   `json:"key"`
+	Msg     string   `json:"msg"`
+	CT      string   `json:"ct"`
+	Result  string   `json:"result"`
+	Flags   []string `json:"flags"`
+}
+
+type wycheproofTestGroupKW struct {
+	KeySize int                 `json:"keySize"`
+	Type    string              `json:"type"`
+	Tests   []*wycheproofTestKW `json:"tests"`
+}
+
 type wycheproofTestRSA struct {
 	TCID    int      `json:"tcId"`
 	Comment string   `json:"comment"`
@@ -360,7 +377,11 @@ func printAcceptableStatistics() {
 	}
 	sort.Strings(comments)
 	for _, comment := range comments {
-		fmt.Printf("%-45v %5d\n", comment, acceptableComments[comment])
+		prcomment := comment
+		if len(comment) > 45 {
+			prcomment = comment[0:42] + "..."
+		}
+		fmt.Printf("%-45v %5d\n", prcomment, acceptableComments[comment])
 	}
 
 	fmt.Printf("\nFlag statistics:\n")
@@ -1362,12 +1383,11 @@ func runECDHWebCryptoTest(nid int, wt *wycheproofTestECDHWebCrypto) bool {
 	}
 	defer C.EC_KEY_free(privKey)
 
-	var bnD *C.BIGNUM
 	d, err := base64.RawURLEncoding.DecodeString(wt.Private.D)
 	if err != nil {
 		log.Fatalf("Failed to base64 decode d: %v", err)
 	}
-	bnD = C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&d[0])), C.int(len(d)), nil)
+	bnD := C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&d[0])), C.int(len(d)), nil)
 	if bnD == nil {
 		log.Fatal("Failed to decode D")
 	}
@@ -1380,23 +1400,21 @@ func runECDHWebCryptoTest(nid int, wt *wycheproofTestECDHWebCrypto) bool {
 		return false
 	}
 
-	var bnX *C.BIGNUM
 	x, err := base64.RawURLEncoding.DecodeString(wt.Public.X)
 	if err != nil {
 		log.Fatalf("Failed to base64 decode x: %v", err)
 	}
-	bnX = C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&x[0])), C.int(len(x)), nil)
+	bnX := C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&x[0])), C.int(len(x)), nil)
 	if bnX == nil {
 		log.Fatal("Failed to decode X")
 	}
 	defer C.BN_free(bnX)
 
-	var bnY *C.BIGNUM
 	y, err := base64.RawURLEncoding.DecodeString(wt.Public.Y)
 	if err != nil {
 		log.Fatalf("Failed to base64 decode y: %v", err)
 	}
-	bnY = C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&y[0])), C.int(len(y)), nil)
+	bnY := C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&y[0])), C.int(len(y)), nil)
 	if bnY == nil {
 		log.Fatal("Failed to decode Y")
 	}
@@ -1635,8 +1653,7 @@ func runECDSAWebCryptoTestGroup(algorithm string, wtg *wycheproofTestGroupECDSAW
 	if err != nil {
 		log.Fatalf("Failed to base64 decode X: %v", err)
 	}
-	var bnX *C.BIGNUM
-	bnX = C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&x[0])), C.int(len(x)), nil)
+	bnX := C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&x[0])), C.int(len(x)), nil)
 	if bnX == nil {
 		log.Fatal("Failed to decode X")
 	}
@@ -1646,8 +1663,7 @@ func runECDSAWebCryptoTestGroup(algorithm string, wtg *wycheproofTestGroupECDSAW
 	if err != nil {
 		log.Fatalf("Failed to base64 decode Y: %v", err)
 	}
-	var bnY *C.BIGNUM
-	bnY = C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&y[0])), C.int(len(y)), nil)
+	bnY := C.BN_bin2bn((*C.uchar)(unsafe.Pointer(&y[0])), C.int(len(y)), nil)
 	if bnY == nil {
 		log.Fatal("Failed to decode Y")
 	}
@@ -1669,6 +1685,115 @@ func runECDSAWebCryptoTestGroup(algorithm string, wtg *wycheproofTestGroupECDSAW
 	success := true
 	for _, wt := range wtg.Tests {
 		if !runECDSATest(ecKey, nid, h, true, wt) {
+			success = false
+		}
+	}
+	return success
+}
+
+func runKWTestWrap(keySize int, key []byte, keyLen int, msg []byte, msgLen int, ct []byte, ctLen int, wt *wycheproofTestKW) bool {
+	var aesKey C.AES_KEY
+
+	ret := C.AES_set_encrypt_key((*C.uchar)(unsafe.Pointer(&key[0])), (C.int)(keySize), (*C.AES_KEY)(unsafe.Pointer(&aesKey)))
+	if ret != 0 {
+		fmt.Printf("FAIL: Test case %d (%q) %v - AES_set_encrypt_key() = %d, want %v\n",
+			wt.TCID, wt.Comment, wt.Flags, int(ret), wt.Result)
+		return false
+	}
+
+	outLen := msgLen + 8
+	out := make([]byte, outLen)
+	ret = C.AES_wrap_key((*C.AES_KEY)(unsafe.Pointer(&aesKey)), nil, (*C.uchar)(unsafe.Pointer(&out[0])), (*C.uchar)(unsafe.Pointer(&msg[0])), (C.uint)(msgLen))
+	success := false
+	if ret == C.int(outLen) && bytes.Equal(out, ct) {
+		if acceptableAudit && wt.Result == "acceptable" {
+			gatherAcceptableStatistics(wt.TCID, wt.Comment, wt.Flags)
+		}
+		if wt.Result != "invalid" {
+			success = true
+		}
+	} else if wt.Result != "valid" {
+		success = true
+	}
+	if !success {
+		fmt.Printf("FAIL: Test case %d (%q) %v - msgLen = %d, AES_wrap_key() = %d, want %v\n",
+			wt.TCID, wt.Comment, wt.Flags, msgLen, int(ret), wt.Result)
+	}
+	return success
+}
+
+func runKWTestUnWrap(keySize int, key []byte, keyLen int, msg []byte, msgLen int, ct []byte, ctLen int, wt *wycheproofTestKW) bool {
+	var aesKey C.AES_KEY
+
+	ret := C.AES_set_decrypt_key((*C.uchar)(unsafe.Pointer(&key[0])), (C.int)(keySize), (*C.AES_KEY)(unsafe.Pointer(&aesKey)))
+	if ret != 0 {
+		fmt.Printf("FAIL: Test case %d (%q) %v - AES_set_encrypt_key() = %d, want %v\n",
+			wt.TCID, wt.Comment, wt.Flags, int(ret), wt.Result)
+		return false
+	}
+
+	out := make([]byte, ctLen)
+	if ctLen == 0 {
+		out = append(out, 0)
+	}
+	ret = C.AES_unwrap_key((*C.AES_KEY)(unsafe.Pointer(&aesKey)), nil, (*C.uchar)(unsafe.Pointer(&out[0])), (*C.uchar)(unsafe.Pointer(&ct[0])), (C.uint)(ctLen))
+	success := false
+	if ret == C.int(ctLen - 8) && bytes.Equal(out[0:ret], msg[0:ret]) {
+		if acceptableAudit && wt.Result == "acceptable" {
+			gatherAcceptableStatistics(wt.TCID, wt.Comment, wt.Flags)
+		}
+		if wt.Result != "invalid" {
+			success = true
+		}
+	} else if wt.Result != "valid" {
+		success = true
+	}
+	if !success {
+		fmt.Printf("FAIL: Test case %d (%q) %v - keyLen = %d, AES_unwrap_key() = %d, want %v\n",
+			wt.TCID, wt.Comment, wt.Flags, keyLen, int(ret), wt.Result)
+	}
+	return success
+}
+
+func runKWTest(keySize int, wt *wycheproofTestKW) bool {
+	key, err := hex.DecodeString(wt.Key)
+	if err != nil {
+		log.Fatalf("Failed to decode key %q: %v", wt.Key, err)
+	}
+	msg, err := hex.DecodeString(wt.Msg)
+	if err != nil {
+		log.Fatalf("Failed to decode msg %q: %v", wt.Msg, err)
+	}
+	ct, err := hex.DecodeString(wt.CT)
+	if err != nil {
+		log.Fatalf("Failed to decode ct %q: %v", wt.CT, err)
+	}
+
+	keyLen, msgLen, ctLen := len(key), len(msg), len(ct)
+
+	if keyLen == 0 {
+		key = append(key, 0)
+	}
+	if msgLen == 0 {
+		msg = append(msg, 0)
+	}
+	if ctLen == 0 {
+		ct = append(ct, 0)
+	}
+
+	wrapSuccess := runKWTestWrap(keySize, key, keyLen, msg, msgLen, ct, ctLen, wt)
+	unwrapSuccess := runKWTestUnWrap(keySize, key, keyLen, msg, msgLen, ct, ctLen, wt)
+
+	return wrapSuccess && unwrapSuccess
+}
+
+func runKWTestGroup(algorithm string, wtg *wycheproofTestGroupKW) bool {
+	fmt.Printf("Running %v test group %v with key size %d...\n",
+		algorithm, wtg.Type, wtg.KeySize)
+
+	success := true
+	for _, wt := range wtg.Tests {
+		if !runKWTest(wtg.KeySize, wt) {
 			success = false
 		}
 	}
@@ -1698,7 +1823,7 @@ func runRSASSATest(rsa *C.RSA, h hash.Hash, sha *C.EVP_MD, mgfSha *C.EVP_MD, sLe
 		sig = append(sig, 0)
 	}
 
-	sigOut := make([]byte, sigLen)
+	sigOut := make([]byte, C.RSA_size(rsa) - 11)
 	if sigLen == 0 {
 		sigOut = append(sigOut, 0)
 	}
@@ -1944,6 +2069,8 @@ func runTestVectors(path string, webcrypto bool) bool {
 		} else {
 			wtg = &wycheproofTestGroupECDSA{}
 		}
+	case "KW":
+		wtg = &wycheproofTestGroupKW{}
 	case "RSASSA-PSS":
 		wtg = &wycheproofTestGroupRSASSA{}
 	case "RSASig":
@@ -2004,6 +2131,10 @@ func runTestVectors(path string, webcrypto bool) bool {
 					success = false
 				}
 			}
+		case "KW":
+			if !runKWTestGroup(wtv.Algorithm, wtg.(*wycheproofTestGroupKW)) {
+				success = false
+			}
 		case "RSASSA-PSS":
 			if !runRSASSATestGroup(wtv.Algorithm, wtg.(*wycheproofTestGroupRSASSA)) {
 				success = false
@@ -2047,6 +2178,7 @@ func main() {
 		{"ECDHWebCrypto", "ecdh_w*_test.json"},
 		{"ECDSA", "ecdsa_[^w]*test.json"},
 		{"ECDSAWebCrypto", "ecdsa_w*_test.json"},
+		{"KW", "kw_test.json"},
 		{"RSA", "rsa_*test.json"},
 		{"X25519", "x25519_*test.json"},
 	}

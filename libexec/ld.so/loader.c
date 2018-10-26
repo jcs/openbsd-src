@@ -1,4 +1,4 @@
-/*	$OpenBSD: loader.c,v 1.172 2017/12/08 05:25:20 deraadt Exp $ */
+/*	$OpenBSD: loader.c,v 1.174 2018/10/23 04:01:45 guenther Exp $ */
 
 /*
  * Copyright (c) 1998 Per Fogelstrom, Opsycon AB
@@ -56,19 +56,19 @@ void _dl_fixup_user_env(void);
 void _dl_call_preinit(elf_object_t *);
 void _dl_call_init_recurse(elf_object_t *object, int initfirst);
 
-int  _dl_pagesz;
+int _dl_pagesz __relro = 4096;
+int _dl_bindnow __relro = 0;
+int _dl_debug __relro = 0;
+int _dl_trust __relro = 0;
+char **_dl_libpath __relro = NULL;
 
-char **_dl_libpath;
+/* XXX variables which are only used during boot */
+char *_dl_preload __relro = NULL;
+char *_dl_tracefmt1 __relro = NULL;
+char *_dl_tracefmt2 __relro = NULL;
+char *_dl_traceprog __relro = NULL;
 
-char *_dl_preload;
-char *_dl_bindnow;
-char *_dl_traceld;
-char *_dl_debug;
-char *_dl_showmap;
-char *_dl_tracefmt1, *_dl_tracefmt2, *_dl_traceprog;
-
-int _dl_trust;
-
+int _dl_traceld;
 struct r_debug *_dl_debug_map;
 
 void _dl_dopreload(char *paths);
@@ -218,11 +218,11 @@ _dl_setup_env(const char *argv0, char **envp)
 	/*
 	 * Get paths to various things we are going to use.
 	 */
-	_dl_debug = _dl_getenv("LD_DEBUG", envp);
+	_dl_debug = _dl_getenv("LD_DEBUG", envp) != NULL;
 	_dl_libpath = _dl_split_path(_dl_getenv("LD_LIBRARY_PATH", envp));
 	_dl_preload = _dl_getenv("LD_PRELOAD", envp);
-	_dl_bindnow = _dl_getenv("LD_BIND_NOW", envp);
-	_dl_traceld = _dl_getenv("LD_TRACE_LOADED_OBJECTS", envp);
+	_dl_bindnow = _dl_getenv("LD_BIND_NOW", envp) != NULL;
+	_dl_traceld = _dl_getenv("LD_TRACE_LOADED_OBJECTS", envp) != NULL;
 	_dl_tracefmt1 = _dl_getenv("LD_TRACE_LOADED_OBJECTS_FMT1", envp);
 	_dl_tracefmt2 = _dl_getenv("LD_TRACE_LOADED_OBJECTS_FMT2", envp);
 	_dl_traceprog = _dl_getenv("LD_TRACE_LOADED_OBJECTS_PROGNAME", envp);
@@ -243,11 +243,11 @@ _dl_setup_env(const char *argv0, char **envp)
 			_dl_unsetenv("LD_PRELOAD", envp);
 		}
 		if (_dl_bindnow) {
-			_dl_bindnow = NULL;
+			_dl_bindnow = 0;
 			_dl_unsetenv("LD_BIND_NOW", envp);
 		}
 		if (_dl_debug) {
-			_dl_debug = NULL;
+			_dl_debug = 0;
 			_dl_unsetenv("LD_DEBUG", envp);
 		}
 	}
@@ -367,6 +367,36 @@ _dl_load_dep_libs(elf_object_t *object, int flags, int booting)
 }
 
 
+/* do any RWX -> RX fixups for executable PLTs and apply GNU_RELRO */
+static inline void
+_dl_self_relro(long loff)
+{
+	Elf_Ehdr *ehdp;
+	Elf_Phdr *phdp;
+	int i;
+
+	ehdp = (Elf_Ehdr *)loff;
+	phdp = (Elf_Phdr *)(loff + ehdp->e_phoff);
+	for (i = 0; i < ehdp->e_phnum; i++, phdp++) {
+		switch (phdp->p_type) {
+#if defined(__alpha__) || defined(__hppa__) || defined(__powerpc__) || \
+    defined(__sparc64__)
+		case PT_LOAD:
+			if ((phdp->p_flags & (PF_X | PF_W)) != (PF_X | PF_W))
+				break;
+			_dl_mprotect((void *)(phdp->p_vaddr + loff),
+			    phdp->p_memsz, PROT_READ);
+			break;
+#endif
+		case PT_GNU_RELRO:
+			_dl_mprotect((void *)(phdp->p_vaddr + loff),
+			    phdp->p_memsz, PROT_READ);
+			break;
+		}
+	}
+}
+
+
 #define PFLAGS(X) ((((X) & PF_R) ? PROT_READ : 0) | \
 		   (((X) & PF_W) ? PROT_WRITE : 0) | \
 		   (((X) & PF_X) ? PROT_EXEC : 0))
@@ -398,15 +428,20 @@ _dl_boot(const char **argv, char **envp, const long dyn_loff, long *dl_data)
 
 	if (dl_data[AUX_pagesz] != 0)
 		_dl_pagesz = dl_data[AUX_pagesz];
-	else
-		_dl_pagesz = 4096;
+	_dl_malloc_init();
+	_dl_setup_env(argv[0], envp);
+
+	/*
+	 * Make read-only the GOT and PLT and variables initialized
+	 * during the ld.so setup above.
+	 */
+	_dl_self_relro(dyn_loff);
 
 	align = _dl_pagesz - 1;
 
 #define ROUND_PG(x) (((x) + align) & ~(align))
 #define TRUNC_PG(x) ((x) & ~(align))
 
-	_dl_setup_env(argv[0], envp);
 	if (_dl_bindnow) {
 		/* Lazy binding disabled, so disable kbind */
 		_dl___syscall(SYS_kbind, (void *)NULL, (size_t)0, (long long)0);
@@ -566,7 +601,7 @@ _dl_boot(const char **argv, char **envp, const long dyn_loff, long *dl_data)
 	 */
 
 	failed = 0;
-	if (_dl_traceld == NULL)
+	if (!_dl_traceld)
 		failed = _dl_rtld(_dl_objects);
 
 	if (_dl_debug || _dl_traceld) {

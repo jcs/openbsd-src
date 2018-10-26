@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1860 2018/09/03 19:51:48 jcs Exp 
+ *	OpenBSD: pcidevs,v 1.1863 2018/10/22 05:06:32 jsg Exp 
  */
 
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
@@ -1305,7 +1305,11 @@ static const struct pci_known_product pci_known_products[] = {
 	},
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_XHCI,
-	    "AMD64 17h USB xHCI",
+	    "AMD64 17h xHCI",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_XHCI_2,
+	    "AMD64 17h xHCI",
 	},
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_DF_1,
@@ -1342,6 +1346,14 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CCPV5B,
 	    "Cryptographic Co-processor v5b",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_PCIE_4,
+	    "AMD64 17h PCIE",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_PCIE_5,
+	    "AMD64 17h PCIE",
 	},
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_14_HB,
@@ -1480,8 +1492,68 @@ static const struct pci_known_product pci_known_products[] = {
 	    "AMD64 16h Misc Cfg",
 	},
 	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_RC,
+	    "AMD64 17h/1xh Root Complex",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_IOMMU,
+	    "AMD64 17h/1xh IOMMU",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_PCIE_1,
+	    "AMD64 17h/1xh PCIE",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_PCIE_2,
+	    "AMD64 17h/1xh PCIE",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_PCIE_3,
+	    "AMD64 17h/1xh PCIE",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_XHCI_1,
+	    "AMD64 17h/1xh xHCI",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_XHCI_2,
+	    "AMD64 17h/1xh xHCI",
+	},
+	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_RAVENRIDGE_HDA,
 	    "Raven Ridge HD Audio",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_0,
+	    "AMD64 17h/1xh Data Fabric",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_1,
+	    "AMD64 17h/1xh Data Fabric",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_2,
+	    "AMD64 17h/1xh Data Fabric",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_3,
+	    "AMD64 17h/1xh Data Fabric",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_4,
+	    "AMD64 17h/1xh Data Fabric",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_5,
+	    "AMD64 17h/1xh Data Fabric",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_6,
+	    "AMD64 17h/1xh Data Fabric",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_17_1X_DF_7,
+	    "AMD64 17h/1xh Data Fabric",
 	},
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_AMD64_15_0x_LINK,
@@ -1666,6 +1738,22 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_300SERIES_XHCI,
 	    "300 Series xHCI",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_400SERIES_PCIE_1,
+	    "400 Series PCIE",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_400SERIES_PCIE_2,
+	    "400 Series PCIE",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_400SERIES_AHCI,
+	    "400 Series AHCI",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_400SERIES_XHCI,
+	    "400 Series xHCI",
 	},
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_SC751_SC,
@@ -1904,40 +1992,40 @@ static const struct pci_known_product pci_known_products[] = {
 	    "Bolton xHCI",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_SATA_1,
-	    "Carrizo SATA",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_SATA_1,
+	    "FCH SATA",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_AHCI_1,
-	    "Carrizo AHCI",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_AHCI_1,
+	    "FCH AHCI",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_RAID_1,
-	    "Carrizo RAID",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_RAID_1,
+	    "FCH RAID",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_RAID_2,
-	    "Carrizo RAID",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_RAID_2,
+	    "FCH RAID",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_AHCI_2,
-	    "Carrizo AHCI",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_AHCI_2,
+	    "FCH AHCI",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_EHCI,
-	    "Carrizo USB2",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_EHCI,
+	    "FCH USB2",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_SMB,
-	    "Carrizo SMBus",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_SMB,
+	    "FCH SMBus",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_LPC,
-	    "Carrizo LPC",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_LPC,
+	    "FCH LPC",
 	},
 	{
-	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CARRIZO_XHCI,
-	    "Carrizo xHCI",
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_KERNCZ_XHCI,
+	    "FCH xHCI",
 	},
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_RS780_HB,
@@ -2510,6 +2598,14 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_KAVERI_22,
 	    "Kaveri Radeon R6",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RAVEN_VEGA,
+	    "Radeon Vega",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RAVEN_VEGA_HDA,
+	    "Radeon Vega HD Audio",
 	},
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_HD6500D_HDA,
@@ -4472,6 +4568,42 @@ static const struct pci_known_product pci_known_products[] = {
 	    "Turks",
 	},
 	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_1,
+	    "Vega 10",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_2,
+	    "Vega 10",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_3,
+	    "Vega 10",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_4,
+	    "Vega 10",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_5,
+	    "Vega 10",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_6,
+	    "Vega 10",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_7,
+	    "Vega 10",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_8,
+	    "Radeon Rx Vega",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_9,
+	    "Vega 10",
+	},
+	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_CYPRESS,
 	    "Cypress",
 	},
@@ -5938,6 +6070,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_PRO_HDA,
 	    "Radeon Pro Audio",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_VEGA10_HDA_1,
+	    "Radeon Rx Vega HD Audio",
 	},
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RS100_AGP,
@@ -24182,6 +24318,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RT8191SE,
 	    "8191SE",
+	},
+	{
+	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8822BE,
+	    "8822BE",
 	},
 	{
 	    PCI_VENDOR_REDHAT, PCI_PRODUCT_REDHAT_PPB,
