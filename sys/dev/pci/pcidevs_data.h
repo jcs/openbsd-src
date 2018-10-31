@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1863 2018/10/22 05:06:32 jsg Exp 
+ *	OpenBSD: pcidevs,v 1.1865 2018/10/26 05:53:58 mlarkin Exp 
  */
 
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
@@ -9326,6 +9326,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_INITIO, PCI_PRODUCT_INITIO_INIC950,
 	    "INIC-950",
+	},
+	{
+	    PCI_VENDOR_INNOTEK, PCI_PRODUCT_INNOTEK_VBNVME,
+	    "VirtualBox NVMe",
 	},
 	{
 	    PCI_VENDOR_INNOTEK, PCI_PRODUCT_INNOTEK_VBGA,
@@ -24316,8 +24320,8 @@ static const struct pci_known_product pci_known_products[] = {
 	    "8821AE",
 	},
 	{
-	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RT8191SE,
-	    "8191SE",
+	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8723BE,
+	    "8723BE",
 	},
 	{
 	    PCI_VENDOR_REALTEK, PCI_PRODUCT_REALTEK_RTL8822BE,

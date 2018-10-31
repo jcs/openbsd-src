@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpctl.c,v 1.219 2018/10/01 23:09:53 job Exp $ */
+/*	$OpenBSD: bgpctl.c,v 1.222 2018/10/31 14:58:59 claudio Exp $ */
 
 /*
  * Copyright (c) 2003 Henning Brauer <henning@openbsd.org>
@@ -1864,8 +1864,10 @@ show_rib_memory_msg(struct imsg *imsg)
 		printf("%10lld BGP path attribute entries using %s of memory\n",
 		    (long long)stats.path_cnt, fmt_mem(stats.path_cnt *
 		    sizeof(struct rde_aspath)));
+		printf("\t   and holding %lld references\n",
+		    (long long)stats.path_refs);
 		printf("%10lld BGP AS-PATH attribute entries using "
-		    "%s of memory,\n\t   and holding %lld references\n",
+		    "%s of memory\n\t   and holding %lld references\n",
 		    (long long)stats.aspath_cnt, fmt_mem(stats.aspath_size),
 		    (long long)stats.aspath_refs);
 		printf("%10lld BGP attributes entries using %s of memory\n",
@@ -1875,12 +1877,19 @@ show_rib_memory_msg(struct imsg *imsg)
 		    (long long)stats.attr_refs);
 		printf("%10lld BGP attributes using %s of memory\n",
 		    (long long)stats.attr_dcnt, fmt_mem(stats.attr_data));
+		printf("%10lld as-set elements in %lld tables using "
+		    "%s of memory\n", stats.aset_nmemb, stats.aset_cnt,
+		    fmt_mem(stats.aset_size));
+		printf("%10lld prefix-set elments using %s of memory\n",
+		    stats.pset_cnt, fmt_mem(stats.pset_size));
 		printf("RIB using %s of memory\n", fmt_mem(pts +
 		    stats.prefix_cnt * sizeof(struct prefix) +
 		    stats.rib_cnt * sizeof(struct rib_entry) +
 		    stats.path_cnt * sizeof(struct rde_aspath) +
 		    stats.aspath_size + stats.attr_cnt * sizeof(struct attr) +
 		    stats.attr_data));
+		printf("Sets using %s of memory\n", fmt_mem(stats.aset_size +
+		    stats.pset_size));
 		printf("\nRDE hash statistics\n");
 		break;
 	case IMSG_CTL_SHOW_RIB_HASH:

@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.199 2018/10/25 15:49:42 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.201 2018/10/31 14:50:07 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -76,9 +76,7 @@ struct rib_desc {
 LIST_HEAD(rde_peer_head, rde_peer);
 LIST_HEAD(aspath_list, aspath);
 LIST_HEAD(attr_list, attr);
-TAILQ_HEAD(prefix_queue, prefix);
 LIST_HEAD(aspath_head, rde_aspath);
-TAILQ_HEAD(aspath_queue, rde_aspath);
 RB_HEAD(uptree_prefix, update_prefix);
 RB_HEAD(uptree_attr, update_attr);
 RB_HEAD(uptree_rib, update_rib);
@@ -89,7 +87,6 @@ TAILQ_HEAD(uplist_attr, update_attr);
 struct rde_peer {
 	LIST_ENTRY(rde_peer)		 hash_l; /* hash list over all peers */
 	LIST_ENTRY(rde_peer)		 peer_l; /* list of all peers */
-	struct aspath_queue		 path_h; /* list of all as paths */
 	struct peer_config		 conf;
 	struct bgpd_addr		 remote_addr;
 	struct bgpd_addr		 local_v4_addr;
@@ -209,10 +206,7 @@ struct mpattr {
 
 struct rde_aspath {
 	LIST_ENTRY(rde_aspath)		 path_l;
-	TAILQ_ENTRY(rde_aspath)		 peer_l;
-	struct prefix_queue		 prefixes;
 	struct attr			**others;
-	struct rde_peer			*peer;
 	struct aspath			*aspath;
 	u_int64_t			 hash;
 	u_int32_t			 flags;		/* internally used */
@@ -220,6 +214,7 @@ struct rde_aspath {
 	u_int32_t			 med;		/* multi exit disc */
 	u_int32_t			 lpref;		/* local pref */
 	u_int32_t			 weight;	/* low prio lpref */
+	int				 refcnt;
 	u_int16_t			 rtlabelid;	/* route label id */
 	u_int16_t			 pftableid;	/* pf table id */
 	u_int8_t			 origin;
@@ -291,7 +286,6 @@ struct pt_entry_vpn4 {
 
 struct prefix {
 	LIST_ENTRY(prefix)		 rib_l, nexthop_l;
-	TAILQ_ENTRY(prefix)		 path_l;
 	struct rib_entry		*re;
 	struct rde_aspath		*aspath;
 	struct rde_peer			*peer;
@@ -478,9 +472,7 @@ void		 path_hash_stats(struct rde_hashstats *);
 int		 path_update(struct rib *, struct rde_peer *,
 		     struct filterstate *, struct bgpd_addr *, int, u_int8_t);
 int		 path_compare(struct rde_aspath *, struct rde_aspath *);
-void		 path_remove(struct rde_aspath *);
 u_int32_t	 path_remove_stale(struct rde_aspath *, u_int8_t, time_t);
-void		 path_destroy(struct rde_aspath *);
 int		 path_empty(struct rde_aspath *);
 struct rde_aspath *path_copy(struct rde_aspath *, const struct rde_aspath *);
 struct rde_aspath *path_prep(struct rde_aspath *);
@@ -499,7 +491,6 @@ struct prefix	*prefix_bypeer(struct rib_entry *, struct rde_peer *);
 void		 prefix_updateall(struct prefix *, enum nexthop_state,
 		     enum nexthop_state);
 void		 prefix_destroy(struct prefix *);
-void		 prefix_network_clean(struct rde_peer *);
 void		 prefix_relink(struct prefix *, struct rde_aspath *, int);
 
 static inline struct rde_peer *
