@@ -1,4 +1,4 @@
-.\"	$OpenBSD: sysctl.2,v 1.11 2018/09/30 18:58:17 solene Exp $
+.\"	$OpenBSD: sysctl.2,v 1.14 2018/11/06 13:16:54 otto Exp $
 .\"
 .\" Copyright (c) 1993
 .\"	The Regents of the University of California.  All rights reserved.
@@ -27,7 +27,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: September 30 2018 $
+.Dd $Mdocdate: November 6 2018 $
 .Dt SYSCTL 2
 .Os
 .Sh NAME
@@ -256,7 +256,7 @@ privileges may change the value.
 .It Dv FS_POSIX_SETUID Ta "integer" Ta "yes"
 .El
 .Bl -tag -width "123456"
-.It Dv FS_POSIX_SETUID Pq Va fx.posix.setuid
+.It Dv FS_POSIX_SETUID Pq Va fs.posix.setuid
 When this variable is set, ownership changes on a file will cause
 the
 .Va S_ISUID
@@ -1153,6 +1153,7 @@ The fifth and sixth level names are as follows:
 .It Dv NET_RT_IFLIST Ta "None"
 .It Dv NET_RT_IFNAMES Ta "None"
 .It Dv NET_RT_STATS Ta "None"
+.It Dv NET_RT_TABLE Ta "rtableid"
 .El
 .Bl -tag -width "123456"
 .It Li NET_RT_DUMP
@@ -2134,6 +2135,7 @@ privileges may change the value.
 .It Sy "Second level name" Ta Sy "Type" Ta Sy "Changeable"
 .It Dv VM_ANONMIN Ta "integer" Ta "yes"
 .It Dv VM_LOADAVG Ta "struct loadavg" Ta "no"
+.It Dv VM_MALLOC_CONF Ta "string" Ta "yes"
 .It Dv VM_MAXSLP Ta "integer" Ta "no"
 .It Dv VM_METER Ta "struct vmtotal" Ta "no"
 .It Dv VM_NKMEMPAGES Ta "integer" Ta "no"
@@ -2152,6 +2154,10 @@ pages which contain anonymous mapping.
 Return the load average history.
 The returned data consists of a
 .Li struct loadavg .
+.It Dv VM_MALLOC_CONF Pq Va vm.malloc_conf
+The
+.Xr malloc.conf 5
+option string.
 .It Dv VM_MAXSLP Pq Va vm.maxslp
 The time for a process to be blocked before being swappable,
 in seconds.

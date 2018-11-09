@@ -1,4 +1,4 @@
-/*	$OpenBSD: malloc.c,v 1.249 2018/04/07 09:57:08 otto Exp $	*/
+/*	$OpenBSD: malloc.c,v 1.251 2018/11/06 08:01:43 otto Exp $	*/
 /*
  * Copyright (c) 2008, 2010, 2011, 2016 Otto Moerbeek <otto@drijf.net>
  * Copyright (c) 2012 Matthew Dempsky <matthew@openbsd.org>
@@ -28,6 +28,8 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
+#include <uvm/uvmexp.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -386,8 +388,9 @@ omalloc_parseopt(char opt)
 static void
 omalloc_init(void)
 {
-	char *p, *q, b[64];
-	int i, j;
+	char *p, *q, b[16];
+	int i, j, mib[2];
+	size_t sb;
 
 	/*
 	 * Default options
@@ -398,10 +401,12 @@ omalloc_init(void)
 	for (i = 0; i < 3; i++) {
 		switch (i) {
 		case 0:
-			j = readlink("/etc/malloc.conf", b, sizeof b - 1);
-			if (j <= 0)
+			mib[0] = CTL_VM;
+			mib[1] = VM_MALLOC_CONF;
+			sb = sizeof(b);
+			j = sysctl(mib, 2, b, &sb, NULL, 0);
+			if (j != 0)
 				continue;
-			b[j] = '\0';
 			p = b;
 			break;
 		case 1:
@@ -2057,6 +2062,48 @@ err:
 	return res;
 }
 /*DEF_STRONG(posix_memalign);*/
+
+void *
+aligned_alloc(size_t alignment, size_t size)
+{
+	struct dir_info *d;
+	int saved_errno = errno;
+	void *r;
+
+	/* Make sure that alignment is a positive power of 2. */
+	if (((alignment - 1) & alignment) != 0 || alignment == 0) {
+		errno = EINVAL;
+		return NULL;
+	};
+	/* Per spec, size should be a multiple of alignment */
+	if ((size & (alignment - 1)) != 0) {
+		errno = EINVAL;
+		return NULL;
+	}
+
+	d = getpool();
+	if (d == NULL) {
+		_malloc_init(0);
+		d = getpool();
+	}
+	_MALLOC_LOCK(d->mutex);
+	d->func = "aligned_alloc";
+	if (d->active++) {
+		malloc_recurse(d);
+		return NULL;
+	}
+	r = omemalign(d, alignment, size, 0, CALLER);
+	d->active--;
+	_MALLOC_UNLOCK(d->mutex);
+	if (r == NULL) {
+		if (mopts.malloc_xmalloc)
+			wrterror(d, "out of memory");
+		return NULL;
+	}
+	errno = saved_errno;
+	return r;
+}
+/*DEF_STRONG(aligned_alloc);*/
 
 #ifdef MALLOC_STATS
 

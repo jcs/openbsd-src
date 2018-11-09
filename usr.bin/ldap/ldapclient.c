@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldapclient.c,v 1.5 2018/10/23 08:28:34 martijn Exp $	*/
+/*	$OpenBSD: ldapclient.c,v 1.9 2018/11/07 13:58:51 martijn Exp $	*/
 
 /*
  * Copyright (c) 2018 Reyk Floeter <reyk@openbsd.org>
@@ -52,7 +52,6 @@
 #define F_NEEDAUTH	0x04
 #define F_LDIF		0x08
 
-#define CAPATH		"/etc/ssl/cert.pem"
 #define LDAPHOST	"localhost"
 #define LDAPFILTER	"(objectClass=*)"
 #define LDIF_LINELENGTH	79
@@ -220,7 +219,7 @@ main(int argc, char *argv[])
 	if (ldap.ldap_protocol == LDAP && (ldap.ldap_flags & F_STARTTLS))
 		ldap.ldap_protocol = LDAPTLS;
 	if (ldap.ldap_capath == NULL)
-		ldap.ldap_capath = CAPATH;
+		ldap.ldap_capath = TLS_CA_CERT_FILE;
 	if (ls.ls_basedn == NULL)
 		ls.ls_basedn = "";
 	if (ls.ls_scope == -1)
@@ -404,8 +403,13 @@ ldapc_printattr(struct ldapc *ldap, const char *key, const char *value)
 		 * in SAFE-STRINGs. String value that do not match the
 		 * criteria must be encoded as Base64.
 		 */
-		for (cp = (const unsigned char *)value;
-		    encode == 0 &&*cp != '\0'; cp++) {
+		cp = (const unsigned char *)value;
+		/* !SAFE-INIT-CHAR: SAFE-CHAR minus %x20 %x3A %x3C */
+		if (*cp == ' ' ||
+		    *cp == ':' ||
+		    *cp == '<')
+			encode = 1;
+		for (; encode == 0 &&*cp != '\0'; cp++) {
 			/* !SAFE-CHAR %x01-09 / %x0B-0C / %x0E-7F */
 			if (*cp > 127 ||
 			    *cp == '\0' ||
@@ -421,7 +425,7 @@ ldapc_printattr(struct ldapc *ldap, const char *key, const char *value)
 			}
 		} else {
 			inlen = strlen(value);
-			outlen = inlen * 2 + 1;
+			outlen = (((inlen + 2) / 3) * 4) + 1;
 
 			if ((out = calloc(1, outlen)) == NULL ||
 			    b64_ntop(value, inlen, out, outlen) == -1) {
@@ -431,7 +435,7 @@ ldapc_printattr(struct ldapc *ldap, const char *key, const char *value)
 			}
 
 			/* Base64 is indicated with a double-colon */
-			if (asprintf(&p, "%s: %s", key, out) == -1) {
+			if (asprintf(&p, "%s:: %s", key, out) == -1) {
 				log_warnx("asprintf");
 				free(out);
 				return (-1);

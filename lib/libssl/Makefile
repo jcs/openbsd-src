@@ -1,4 +1,4 @@
-# $OpenBSD: Makefile,v 1.39 2018/03/17 16:20:01 beck Exp $
+# $OpenBSD: Makefile,v 1.43 2018/11/09 00:34:55 beck Exp $
 
 .include <bsd.own.mk>
 .ifndef NOMAN
@@ -26,14 +26,15 @@ SYMBOL_LIST=	${.CURDIR}/Symbols.list
 
 SRCS= \
 	ssl_srvr.c ssl_clnt.c s3_lib.c ssl_pkt.c ssl_both.c \
-	t1_meth.c t1_srvr.c t1_clnt.c t1_lib.c t1_enc.c t1_hash.c \
-	d1_meth.c d1_srvr.c d1_clnt.c d1_lib.c d1_pkt.c \
+	t1_lib.c t1_enc.c t1_hash.c \
+	d1_srvr.c d1_clnt.c d1_lib.c d1_pkt.c \
 	d1_both.c d1_enc.c d1_srtp.c \
 	ssl_lib.c ssl_cert.c ssl_sess.c \
 	ssl_ciph.c ssl_stat.c ssl_rsa.c \
 	ssl_asn1.c ssl_txt.c ssl_algs.c \
-	bio_ssl.c ssl_err.c \
-	ssl_packet.c ssl_tlsext.c ssl_versions.c pqueue.c ssl_init.c
+	bio_ssl.c ssl_err.c ssl_methods.c \
+	ssl_packet.c ssl_tlsext.c ssl_versions.c pqueue.c ssl_init.c \
+	tls13_handshake.c tls13_key_schedule.c ssl_sigalgs.c
 SRCS+=	s3_cbc.c
 SRCS+=	bs_ber.c bs_cbb.c bs_cbs.c
 

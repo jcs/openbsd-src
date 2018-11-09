@@ -28,11 +28,7 @@
  */
 
 #include <sys/time.h>
-#ifdef __FreeBSD__
-#include <sys/mount.h>
-#endif
 #include <sys/stat.h>
-#include <sys/wait.h>
 
 #include <err.h>
 #include <errno.h>
@@ -43,75 +39,13 @@
 #include <string.h>
 #include <unistd.h>
 
-#ifdef __FreeBSD__
-#if __FreeBSD_version >= 800028
-#define HAVE_SYSID
-#endif
-#include <sys/cdefs.h>
-#else
-#ifndef __unused
-#define __unused
-#endif
-#endif
+#include "util.h"
 
 int verbose = 0;
-
-static int
-make_file(const char *pathname, off_t sz)
-{
-	struct stat st;
-	const char *template = "/flocktempXXXXXX";
-	size_t len;
-	char *filename;
-	int fd;
-
-	if (stat(pathname, &st) == 0) {
-		if (S_ISREG(st.st_mode)) {
-			fd = open(pathname, O_RDWR);
-			if (fd < 0)
-				err(1, "open(%s)", pathname);
-			if (ftruncate(fd, sz) < 0)
-				err(1, "ftruncate");
-			return (fd);
-		}
-	}
-
-	len = strlen(pathname) + strlen(template) + 1;
-	filename = malloc(len);
-	snprintf(filename, len, "%s%s", pathname, template);
-	fd = mkstemp(filename);
-	if (fd < 0)
-		err(1, "mkstemp");
-	if (ftruncate(fd, sz) < 0)
-		err(1, "ftruncate");
-	if (unlink(filename) < 0)
-		err(1, "unlink");
-	free(filename);
-
-	return (fd);
-}
 
 static void
 ignore_alarm(int __unused sig)
 {
-}
-
-static int
-safe_waitpid(pid_t pid)
-{
-	int save_errno;
-	int status;
-
-	save_errno = errno;
-	errno = 0;
-	while (waitpid(pid, &status, 0) != pid) {
-		if (errno == EINTR)
-			continue;
-		err(1, "waitpid");
-	}
-	errno = save_errno;
-
-	return (status);
 }
 
 static int
@@ -128,18 +62,6 @@ safe_kill(pid_t pid, int sig)
 	return (status);
 }
 
-#define FAIL(test)							\
-	do {								\
-		if (test) {						\
-			if (verbose) printf("%s: %d: FAIL (%s)\n",	\
-				__func__, __LINE__, #test);		\
-			return -1;					\
-		}							\
-	} while (0)
-
-#define SUCCEED \
-	do { if (verbose) printf("SUCCEED\n"); return 0; } while (0)
-
 /*
  * Test 1 - F_GETLK on unlocked region
  *
@@ -148,7 +70,7 @@ safe_kill(pid_t pid, int sig)
  * except for the lock type which is set to F_UNLCK.
  */
 static int
-test1(int fd, __unused int argc, const __unused char **argv)
+test1(int fd)
 {
 	struct flock fl1, fl2;
 
@@ -166,9 +88,6 @@ test1(int fd, __unused int argc, const __unused char **argv)
 	FAIL(fl1.l_pid != fl2.l_pid);
 	FAIL(fl1.l_type != F_UNLCK);
 	FAIL(fl1.l_whence != fl2.l_whence);
-#ifdef HAVE_SYSID
-	FAIL(fl1.l_sysid != fl2.l_sysid);
-#endif
 
 	SUCCEED;
 }
@@ -180,7 +99,7 @@ test1(int fd, __unused int argc, const __unused char **argv)
  * immediately with EACCES or EAGAIN.
  */
 static int
-test2(int fd, __unused int argc, const __unused char **argv)
+test2(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -251,7 +170,7 @@ test2(int fd, __unused int argc, const __unused char **argv)
  * in FreeBSD's client (and server) lockd implementation.
  */
 static int
-test3(int fd, __unused int argc, const __unused char **argv)
+test3(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -321,7 +240,7 @@ test3(int fd, __unused int argc, const __unused char **argv)
  * Get the first lock that blocks the lock.
  */
 static int
-test4(int fd, __unused int argc, const __unused char **argv)
+test4(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -377,9 +296,6 @@ test4(int fd, __unused int argc, const __unused char **argv)
 	FAIL(fl.l_len != 99);
 	FAIL(fl.l_type != F_WRLCK);
 	FAIL(fl.l_pid != pid);
-#ifdef HAVE_SYSID
-	FAIL(fl.l_sysid != 0);
-#endif
 
 	safe_kill(pid, SIGTERM);
 	safe_waitpid(pid);
@@ -398,7 +314,7 @@ test4(int fd, __unused int argc, const __unused char **argv)
  * EDEADLK is returned.
  */
 static int
-test5(int fd, __unused int argc, const __unused char **argv)
+test5(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -492,7 +408,7 @@ test5(int fd, __unused int argc, const __unused char **argv)
  * (due to C2's blocking attempt to lock byte zero).
  */
 static int
-test6(int fd, __unused int argc, const __unused char **argv)
+test6(int fd)
 {
 	/*
 	 * Because our test relies on the child process being blocked
@@ -595,7 +511,7 @@ test6(int fd, __unused int argc, const __unused char **argv)
  * immediately with EACCES or EAGAIN.
  */
 static int
-test7(int fd, __unused int argc, const __unused char **argv)
+test7(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -667,7 +583,7 @@ test7(int fd, __unused int argc, const __unused char **argv)
  * it.
  */
 static int
-test8(int fd, __unused int argc, const __unused char **argv)
+test8(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -744,7 +660,7 @@ test8(int fd, __unused int argc, const __unused char **argv)
  * immediately with EACCES or EAGAIN.
  */
 static int
-test9(int fd, __unused int argc, const __unused char **argv)
+test9(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -816,7 +732,7 @@ test9(int fd, __unused int argc, const __unused char **argv)
  * system ID of the system that owns that process
  */
 static int
-test10(int fd, __unused int argc, const __unused char **argv)
+test10(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -835,9 +751,6 @@ test10(int fd, __unused int argc, const __unused char **argv)
 	fl.l_type = F_WRLCK;
 	fl.l_whence = SEEK_SET;
 	fl.l_pid = 9999;
-#ifdef HAVE_SYSID
-	fl.l_sysid = 9999;
-#endif
 
 	pid = fork();
 	if (pid < 0)
@@ -875,9 +788,6 @@ test10(int fd, __unused int argc, const __unused char **argv)
 	close(pfd[1]);
 
 	FAIL(fl.l_pid != pid);
-#ifdef HAVE_SYSID
-	FAIL(fl.l_sysid != 0);
-#endif
 
 	SUCCEED;
 }
@@ -889,7 +799,7 @@ test10(int fd, __unused int argc, const __unused char **argv)
  * is added.
  */
 static int
-test11(int fd, __unused int argc, const __unused char **argv)
+test11(int fd)
 {
 #ifdef F_SETLK_REMOTE
 	struct flock fl;
@@ -969,7 +879,7 @@ test11(int fd, __unused int argc, const __unused char **argv)
  * process waits until the request can be satisfied.
  */
 static int
-test12(int fd, __unused int argc, const __unused char **argv)
+test12(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -1046,7 +956,7 @@ test12(int fd, __unused int argc, const __unused char **argv)
  * process waits until the request can be satisfied.
  */
 static int
-test13(int fd, __unused int argc, const __unused char **argv)
+test13(int fd)
 {
 	/*
 	 * We create a child process to hold the lock which we will
@@ -1131,14 +1041,14 @@ test13(int fd, __unused int argc, const __unused char **argv)
  * Test 14 - soak test
  */
 static int
-test14(int fd, int argc, const char **argv)
+test14(int fd)
 {
 #define CHILD_COUNT 20
 	/*
 	 * We create a set of child processes and let each one run
 	 * through a random sequence of locks and unlocks.
 	 */
-	int i, j, id, id_base;
+	int i, j, id;
 	int pids[CHILD_COUNT], pid;
 	char buf[128];
 	char tbuf[128];
@@ -1147,10 +1057,7 @@ test14(int fd, int argc, const char **argv)
 	struct flock fl;
 	struct itimerval itv;
 	int status;
-
-	id_base = 0;
-	if (argc >= 2)
-		id_base = strtol(argv[1], NULL, 0);
+	int id_base = 0;
 
 	if (verbose) printf("14 - soak test: ");
 	fflush(stdout);
@@ -1327,7 +1234,7 @@ test14(int fd, int argc, const char **argv)
  * point.
  */
 static int
-test15(int fd, __unused int argc, const __unused char **argv)
+test15(int fd)
 {
 #ifdef LOCK_EX
 	/*
@@ -1417,7 +1324,7 @@ test15(int fd, __unused int argc, const __unused char **argv)
  * Test 16 - double free regression
  */
 static int
-test16(int fd, __unused int argc, const __unused char **argv)
+test16(int fd)
 {
 	struct flock fl;
 	int res;
@@ -1455,7 +1362,7 @@ test16(int fd, __unused int argc, const __unused char **argv)
  * No overlap.
  */
 static int
-test17(int fd, __unused int argc, const __unused char **argv)
+test17(int fd)
 {
 	struct flock fl;
 	int nfd, res;
@@ -1541,7 +1448,7 @@ test17(int fd, __unused int argc, const __unused char **argv)
  * Overlap and lock are equal.
  */
 static int
-test18(int fd, __unused int argc, const __unused char **argv)
+test18(int fd)
 {
 	struct flock fl;
 	int res;
@@ -1565,7 +1472,7 @@ test18(int fd, __unused int argc, const __unused char **argv)
  * Overlap contains lock.
  */
 static int
-test19(int fd, __unused int argc, const __unused char **argv)
+test19(int fd)
 {
 	struct flock fl;
 	int nfd, res;
@@ -1651,7 +1558,7 @@ test19(int fd, __unused int argc, const __unused char **argv)
  * Lock contains overlap.
  */
 static int
-test20(int fd, __unused int argc, const __unused char **argv)
+test20(int fd)
 {
 	struct flock fl;
 	int res;
@@ -1681,7 +1588,7 @@ test20(int fd, __unused int argc, const __unused char **argv)
  * Overlap starts before lock.
  */
 static int
-test21(int fd, __unused int argc, const __unused char **argv)
+test21(int fd)
 {
 	struct flock fl;
 	int res;
@@ -1711,7 +1618,7 @@ test21(int fd, __unused int argc, const __unused char **argv)
  * Overlap ends after lock.
  */
 static int
-test22(int fd, __unused int argc, const __unused char **argv)
+test22(int fd)
 {
 	struct flock fl;
 	int res;
@@ -1735,91 +1642,71 @@ test22(int fd, __unused int argc, const __unused char **argv)
 	SUCCEED;
 }
 
-struct test {
-	int (*testfn)(int, int, const char **);	/* function to perform the test */
-	int num;		/* test number */
-	int intr;		/* non-zero if the test interrupts a lock */
+static struct test tests[] = {
+	{	test1,		0	},
+	{	test2,		0	},
+	{	test3,		1	},
+	{	test4,		0	},
+	{	test5,		1	},
+	{	test6,		1	},
+	{	test7,		0	},
+	{	test8,		0	},
+	{	test9,		0	},
+	{	test10,		0	},
+	{	test11,		1	},
+	{	test12,		0	},
+	{	test13,		1	},
+	{	test14,		0	},
+	{	test15,		1	},
+	{	test16,		0	},
+	{	test17,		0	},
+	{	test18,		0	},
+	{	test19,		0	},
+	{	test20,		0	},
+	{	test21,		0	},
+	{	test22,		0	},
 };
 
-struct test tests[] = {
-	{	test1,		1,	0	},
-	{	test2,		2,	0	},
-	{	test3,		3,	1	},
-	{	test4,		4,	0	},
-	{	test5,		5,	1	},
-	{	test6,		6,	1	},
-	{	test7,		7,	0	},
-	{	test8,		8,	0	},
-	{	test9,		9,	0	},
-	{	test10,		10,	0	},
-	{	test11,		11,	1	},
-	{	test12,		12,	0	},
-	{	test13,		13,	1	},
-	{	test14,		14,	0	},
-	{	test15,		15,	1	},
-	{	test16,		16,	0	},
-	{	test17,		17,	0	},
-	{	test18,		18,	0	},
-	{	test19,		19,	0	},
-	{	test20,		20,	0	},
-	{	test21,		21,	0	},
-	{	test22,		22,	0	},
-};
-int test_count = sizeof(tests) / sizeof(tests[0]);
+static int test_count = sizeof(tests) / sizeof(tests[0]);
 
 int
-main(int argc, const char *argv[])
+main(int argc, char *argv[])
 {
-	int testnum;
-	int fd;
-	int nointr;
-	int i;
 	struct sigaction sa;
-	int test_argc;
-	const char **test_argv;
-	int ret;
+	const char *errstr;
+	int c, fd, i;
+	int error = 0;
+	int testnum = 0;
 
-	if (argc < 2) {
-		errx(1, "usage: flock <directory> [test number] ...");
+	while ((c = getopt(argc, argv, "v")) != -1)
+		switch (c) {
+		case 'v':
+			verbose = 1;
+			break;
+		default:
+			usage();
+		}
+	argc -= optind;
+	argv += optind;
+	if (argc > 1)
+		usage();
+	if (argc == 1) {
+		testnum = strtonum(argv[0], 1, test_count, &errstr);
+		if (testnum == 0)
+			errx(1, "test number %s", errstr);
 	}
 
-	fd = make_file(argv[1], 1024);
-	if (argc >= 3) {
-		testnum = strtol(argv[2], NULL, 0);
-		test_argc = argc - 2;
-		test_argv = argv + 2;
-	} else {
-		verbose = 1;
-		testnum = 0;
-		test_argc = 0;
-		test_argv = 0;
-	}
+	fd = make_file(1024);
 
 	sa.sa_handler = ignore_alarm;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	sigaction(SIGALRM, &sa, 0);
 
-	nointr = 0;
-#if defined(__FreeBSD__) && __FreeBSD_version < 800040
-	{
-		/*
-		 * FreeBSD with userland NLM can't interrupt a blocked
-		 * lock request on an NFS mounted filesystem.
-		 */
-		struct statfs st;
-		fstatfs(fd, &st);
-		nointr = !strcmp(st.f_fstypename, "nfs");
-	}
-#endif
-
-	ret = 0;
 	for (i = 0; i < test_count; i++) {
-		if (tests[i].intr && nointr)
-			continue;
-		if (!testnum || tests[i].num == testnum)
-			ret |= tests[i].testfn(fd, test_argc, test_argv);
+		if (testnum == 0 || testnum == i + 1)
+			error |= tests[i].testfn(fd);
 	}
 
-	return (ret ? 1 : 0);
+	return (error ? 1 : 0);
 }

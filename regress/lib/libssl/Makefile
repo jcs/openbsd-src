@@ -1,14 +1,16 @@
-#	$OpenBSD: Makefile,v 1.26 2017/07/16 18:18:10 jsing Exp $
+#	$OpenBSD: Makefile,v 1.28 2018/11/07 21:42:10 beck Exp $
 
 SUBDIR= \
 	asn1 \
 	bytestring \
 	ciphers \
 	client \
+	interop \
 	pqueue \
 	server \
 	ssl \
 	tlsext \
+	key_schedule \
 	unit
 
 install:

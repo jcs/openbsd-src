@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_clnt.c,v 1.34 2018/09/05 16:58:59 jsing Exp $ */
+/* $OpenBSD: ssl_clnt.c,v 1.38 2018/11/09 00:34:55 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -170,6 +170,7 @@
 #endif
 
 #include "bytestring.h"
+#include "ssl_sigalgs.h"
 #include "ssl_tlsext.h"
 
 static int ca_dn_cmp(const X509_NAME * const *a, const X509_NAME * const *b);
@@ -244,7 +245,7 @@ ssl3_connect(SSL *s)
 			/* don't push the buffering BIO quite yet */
 
 			if (!SSL_IS_DTLS(s)) {
-				if (!tls1_init_finished_mac(s)) {
+				if (!tls1_transcript_init(s)) {
 					ret = -1;
 					goto end;
 				}
@@ -269,7 +270,7 @@ ssl3_connect(SSL *s)
 
 			if (SSL_IS_DTLS(s)) {
 				/* every DTLS ClientHello resets Finished MAC */
-				if (!tls1_init_finished_mac(s)) {
+				if (!tls1_transcript_init(s)) {
 					ret = -1;
 					goto end;
 				}
@@ -582,6 +583,12 @@ ssl3_connect(SSL *s)
 		case SSL_ST_OK:
 			/* clean a few things up */
 			tls1_cleanup_key_block(s);
+
+			if (S3I(s)->handshake_transcript != NULL) {
+				SSLerror(s, ERR_R_INTERNAL_ERROR);
+				ret = -1;
+				goto end;
+			}
 
 			if (!SSL_IS_DTLS(s)) {
 				BUF_MEM_free(s->internal->init_buf);
@@ -982,11 +989,8 @@ ssl3_get_server_hello(SSL *s)
 	 * client authentication.
 	 */
 	alg_k = S3I(s)->hs.new_cipher->algorithm_mkey;
-	if (!(SSL_USE_SIGALGS(s) || (alg_k & SSL_kGOST)) &&
-	    !tls1_digest_cached_records(s)) {
-		al = SSL_AD_INTERNAL_ERROR;
-		goto f_err;
-	}
+	if (!(SSL_USE_SIGALGS(s) || (alg_k & SSL_kGOST)))
+		tls1_transcript_free(s);
 
 	if (!CBS_get_u8(&cbs, &compression_method))
 		goto truncated;
@@ -1428,9 +1432,8 @@ ssl3_get_server_key_exchange(SSL *s)
 	EVP_PKEY *pkey = NULL;
 	EVP_MD_CTX md_ctx;
 	const unsigned char *param;
-	uint8_t hash_id, sig_id;
 	long n, alg_k, alg_a;
-	int al, ok, sigalg;
+	int al, ok;
 	size_t param_len;
 
 	EVP_MD_CTX_init(&md_ctx);
@@ -1503,24 +1506,16 @@ ssl3_get_server_key_exchange(SSL *s)
 	/* if it was signed, check the signature */
 	if (pkey != NULL) {
 		if (SSL_USE_SIGALGS(s)) {
-			if (!CBS_get_u8(&cbs, &hash_id))
-				goto truncated;
-			if (!CBS_get_u8(&cbs, &sig_id))
-				goto truncated;
+			uint16_t sigalg;
 
-			if ((md = tls12_get_hash(hash_id)) == NULL) {
+			if (!CBS_get_u16(&cbs, &sigalg))
+				goto truncated;
+			if ((md = ssl_sigalg_md(sigalg)) == NULL) {
 				SSLerror(s, SSL_R_UNKNOWN_DIGEST);
 				al = SSL_AD_DECODE_ERROR;
 				goto f_err;
 			}
-
-			/* Check key type is consistent with signature. */
-			if ((sigalg = tls12_get_sigid(pkey)) == -1) {
-				/* Should never happen */
-				SSLerror(s, ERR_R_INTERNAL_ERROR);
-				goto err;
-			}
-			if (sigalg != sig_id) {
+			if (!ssl_sigalg_pkey_check(sigalg, pkey)) {
 				SSLerror(s, SSL_R_WRONG_SIGNATURE_TYPE);
 				al = SSL_AD_DECODE_ERROR;
 				goto f_err;
@@ -1613,10 +1608,7 @@ ssl3_get_certificate_request(SSL *s)
 		 * If we get here we don't need any cached handshake records
 		 * as we wont be doing client auth.
 		 */
-		if (S3I(s)->handshake_buffer) {
-			if (!tls1_digest_cached_records(s))
-				goto err;
-		}
+		tls1_transcript_free(s);
 		return (1);
 	}
 
@@ -2366,12 +2358,12 @@ ssl3_send_client_verify(SSL *s)
 	unsigned char data[MD5_DIGEST_LENGTH + SHA_DIGEST_LENGTH];
 	unsigned char *signature = NULL;
 	unsigned int signature_len;
+	const unsigned char *hdata;
+	size_t hdatalen;
 	EVP_PKEY_CTX *pctx = NULL;
 	EVP_PKEY *pkey;
 	EVP_MD_CTX mctx;
 	const EVP_MD *md;
-	long hdatalen;
-	void *hdata;
 
 	EVP_MD_CTX_init(&mctx);
 
@@ -2398,10 +2390,7 @@ ssl3_send_client_verify(SSL *s)
 			goto err;
 
 		if (!SSL_USE_SIGALGS(s)) {
-			if (S3I(s)->handshake_buffer) {
-				if (!tls1_digest_cached_records(s))
-					goto err;
-			}
+			tls1_transcript_free(s);
 			if (!tls1_handshake_hash_value(s, data, sizeof(data),
 			    NULL))
 				goto err;
@@ -2412,11 +2401,13 @@ ssl3_send_client_verify(SSL *s)
 		 * using agreed digest and cached handshake records.
 		 */
 		if (SSL_USE_SIGALGS(s)) {
-			hdatalen = BIO_get_mem_data(S3I(s)->handshake_buffer,
-			    &hdata);
+			uint16_t sigalg;
+
 			md = s->cert->key->digest;
-			if (hdatalen <= 0 ||
-			    !tls12_get_hashandsig(&cert_verify, pkey, md)) {
+			if (!tls1_transcript_data(s, &hdata, &hdatalen) ||
+			    (sigalg = ssl_sigalg_value(pkey, md)) ==
+			    SIGALG_NONE ||
+			    !CBB_add_u16(&cert_verify, sigalg)) {
 				SSLerror(s, ERR_R_INTERNAL_ERROR);
 				goto err;
 			}
@@ -2427,8 +2418,7 @@ ssl3_send_client_verify(SSL *s)
 				SSLerror(s, ERR_R_EVP_LIB);
 				goto err;
 			}
-			if (!tls1_digest_cached_records(s))
-				goto err;
+			tls1_transcript_free(s);
 		} else if (pkey->type == EVP_PKEY_RSA) {
 			if (RSA_sign(NID_md5_sha1, data,
 			    MD5_DIGEST_LENGTH + SHA_DIGEST_LENGTH, signature,
@@ -2451,8 +2441,7 @@ ssl3_send_client_verify(SSL *s)
 			size_t sigsize;
 			int nid;
 
-			hdatalen = BIO_get_mem_data(S3I(s)->handshake_buffer, &hdata);
-			if (hdatalen <= 0) {
+			if (!tls1_transcript_data(s, &hdata, &hdatalen)) {
 				SSLerror(s, ERR_R_INTERNAL_ERROR);
 				goto err;
 			}
@@ -2476,8 +2465,7 @@ ssl3_send_client_verify(SSL *s)
 			if (sigsize > UINT_MAX)
 				goto err;
 			signature_len = sigsize;
-			if (!tls1_digest_cached_records(s))
-				goto err;
+			tls1_transcript_free(s);
 #endif
 		} else {
 			SSLerror(s, ERR_R_INTERNAL_ERROR);
@@ -2521,8 +2509,8 @@ ssl3_send_client_certificate(SSL *s)
 	memset(&cbb, 0, sizeof(cbb));
 
 	if (S3I(s)->hs.state == SSL3_ST_CW_CERT_A) {
-		if ((s->cert == NULL) || (s->cert->key->x509 == NULL) ||
-		    (s->cert->key->privatekey == NULL))
+		if (s->cert->key->x509 == NULL ||
+		    s->cert->key->privatekey == NULL)
 			S3I(s)->hs.state = SSL3_ST_CW_CERT_B;
 		else
 			S3I(s)->hs.state = SSL3_ST_CW_CERT_C;
@@ -2553,8 +2541,12 @@ ssl3_send_client_certificate(SSL *s)
 
 		X509_free(x509);
 		EVP_PKEY_free(pkey);
-		if (i == 0)
+		if (i == 0) {
 			S3I(s)->tmp.cert_req = 2;
+
+			/* There is no client certificate to verify. */
+			tls1_transcript_free(s);
+		}
 
 		/* Ok, we have a cert */
 		S3I(s)->hs.state = SSL3_ST_CW_CERT_C;

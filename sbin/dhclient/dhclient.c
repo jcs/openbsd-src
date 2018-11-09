@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.577 2018/09/22 09:12:36 fcambus Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.581 2018/11/04 19:10:34 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -127,7 +127,7 @@ struct proposal {
 
 void		 sighdlr(int);
 void		 usage(void);
-int		 res_hnok_list(const char *dn);
+int		 res_hnok_list(const char *);
 int		 addressinuse(char *, struct in_addr, char *);
 
 void		 fork_privchld(struct interface_info *, int, int);
@@ -370,9 +370,8 @@ routehandler(struct interface_info *ifi, int routefd)
 			memcpy(&hw, &ifi->hw_address, sizeof(hw));
 			get_hw_address(ifi);
 			if (memcmp(&hw, &ifi->hw_address, sizeof(hw))) {
-				log_warnx("%s: LLADDR changed; restarting",
-				    log_procname);
-				sendhup();
+				log_warnx("%s: LLADDR changed", log_procname);
+				quit = SIGHUP;
 				goto done;
 			}
 		}
@@ -599,12 +598,6 @@ main(int argc, char *argv[])
 		close(tailfd);
 	}
 
-	/*
-	 * Do the initial status check and possible force up before creating
-	 * the routing socket. If we bounce the interface down and up while
-	 * the routing socket is listening, the RTM_IFINFO message with the
-	 * RTF_UP flag reset will cause premature exit.
-	 */
 	interface_state(ifi);
 	if (!LINK_STATE_IS_UP(ifi->link_state))
 		interface_link_forceup(ifi->name, ioctlfd);
@@ -2281,7 +2274,7 @@ fork_privchld(struct interface_info *ifi, int fd, int fd2)
 	close(fd);
 
 	if (quit == SIGHUP) {
-		log_warnx("%s: %s - restarting", log_procname, strsignal(quit));
+		log_warnx("%s: restarting", log_procname);
 		signal(SIGHUP, SIG_IGN); /* will be restored after exec */
 		execvp(saved_argv[0], saved_argv);
 		fatal("execvp(%s)", saved_argv[0]);

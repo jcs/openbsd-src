@@ -1,4 +1,4 @@
-/* $OpenBSD: t1_lib.c,v 1.144 2018/08/24 18:10:25 jsing Exp $ */
+/* $OpenBSD: t1_lib.c,v 1.149 2018/11/09 00:34:55 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -119,6 +119,7 @@
 #include "ssl_locl.h"
 
 #include "bytestring.h"
+#include "ssl_sigalgs.h"
 #include "ssl_tlsext.h"
 
 static int tls_decrypt_ticket(SSL *s, const unsigned char *tick, int ticklen,
@@ -361,25 +362,25 @@ tls1_get_formatlist(SSL *s, int client_formats, const uint8_t **pformats,
 }
 
 /*
- * Return the appropriate curve list. If client_curves is non-zero, return
- * the client/session curves. Otherwise return the custom curve list if one
- * exists, or the default curves if a custom list has not been specified.
+ * Return the appropriate group list. If client_groups is non-zero, return
+ * the client/session groups. Otherwise return the custom group list if one
+ * exists, or the default groups if a custom list has not been specified.
  */
 void
-tls1_get_curvelist(SSL *s, int client_curves, const uint16_t **pcurves,
-    size_t *pcurveslen)
+tls1_get_group_list(SSL *s, int client_groups, const uint16_t **pgroups,
+    size_t *pgroupslen)
 {
-	if (client_curves != 0) {
-		*pcurves = SSI(s)->tlsext_supportedgroups;
-		*pcurveslen = SSI(s)->tlsext_supportedgroups_length;
+	if (client_groups != 0) {
+		*pgroups = SSI(s)->tlsext_supportedgroups;
+		*pgroupslen = SSI(s)->tlsext_supportedgroups_length;
 		return;
 	}
 
-	*pcurves = s->internal->tlsext_supportedgroups;
-	*pcurveslen = s->internal->tlsext_supportedgroups_length;
-	if (*pcurves == NULL) {
-		*pcurves = eccurves_default;
-		*pcurveslen = sizeof(eccurves_default) / 2;
+	*pgroups = s->internal->tlsext_supportedgroups;
+	*pgroupslen = s->internal->tlsext_supportedgroups_length;
+	if (*pgroups == NULL) {
+		*pgroups = eccurves_default;
+		*pgroupslen = sizeof(eccurves_default) / 2;
 	}
 }
 
@@ -410,7 +411,7 @@ tls1_set_groups(uint16_t **out_group_ids, size_t *out_group_ids_len,
 }
 
 int
-tls1_set_groups_list(uint16_t **out_group_ids, size_t *out_group_ids_len,
+tls1_set_group_list(uint16_t **out_group_ids, size_t *out_group_ids_len,
     const char *groups)
 {
 	uint16_t *new_group_ids, *group_ids = NULL;
@@ -461,13 +462,13 @@ tls1_set_groups_list(uint16_t **out_group_ids, size_t *out_group_ids_len,
 int
 tls1_check_curve(SSL *s, const uint16_t curve_id)
 {
-	const uint16_t *curves;
-	size_t curveslen, i;
+	const uint16_t *groups;
+	size_t groupslen, i;
 
-	tls1_get_curvelist(s, 0, &curves, &curveslen);
+	tls1_get_group_list(s, 0, &groups, &groupslen);
 
-	for (i = 0; i < curveslen; i++) {
-		if (curves[i] == curve_id)
+	for (i = 0; i < groupslen; i++) {
+		if (groups[i] == curve_id)
 			return (1);
 	}
 	return (0);
@@ -486,8 +487,8 @@ tls1_get_shared_curve(SSL *s)
 
 	/* Return first preference shared curve. */
 	server_pref = (s->internal->options & SSL_OP_CIPHER_SERVER_PREFERENCE);
-	tls1_get_curvelist(s, (server_pref == 0), &pref, &preflen);
-	tls1_get_curvelist(s, (server_pref != 0), &supp, &supplen);
+	tls1_get_group_list(s, (server_pref == 0), &pref, &preflen);
+	tls1_get_group_list(s, (server_pref != 0), &supp, &supplen);
 
 	for (i = 0; i < preflen; i++) {
 		for (j = 0; j < supplen; j++) {
@@ -548,8 +549,8 @@ tls1_set_ec_id(uint16_t *curve_id, uint8_t *comp_id, EC_KEY *ec)
 static int
 tls1_check_ec_key(SSL *s, const uint16_t *curve_id, const uint8_t *comp_id)
 {
-	size_t curveslen, formatslen, i;
-	const uint16_t *curves;
+	size_t groupslen, formatslen, i;
+	const uint16_t *groups;
 	const uint8_t *formats;
 
 	/*
@@ -569,13 +570,13 @@ tls1_check_ec_key(SSL *s, const uint16_t *curve_id, const uint8_t *comp_id)
 	/*
 	 * Check curve list if present, otherwise everything is supported.
 	 */
-	tls1_get_curvelist(s, 1, &curves, &curveslen);
-	if (curve_id != NULL && curves != NULL) {
-		for (i = 0; i < curveslen; i++) {
-			if (curves[i] == *curve_id)
+	tls1_get_group_list(s, 1, &groups, &groupslen);
+	if (curve_id != NULL && groups != NULL) {
+		for (i = 0; i < groupslen; i++) {
+			if (groups[i] == *curve_id)
 				break;
 		}
-		if (i == curveslen)
+		if (i == groupslen)
 			return (0);
 	}
 
@@ -602,63 +603,6 @@ tls1_check_ec_server_key(SSL *s)
 		return (0);
 
 	return tls1_check_ec_key(s, &curve_id, &comp_id);
-}
-
-/* Check EC temporary key is compatible with client extensions. */
-int
-tls1_check_ec_tmp_key(SSL *s)
-{
-	EC_KEY *ec = s->cert->ecdh_tmp;
-	uint16_t curve_id;
-
-	/* Need a shared curve. */
-	if (tls1_get_shared_curve(s) != NID_undef)
-		return (1);
-
-	if (ec == NULL)
-		return (0);
-
-	if (tls1_set_ec_id(&curve_id, NULL, ec) != 1)
-		return (0);
-
-	return tls1_check_ec_key(s, &curve_id, NULL);
-}
-
-/*
- * List of supported signature algorithms and hashes. Should make this
- * customisable at some point, for now include everything we support.
- */
-
-static unsigned char tls12_sigalgs[] = {
-	TLSEXT_hash_sha512, TLSEXT_signature_rsa,
-	TLSEXT_hash_sha512, TLSEXT_signature_ecdsa,
-#ifndef OPENSSL_NO_GOST
-	TLSEXT_hash_streebog_512, TLSEXT_signature_gostr12_512,
-#endif
-
-	TLSEXT_hash_sha384, TLSEXT_signature_rsa,
-	TLSEXT_hash_sha384, TLSEXT_signature_ecdsa,
-
-	TLSEXT_hash_sha256, TLSEXT_signature_rsa,
-	TLSEXT_hash_sha256, TLSEXT_signature_ecdsa,
-
-#ifndef OPENSSL_NO_GOST
-	TLSEXT_hash_streebog_256, TLSEXT_signature_gostr12_256,
-	TLSEXT_hash_gost94, TLSEXT_signature_gostr01,
-#endif
-
-	TLSEXT_hash_sha224, TLSEXT_signature_rsa,
-	TLSEXT_hash_sha224, TLSEXT_signature_ecdsa,
-
-	TLSEXT_hash_sha1, TLSEXT_signature_rsa,
-	TLSEXT_hash_sha1, TLSEXT_signature_ecdsa,
-};
-
-void
-tls12_get_req_sig_algs(SSL *s, unsigned char **sigalgs, size_t *sigalgs_len)
-{
-	*sigalgs = tls12_sigalgs;
-	*sigalgs_len = sizeof(tls12_sigalgs);
 }
 
 int
@@ -1056,174 +1000,51 @@ tls_decrypt_ticket(SSL *s, const unsigned char *etick, int eticklen,
 	return 2;
 }
 
-/* Tables to translate from NIDs to TLS v1.2 ids */
-
-typedef struct {
-	int nid;
-	int id;
-} tls12_lookup;
-
-static tls12_lookup tls12_md[] = {
-	{NID_md5, TLSEXT_hash_md5},
-	{NID_sha1, TLSEXT_hash_sha1},
-	{NID_sha224, TLSEXT_hash_sha224},
-	{NID_sha256, TLSEXT_hash_sha256},
-	{NID_sha384, TLSEXT_hash_sha384},
-	{NID_sha512, TLSEXT_hash_sha512},
-	{NID_id_GostR3411_94, TLSEXT_hash_gost94},
-	{NID_id_tc26_gost3411_2012_256, TLSEXT_hash_streebog_256},
-	{NID_id_tc26_gost3411_2012_512, TLSEXT_hash_streebog_512}
-};
-
-static tls12_lookup tls12_sig[] = {
-	{EVP_PKEY_RSA, TLSEXT_signature_rsa},
-	{EVP_PKEY_EC, TLSEXT_signature_ecdsa},
-	{EVP_PKEY_GOSTR01, TLSEXT_signature_gostr01},
-};
-
-static int
-tls12_find_id(int nid, tls12_lookup *table, size_t tlen)
-{
-	size_t i;
-	for (i = 0; i < tlen; i++) {
-		if (table[i].nid == nid)
-			return table[i].id;
-	}
-	return -1;
-}
-
-int
-tls12_get_hashid(const EVP_MD *md)
-{
-	if (md == NULL)
-		return -1;
-
-	return tls12_find_id(EVP_MD_type(md), tls12_md,
-	    sizeof(tls12_md) / sizeof(tls12_lookup));
-}
-
-int
-tls12_get_sigid(const EVP_PKEY *pk)
-{
-	if (pk == NULL)
-		return -1;
-
-	return tls12_find_id(pk->type, tls12_sig,
-	    sizeof(tls12_sig) / sizeof(tls12_lookup));
-}
-
-int
-tls12_get_hashandsig(CBB *cbb, const EVP_PKEY *pk, const EVP_MD *md)
-{
-	int hash_id, sig_id;
-
-	if ((hash_id = tls12_get_hashid(md)) == -1)
-		return 0;
-	if ((sig_id = tls12_get_sigid(pk)) == -1)
-		return 0;
-
-	if (!CBB_add_u8(cbb, hash_id))
-		return 0;
-	if (!CBB_add_u8(cbb, sig_id))
-		return 0;
-
-	return 1;
-}
-
-const EVP_MD *
-tls12_get_hash(unsigned char hash_alg)
-{
-	switch (hash_alg) {
-	case TLSEXT_hash_sha1:
-		return EVP_sha1();
-	case TLSEXT_hash_sha224:
-		return EVP_sha224();
-	case TLSEXT_hash_sha256:
-		return EVP_sha256();
-	case TLSEXT_hash_sha384:
-		return EVP_sha384();
-	case TLSEXT_hash_sha512:
-		return EVP_sha512();
-#ifndef OPENSSL_NO_GOST
-	case TLSEXT_hash_gost94:
-		return EVP_gostr341194();
-	case TLSEXT_hash_streebog_256:
-		return EVP_streebog256();
-	case TLSEXT_hash_streebog_512:
-		return EVP_streebog512();
-#endif
-	default:
-		return NULL;
-	}
-}
-
 /* Set preferred digest for each key type */
-
 int
 tls1_process_sigalgs(SSL *s, CBS *cbs)
 {
-	const EVP_MD *md;
 	CERT *c = s->cert;
-	int idx;
 
 	/* Extension ignored for inappropriate versions */
 	if (!SSL_USE_SIGALGS(s))
 		return 1;
 
-	/* Should never happen */
-	if (c == NULL)
-		return 0;
-
 	c->pkeys[SSL_PKEY_RSA_SIGN].digest = NULL;
 	c->pkeys[SSL_PKEY_RSA_ENC].digest = NULL;
 	c->pkeys[SSL_PKEY_ECC].digest = NULL;
+#ifndef OPENSSL_NO_GOST
 	c->pkeys[SSL_PKEY_GOST01].digest = NULL;
-
+#endif
 	while (CBS_len(cbs) > 0) {
-		uint8_t hash_alg, sig_alg;
+		const EVP_MD *md;
+		uint16_t sig_alg;
+		const struct ssl_sigalg *sigalg;
 
-		if (!CBS_get_u8(cbs, &hash_alg) || !CBS_get_u8(cbs, &sig_alg))
+		if (!CBS_get_u16(cbs, &sig_alg))
 			return 0;
 
-		switch (sig_alg) {
-		case TLSEXT_signature_rsa:
-			idx = SSL_PKEY_RSA_SIGN;
-			break;
-		case TLSEXT_signature_ecdsa:
-			idx = SSL_PKEY_ECC;
-			break;
-		case TLSEXT_signature_gostr01:
-		case TLSEXT_signature_gostr12_256:
-		case TLSEXT_signature_gostr12_512:
-			idx = SSL_PKEY_GOST01;
-			break;
-		default:
-			continue;
+		if ((sigalg = ssl_sigalg_lookup(sig_alg)) != NULL &&
+		    c->pkeys[sigalg->pkey_idx].digest == NULL) {
+			md = sigalg->md();
+			c->pkeys[sigalg->pkey_idx].digest = md;
+			if (sigalg->pkey_idx == SSL_PKEY_RSA_SIGN)
+				c->pkeys[SSL_PKEY_RSA_ENC].digest = md;
 		}
-
-		if (c->pkeys[idx].digest == NULL) {
-			md = tls12_get_hash(hash_alg);
-			if (md) {
-				c->pkeys[idx].digest = md;
-				if (idx == SSL_PKEY_RSA_SIGN)
-					c->pkeys[SSL_PKEY_RSA_ENC].digest = md;
-			}
-		}
-
 	}
 
 	/*
 	 * Set any remaining keys to default values. NOTE: if alg is not
 	 * supported it stays as NULL.
 	 */
-	if (!c->pkeys[SSL_PKEY_RSA_SIGN].digest) {
+	if (c->pkeys[SSL_PKEY_RSA_SIGN].digest == NULL)
 		c->pkeys[SSL_PKEY_RSA_SIGN].digest = EVP_sha1();
+	if (c->pkeys[SSL_PKEY_RSA_ENC].digest == NULL)
 		c->pkeys[SSL_PKEY_RSA_ENC].digest = EVP_sha1();
-	}
-	if (!c->pkeys[SSL_PKEY_ECC].digest)
+	if (c->pkeys[SSL_PKEY_ECC].digest == NULL)
 		c->pkeys[SSL_PKEY_ECC].digest = EVP_sha1();
 #ifndef OPENSSL_NO_GOST
-	if (!c->pkeys[SSL_PKEY_GOST01].digest)
+	if (c->pkeys[SSL_PKEY_GOST01].digest == NULL)
 		c->pkeys[SSL_PKEY_GOST01].digest = EVP_gostr341194();
 #endif
 	return 1;

@@ -30,9 +30,9 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"	$OpenBSD: malloc.3,v 1.115 2017/05/15 18:05:34 tb Exp $
+.\"	$OpenBSD: malloc.3,v 1.118 2018/11/08 05:58:21 otto Exp $
 .\"
-.Dd $Mdocdate: May 15 2017 $
+.Dd $Mdocdate: November 8 2018 $
 .Dt MALLOC 3
 .Os
 .Sh NAME
@@ -42,7 +42,8 @@
 .Nm free ,
 .Nm reallocarray ,
 .Nm recallocarray ,
-.Nm freezero
+.Nm freezero ,
+.Nm aligned_alloc
 .Nd memory allocation and deallocation
 .Sh SYNOPSIS
 .In stdlib.h
@@ -60,6 +61,8 @@
 .Fn recallocarray "void *ptr" "size_t oldnmemb" "size_t nmemb" "size_t size"
 .Ft void
 .Fn freezero "void *ptr" "size_t size"
+.Ft void *
+.Fn aligned_alloc "size_t alignment" "size_t size"
 .Vt char *malloc_options ;
 .Sh DESCRIPTION
 The standard functions
@@ -206,7 +209,7 @@ is not
 .Dv NULL ,
 the
 .Fa size
-argument must be equal or smaller than the size of the earlier allocation
+argument must be equal to or smaller than the size of the earlier allocation
 that returned
 .Fa ptr .
 .Fn freezero
@@ -215,6 +218,21 @@ guarantees the memory range starting at
 with length
 .Fa size
 is discarded while deallocating the whole object originally allocated.
+.Pp
+The
+.Fn aligned_alloc
+function allocates
+.Fa size
+bytes of memory such that the allocation's base address is a multiple of
+.Fa alignment .
+The requested
+.Fa alignment
+must be a power of 2.
+If
+.Fa size
+is not a multiple of
+.Fa alignment ,
+behavior is undefined.
 .Sh RETURN VALUES
 Upon successful completion, the allocation functions
 return a pointer to the allocated space; otherwise,
@@ -223,6 +241,17 @@ is returned and
 .Va errno
 is set to
 .Er ENOMEM .
+The function
+.Fn aligned_alloc
+returns
+.Dv NULL
+and sets
+.Va errno
+to
+.Er EINVAL
+if
+.Fa alignment
+is not a power of 2.
 .Pp
 If
 .Fa nmemb
@@ -372,15 +401,10 @@ it guarantees memory is cleared before placing it on the internal free list.
 Deallocation of such an object should be done by calling
 .Fn freezero .
 .Sh ENVIRONMENT
-.Bl -tag -width "/etc/malloc.conf"
+.Bl -tag -width "MALLOC_OPTIONS"
 .It Ev MALLOC_OPTIONS
 String of flags documented in
 .Xr malloc.conf 5 .
-.El
-.Sh FILES
-.Bl -tag -width "/etc/malloc.conf"
-.It Pa /etc/malloc.conf
-Symbolic link to filename containing option flags.
 .El
 .Sh EXAMPLES
 If
@@ -514,6 +538,10 @@ and
 .Fn free
 functions conform to
 .St -ansiC .
+The
+.Fn aligned_alloc
+function conforms to
+.St -isoC-2011 .
 .Pp
 If
 .Fa nmemb
@@ -526,9 +554,9 @@ in this case.
 .Pp
 The
 .Ev MALLOC_OPTIONS
-environment variable, the file
-.Pa /etc/malloc.conf ,
-and the
+environment variable, the
+.Va vm.malloc_conf
+sysctl and the
 .Sx DIAGNOSTICS
 output are extensions to the standard.
 .Sh HISTORY
@@ -588,6 +616,10 @@ The
 .Fn freezero
 function appeared in
 .Ox 6.2 .
+The
+.Fn aligned_alloc
+function appeared in
+.Ox 6.5 .
 .Sh CAVEATS
 When using
 .Fn malloc ,

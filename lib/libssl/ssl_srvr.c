@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_srvr.c,v 1.48 2018/08/27 17:04:34 jsing Exp $ */
+/* $OpenBSD: ssl_srvr.c,v 1.52 2018/11/09 00:34:55 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -166,6 +166,7 @@
 #include <openssl/x509.h>
 
 #include "bytestring.h"
+#include "ssl_sigalgs.h"
 #include "ssl_tlsext.h"
 
 int
@@ -195,12 +196,6 @@ ssl3_accept(SSL *s)
 
 	if (SSL_IS_DTLS(s))
 		D1I(s)->listen = listen;
-
-	if (s->cert == NULL) {
-		SSLerror(s, SSL_R_NO_CERTIFICATE_SET);
-		ret = -1;
-		goto end;
-	}
 
 	for (;;) {
 		state = S3I(s)->hs.state;
@@ -254,7 +249,8 @@ ssl3_accept(SSL *s)
 					ret = -1;
 					goto end;
 				}
-				if (!tls1_init_finished_mac(s)) {
+
+				if (!tls1_transcript_init(s)) {
 					ret = -1;
 					goto end;
 				}
@@ -299,7 +295,7 @@ ssl3_accept(SSL *s)
 			S3I(s)->hs.state = SSL3_ST_SW_FLUSH;
 			s->internal->init_num = 0;
 
-			if (!tls1_init_finished_mac(s)) {
+			if (!tls1_transcript_init(s)) {
 				ret = -1;
 				goto end;
 			}
@@ -372,7 +368,7 @@ ssl3_accept(SSL *s)
 			S3I(s)->hs.next_state = SSL3_ST_SR_CLNT_HELLO_A;
 
 			/* HelloVerifyRequest resets Finished MAC. */
-			if (!tls1_init_finished_mac(s)) {
+			if (!tls1_transcript_init(s)) {
 				ret = -1;
 				goto end;
 			}
@@ -473,12 +469,9 @@ ssl3_accept(SSL *s)
 				skip = 1;
 				S3I(s)->tmp.cert_request = 0;
 				S3I(s)->hs.state = SSL3_ST_SW_SRVR_DONE_A;
-				if (!SSL_IS_DTLS(s) && S3I(s)->handshake_buffer) {
-					if (!tls1_digest_cached_records(s)) {
-						ret = -1;
-						goto end;
-					}
-				}
+
+				if (!SSL_IS_DTLS(s))
+					tls1_transcript_free(s);
 			} else {
 				S3I(s)->tmp.cert_request = 1;
 				if (SSL_IS_DTLS(s))
@@ -571,33 +564,20 @@ ssl3_accept(SSL *s)
 				if (!s->session->peer)
 					break;
 				/*
-				 * For sigalgs freeze the handshake buffer
-				 * at this point and digest cached records.
+				 * Freeze the transcript for use during client
+				 * certificate verification.
 				 */
-				if (!S3I(s)->handshake_buffer) {
-					SSLerror(s, ERR_R_INTERNAL_ERROR);
-					ret = -1;
-					goto end;
-				}
-				s->s3->flags |= TLS1_FLAGS_KEEP_HANDSHAKE;
-				if (!tls1_digest_cached_records(s)) {
-					ret = -1;
-					goto end;
-				}
+				tls1_transcript_freeze(s);
 			} else {
 				S3I(s)->hs.state = SSL3_ST_SR_CERT_VRFY_A;
 				s->internal->init_num = 0;
+
+				tls1_transcript_free(s);
 
 				/*
 				 * We need to get hashes here so if there is
 				 * a client cert, it can be verified.
 				 */
-				if (S3I(s)->handshake_buffer) {
-					if (!tls1_digest_cached_records(s)) {
-						ret = -1;
-						goto end;
-					}
-				}
 				if (!tls1_handshake_hash_value(s,
 				    S3I(s)->tmp.cert_verify_md,
 				    sizeof(S3I(s)->tmp.cert_verify_md),
@@ -706,6 +686,12 @@ ssl3_accept(SSL *s)
 		case SSL_ST_OK:
 			/* clean a few things up */
 			tls1_cleanup_key_block(s);
+
+			if (S3I(s)->handshake_transcript != NULL) {
+				SSLerror(s, ERR_R_INTERNAL_ERROR);
+				ret = -1;
+				goto end;
+			}
 
 			if (!SSL_IS_DTLS(s)) {
 				BUF_MEM_free(s->internal->init_buf);
@@ -1125,12 +1111,8 @@ ssl3_get_client_hello(SSL *s)
 
 	alg_k = S3I(s)->hs.new_cipher->algorithm_mkey;
 	if (!(SSL_USE_SIGALGS(s) || (alg_k & SSL_kGOST)) ||
-	    !(s->verify_mode & SSL_VERIFY_PEER)) {
-		if (!tls1_digest_cached_records(s)) {
-			al = SSL_AD_INTERNAL_ERROR;
-			goto f_err;
-		}
-	}
+	    !(s->verify_mode & SSL_VERIFY_PEER))
+		tls1_transcript_free(s);
 
 	/*
 	 * We now have the following setup.
@@ -1564,7 +1546,10 @@ ssl3_send_server_key_exchange(SSL *s)
 
 			/* Send signature algorithm. */
 			if (SSL_USE_SIGALGS(s)) {
-				if (!tls12_get_hashandsig(&server_kex, pkey, md)) {
+				uint16_t sigalg;
+				if ((sigalg = ssl_sigalg_value(pkey, md)) ==
+				    SIGALG_NONE ||
+				    !CBB_add_u16(&server_kex, sigalg)) {
 					/* Should never happen */
 					al = SSL_AD_INTERNAL_ERROR;
 					SSLerror(s, ERR_R_INTERNAL_ERROR);
@@ -1648,14 +1633,9 @@ ssl3_send_certificate_request(SSL *s)
 			goto err;
 
 		if (SSL_USE_SIGALGS(s)) {
-			unsigned char *sigalgs_data;
-			size_t sigalgs_len;
-
-			tls12_get_req_sig_algs(s, &sigalgs_data, &sigalgs_len);
-
 			if (!CBB_add_u16_length_prefixed(&cert_request, &sigalgs))
 				goto err;
-			if (!CBB_add_bytes(&sigalgs, sigalgs_data, sigalgs_len))
+			if (!ssl_sigalgs_build(&sigalgs))
 				goto err;
 		}
 
@@ -2108,12 +2088,11 @@ ssl3_get_cert_verify(SSL *s)
 	EVP_PKEY *pkey = NULL;
 	X509 *peer = NULL;
 	EVP_MD_CTX mctx;
-	uint8_t hash_id, sig_id;
-	int al, ok, sigalg, verify;
+	int al, ok, verify;
+	const unsigned char *hdata;
+	size_t hdatalen;
 	int type = 0;
 	int ret = 0;
-	long hdatalen;
-	void *hdata;
 	long n;
 
 	EVP_MD_CTX_init(&mctx);
@@ -2176,24 +2155,16 @@ ssl3_get_cert_verify(SSL *s)
 			goto err;
 	} else {
 		if (SSL_USE_SIGALGS(s)) {
-			if (!CBS_get_u8(&cbs, &hash_id))
-				goto truncated;
-			if (!CBS_get_u8(&cbs, &sig_id))
-				goto truncated;
+			uint16_t sigalg;
 
-			if ((md = tls12_get_hash(hash_id)) == NULL) {
+			if (!CBS_get_u16(&cbs, &sigalg))
+				goto truncated;
+			if ((md = ssl_sigalg_md(sigalg)) == NULL) {
 				SSLerror(s, SSL_R_UNKNOWN_DIGEST);
 				al = SSL_AD_DECODE_ERROR;
 				goto f_err;
 			}
-
-			/* Check key type is consistent with signature. */
-			if ((sigalg = tls12_get_sigid(pkey)) == -1) {
-				/* Should never happen */
-				SSLerror(s, ERR_R_INTERNAL_ERROR);
-				goto err;
-			}
-			if (sigalg != sig_id) {
+			if (!ssl_sigalg_pkey_check(sigalg, pkey)) {
 				SSLerror(s, SSL_R_WRONG_SIGNATURE_TYPE);
 				al = SSL_AD_DECODE_ERROR;
 				goto f_err;
@@ -2214,8 +2185,7 @@ ssl3_get_cert_verify(SSL *s)
 	}
 
 	if (SSL_USE_SIGALGS(s)) {
-		hdatalen = BIO_get_mem_data(S3I(s)->handshake_buffer, &hdata);
-		if (hdatalen <= 0) {
+		if (!tls1_transcript_data(s, &hdata, &hdatalen)) {
 			SSLerror(s, ERR_R_INTERNAL_ERROR);
 			al = SSL_AD_INTERNAL_ERROR;
 			goto f_err;
@@ -2265,8 +2235,7 @@ ssl3_get_cert_verify(SSL *s)
 		EVP_PKEY_CTX *pctx;
 		int nid;
 
-		hdatalen = BIO_get_mem_data(S3I(s)->handshake_buffer, &hdata);
-		if (hdatalen <= 0) {
+		if (!tls1_transcript_data(s, &hdata, &hdatalen)) {
 			SSLerror(s, ERR_R_INTERNAL_ERROR);
 			al = SSL_AD_INTERNAL_ERROR;
 			goto f_err;
@@ -2321,11 +2290,7 @@ ssl3_get_cert_verify(SSL *s)
 		ssl3_send_alert(s, SSL3_AL_FATAL, al);
 	}
  end:
-	if (S3I(s)->handshake_buffer) {
-		BIO_free(S3I(s)->handshake_buffer);
-		S3I(s)->handshake_buffer = NULL;
-		s->s3->flags &= ~TLS1_FLAGS_KEEP_HANDSHAKE;
-	}
+	tls1_transcript_free(s);
  err:
 	EVP_MD_CTX_cleanup(&mctx);
 	EVP_PKEY_free(pkey);
@@ -2427,11 +2392,8 @@ ssl3_get_client_certificate(SSL *s)
 			al = SSL_AD_HANDSHAKE_FAILURE;
 			goto f_err;
 		}
-		/* No client certificate so digest cached records */
-		if (S3I(s)->handshake_buffer && !tls1_digest_cached_records(s)) {
-			al = SSL_AD_INTERNAL_ERROR;
-			goto f_err;
-		}
+		/* No client certificate so free transcript. */
+		tls1_transcript_free(s);
 	} else {
 		i = ssl_verify_cert_chain(s, sk);
 		if (i <= 0) {

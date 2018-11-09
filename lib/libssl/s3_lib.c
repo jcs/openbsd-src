@@ -1,4 +1,4 @@
-/* $OpenBSD: s3_lib.c,v 1.171 2018/10/24 18:04:50 jsing Exp $ */
+/* $OpenBSD: s3_lib.c,v 1.176 2018/11/08 22:28:52 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -870,6 +870,60 @@ SSL_CIPHER ssl3_ciphers[] = {
 	},
 #endif /* OPENSSL_NO_CAMELLIA */
 
+	/*
+	 * TLSv1.3 cipher suites.
+	 */
+
+#ifdef LIBRESSL_HAS_TLS1_3
+	/* Cipher 1301 */
+	{
+		.valid = 1,
+		.name = TLS1_3_TXT_AES_128_GCM_SHA256,
+		.id = TLS1_3_CK_AES_128_GCM_SHA256,
+		.algorithm_mkey = SSL_kTLS1_3,
+		.algorithm_auth = SSL_aTLS1_3,
+		.algorithm_enc = SSL_AES128GCM,
+		.algorithm_mac = SSL_AEAD,
+		.algorithm_ssl = SSL_TLSV1_3,
+		.algo_strength = SSL_HIGH,
+		.algorithm2 = SSL_HANDSHAKE_MAC_SHA256, /* XXX */
+		.strength_bits = 128,
+		.alg_bits = 128,
+	},
+
+	/* Cipher 1302 */
+	{
+		.valid = 1,
+		.name = TLS1_3_TXT_AES_256_GCM_SHA384,
+		.id = TLS1_3_CK_AES_256_GCM_SHA384,
+		.algorithm_mkey = SSL_kTLS1_3,
+		.algorithm_auth = SSL_aTLS1_3,
+		.algorithm_enc = SSL_AES256GCM,
+		.algorithm_mac = SSL_AEAD,
+		.algorithm_ssl = SSL_TLSV1_3,
+		.algo_strength = SSL_HIGH,
+		.algorithm2 = SSL_HANDSHAKE_MAC_SHA384, /* XXX */
+		.strength_bits = 256,
+		.alg_bits = 256,
+	},
+
+	/* Cipher 1303 */
+	{
+		.valid = 1,
+		.name = TLS1_3_TXT_CHACHA20_POLY1305_SHA256,
+		.id = TLS1_3_CK_CHACHA20_POLY1305_SHA256,
+		.algorithm_mkey = SSL_kTLS1_3,
+		.algorithm_auth = SSL_aTLS1_3,
+		.algorithm_enc = SSL_CHACHA20POLY1305,
+		.algorithm_mac = SSL_AEAD,
+		.algorithm_ssl = SSL_TLSV1_3,
+		.algo_strength = SSL_HIGH,
+		.algorithm2 = SSL_HANDSHAKE_MAC_SHA256, /* XXX */
+		.strength_bits = 256,
+		.alg_bits = 256,
+	},
+#endif
+
 	/* Cipher C006 */
 	{
 		.valid = 1,
@@ -1513,8 +1567,7 @@ ssl3_free(SSL *s)
 
 	sk_X509_NAME_pop_free(S3I(s)->tmp.ca_names, X509_NAME_free);
 
-	BIO_free(S3I(s)->handshake_buffer);
-
+	tls1_transcript_free(s);
 	tls1_handshake_hash_free(s);
 
 	free(S3I(s)->alpn_selected);
@@ -1548,9 +1601,7 @@ ssl3_clear(SSL *s)
 	rlen = S3I(s)->rbuf.len;
 	wlen = S3I(s)->wbuf.len;
 
-	BIO_free(S3I(s)->handshake_buffer);
-	S3I(s)->handshake_buffer = NULL;
-
+	tls1_transcript_free(s);
 	tls1_handshake_hash_free(s);
 
 	free(S3I(s)->alpn_selected);
@@ -1674,11 +1725,6 @@ _SSL_set_tmp_dh(SSL *s, DH *dh)
 {
 	DH *dh_tmp;
 
-	if (!ssl_cert_inst(&s->cert)) {
-		SSLerror(s, ERR_R_MALLOC_FAILURE);
-		return 0;
-	}
-
 	if (dh == NULL) {
 		SSLerror(s, ERR_R_PASSED_NULL_PARAMETER);
 		return 0;
@@ -1707,11 +1753,6 @@ _SSL_set_tmp_ecdh(SSL *s, EC_KEY *ecdh)
 {
 	const EC_GROUP *group;
 	int nid;
-
-	if (!ssl_cert_inst(&s->cert)) {
-		SSLerror(s, ERR_R_MALLOC_FAILURE);
-		return 0;
-	}
 
 	if (ecdh == NULL)
 		return 0;
@@ -1820,7 +1861,7 @@ SSL_set1_groups(SSL *s, const int *groups, size_t groups_len)
 int
 SSL_set1_groups_list(SSL *s, const char *groups)
 {
-	return tls1_set_groups_list(&s->internal->tlsext_supportedgroups,
+	return tls1_set_group_list(&s->internal->tlsext_supportedgroups,
 	    &s->internal->tlsext_supportedgroups_length, groups);
 }
 
@@ -1940,13 +1981,6 @@ ssl3_ctrl(SSL *s, int cmd, long larg, void *parg)
 long
 ssl3_callback_ctrl(SSL *s, int cmd, void (*fp)(void))
 {
-	if (cmd == SSL_CTRL_SET_TMP_DH_CB || cmd == SSL_CTRL_SET_TMP_ECDH_CB) {
-		if (!ssl_cert_inst(&s->cert)) {
-			SSLerror(s, ERR_R_MALLOC_FAILURE);
-			return 0;
-		}
-	}
-
 	switch (cmd) {
 	case SSL_CTRL_SET_TMP_RSA_CB:
 		SSLerror(s, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
@@ -2107,7 +2141,7 @@ SSL_CTX_set1_groups(SSL_CTX *ctx, const int *groups, size_t groups_len)
 int
 SSL_CTX_set1_groups_list(SSL_CTX *ctx, const char *groups)
 {
-	return tls1_set_groups_list(&ctx->internal->tlsext_supportedgroups,
+	return tls1_set_group_list(&ctx->internal->tlsext_supportedgroups,
 	    &ctx->internal->tlsext_supportedgroups_length, groups);
 }
 
@@ -2286,11 +2320,14 @@ ssl3_choose_cipher(SSL *s, STACK_OF(SSL_CIPHER) *clnt,
 	unsigned long alg_k, alg_a, mask_k, mask_a;
 	STACK_OF(SSL_CIPHER) *prio, *allow;
 	SSL_CIPHER *c, *ret = NULL;
+	int can_use_ecc;
 	int i, ii, ok;
 	CERT *cert;
 
 	/* Let's see which ciphers we can support */
 	cert = s->cert;
+
+	can_use_ecc = (tls1_get_shared_curve(s) != NID_undef);
 
 	/*
 	 * Do not set the compare functions, because this may lead to a
@@ -2336,7 +2373,7 @@ ssl3_choose_cipher(SSL *s, STACK_OF(SSL_CIPHER) *clnt,
 		 * an ephemeral EC key check it.
 		 */
 		if (alg_k & SSL_kECDHE)
-			ok = ok && tls1_check_ec_tmp_key(s);
+			ok = ok && can_use_ecc;
 
 		if (!ok)
 			continue;
