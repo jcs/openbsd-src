@@ -1539,6 +1539,9 @@ azalia_codec_init(codec_t *this)
 		return ENOMEM;
 	}
 
+	if (this->qrks & AZ_QRK_DOLBY)
+		azalia_codec_init_dolby(this);
+
 	/* query the base parameters */
 	azalia_comresp(this, this->audiofunc, CORB_GET_PARAMETER,
 	    COP_STREAM_FORMATS, &result);
