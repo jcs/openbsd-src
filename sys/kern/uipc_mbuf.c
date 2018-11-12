@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_mbuf.c,v 1.259 2018/09/13 19:53:58 bluhm Exp $	*/
+/*	$OpenBSD: uipc_mbuf.c,v 1.261 2018/11/12 07:45:52 claudio Exp $	*/
 /*	$NetBSD: uipc_mbuf.c,v 1.15.4.1 1996/06/13 17:11:44 cgd Exp $	*/
 
 /*
@@ -149,6 +149,11 @@ struct pool_allocator m_pool_allocator = {
 
 static void (*mextfree_fns[4])(caddr_t, u_int, void *);
 static u_int num_extfree_fns;
+
+#define M_DATABUF(m)	((m)->m_flags & M_EXT ? (m)->m_ext.ext_buf : \
+			(m)->m_flags & M_PKTHDR ? (m)->m_pktdat : (m)->m_dat)
+#define M_SIZE(m)	((m)->m_flags & M_EXT ? (m)->m_ext.ext_size : \
+			(m)->m_flags & M_PKTHDR ? MHLEN : MLEN)
 
 /*
  * Initialize the mbuf allocator.
@@ -600,7 +605,7 @@ m_prepend(struct mbuf *m, int len, int how)
 	if (len > MHLEN)
 		panic("mbuf prepend length too big");
 
-	if (M_LEADINGSPACE(m) >= len) {
+	if (m_leadingspace(m) >= len) {
 		m->m_data -= len;
 		m->m_len += len;
 	} else {
@@ -759,7 +764,7 @@ m_copyback(struct mbuf *m0, int off, int len, const void *_cp, int wait)
 		/* extend last packet to be filled fully */
 		if (m->m_next == NULL && (len > m->m_len - off))
 			m->m_len += min(len - (m->m_len - off),
-			    M_TRAILINGSPACE(m));
+			    m_trailingspace(m));
 		mlen = min(m->m_len - off, len);
 		memmove(mtod(m, caddr_t) + off, cp, mlen);
 		cp += mlen;
@@ -808,7 +813,7 @@ m_cat(struct mbuf *m, struct mbuf *n)
 	while (m->m_next)
 		m = m->m_next;
 	while (n) {
-		if (M_READONLY(m) || n->m_len > M_TRAILINGSPACE(m)) {
+		if (M_READONLY(m) || n->m_len > m_trailingspace(m)) {
 			/* just join the two chains */
 			m->m_next = n;
 			return;
@@ -915,8 +920,8 @@ m_pullup(struct mbuf *n, int len)
 		return (n);
 
 	adj = (unsigned long)n->m_data & ALIGNBYTES;
-	head = (caddr_t)ALIGN(mtod(n, caddr_t) - M_LEADINGSPACE(n)) + adj;
-	tail = mtod(n, caddr_t) + n->m_len + M_TRAILINGSPACE(n);
+	head = (caddr_t)ALIGN(mtod(n, caddr_t) - m_leadingspace(n)) + adj;
+	tail = mtod(n, caddr_t) + n->m_len + m_trailingspace(n);
 
 	if (head < tail && len <= tail - head) {
 		/* there's enough space in the first mbuf */
@@ -955,7 +960,7 @@ m_pullup(struct mbuf *n, int len)
 		m->m_data += adj;
 	}
 
-	KASSERT(M_TRAILINGSPACE(m) >= len);
+	KASSERT(m_trailingspace(m) >= len);
 
 	do {
 		if (n == NULL) {
@@ -1125,13 +1130,13 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 	 * the contents of m as needed.
 	 */
 	remain = m->m_len - skip;		/* data to move */
-	if (skip < remain && hlen <= M_LEADINGSPACE(m)) {
+	if (skip < remain && hlen <= m_leadingspace(m)) {
 		if (skip)
 			memmove(m->m_data-hlen, m->m_data, skip);
 		m->m_data -= hlen;
 		m->m_len += hlen;
 		*off = skip;
-	} else if (hlen > M_TRAILINGSPACE(m)) {
+	} else if (hlen > m_trailingspace(m)) {
 		struct mbuf *n;
 
 		if (remain > 0) {
@@ -1154,7 +1159,7 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 			m->m_next = n;
 		}
 
-		if (hlen <= M_TRAILINGSPACE(m)) {
+		if (hlen <= m_trailingspace(m)) {
 			m->m_len += hlen;
 			*off = skip;
 		} else {
@@ -1262,14 +1267,7 @@ m_zero(struct mbuf *m)
 		panic("m_zero: M_READONLY");
 #endif /* DIAGNOSTIC */
 
-	if (m->m_flags & M_EXT)
-		explicit_bzero(m->m_ext.ext_buf, m->m_ext.ext_size);
-	else {
-		if (m->m_flags & M_PKTHDR)
-			explicit_bzero(m->m_pktdat, MHLEN);
-		else
-			explicit_bzero(m->m_dat, MLEN);
-	}
+	explicit_bzero(M_DATABUF(m), M_SIZE(m));
 }
 
 /*
@@ -1312,26 +1310,45 @@ m_apply(struct mbuf *m, int off, int len,
 	return (0);
 }
 
+/*
+ * Compute the amount of space available before the current start of data
+ * in an mbuf. Read-only clusters never have space available.
+ */
 int
 m_leadingspace(struct mbuf *m)
 {
 	if (M_READONLY(m))
 		return 0;
-	return (m->m_flags & M_EXT ? m->m_data - m->m_ext.ext_buf :
-	    m->m_flags & M_PKTHDR ? m->m_data - m->m_pktdat :
-	    m->m_data - m->m_dat);
+	KASSERT(m->m_data >= M_DATABUF(m));
+	return m->m_data - M_DATABUF(m);
 }
 
+/*
+ * Compute the amount of space available after the end of data in an mbuf.
+ * Read-only clusters never have space available.
+ */
 int
 m_trailingspace(struct mbuf *m)
 {
 	if (M_READONLY(m))
 		return 0;
-	return (m->m_flags & M_EXT ? m->m_ext.ext_buf +
-	    m->m_ext.ext_size - (m->m_data + m->m_len) :
-	    &m->m_dat[MLEN] - (m->m_data + m->m_len));
+	KASSERT(M_DATABUF(m) + M_SIZE(m) >= (m->m_data + m->m_len));
+	return M_DATABUF(m) + M_SIZE(m) - (m->m_data + m->m_len);
 }
 
+/*
+ * Set the m_data pointer of a newly-allocated mbuf to place an object of
+ * the specified size at the end of the mbuf, longword aligned.
+ */
+void
+m_align(struct mbuf *m, int len)
+{
+	KASSERT(len >= 0 && !M_READONLY(m));
+	KASSERT(m->m_data == M_DATABUF(m));	/* newly-allocated check */
+	KASSERT(((len + sizeof(long) - 1) &~ (sizeof(long) - 1)) <= M_SIZE(m));
+
+	m->m_data = M_DATABUF(m) + ((M_SIZE(m) - (len)) &~ (sizeof(long) - 1));
+}
 
 /*
  * Duplicate mbuf pkthdr from from to to.

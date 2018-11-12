@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_sigalgs.c,v 1.1 2018/11/09 00:34:55 beck Exp $ */
+/* $OpenBSD: ssl_sigalgs.c,v 1.7 2018/11/11 21:54:47 beck Exp $ */
 /*
  * Copyright (c) 2018, Bob Beck <beck@openbsd.org>
  *
@@ -24,7 +24,6 @@
 #include "ssl_sigalgs.h"
 #include "tls13_internal.h"
 
-/* This table must be kept in preference order for now */
 const struct ssl_sigalg sigalgs[] = {
 	{
 		.value = SIGALG_RSA_PKCS1_SHA512,
@@ -84,7 +83,6 @@ const struct ssl_sigalg sigalgs[] = {
 		.pkey_idx = SSL_PKEY_GOST01,
 	},
 #endif
-#ifdef LIBRESSL_HAS_TLS1_3
 	{
 		.value = SIGALG_RSA_PSS_RSAE_SHA256,
 		.md = EVP_sha256,
@@ -127,7 +125,6 @@ const struct ssl_sigalg sigalgs[] = {
 		.pkey_idx = SSL_PKEY_RSA_SIGN,
 		.flags = SIGALG_FLAG_RSA_PSS,
 	},
-#endif
 	{
 		.value = SIGALG_RSA_PKCS1_SHA224,
 		.md = EVP_sha224,
@@ -144,7 +141,7 @@ const struct ssl_sigalg sigalgs[] = {
 		.value = SIGALG_RSA_PKCS1_SHA1,
 		.key_type = EVP_PKEY_RSA,
 		.pkey_idx = SSL_PKEY_RSA_SIGN,
-		.md = EVP_sha1,
+		.md = EVP_md5_sha1,
 	},
 	{
 		.value = SIGALG_ECDSA_SHA1,
@@ -156,6 +153,24 @@ const struct ssl_sigalg sigalgs[] = {
 		.value = SIGALG_NONE,
 	},
 };
+
+/* Sigalgs for tls 1.2, in preference order, */
+uint16_t tls12_sigalgs[] = {
+	SIGALG_RSA_PKCS1_SHA512,
+	SIGALG_ECDSA_SECP512R1_SHA512,
+	SIGALG_GOSTR12_512_STREEBOG_512,
+	SIGALG_RSA_PKCS1_SHA384,
+	SIGALG_ECDSA_SECP384R1_SHA384,
+	SIGALG_RSA_PKCS1_SHA256,
+	SIGALG_ECDSA_SECP256R1_SHA256,
+	SIGALG_GOSTR12_256_STREEBOG_256,
+	SIGALG_GOSTR01_GOST94,
+	SIGALG_RSA_PKCS1_SHA224,
+	SIGALG_ECDSA_SECP224R1_SHA224,
+	SIGALG_RSA_PKCS1_SHA1, /* XXX */
+	SIGALG_ECDSA_SHA1,     /* XXX */
+};
+size_t tls12_sigalgs_len = (sizeof(tls12_sigalgs) / sizeof(tls12_sigalgs[0]));
 
 const struct ssl_sigalg *
 ssl_sigalg_lookup(uint16_t sigalg)
@@ -170,49 +185,59 @@ ssl_sigalg_lookup(uint16_t sigalg)
 	return NULL;
 }
 
-const EVP_MD *
-ssl_sigalg_md(uint16_t sigalg)
+const struct ssl_sigalg *
+ssl_sigalg(uint16_t sigalg, uint16_t *values, size_t len)
 {
 	const struct ssl_sigalg *sap;
+	int i;
 
-	if ((sap = ssl_sigalg_lookup(sigalg)) != NULL)
-		return sap->md();
+	for (i = 0; i < len; i++) {
+		if (values[i] == sigalg)
+			break;
+	}
+	if (values[i] == sigalg) {
+		if ((sap = ssl_sigalg_lookup(sigalg)) != NULL)
+			return sap;
+	}
 
 	return NULL;
 }
 
 int
-ssl_sigalg_pkey_check(uint16_t sigalg, EVP_PKEY *pk)
+ssl_sigalgs_build(CBB *cbb, uint16_t *values, size_t len)
 {
 	const struct ssl_sigalg *sap;
+	size_t i;
 
-	if ((sap = ssl_sigalg_lookup(sigalg)) != NULL)
-		return sap->key_type == pk->type;
+	for (i = 0; sigalgs[i].value != SIGALG_NONE; i++);
+	if (len > i)
+		return 0;
 
-	return 0;
-}
+	/* XXX check for duplicates and other sanity BS? */
 
-uint16_t
-ssl_sigalg_value(const EVP_PKEY *pk, const EVP_MD *md)
-{
-	int i;
-
-	for (i = 0; sigalgs[i].value != SIGALG_NONE; i++) {
-		if ((sigalgs[i].key_type == pk->type) &&
-		    ((sigalgs[i].md() == md)))
-			return sigalgs[i].value;
-	}
-	return SIGALG_NONE;
-}
-
-int
-ssl_sigalgs_build(CBB *cbb)
-{
-	int i;
-
-	for (i = 0; sigalgs[i].value != SIGALG_NONE; i++) {
-		if (!CBB_add_u16(cbb, sigalgs[i].value))
+	/* Add values in order as long as they are supported. */
+	for (i = 0; i < len; i++) {
+		if ((sap = ssl_sigalg_lookup(values[i])) != NULL) {
+			if (!CBB_add_u16(cbb, values[i]))
+				return 0;
+		} else
 			return 0;
 	}
 	return 1;
+}
+
+int
+ssl_sigalg_pkey_ok(const struct ssl_sigalg *sigalg, EVP_PKEY *pkey)
+{
+	if (sigalg->key_type == pkey->type) {
+		if (!(sigalg->flags & SIGALG_FLAG_RSA_PSS))
+			return 1;
+		/*
+		 * RSA keys for PSS need to be at least
+		 * as big as twice the size of the hash + 2
+		 */
+		if (EVP_PKEY_size(pkey) < (2 * EVP_MD_size(sigalg->md()) + 2))
+			return 1;
+	}
+	return 0;
 }

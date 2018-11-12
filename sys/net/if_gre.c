@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gre.c,v 1.131 2018/10/25 01:05:19 dlg Exp $ */
+/*	$OpenBSD: if_gre.c,v 1.135 2018/11/12 09:39:52 dlg Exp $ */
 /*	$NetBSD: if_gre.c,v 1.9 1999/10/25 19:18:11 drochner Exp $ */
 
 /*
@@ -589,6 +589,8 @@ gre_clone_create(struct if_clone *ifc, int unit)
 	bpfattach(&ifp->if_bpf, ifp, DLT_LOOP, sizeof(uint32_t));
 #endif
 
+	ifp->if_llprio = IFQ_TOS2PRIO(IPTOS_PREC_INTERNETCONTROL);
+
 	NET_LOCK();
 	TAILQ_INSERT_TAIL(&gre_list, sc, sc_entry);
 	NET_UNLOCK();
@@ -681,7 +683,7 @@ egre_clone_create(struct if_clone *ifc, int unit)
 	    ifc->ifc_name, unit);
 
 	ifp->if_softc = sc;
-	ifp->if_mtu = 1500; /* XXX */
+	ifp->if_hardmtu = ETHER_MAX_HARDMTU_LEN;
 	ifp->if_ioctl = egre_ioctl;
 	ifp->if_start = egre_start;
 	ifp->if_xflags = IFXF_CLONED;
@@ -740,7 +742,7 @@ nvgre_clone_create(struct if_clone *ifc, int unit)
 	    ifc->ifc_name, unit);
 
 	ifp->if_softc = sc;
-	ifp->if_mtu = 1500; /* XXX */
+	ifp->if_hardmtu = ETHER_MAX_HARDMTU_LEN;
 	ifp->if_ioctl = nvgre_ioctl;
 	ifp->if_start = nvgre_start;
 	ifp->if_xflags = IFXF_CLONED;
@@ -807,6 +809,7 @@ eoip_clone_create(struct if_clone *ifc, int unit)
 	    ifc->ifc_name, unit);
 
 	ifp->if_softc = sc;
+	ifp->if_hardmtu = ETHER_MAX_HARDMTU_LEN;
 	ifp->if_ioctl = eoip_ioctl;
 	ifp->if_start = eoip_start;
 	ifp->if_xflags = IFXF_CLONED;
@@ -1910,24 +1913,31 @@ gre_l3_encap_dst(const struct gre_tunnel *tunnel, const void *dst,
 	}
  #endif
 #ifdef MPLS
-	case AF_MPLS:
+	case AF_MPLS: {
+		uint32_t shim;
+
+		m = m_pullup(m, sizeof(shim));
+		if (m == NULL)
+			return (NULL);
+
+		shim = bemtoh32(mtod(m, uint32_t *)) & MPLS_EXP_MASK;
+		tos = (shim >> MPLS_EXP_OFFSET) << 5;
+
 		ttloff = 3;
-		tos = 0;
  
 		if (m->m_flags & (M_BCAST | M_MCAST))
 			proto = htons(ETHERTYPE_MPLS_MCAST);
 		else
 			proto = htons(ETHERTYPE_MPLS);
 		break;
+	}
 #endif
 	default:
 		unhandled_af(af);
 	}
  
 	if (tttl == -1) {
-		m = m_pullup(m, ttloff + 1);
-		if (m == NULL)
-			return (NULL);
+		KASSERT(m->m_len > ttloff); /* m_pullup has happened */
  
 		ttl = *(m->m_data + ttloff);
 	} else
@@ -2817,6 +2827,7 @@ gre_keepalive_send(void *arg)
 	int linkhdr, len;
 	uint16_t proto;
 	uint8_t ttl;
+	uint8_t tos;
 
 	/*
 	 * re-schedule immediately, so we deal with incomplete configuation
@@ -2869,6 +2880,7 @@ gre_keepalive_send(void *arg)
 	SipHash24_Final(gk->gk_digest, &ctx);
 
 	ttl = sc->sc_tunnel.t_ttl == -1 ? ip_defttl : sc->sc_tunnel.t_ttl;
+	tos = IFQ_PRIO2TOS(sc->sc_if.if_llprio);
 
 	t.t_af = sc->sc_tunnel.t_af;
 	t.t_df = sc->sc_tunnel.t_df;
@@ -2877,7 +2889,7 @@ gre_keepalive_send(void *arg)
 	t.t_key = sc->sc_tunnel.t_key;
 	t.t_key_mask = sc->sc_tunnel.t_key_mask;
 
-	m = gre_encap(&t, m, htons(0), ttl, IPTOS_PREC_INTERNETCONTROL);
+	m = gre_encap(&t, m, htons(0), ttl, tos);
 	if (m == NULL)
 		return;
 
@@ -2906,10 +2918,11 @@ gre_keepalive_send(void *arg)
 	/*
 	 * put it in the tunnel
 	 */
-	m = gre_encap(&sc->sc_tunnel, m, proto, ttl,
-	    IPTOS_PREC_INTERNETCONTROL);
+	m = gre_encap(&sc->sc_tunnel, m, proto, ttl, tos);
 	if (m == NULL)
 		return;
+
+	m->m_pkthdr.pf.prio = sc->sc_if.if_llprio;
 
 	gre_ip_output(&sc->sc_tunnel, m);
 }
@@ -3751,10 +3764,11 @@ static void
 eoip_keepalive_send(void *arg)
 {
 	struct eoip_softc *sc = arg;
+	struct ifnet *ifp = &sc->sc_ac.ac_if;
 	struct mbuf *m;
 	int linkhdr;
 
-	if (!ISSET(sc->sc_ac.ac_if.if_flags, IFF_RUNNING))
+	if (!ISSET(ifp->if_flags, IFF_RUNNING))
 		return;
 
 	/* this is really conservative */
@@ -3780,9 +3794,11 @@ eoip_keepalive_send(void *arg)
 	m->m_pkthdr.len = m->m_len = linkhdr;
 	m_adj(m, linkhdr);
 
-	m = eoip_encap(sc, m, IPTOS_PREC_INTERNETCONTROL);
+	m = eoip_encap(sc, m, IFQ_PRIO2TOS(ifp->if_llprio));
 	if (m == NULL)
 		return;
+
+	m->m_pkthdr.pf.prio = ifp->if_llprio;
 
 	gre_ip_output(&sc->sc_tunnel, m);
 
