@@ -60,6 +60,7 @@ static struct fb_ops radeonfb_ops = {
 };
 #endif
 
+void radeondrm_burner_cb(void *);
 
 int radeon_align_pitch(struct radeon_device *rdev, int width, int bpp, bool tiled)
 {
@@ -381,9 +382,34 @@ int radeon_fbdev_init(struct radeon_device *rdev)
 	if (ret)
 		goto free;
 
+	task_set(&rdev->burner_task, radeondrm_burner_cb, rdev);
+
 	ret = drm_fb_helper_single_add_all_connectors(&rfbdev->helper);
 	if (ret)
 		goto fini;
+
+#ifdef __sparc64__
+{
+	struct drm_fb_helper *fb_helper = &rfbdev->helper;
+	struct drm_fb_helper_connector *fb_helper_conn;
+	int i;
+
+	for (i = 0; i < fb_helper->connector_count; i++) {
+		struct drm_cmdline_mode *mode;
+		struct drm_connector *connector;
+
+		fb_helper_conn = fb_helper->connector_info[i];
+		connector = fb_helper_conn->connector;
+		mode = &connector->cmdline_mode;
+
+		mode->specified = true;
+		mode->xres = rdev->sf.sf_width;
+		mode->yres = rdev->sf.sf_height;
+		mode->bpp_specified = true;
+		mode->bpp = rdev->sf.sf_depth;
+	}
+}
+#endif
 
 	/* disable all the possible outputs/crtcs before entering KMS mode */
 	drm_helper_disable_unused_functions(rdev->ddev);
@@ -405,6 +431,8 @@ void radeon_fbdev_fini(struct radeon_device *rdev)
 {
 	if (!rdev->mode_info.rfbdev)
 		return;
+
+	task_del(systq, &rdev->burner_task);
 
 #ifdef notyet
 	radeon_fbdev_destroy(rdev->ddev, rdev->mode_info.rfbdev);
