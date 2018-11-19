@@ -1,4 +1,4 @@
-.\" $OpenBSD: bsd.port.mk.5,v 1.500 2018/11/05 15:59:47 espie Exp $
+.\" $OpenBSD: bsd.port.mk.5,v 1.503 2018/11/16 10:06:11 espie Exp $
 .\"
 .\" Copyright (c) 2000-2008 Marc Espie
 .\"
@@ -24,7 +24,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: November 5 2018 $
+.Dd $Mdocdate: November 16 2018 $
 .Dt BSD.PORT.MK 5
 .Os
 .Sh NAME
@@ -219,9 +219,6 @@ creates the ${WRKBUILD} directory (see
 .Ev SEPARATE_BUILD ) ,
 and runs whatever configuration methods are recorded in
 .Ev CONFIGURE_STYLE .
-.It Cm describe
-Prints a one-line index entry of the port, suitable for
-.Pa ${PORTSDIR}/INDEX .
 .It Cm distclean
 Shorthand for
 .Ql make clean=dist .
@@ -706,6 +703,11 @@ and outputs a list of dependencies suitable for
 .Xr pkg_create 1 ,
 see
 .Cm print-package-args .
+.It Cm reprepare
+Force running the
+.Ar prepare
+target
+again.
 .It Cm show
 Invoked as make show=name, show the contents of ${name}.
 Invoked as make show="name1 name2 ...",
@@ -1581,6 +1583,14 @@ Annotations for the Distributed Ports Builder.
 See
 .Xr dpb 1
 for semantics.
+.It Ev DUMMY_PACKAGE
+If defined,
+.Nm
+will provide dummy values for variables mandatory for a minimally functional
+port.
+Used by various pieces of the ports tree to perform introspection and get to
+.Nm Ns 's
+variables.
 .It Ev ECHO_MSG
 User settings.
 Used to display
@@ -3960,6 +3970,15 @@ target.
 .It Cm depends-list
 Renamed into
 .Cm full-build-depends .
+.It Cm describe
+Prints a one-line index entry of the port.
+.Cm dump-vars
+provides much more accurate information, and the indexing role
+has been taken over by the
+.Pa sqlports
+and
+.Pa portslist
+packages.
 .It Cm {build,run,lib}-depends
 The dependency mechanism now meshes
 .Ev BUILD_DEPENDS , LIB_DEPENDS , RUN_DEPENDS, WANTLIB

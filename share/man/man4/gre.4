@@ -1,4 +1,4 @@
-.\" $OpenBSD: gre.4,v 1.72 2018/04/20 22:55:53 bentley Exp $
+.\" $OpenBSD: gre.4,v 1.75 2018/11/16 01:21:12 dlg Exp $
 .\" $NetBSD: gre.4,v 1.10 1999/12/22 14:55:49 kleink Exp $
 .\"
 .\" Copyright 1998 (c) The NetBSD Foundation, Inc.
@@ -28,7 +28,7 @@
 .\" ARISING IN ANY WAY  OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: April 20 2018 $
+.Dd $Mdocdate: November 16 2018 $
 .Dt GRE 4
 .Os
 .Sh NAME
@@ -67,7 +67,13 @@ Point-to-point Ethernet tunnel interfaces.
 .It Nm nvgre
 Network Virtualization using Generic Routing Encapsulation
 (NVGRE) overlay Ethernet network interfaces.
+.It Nm eoip
+MikroTik Ethernet over IP tunnel interfaces.
 .El
+.Pp
+See
+.Xr eoip 4
+for information regarding MikroTik Ethernet over IP interfaces.
 .Pp
 All GRE packet processing in the system is allowed or denied by setting the
 .Va net.inet.gre.allow
@@ -277,6 +283,22 @@ and disables fragmentation of IPv6 packets.
 .It Dv SIOCGLIFPHYDF Fa "struct ifreq *"
 Get whether the tunnel traffic sent by the interface can be fragmented
 or not.
+.It Dv SIOCSTXHPRIO Fa "struct ifreq *"
+Set the priority value used in the Type of Service field in IPv4
+headers, or the Traffic Class field in IPv6 headers.
+Values may be from 0 to 7, or
+.Dv IF_HDRPRIO_PACKET
+to specify that the current priority of a packet should be used.
+.Pp
+.Nm gre
+and
+.Nm mgre
+interfaces configured with a value of
+.Dv IF_HDRPRIO_PAYLOAD
+will copy the priority from encapsulated protocol headers.
+.It Dv SIOCGTXHPRIO Fa "struct ifreq *"
+Get the priority value used in the Type of Service field in IPv4
+headers, or the Traffic Class field in IPv6 headers.
 .El
 .Pp
 .Nm gre ,
@@ -287,7 +309,7 @@ interfaces support the following
 .Xr ioctl 2
 calls:
 .Bl -tag -width indent -offset 3n
-.It Dv SIOCSVNEFLOWID Fa "struct ifreq *"
+.It Dv SIOCSVNETFLOWID Fa "struct ifreq *"
 Enable or disable the partitioning of the optional GRE Key header
 into a 24-bit virtual network identifier and an 8-bit flow
 identifier.
@@ -609,6 +631,7 @@ See the
 .Nm egre
 section for an example.
 .Sh SEE ALSO
+.Xr eoip 4 ,
 .Xr inet 4 ,
 .Xr ip 4 ,
 .Xr netintro 4 ,

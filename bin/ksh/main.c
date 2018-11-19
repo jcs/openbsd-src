@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.93 2018/09/29 14:13:19 millert Exp $	*/
+/*	$OpenBSD: main.c,v 1.95 2018/11/17 18:14:58 deraadt Exp $	*/
 
 /*
  * startup, main loop, environments and error handling
@@ -145,10 +145,18 @@ main(int argc, char *argv[])
 
 	kshname = argv[0];
 
-	if (pledge("stdio rpath wpath cpath fattr flock getpw proc exec tty",
-	    NULL) == -1) {
-		perror("pledge");
-		exit(1);
+	if (issetugid()) { /* could later drop privileges */
+		if (pledge("stdio rpath wpath cpath fattr flock getpw proc "
+		    "exec tty id", NULL) == -1) {
+			perror("pledge");
+			exit(1);
+		}
+	} else {
+		if (pledge("stdio rpath wpath cpath fattr flock getpw proc "
+		    "exec tty", NULL) == -1) {
+			perror("pledge");
+			exit(1);
+		}
 	}
 
 	ainit(&aperm);		/* initialize permanent Area */
