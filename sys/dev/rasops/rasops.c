@@ -215,10 +215,7 @@ rasops_init(struct rasops_info *ri, int wantrows, int wantcols)
 
 		wsfont_init();
 
-		if (ri->ri_width > 120*16)
-			/* Super high res screen, choose a double-size font */
-			cookie = wsfont_find(NULL, 16, 0, 0);
-		else if (ri->ri_width > 80*12)
+		if (ri->ri_width > 80*12)
 			/* High res screen, choose a big font */
 			cookie = wsfont_find(NULL, 12, 0, 0);
 		else

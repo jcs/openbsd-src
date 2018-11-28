@@ -43,10 +43,6 @@
 
 #undef HAVE_FONT
 
-#define	FONT_DOS4378x16
-#define HAVE_FONT 1
-#include <dev/wsfont/dos4378x16.h>
-
 #ifdef FONT_SPLEEN5x8
 #define HAVE_FONT 1
 #include <dev/wsfont/spleen5x8.h>
@@ -68,15 +64,28 @@
 /*
  * Make sure we always have at least one font.
  * Unless otherwise configured, all platforms provide both a 8x16 font and a
- * larger font.
+ * larger 12x22 font.
  * Some platforms will however only provide the 8x16 font if option
  * SMALL_KERNEL.
  */
+#ifndef HAVE_FONT
+#define HAVE_FONT 1
+
+#define	FONT_BOLD8x16_ISO1
 #if defined(__alpha__) || defined(__luna88k__) || defined(__macppc__) || \
     defined(__sgi__) || defined(__sparc64__) || \
     !defined(SMALL_KERNEL)
-#define	FONT_DOS43716x32
-#include <dev/wsfont/dos43716x32.h>
+#define	FONT_GALLANT12x22
+#endif
+
+#endif	/* HAVE_FONT */
+
+#ifdef FONT_BOLD8x16_ISO1
+#include <dev/wsfont/bold8x16-iso1.h>
+#endif
+
+#ifdef FONT_GALLANT12x22
+#include <dev/wsfont/gallant12x22.h>
 #endif
 
 struct font {
@@ -93,11 +102,14 @@ static struct font builtin_fonts[] = {
 #define BUILTIN_FONT(f, c) \
 	{ .font = &(f), .cookie = (c), .lockcount = 0, \
 	  .flg = WSFONT_STATIC | WSFONT_BUILTIN }
-#ifdef FONT_DOS4378x16
-	BUILTIN_FONT(dos4378x16, 1),
+#ifdef FONT_BOLD8x16
+	BUILTIN_FONT(bold8x16, 1),
 #endif
-#ifdef FONT_DOS43716x32
-	BUILTIN_FONT(dos43716x32, 2),
+#ifdef FONT_BOLD8x16_ISO1
+	BUILTIN_FONT(bold8x16_iso1, 2),
+#endif
+#ifdef FONT_GALLANT12x22
+	BUILTIN_FONT(gallant12x22, 3),
 #endif
 #ifdef FONT_SPLEEN5x8
 	BUILTIN_FONT(spleen5x8, 4),
