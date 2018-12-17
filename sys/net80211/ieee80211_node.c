@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_node.c,v 1.155 2018/10/27 10:02:47 phessler Exp $	*/
+/*	$OpenBSD: ieee80211_node.c,v 1.158 2018/11/25 12:14:01 phessler Exp $	*/
 /*	$NetBSD: ieee80211_node.c,v 1.14 2004/05/09 09:18:47 dyoung Exp $	*/
 
 /*-
@@ -140,15 +140,15 @@ ieee80211_print_ess(struct ieee80211_ess *ess)
 		printf(" ");
 
 		if (ess->rsnciphers & IEEE80211_CIPHER_USEGROUP)
-			printf("usegroup");
+			printf(" usegroup");
 		if (ess->rsnciphers & IEEE80211_CIPHER_WEP40)
-			printf("wep40");
+			printf(" wep40");
 		if (ess->rsnciphers & IEEE80211_CIPHER_WEP104)
-			printf("wep104");
+			printf(" wep104");
 		if (ess->rsnciphers & IEEE80211_CIPHER_TKIP)
-			printf("tkip");
+			printf(" tkip");
 		if (ess->rsnciphers & IEEE80211_CIPHER_CCMP)
-			printf("ccmp");
+			printf(" ccmp");
 	}
 	if (ess->flags & IEEE80211_F_WEPON) {
 		int i = ess->def_txkey;
@@ -315,6 +315,10 @@ ieee80211_ess_setwpaparms(struct ieee80211_ess *ess,
 	}
 
 	ess->flags |= IEEE80211_F_RSNON;
+
+	if (ess->rsnakms &
+	    (IEEE80211_AKM_8021X|IEEE80211_WPA_AKM_SHA256_8021X))
+		ess->flags |= IEEE80211_JOIN_8021X;
 
 	return ENETRESET;
 }
@@ -1548,13 +1552,17 @@ void
 ieee80211_setup_node(struct ieee80211com *ic,
 	struct ieee80211_node *ni, const u_int8_t *macaddr)
 {
-	int s;
+	int i, s;
 
 	DPRINTF(("%s\n", ether_sprintf((u_int8_t *)macaddr)));
 	IEEE80211_ADDR_COPY(ni->ni_macaddr, macaddr);
 	ieee80211_node_newstate(ni, IEEE80211_STA_CACHE);
 
 	ni->ni_ic = ic;	/* back-pointer */
+	/* Initialize cached last sequence numbers with invalid values. */
+	ni->ni_rxseq = 0xffffU;
+	for (i=0; i < IEEE80211_NUM_TID; ++i)
+		ni->ni_qos_rxseqs[i] = 0xffffU;
 #ifndef IEEE80211_STA_ONLY
 	mq_init(&ni->ni_savedq, IEEE80211_PS_MAX_QUEUE, IPL_NET);
 	timeout_set(&ni->ni_eapol_to, ieee80211_eapol_timeout, ni);

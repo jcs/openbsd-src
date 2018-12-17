@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_attr.c,v 1.112 2018/10/10 06:21:47 deraadt Exp $ */
+/*	$OpenBSD: rde_attr.c,v 1.114 2018/12/11 09:02:14 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -441,6 +441,8 @@ attr_put(struct attr *a)
 
 /* aspath specific functions */
 
+static u_int16_t aspath_count(const void *, u_int16_t);
+static u_int32_t aspath_extract_origin(const void *, u_int16_t);
 static u_int16_t aspath_countlength(struct aspath *, u_int16_t, int);
 static void	 aspath_countcopy(struct aspath *, u_int16_t, u_int8_t *,
 		     u_int16_t, int);
@@ -530,6 +532,7 @@ aspath_get(void *data, u_int16_t len)
 		aspath->refcnt = 0;
 		aspath->len = len;
 		aspath->ascnt = aspath_count(data, len);
+		aspath->source_as = aspath_extract_origin(data, len);
 		memcpy(aspath->data, data, len);
 
 		/* link */
@@ -667,7 +670,22 @@ aspath_length(struct aspath *aspath)
 	return (aspath->len);
 }
 
-u_int16_t
+u_int32_t
+aspath_neighbor(struct aspath *aspath)
+{
+	/* Empty aspath is OK -- internal AS route. */
+	if (aspath->len == 0)
+		return (rde_local_as());
+	return (aspath_extract(aspath->data, 0));
+}
+
+u_int32_t
+aspath_origin(struct aspath *aspath)
+{
+	return aspath->source_as;
+}
+
+static u_int16_t
 aspath_count(const void *data, u_int16_t len)
 {
 	const u_int8_t	*seg;
@@ -690,6 +708,41 @@ aspath_count(const void *data, u_int16_t len)
 			fatalx("%s: would overflow", __func__);
 	}
 	return (cnt);
+}
+
+/*
+ * The origin AS number derived from a Route as follows:
+ * o  the rightmost AS in the final segment of the AS_PATH attribute
+ *    in the Route if that segment is of type AS_SEQUENCE, or
+ * o  the BGP speaker's own AS number if that segment is of type
+ *    AS_CONFED_SEQUENCE or AS_CONFED_SET or if the AS_PATH is empty,
+ * o  the distinguished value "NONE" if the final segment of the
+ *    AS_PATH attribute is of any other type.
+ */
+static u_int32_t
+aspath_extract_origin(const void *data, u_int16_t len)
+{
+	const u_int8_t	*seg;
+	u_int32_t	 as = AS_NONE;
+	u_int16_t	 seg_size;
+	u_int8_t	 seg_len;
+
+	/* AS_PATH is empty */
+	if (len == 0)
+		return (rde_local_as());
+
+	seg = data;
+	for (; len > 0; len -= seg_size, seg += seg_size) {
+		seg_len = seg[1];
+		seg_size = 2 + sizeof(u_int32_t) * seg_len;
+
+		if (len == seg_size && seg[0] == AS_SEQUENCE) {
+			as = aspath_extract(seg, seg_len - 1);
+		}
+		if (seg_size > len)
+			fatalx("%s: would overflow", __func__);
+	}
+	return (as);
 }
 
 static u_int16_t
@@ -771,50 +824,6 @@ aspath_countcopy(struct aspath *aspath, u_int16_t cnt, u_int8_t *buf,
 	}
 }
 
-u_int32_t
-aspath_neighbor(struct aspath *aspath)
-{
-	/* Empty aspath is OK -- internal AS route. */
-	if (aspath->len == 0)
-		return (rde_local_as());
-	return (aspath_extract(aspath->data, 0));
-}
-
-/*
- * The origin AS number derived from a Route as follows:
- * o  the rightmost AS in the final segment of the AS_PATH attribute
- *    in the Route if that segment is of type AS_SEQUENCE, or
- * o  the BGP speaker's own AS number if that segment is of type
- *    AS_CONFED_SEQUENCE or AS_CONFED_SET or if the AS_PATH is empty,
- * o  the distinguished value "NONE" if the final segment of the
- *   AS_PATH attribute is of any other type.
- */
-u_int32_t
-aspath_origin(struct aspath *aspath)
-{
-	u_int8_t	*seg;
-	u_int32_t	 as = AS_NONE;
-	u_int16_t	 len, seg_size;
-	u_int8_t	 seg_len;
-
-	/* AS_PATH is empty */
-	if (aspath->len == 0)
-		return (rde_local_as());
-
-	seg = aspath->data;
-	for (len = aspath->len; len > 0; len -= seg_size, seg += seg_size) {
-		seg_len = seg[1];
-		seg_size = 2 + sizeof(u_int32_t) * seg_len;
-
-		if (len == seg_size && seg[0] == AS_SEQUENCE) {
-			as = aspath_extract(seg, seg_len - 1);
-		}
-		if (seg_size > len)
-			fatalx("%s: would overflow", __func__);
-	}
-	return (as);
-}
-
 int
 aspath_loopfree(struct aspath *aspath, u_int32_t myAS)
 {
@@ -872,6 +881,110 @@ aspath_lookup(const void *data, u_int16_t len)
 	return (NULL);
 }
 
+
+static int
+as_compare(struct filter_as *f, u_int32_t as, u_int32_t neighas)
+{
+	u_int32_t match;
+
+	if (f->flags & AS_FLAG_AS_SET_NAME)	/* should not happen */
+		return (0);
+	if (f->flags & AS_FLAG_AS_SET)
+		return (as_set_match(f->aset, as));
+
+	if (f->flags & AS_FLAG_NEIGHBORAS)
+		match = neighas;
+	else
+		match = f->as_min;
+
+	switch (f->op) {
+	case OP_NONE:
+	case OP_EQ:
+		if (as == match)
+			return (1);
+		break;
+	case OP_NE:
+		if (as != match)
+			return (1);
+		break;
+	case OP_RANGE:
+		if (as >= f->as_min && as <= f->as_max)
+			return (1);
+		break;
+	case OP_XRANGE:
+		if (as < f->as_min || as > f->as_max)
+			return (1);
+		break;
+	}
+	return (0);
+}
+
+/* we need to be able to search more than one as */
+int
+aspath_match(struct aspath *aspath, struct filter_as *f, u_int32_t neighas)
+{
+	const u_int8_t	*seg;
+	int		 final;
+	u_int16_t	 len, seg_size;
+	u_int8_t	 i, seg_len;
+	u_int32_t	 as = AS_NONE;
+
+	if (f->type == AS_EMPTY) {
+		if (aspath_length(aspath) == 0)
+			return (1);
+		else
+			return (0);
+	}
+
+	/* just check the leftmost AS */
+	if (f->type == AS_PEER) {
+		as = aspath_neighbor(aspath);
+		if (as_compare(f, as, neighas))
+			return (1);
+		else
+			return (0);
+	}
+
+	seg = aspath->data;
+	len = aspath->len;
+	for (; len >= 6; len -= seg_size, seg += seg_size) {
+		seg_len = seg[1];
+		seg_size = 2 + sizeof(u_int32_t) * seg_len;
+
+		final = (len == seg_size);
+
+		if (f->type == AS_SOURCE) {
+			/*
+			 * Just extract the rightmost AS
+			 * but if that segment is an AS_SET then the rightmost
+			 * AS of a previous AS_SEQUENCE segment should be used.
+			 * Because of that just look at AS_SEQUENCE segments.
+			 */
+			if (seg[0] == AS_SEQUENCE)
+				as = aspath_extract(seg, seg_len - 1);
+			/* not yet in the final segment */
+			if (!final)
+				continue;
+			if (as_compare(f, as, neighas))
+				return (1);
+			else
+				return (0);
+		}
+		/* AS_TRANSIT or AS_ALL */
+		for (i = 0; i < seg_len; i++) {
+			/*
+			 * the source (rightmost) AS is excluded from
+			 * AS_TRANSIT matches.
+			 */
+			if (final && i == seg_len - 1 && f->type == AS_TRANSIT)
+				return (0);
+			as = aspath_extract(seg, i);
+			if (as_compare(f, as, neighas))
+				return (1);
+		}
+	}
+	return (0);
+}
 
 /*
  * Returns a new prepended aspath. Old needs to be freed by caller.
@@ -995,16 +1108,63 @@ aspath_lenmatch(struct aspath *a, enum aslen_spec type, u_int aslen)
 
 int community_ext_matchone(struct filter_extcommunity *, u_int16_t, u_int64_t);
 
+static int
+community_extract(struct filter_community *fc, struct rde_peer *peer,
+     int field, int large, u_int32_t *value)
+{
+	u_int32_t data;
+	u_int8_t flag;
+	switch (field) {
+	case 1:
+		flag = fc->dflag1;
+		data = fc->data1;
+		break;
+	case 2:
+		flag = fc->dflag2;
+		data = fc->data2;
+		break;
+	case 3:
+		flag = fc->dflag3;
+		data = fc->data3;
+		break;
+	default:
+		fatalx("%s: unknown field %d", __func__, field);
+	}
+
+	switch (flag) {
+	case COMMUNITY_NEIGHBOR_AS:
+		if (peer == NULL)
+			return -1;
+		*value = peer->conf.remote_as;
+	case COMMUNITY_LOCAL_AS:
+		if (peer == NULL)
+			return -1;
+		*value = peer->conf.local_as;
+	default:
+		*value = data;
+	}
+	if (!large && *value > USHRT_MAX)
+		return -1;
+	return 0;
+}
+
 int
-community_match(struct rde_aspath *asp, int as, int type)
+community_match(struct rde_aspath *asp, struct filter_community *fc,
+    struct rde_peer *peer)
 {
 	struct attr	*a;
 	u_int8_t	*p;
-	u_int16_t	 eas, etype, len;
+	u_int32_t	 as, type, eas, etype;
+	u_int16_t	 len;
 
 	a = attr_optget(asp, ATTR_COMMUNITIES);
 	if (a == NULL)
 		/* no communities, no match */
+		return (0);
+
+	if (community_extract(fc, peer, 1, 0, &as) == -1 ||
+	    community_extract(fc, peer, 2, 0, &type) == -1)
+		/* can't match community */
 		return (0);
 
 	p = a->data;
@@ -1015,20 +1175,28 @@ community_match(struct rde_aspath *asp, int as, int type)
 		etype = *p++;
 		etype <<= 8;
 		etype |= *p++;
-		if ((as == COMMUNITY_ANY || (u_int16_t)as == eas) &&
-		    (type == COMMUNITY_ANY || (u_int16_t)type == etype))
+		if ((fc->dflag1 == COMMUNITY_ANY || as == eas) &&
+		    (fc->dflag2 == COMMUNITY_ANY || type == etype))
 			return (1);
 	}
 	return (0);
 }
 
 int
-community_set(struct rde_aspath *asp, int as, int type)
+community_set(struct rde_aspath *asp, struct filter_community *fc,
+    struct rde_peer *peer)
 {
 	struct attr	*attr;
 	u_int8_t	*p = NULL;
 	unsigned int	 i, ncommunities = 0;
+	u_int32_t	 as, type;
 	u_int8_t	 f = ATTR_OPTIONAL|ATTR_TRANSITIVE;
+
+	if (fc->dflag1 == COMMUNITY_ANY || fc->dflag2 == COMMUNITY_ANY ||
+	    community_extract(fc, peer, 1, 0, &as) == -1 ||
+	    community_extract(fc, peer, 2, 0, &type) == -1)
+		/* bad community */
+		return (0);
 
 	attr = attr_optget(asp, ATTR_COMMUNITIES);
 	if (attr != NULL) {
@@ -1070,17 +1238,23 @@ community_set(struct rde_aspath *asp, int as, int type)
 }
 
 void
-community_delete(struct rde_aspath *asp, int as, int type)
+community_delete(struct rde_aspath *asp, struct filter_community *fc,
+    struct rde_peer *peer)
 {
 	struct attr	*attr;
 	u_int8_t	*p, *n;
 	u_int16_t	 l, len = 0;
-	u_int16_t	 eas, etype;
+	u_int32_t	 as, type, eas, etype;
 	u_int8_t	 f;
 
 	attr = attr_optget(asp, ATTR_COMMUNITIES);
 	if (attr == NULL)
 		/* no attr nothing to do */
+		return;
+
+	if (community_extract(fc, peer, 1, 0, &as) == -1 ||
+	    community_extract(fc, peer, 2, 0, &type) == -1)
+		/* bad community, nothing to do */
 		return;
 
 	p = attr->data;
@@ -1092,8 +1266,8 @@ community_delete(struct rde_aspath *asp, int as, int type)
 		etype <<= 8;
 		etype |= *p++;
 
-		if ((as == COMMUNITY_ANY || (u_int16_t)as == eas) &&
-		    (type == COMMUNITY_ANY || (u_int16_t)type == etype))
+		if ((fc->dflag1 == COMMUNITY_ANY || as == eas) &&
+		    (fc->dflag2 == COMMUNITY_ANY || type == etype))
 			/* match */
 			continue;
 		len += 4;
@@ -1116,8 +1290,8 @@ community_delete(struct rde_aspath *asp, int as, int type)
 		etype <<= 8;
 		etype |= *p++;
 
-		if ((as == COMMUNITY_ANY || (u_int16_t)as == eas) &&
-		    (type == COMMUNITY_ANY || (u_int16_t)type == etype))
+		if ((fc->dflag1 == COMMUNITY_ANY || as == eas) &&
+		    (fc->dflag2 == COMMUNITY_ANY || type == etype))
 			/* match */
 			continue;
 		n[l++] = eas >> 8;
@@ -1382,45 +1556,65 @@ struct wire_largecommunity {
 };
 
 int
-community_large_match(struct rde_aspath *asp, int64_t as, int64_t ld1,
-    int64_t ld2)
+community_large_match(struct rde_aspath *asp, struct filter_community *fc,
+    struct rde_peer *peer)
 {
-	struct wire_largecommunity	*bar;
+	struct wire_largecommunity	*wlc;
 	struct attr	*a;
 	u_int8_t	*p;
 	u_int16_t	 len;
-	u_int32_t	 eas, eld1, eld2;
+	u_int32_t	 as, ld1, ld2;
 
 	a = attr_optget(asp, ATTR_LARGE_COMMUNITIES);
 	if (a == NULL)
 		/* no communities, no match */
 		return (0);
 
+	if (community_extract(fc, peer, 1, 1, &as) == -1 ||
+	    community_extract(fc, peer, 2, 1, &ld1) == -1 ||
+	    community_extract(fc, peer, 3, 1, &ld2) == -1)
+		/* can't match community */
+		return (0);
+	
+	as = htonl(as);
+	ld1 = htonl(ld1);
+	ld2 = htonl(ld2);
+
 	p = a->data;
 	for (len = a->len / 12; len > 0; len--) {
-		bar = (struct wire_largecommunity *)p;
+		wlc = (struct wire_largecommunity *)p;
 		p += 12;
-		eas = betoh32(bar->as);
-		eld1 = betoh32(bar->ld1);
-		eld2 = betoh32(bar->ld2);
 
-		if ((as == COMMUNITY_ANY || as == eas) &&
-		    (ld1 == COMMUNITY_ANY || ld1 == eld1) &&
-		    (ld2 == COMMUNITY_ANY || ld2 == eld2))
+		if ((fc->dflag1 == COMMUNITY_ANY || as == wlc->as) &&
+		    (fc->dflag2 == COMMUNITY_ANY || ld1 == wlc->ld1) &&
+		    (fc->dflag3 == COMMUNITY_ANY || ld2 == wlc->ld2))
 			return (1);
 	}
 	return (0);
 }
 
 int
-community_large_set(struct rde_aspath *asp, int64_t as, int64_t ld1,
-    int64_t ld2)
+community_large_set(struct rde_aspath *asp, struct filter_community *fc,
+    struct rde_peer *peer)
 {
-	struct wire_largecommunity	*bar;
+	struct wire_largecommunity	*wlc;
 	struct attr	*attr;
 	u_int8_t	*p = NULL;
 	unsigned int	 i, ncommunities = 0;
+	u_int32_t	 as, ld1, ld2;
 	u_int8_t	 f = ATTR_OPTIONAL|ATTR_TRANSITIVE;
+
+	if (fc->dflag1 == COMMUNITY_ANY || fc->dflag2 == COMMUNITY_ANY ||
+	    fc->dflag3 == COMMUNITY_ANY ||
+	    community_extract(fc, peer, 1, 1, &as) == -1 ||
+	    community_extract(fc, peer, 2, 1, &ld1) == -1 ||
+	    community_extract(fc, peer, 3, 1, &ld2) == -1)
+		/* can't match community */
+		return (0);
+
+	as = htonl(as);
+	ld1 = htonl(ld1);
+	ld2 = htonl(ld2);
 
 	attr = attr_optget(asp, ATTR_LARGE_COMMUNITIES);
 	if (attr != NULL) {
@@ -1430,9 +1624,8 @@ community_large_set(struct rde_aspath *asp, int64_t as, int64_t ld1,
 
 	/* first check if the community is not already set */
 	for (i = 0; i < ncommunities; i++) {
-		bar = (struct wire_largecommunity *)p;
-		if (bar->as == htobe32(as) && bar->ld1 == htobe32(ld1) &&
-		    bar->ld2 == htobe32(ld2))
+		wlc = (struct wire_largecommunity *)p;
+		if (wlc->as == as && wlc->ld1 == ld1 && wlc->ld2 == ld2)
 			/* already present, nothing todo */
 			return (1);
 		p += 12;
@@ -1445,10 +1638,10 @@ community_large_set(struct rde_aspath *asp, int64_t as, int64_t ld1,
 	if ((p = reallocarray(NULL, ncommunities, 12)) == NULL)
 		fatal("community_set");
 
-	bar = (struct wire_largecommunity *)p;
-	bar->as = htobe32(as);
-	bar->ld1 = htobe32(ld1);
-	bar->ld2 = htobe32(ld2);
+	wlc = (struct wire_largecommunity *)p;
+	wlc->as = as;
+	wlc->ld1 = ld1;
+	wlc->ld2 = ld2;
 
 	if (attr != NULL) {
 		memcpy(p + 12, attr->data, attr->len);
@@ -1463,14 +1656,14 @@ community_large_set(struct rde_aspath *asp, int64_t as, int64_t ld1,
 }
 
 void
-community_large_delete(struct rde_aspath *asp, int64_t as, int64_t ld1,
-    int64_t ld2)
+community_large_delete(struct rde_aspath *asp, struct filter_community *fc,
+    struct rde_peer *peer)
 {
-	struct wire_largecommunity	*bar;
+	struct wire_largecommunity	*wlc;
 	struct attr	*attr;
 	u_int8_t	*p, *n;
 	u_int16_t	 l = 0, len = 0;
-	u_int32_t	 eas, eld1, eld2;
+	u_int32_t	 as, ld1, ld2;
 	u_int8_t	 f;
 
 	attr = attr_optget(asp, ATTR_LARGE_COMMUNITIES);
@@ -1478,17 +1671,24 @@ community_large_delete(struct rde_aspath *asp, int64_t as, int64_t ld1,
 		/* no attr nothing to do */
 		return;
 
+	if (community_extract(fc, peer, 1, 1, &as) == -1 ||
+	    community_extract(fc, peer, 2, 1, &ld1) == -1 ||
+	    community_extract(fc, peer, 3, 1, &ld2) == -1)
+		/* can't match community */
+		return;
+
+	as = htonl(as);
+	ld1 = htonl(ld1);
+	ld2 = htonl(ld2);
+
 	p = attr->data;
 	for (len = 0; l < attr->len; l += 12) {
-		bar = (struct wire_largecommunity *)p;
+		wlc = (struct wire_largecommunity *)p;
 		p += 12;
-		eas = betoh32(bar->as);
-		eld1 = betoh32(bar->ld1);
-		eld2 = betoh32(bar->ld2);
 
-		if ((as == COMMUNITY_ANY || as == eas) &&
-		    (ld1 == COMMUNITY_ANY || ld1 == eld1) &&
-		    (ld2 == COMMUNITY_ANY || ld2 == eld2))
+		if ((fc->dflag1 == COMMUNITY_ANY || as == wlc->as) &&
+		    (fc->dflag2 == COMMUNITY_ANY || ld1 == wlc->ld1) &&
+		    (fc->dflag3 == COMMUNITY_ANY || ld2 == wlc->ld2))
 			/* match */
 			continue;
 		len += 12;
@@ -1504,18 +1704,15 @@ community_large_delete(struct rde_aspath *asp, int64_t as, int64_t ld1,
 
 	p = attr->data;
 	for (l = 0; l < len && p < attr->data + attr->len; ) {
-		bar = (struct wire_largecommunity *)p;
+		wlc = (struct wire_largecommunity *)p;
 		p += 12;
-		eas = betoh32(bar->as);
-		eld1 = betoh32(bar->ld1);
-		eld2 = betoh32(bar->ld2);
 
-		if ((as == COMMUNITY_ANY || as == eas) &&
-		    (ld1 == COMMUNITY_ANY || ld1 == eld1) &&
-		    (ld2 == COMMUNITY_ANY || ld2 == eld2))
+		if ((fc->dflag1 == COMMUNITY_ANY || as == wlc->as) &&
+		    (fc->dflag2 == COMMUNITY_ANY || ld1 == wlc->ld1) &&
+		    (fc->dflag3 == COMMUNITY_ANY || ld2 == wlc->ld2))
 			/* match */
 			continue;
-		memcpy(n + l, bar, sizeof(*bar));
+		memcpy(n + l, wlc, sizeof(*wlc));
 		l += 12;
 	}
 
@@ -1525,7 +1722,6 @@ community_large_delete(struct rde_aspath *asp, int64_t as, int64_t ld1,
 	attr_optadd(asp, f, ATTR_LARGE_COMMUNITIES, n, len);
 	free(n);
 }
-
 
 u_char *
 community_ext_delete_non_trans(u_char *data, u_int16_t len, u_int16_t *newlen)

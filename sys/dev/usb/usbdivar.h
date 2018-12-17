@@ -1,4 +1,4 @@
-/*	$OpenBSD: usbdivar.h,v 1.77 2018/11/17 20:17:10 mpi Exp $ */
+/*	$OpenBSD: usbdivar.h,v 1.79 2018/11/27 14:56:09 mpi Exp $ */
 /*	$NetBSD: usbdivar.h,v 1.70 2002/07/11 21:14:36 augustss Exp $	*/
 /*	$FreeBSD: src/sys/dev/usb/usbdivar.h,v 1.11 1999/11/17 22:33:51 n_hibma Exp $	*/
 

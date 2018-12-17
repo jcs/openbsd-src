@@ -1,4 +1,4 @@
-/*	$OpenBSD: pony.c,v 1.22 2018/11/03 13:42:24 gilles Exp $	*/
+/*	$OpenBSD: pony.c,v 1.25 2018/12/11 13:40:30 gilles Exp $	*/
 
 /*
  * Copyright (c) 2014 Gilles Chehade <gilles@poolp.org>
@@ -63,6 +63,11 @@ pony_imsg(struct mproc *p, struct imsg *imsg)
 		resolver_dispatch_result(p, imsg);
 		return;
 
+	case IMSG_CERT_INIT:
+	case IMSG_CERT_VERIFY:
+		cert_dispatch_result(p, imsg);
+		return;
+
 	case IMSG_CONF_START:
 		return;
 	case IMSG_CONF_END:
@@ -91,7 +96,8 @@ pony_imsg(struct mproc *p, struct imsg *imsg)
 	case IMSG_SMTP_MESSAGE_COMMIT:
 	case IMSG_SMTP_MESSAGE_CREATE:
 	case IMSG_SMTP_MESSAGE_OPEN:
-	case IMSG_SMTP_FILTER:
+	case IMSG_FILTER_SMTP_PROTOCOL:
+	case IMSG_FILTER_SMTP_DATA_BEGIN:
 	case IMSG_QUEUE_ENVELOPE_SUBMIT:
 	case IMSG_QUEUE_ENVELOPE_COMMIT:
 	case IMSG_QUEUE_SMTP_SESSION:

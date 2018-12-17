@@ -841,7 +841,11 @@
 ./usr/include/dev/wsfont/bold8x16-iso1.h
 ./usr/include/dev/wsfont/bold8x16.h
 ./usr/include/dev/wsfont/gallant12x22.h
+./usr/include/dev/wsfont/spleen12x24.h
+./usr/include/dev/wsfont/spleen16x32.h
+./usr/include/dev/wsfont/spleen32x64.h
 ./usr/include/dev/wsfont/spleen5x8.h
+./usr/include/dev/wsfont/spleen8x16.h
 ./usr/include/dev/wsfont/wsfont.h
 ./usr/include/dev/x86emu
 ./usr/include/dev/x86emu/x86emu.h
@@ -2321,7 +2325,7 @@
 ./usr/share/man/man3/fuse_mount.3
 ./usr/share/man/man3/fuse_new.3
 ./usr/share/man/man3/fuse_opt.3
-./usr/share/man/man3/fuse_parse_cmd_line.3
+./usr/share/man/man3/fuse_parse_cmdline.3
 ./usr/share/man/man3/fuse_set_signal_handlers.3
 ./usr/share/man/man3/fuse_setup.3
 ./usr/share/man/man3/fuse_teardown.3

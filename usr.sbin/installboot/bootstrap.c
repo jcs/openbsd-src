@@ -1,4 +1,4 @@
-/*	$OpenBSD: bootstrap.c,v 1.10 2018/09/01 16:55:29 krw Exp $	*/
+/*	$OpenBSD: bootstrap.c,v 1.12 2018/12/13 14:06:10 krw Exp $	*/
 
 /*
  * Copyright (c) 2013 Joel Sing <jsing@openbsd.org>

@@ -1,4 +1,4 @@
-/* $OpenBSD: rebound.c,v 1.101 2018/10/26 06:03:03 deraadt Exp $ */
+/* $OpenBSD: rebound.c,v 1.103 2018/12/06 16:51:19 tedu Exp $ */
 /*
  * Copyright (c) 2015 Ted Unangst <tedu@openbsd.org>
  *
@@ -43,7 +43,21 @@
 
 #define MINIMUM(a,b) (((a)<(b))?(a):(b))
 
+/*
+ * TTL for permanently cached records.
+ * They don't expire, but need something to put in the response.
+ */
+#define CACHETTL 10
+
 uint16_t randomid(void);
+
+int https_init(void);
+int https_connect(const char *ip, const char *name);
+int https_query(uint8_t *query, size_t qlen, uint8_t *resp, size_t *resplen);
+
+static int https;
+static char https_ip[256];
+static char https_name[256];
 
 union sockun {
 	struct sockaddr a;
@@ -116,7 +130,9 @@ static int connmax;
 static uint64_t conntotal;
 static int stopaccepting;
 
-static void
+static void sendreply(struct request *req, uint8_t *buf, size_t r);
+
+void
 logmsg(int prio, const char *msg, ...)
 {
 	va_list ap;
@@ -134,7 +150,7 @@ logmsg(int prio, const char *msg, ...)
 	}
 }
 
-static void __dead
+void __dead
 logerr(const char *msg, ...)
 {
 	va_list ap;
@@ -203,7 +219,7 @@ freecacheent(struct dnscache *ent)
 }
 
 /*
- * names end with either a nul byte, or a two byte 0xc0 pointer
+ * names end with either a nul byte or a two byte 0xc0 pointer
  */
 static size_t
 dnamelen(const unsigned char *p, size_t len)
@@ -412,6 +428,26 @@ newrequest(int ud, struct sockaddr *remoteaddr)
 		req->cacheent = hit;
 	}
 
+	if (https) {
+		int rv;
+		char resp[65536];
+		size_t resplen;
+
+		rv = https_query(buf, r, resp, &resplen);
+		if (rv != 0) {
+			rv = https_connect(https_ip, https_name);
+			if (rv == 0)
+				rv = https_query(buf, r, buf, &resplen);
+		}
+		if (rv != 0) {
+			logmsg(LOG_NOTICE, "failed to make https query");
+			goto fail;
+		}
+		sendreply(req, resp, resplen);
+		freerequest(req);
+		return NULL;
+	}
+
 	req->s = socket(remoteaddr->sa_family, SOCK_DGRAM, 0);
 	if (req->s == -1)
 		goto fail;
@@ -479,17 +515,13 @@ minttl(struct dnspacket *resp, u_int rlen)
 }
 
 static void
-sendreply(struct request *req)
+sendreply(struct request *req, uint8_t *buf, size_t r)
 {
-	uint8_t buf[65536];
 	struct dnspacket *resp;
 	struct dnscache *ent;
-	size_t r;
 	uint32_t ttl;
 
 	resp = (struct dnspacket *)buf;
-
-	r = recv(req->s, buf, sizeof(buf), 0);
 	if (r == 0 || r == -1 || r < sizeof(struct dnspacket))
 		return;
 	if (resp->id != req->reqid)
@@ -532,6 +564,16 @@ sendreply(struct request *req)
 		cachecount += 1;
 		TAILQ_INSERT_TAIL(&cachefifo, ent, fifo);
 	}
+}
+
+static void
+handlereply(struct request *req)
+{
+	uint8_t buf[65536];
+	size_t r;
+
+	r = recv(req->s, buf, sizeof(buf), 0);
+	sendreply(req, buf, r);
 }
 
 static struct request *
@@ -677,7 +719,7 @@ preloadcache(const char *name, uint16_t type, void *rdata, uint16_t rdatalen)
 	p += 2;
 	memcpy(p, &class, 2);
 	p += 2;
-	ttl = htonl(10);
+	ttl = htonl(CACHETTL);
 	memcpy(p, &ttl, 4);
 	p += 4;
 	len = htons(rdatalen);
@@ -737,6 +779,7 @@ readconfig(int conffd, union sockun *remoteaddr)
 {
 	const char ns[] = "nameserver";
 	const char rc[] = "record";
+	const char doh[] = "https";
 	char buf[1024];
 	char *p;
 	struct sockaddr_in *sin = &remoteaddr->i;
@@ -785,6 +828,13 @@ readconfig(int conffd, union sockun *remoteaddr)
 				preloadA(name, value);
 				preloadPTR(value, name);
 			}
+		} else if (strncmp(buf, doh, strlen(doh)) == 0) {
+			p = buf + strlen(doh) + 1;
+			if (sscanf(p, "%255s %255s", https_ip, https_name) != 2)
+				logerr("do not like https line");
+			https = 1;
+			if (rv == -1)
+				rv = 0;
 		}
 	}
 	fclose(conf);
@@ -928,7 +978,7 @@ workerloop(int conffd, int ud, int ld, int ud6, int ld6)
 				} else {
 					req = ke->udata;
 					if (req->tcp == 0)
-						sendreply(req);
+						handlereply(req);
 					freerequest(req);
 				}
 				break;
@@ -1142,6 +1192,8 @@ main(int argc, char **argv)
 
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGUSR1, SIG_IGN);
+
+	https_init();
 
 	while ((ch = getopt(argc, argv, "c:dl:W")) != -1) {
 		switch (ch) {

@@ -1,4 +1,4 @@
-/*	$OpenBSD: malloc.c,v 1.252 2018/11/18 16:15:18 otto Exp $	*/
+/*	$OpenBSD: malloc.c,v 1.257 2018/12/10 07:57:49 otto Exp $	*/
 /*
  * Copyright (c) 2008, 2010, 2011, 2016 Otto Moerbeek <otto@drijf.net>
  * Copyright (c) 2012 Matthew Dempsky <matthew@openbsd.org>
@@ -260,8 +260,8 @@ hash(void *p)
 	return sum;
 }
 
-static inline
-struct dir_info *getpool(void)
+static inline struct dir_info *
+getpool(void)
 {
 	if (!mopts.malloc_mt)
 		return mopts.malloc_pool[0];
@@ -1273,19 +1273,18 @@ validate_junk(struct dir_info *pool, void *p)
 	}
 }
 
-static void
-ofree(struct dir_info *argpool, void *p, int clear, int check, size_t argsz)
-{
-	struct dir_info *pool;
-	struct region_info *r;
-	char *saved_function;
-	size_t sz;
-	int i;
 
-	pool = argpool;
-	r = find(pool, p);
+static struct region_info *
+findpool(void *p, struct dir_info *argpool, struct dir_info **foundpool,
+    char **saved_function)
+{
+	struct dir_info *pool = argpool;
+	struct region_info *r = find(pool, p);
+
 	if (r == NULL) {
 		if (mopts.malloc_mt)  {
+			int i;
+
 			for (i = 0; i < _MALLOC_MUTEXES; i++) {
 				if (i == argpool->mutex)
 					continue;
@@ -1296,7 +1295,7 @@ ofree(struct dir_info *argpool, void *p, int clear, int check, size_t argsz)
 				pool->active++;
 				r = find(pool, p);
 				if (r != NULL) {
-					saved_function = pool->func;
+					*saved_function = pool->func;
 					pool->func = argpool->func;
 					break;
 				}
@@ -1305,6 +1304,19 @@ ofree(struct dir_info *argpool, void *p, int clear, int check, size_t argsz)
 		if (r == NULL)
 			wrterror(argpool, "bogus pointer (double free?) %p", p);
 	}
+	*foundpool = pool;
+	return r;
+}
+
+static void
+ofree(struct dir_info **argpool, void *p, int clear, int check, size_t argsz)
+{
+	struct region_info *r;
+	struct dir_info *pool;
+	char *saved_function;
+	size_t sz;
+
+	r = findpool(p, *argpool, &pool, &saved_function);
 
 	REALSIZE(sz, r);
 	if (check) {
@@ -1393,12 +1405,9 @@ ofree(struct dir_info *argpool, void *p, int clear, int check, size_t argsz)
 		}
 	}
 
-	if (argpool != pool) {
-		pool->active--;
+	if (*argpool != pool) {
 		pool->func = saved_function;
-		_MALLOC_UNLOCK(pool->mutex);
-		_MALLOC_LOCK(argpool->mutex);
-		argpool->active++;
+		*argpool = pool;
 	}
 }
 
@@ -1421,7 +1430,7 @@ free(void *ptr)
 		malloc_recurse(d);
 		return;
 	}
-	ofree(d, ptr, 0, 0, 0);
+	ofree(&d, ptr, 0, 0, 0);
 	d->active--;
 	_MALLOC_UNLOCK(d->mutex);
 	errno = saved_errno;
@@ -1459,135 +1468,33 @@ freezero(void *ptr, size_t sz)
 		malloc_recurse(d);
 		return;
 	}
-	ofree(d, ptr, 1, 1, sz);
+	ofree(&d, ptr, 1, 1, sz);
 	d->active--;
 	_MALLOC_UNLOCK(d->mutex);
 	errno = saved_errno;
 }
 DEF_WEAK(freezero);
 
-static size_t
-osize(struct dir_info *argpool, void *p)
-{
-	struct dir_info *pool;
-	struct region_info *r;
-	char *saved_function;
-	size_t sz;
-	int i;
-
-	pool = argpool;
-	r = find(pool, p);
-	if (r == NULL) {
-		if (mopts.malloc_mt)  {
-			for (i = 0; i < _MALLOC_MUTEXES; i++) {
-				if (i == argpool->mutex)
-					continue;
-				pool->active--;
-				_MALLOC_UNLOCK(pool->mutex);
-				pool = mopts.malloc_pool[i];
-				_MALLOC_LOCK(pool->mutex);
-				pool->active++;
-				r = find(pool, p);
-				if (r != NULL) {
-					saved_function = pool->func;
-					pool->func = argpool->func;
-					break;
-				}
-			}
-		}
-		if (r == NULL)
-			wrterror(argpool, "bogus pointer (double free?) %p", p);
-	}
-
-	REALSIZE(sz, r);
-	if (sz > MALLOC_MAXCHUNK) {
-		if (MALLOC_MOVE_COND(sz))
-			sz = MALLOC_PAGESIZE - ((char *)p - (char *)r->p);
-		else
-			sz = PAGEROUND(sz);
-	}
-	if (argpool != pool) {
-		pool->active--;
-		pool->func = saved_function;
-		_MALLOC_UNLOCK(pool->mutex);
-		_MALLOC_LOCK(argpool->mutex);
-		argpool->active++;
-	}
-	return sz;
-}
-
-size_t
-malloc_usable_size(void *ptr)
-{
-	struct dir_info *d;
-	int saved_errno = errno;
-	size_t sz;
-
-	/* This is legal. */
-	if (ptr == NULL)
-		return 0;
-
-	d = getpool();
-	if (d == NULL)
-		wrterror(d, "malloc_usable_size() called before allocation");
-	_MALLOC_LOCK(d->mutex);
-	d->func = "malloc_usable_size";
-	if (d->active++) {
-		malloc_recurse(d);
-		return 0;
-	}
-	sz = osize(d, ptr);
-	d->active--;
-	_MALLOC_UNLOCK(d->mutex);
-	errno = saved_errno;
-	return sz;
-}
-DEF_WEAK(malloc_usable_size);
-
 static void *
-orealloc(struct dir_info *argpool, void *p, size_t newsz, void *f)
+orealloc(struct dir_info **argpool, void *p, size_t newsz, void *f)
 {
-	struct dir_info *pool;
 	struct region_info *r;
+	struct dir_info *pool;
+	char *saved_function;
 	struct chunk_info *info;
 	size_t oldsz, goldsz, gnewsz;
 	void *q, *ret;
-	char *saved_function;
-	int i;
 	uint32_t chunknum;
 
-	pool = argpool;
-
 	if (p == NULL)
-		return omalloc(pool, newsz, 0, f);
+		return omalloc(*argpool, newsz, 0, f);
 
-	r = find(pool, p);
-	if (r == NULL) {
-		if (mopts.malloc_mt) {
-			for (i = 0; i < _MALLOC_MUTEXES; i++) {
-				if (i == argpool->mutex)
-					continue;
-				pool->active--;
-				_MALLOC_UNLOCK(pool->mutex);
-				pool = mopts.malloc_pool[i];
-				_MALLOC_LOCK(pool->mutex);
-				pool->active++;
-				r = find(pool, p);
-				if (r != NULL) {
-					saved_function = pool->func;
-					pool->func = argpool->func;
-					break;
-				}
-			}
-		}
-		if (r == NULL)
-			wrterror(argpool, "bogus pointer (double free?) %p", p);
-	}
 	if (newsz >= SIZE_MAX - mopts.malloc_guard - MALLOC_PAGESIZE) {
 		errno = ENOMEM;
-		ret = NULL;
-		goto done;
+		return  NULL;
 	}
+
+	r = findpool(p, *argpool, &pool, &saved_function);
 
 	REALSIZE(oldsz, r);
 	if (mopts.chunk_canaries && oldsz <= MALLOC_MAXCHUNK) {
@@ -1721,7 +1628,7 @@ gotit:
 		}
 		if (newsz != 0 && oldsz != 0)
 			memcpy(q, p, oldsz < newsz ? oldsz : newsz);
-		ofree(pool, p, 0, 0, 0);
+		ofree(&pool, p, 0, 0, 0);
 		ret = q;
 	} else {
 		/* oldsz == newsz */
@@ -1731,12 +1638,9 @@ gotit:
 		ret = p;
 	}
 done:
-	if (argpool != pool) {
-		pool->active--;
+	if (*argpool != pool) {
 		pool->func = saved_function;
-		_MALLOC_UNLOCK(pool->mutex);
-		_MALLOC_LOCK(argpool->mutex);
-		argpool->active++;
+		*argpool = pool;
 	}
 	return ret;
 }
@@ -1759,7 +1663,7 @@ realloc(void *ptr, size_t size)
 		malloc_recurse(d);
 		return NULL;
 	}
-	r = orealloc(d, ptr, size, CALLER);
+	r = orealloc(&d, ptr, size, CALLER);
 
 	d->active--;
 	_MALLOC_UNLOCK(d->mutex);
@@ -1820,42 +1724,22 @@ calloc(size_t nmemb, size_t size)
 /*DEF_STRONG(calloc);*/
 
 static void *
-orecallocarray(struct dir_info *argpool, void *p, size_t oldsize,
+orecallocarray(struct dir_info **argpool, void *p, size_t oldsize,
     size_t newsize, void *f)
 {
-	struct dir_info *pool;
 	struct region_info *r;
+	struct dir_info *pool;
+	char *saved_function;
 	void *newptr;
 	size_t sz;
-	int i;
-
-	pool = argpool;
 
 	if (p == NULL)
-		return omalloc(pool, newsize, 1, f);
+		return omalloc(*argpool, newsize, 1, f);
 
 	if (oldsize == newsize)
 		return p;
 
-	r = find(pool, p);
-	if (r == NULL) {
-		if (mopts.malloc_mt) {
-			for (i = 0; i < _MALLOC_MUTEXES; i++) {
-				if (i == argpool->mutex)
-					continue;
-				pool->active--;
-				_MALLOC_UNLOCK(pool->mutex);
-				pool = mopts.malloc_pool[i];
-				_MALLOC_LOCK(pool->mutex);
-				pool->active++;
-				r = find(pool, p);
-				if (r != NULL)
-					break;
-			}
-		}
-		if (r == NULL)
-			wrterror(pool, "bogus pointer (double free?) %p", p);
-	}
+	r = findpool(p, *argpool, &pool, &saved_function);
 
 	REALSIZE(sz, r);
 	if (sz <= MALLOC_MAXCHUNK) {
@@ -1882,14 +1766,12 @@ orecallocarray(struct dir_info *argpool, void *p, size_t oldsize,
 	} else
 		memcpy(newptr, p, newsize);
 
-	ofree(pool, p, 1, 0, oldsize);
+	ofree(&pool, p, 1, 0, oldsize);
 
 done:
-	if (argpool != pool) {
-		pool->active--;
-		_MALLOC_UNLOCK(pool->mutex);
-		_MALLOC_LOCK(argpool->mutex);
-		argpool->active++;
+	if (*argpool != pool) {
+		pool->func = saved_function;
+		*argpool = pool;
 	}
 
 	return newptr;
@@ -1992,7 +1874,7 @@ recallocarray(void *ptr, size_t oldnmemb, size_t newnmemb, size_t size)
 		return NULL;
 	}
 
-	r = orecallocarray(d, ptr, oldsize, newsize, CALLER);
+	r = orecallocarray(&d, ptr, oldsize, newsize, CALLER);
 
 	d->active--;
 	_MALLOC_UNLOCK(d->mutex);

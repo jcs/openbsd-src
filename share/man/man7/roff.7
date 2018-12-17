@@ -1,4 +1,4 @@
-.\"	$OpenBSD: roff.7,v 1.87 2018/10/04 15:31:40 schwarze Exp $
+.\"	$OpenBSD: roff.7,v 1.90 2018/12/16 01:34:34 schwarze Exp $
 .\"
 .\" Copyright (c) 2010, 2011, 2012 Kristaps Dzonsons <kristaps@bsd.lv>
 .\" Copyright (c) 2010-2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: October 4 2018 $
+.Dd $Mdocdate: December 16 2018 $
 .Dt ROFF 7
 .Os
 .Sh NAME
@@ -44,7 +44,8 @@ utility supports a subset of
 requests and escapes.
 Even though this manual page lists all
 .Nm
-requests, it only has partial information about requests not supported by
+requests and escape sequences, it only contains partial information
+about requests not supported by
 .Xr mandoc 1
 and about language features that do not matter for manual pages.
 For complete
@@ -86,7 +87,7 @@ indicates the start of an escape sequence, used for example for
 .Sx Comments
 and
 .Sx Special Characters .
-For a listing of escape sequences, consult the
+For a complete listing of escape sequences, consult the
 .Sx ESCAPE SEQUENCE REFERENCE
 below.
 .Ss Comments
@@ -132,18 +133,73 @@ One-letter backslash escape.
 See
 .Xr mandoc_char 7
 for a complete list.
-.Ss Text Decoration
-Terms may be text-decorated using the
-.Sq \ef
-escape followed by an indicator: B (bold), I (italic), R (regular), or P
-(revert to previous mode).
-A numerical representation 3, 2, or 1 (bold, italic, and regular,
-respectively) may be used instead.
+.Ss Font Selection
+In
+.Xr mdoc 7
+and
+.Xr man 7
+documents, fonts are usually selected with macros.
+The
+.Ic \ef
+escape sequence and the
+.Ic \&ft
+request can be used to manually change the font,
+but this is not recommended in
+.Xr mdoc 7
+documents.
+Such manual font changes are overridden by many subsequent macros.
 .Pp
-The two-character indicator
-.Sq BI
-requests a font that is both bold and italic.
-It may not be portable to old roff implementations.
+The following fonts are supported:
+.Pp
+.Bl -tag -width CW -offset indent -compact
+.It Cm B
+Bold font.
+.It Cm BI
+A font that is both bold and italic.
+.It Cm CB
+Bold constant width font.
+Same as
+.Cm B
+in terminal output.
+.It Cm CI
+Italic constant width font.
+Same as
+.Cm I
+in terminal output.
+.It Cm CR
+Regular constant width font.
+Same as
+.Cm R
+in terminal output.
+.It Cm CW
+An alias for
+.Cm CR .
+.It Cm I
+Italic font.
+.It Cm P
+Return to the previous font.
+If a macro caused a font change since the last
+.Ic \ef
+eascape sequence or
+.Ic \&ft
+request, this returns to the font before the last font change in
+the macro rather than to the font before the last manual font change.
+.It Cm R
+Roman font.
+This is the default font.
+.It Cm 1
+An alias for
+.Cm R .
+.It Cm 2
+An alias for
+.Cm I .
+.It Cm 3
+An alias for
+.Cm B .
+.It Cm 4
+An alias for
+.Cm BI .
+.El
 .Pp
 Examples:
 .Bl -tag -width Ds -offset indent -compact
@@ -154,12 +210,6 @@ Write in \fIitalic\fP, then return to previous font mode.
 .It Li \ef(BIbold italic\efP
 Write in \f(BIbold italic\fP, then return to previous font mode.
 .El
-.Pp
-Text decoration is
-.Em not
-recommended for
-.Xr mdoc 7 ,
-which encourages semantic annotation.
 .Ss Whitespace
 Whitespace consists of the space character.
 In text lines, whitespace is preserved within a line.
@@ -197,9 +247,9 @@ centimetre
 .It i
 inch
 .It P
-pica (~1/6 inch)
+pica (1/6 inch)
 .It p
-point (~1/72 inch)
+point (1/72 inch)
 .It f
 scale
 .Sq u
@@ -219,7 +269,7 @@ character
 .It u
 default horizontal span for the terminal
 .It M
-mini-em (~1/100 em)
+mini-em (1/100 em)
 .El
 .Pp
 Using anything other than
@@ -591,7 +641,7 @@ macros, whichever applies to the document in question.
 .Pp
 Specifying a custom
 .Ar endmacro
-macro works in the same way as for
+works in the same way as for
 .Ic \&ig ;
 namely, the call to
 .Sq Pf . Ar endmacro
@@ -888,27 +938,12 @@ This is a Heirloom extension and currently ignored.
 Conditionally define a special font.
 This is a groff extension and currently ignored.
 .It Ic \&ft Op Ar font
-Change the font.
-The following
+Change the font; see
+.Sx Font Selection .
+The
 .Ar font
-arguments are supported:
-.Bl -tag -width 4n -offset indent
-.It Cm B , BI , CB , 3 , 4
-switches to
-.Sy bold
-font
-.It Cm I , CI , 2
-switches to
-.Em underlined
-font
-.It Cm R , CR , CW , 1
-switches to normal font
-.It Cm P No "or no argument"
-switches back to the previous font
-.El
-.Pp
-This request takes effect only locally and may be overridden
-by macros and escape sequences.
+argument defaults to
+.Cm P .
 .It Ic \&ftr Ar newname Op Ar oldname
 Translate font name.
 This is a groff extension and currently ignored.
@@ -1815,10 +1850,6 @@ The
 .Xr mandoc 1
 .Nm
 parser recognises the following escape sequences.
-Note that the
-.Nm
-language defines more escape sequences not implemented in
-.Xr mandoc 1 .
 In
 .Xr mdoc 7
 and
@@ -1828,9 +1859,7 @@ described in the
 .Sx LANGUAGE SYNTAX
 section above.
 .Pp
-In
-.Xr mandoc 1 ,
-a backslash followed by any character not listed here
+A backslash followed by any character not listed here
 simply prints that character itself.
 .Bl -tag -width Ds
 .It Ic \e<newline>
@@ -1841,7 +1870,14 @@ on both lines together as if it were on a single input line.
 The escape sequence backslash-space
 .Pq Sq \e\ \&
 is an unpaddable space-sized non-breaking space character; see
-.Sx Whitespace .
+.Sx Whitespace
+and
+.Xr mandoc_char 7 .
+.It Ic \e!
+Embed text up to and including the end of the input line into the
+current diversion or into intermediate output without interpreting
+requests, macros, and escapes.
+Currently unsupported.
 .It Ic \e\(dq
 The rest of the input line is treated as
 .Sx Comments .
@@ -1858,8 +1894,16 @@ Macro argument expansion, see
 Hyphenation allowed at this point of the word; ignored by
 .Xr mandoc 1 .
 .It Ic \e&
-Non-printing zero-width character; see
-.Sx Whitespace .
+Non-printing zero-width character,
+often used for various kinds of escaping; see
+.Sx Whitespace ,
+.Xr mandoc_char 7 ,
+and the
+.Dq MACRO SYNTAX
+and
+.Dq Delimiters
+sections in
+.Xr mdoc 7 .
 .It Ic \e\(aq
 Acute accent special character; use
 .Ic \e(aa
@@ -1868,6 +1912,10 @@ instead.
 .Sx Special Characters
 with two-letter names, see
 .Xr mandoc_char 7 .
+.It Ic \e)
+Zero-width space transparent to end-of-sentence detection;
+ignored by
+.Xr mandoc 1 .
 .It Ic \e*[ Ns Ar name Ns Ic \&]
 Interpolate the string with the
 .Ar name .
@@ -1901,10 +1949,22 @@ Left italic correction (groff extension); ignored by
 .Xr mandoc 1 .
 .It Ic \e-
 Special character
-.Dq mathematical minus sign .
+.Dq mathematical minus sign ;
+see
+.Xr mandoc_char 7
+for details.
 .It Ic \e/
 Right italic correction (groff extension); ignored by
 .Xr mandoc 1 .
+.It Ic \e:
+Breaking the line is allowed at this point of the word
+without inserting a hyphen.
+.It Ic \e?
+Embed the text up to the next
+.Ic \e?
+into the current diversion without interpreting requests, macros,
+and escapes.
+This is a groff extension and currently unsupported.
 .It Ic \e[ Ns Ar name Ns Ic \&]
 .Sx Special Characters
 with names of arbitrary length, see
@@ -1912,6 +1972,10 @@ with names of arbitrary length, see
 .It Ic \e^
 One-twelfth em half-narrow space character, effectively zero-width in
 .Xr mandoc 1 .
+.It Ic \e_
+Underline special character; use
+.Ic \e(ul
+instead.
 .It Ic \e`
 Grave accent special character; use
 .Ic \e(ga
@@ -1932,6 +1996,9 @@ Digit width space character.
 .It Ic \eA\(aq Ns Ar string Ns Ic \(aq
 Anchor definition; ignored by
 .Xr mandoc 1 .
+.It Ic \ea
+Leader character; ignored by
+.Xr mandoc 1 .
 .It Ic \eB\(aq Ns Ar string Ns Ic \(aq
 Interpolate
 .Sq 1
@@ -1939,7 +2006,7 @@ if
 .Ar string
 conforms to the syntax of
 .Sx Numerical expressions
-explained above and
+explained above or
 .Sq 0
 otherwise.
 .It Ic \eb\(aq Ns Ar string Ns Ic \(aq
@@ -1959,6 +2026,13 @@ Draw graphics function; ignored by
 .It Ic \ed
 Move down by half a line; ignored by
 .Xr mandoc 1 .
+.It Ic \eE
+Escape character intended to not be interpreted in copy mode.
+In
+.Xr mandoc 1 ,
+it currently does the same as
+.Ic \e
+itself.
 .It Ic \ee
 Backslash special character.
 .It Ic \eF[ Ns Ar name Ns Ic \&]
@@ -1972,11 +2046,15 @@ and
 Switch to the font
 .Ar name ,
 see
-.Sx Text Decoration .
+.Sx Font Selection .
 For short names, there are variants
 .Ic \ef Ns Ar c
 and
 .Ic \ef( Ns Ar cc .
+An empty name
+.Ic \ef[]
+defaults to
+.Ic \efP .
 .It Ic \eg[ Ns Ar name Ns Ic \&]
 Interpolate the format of a number register; ignored by
 .Xr mandoc 1 .
@@ -2040,6 +2118,14 @@ the register is first incremented or decremented by the
 that was specified in the relevant
 .Ic \&nr
 request, and the changed value is interpolated.
+.It Ic \eO Ns Ar digit , Ic \eO[5 Ns arguments Ns Ic \&]
+Suppress output.
+This is a groff extension and currently unsupported.
+With an argument of
+.Ic 1 , 2 , 3 ,
+or
+.Ic 4 ,
+it is ignored.
 .It Ic \eo\(aq Ns Ar string Ns Ic \(aq
 Overstrike, writing all the characters contained in the
 .Ar string
@@ -2050,6 +2136,9 @@ only the last one of the characters is visible.
 Break the output line at the end of the current word.
 .It Ic \eR\(aq Ns Ar name Oo +|- Oc Ns Ar number Ns Ic \(aq
 Set number register; ignored by
+.Xr mandoc 1 .
+.It Ic \er
+Move up by one line; ignored by
 .Xr mandoc 1 .
 .It Ic \eS\(aq Ns Ar number Ns Ic \(aq
 Slant output; ignored by

@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.38 2018/11/14 10:59:33 martijn Exp $	*/
+/*	$OpenBSD: main.c,v 1.40 2018/12/08 23:11:24 schwarze Exp $	*/
 
 /*-
  * Copyright (c) 1992 Diomidis Spinellis.

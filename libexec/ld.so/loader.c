@@ -1,4 +1,4 @@
-/*	$OpenBSD: loader.c,v 1.175 2018/11/16 21:15:47 guenther Exp $ */
+/*	$OpenBSD: loader.c,v 1.177 2018/12/03 05:29:56 guenther Exp $ */
 
 /*
  * Copyright (c) 1998 Per Fogelstrom, Opsycon AB
@@ -558,8 +558,9 @@ _dl_boot(const char **argv, char **envp, const long dyn_loff, long *dl_data)
 	 */
 	map_link = NULL;
 #ifdef __mips__
-	map_link = (struct r_debug **)(exe_obj->Dyn.info[DT_MIPS_RLD_MAP -
-	    DT_LOPROC + DT_NUM]);
+	if (exe_obj->Dyn.info[DT_MIPS_RLD_MAP - DT_LOPROC + DT_NUM] != 0)
+		map_link = (struct r_debug **)(exe_obj->Dyn.info[
+		    DT_MIPS_RLD_MAP - DT_LOPROC + DT_NUM] + exe_loff);
 #endif
 	if (map_link == NULL) {
 		for (dynp = exe_obj->load_dyn; dynp->d_tag; dynp++) {
@@ -582,16 +583,18 @@ _dl_boot(const char **argv, char **envp, const long dyn_loff, long *dl_data)
 		debug_map->r_ldbase = dyn_loff;
 		_dl_debug_map = debug_map;
 #ifdef __mips__
-		if (dynp->d_tag == DT_DEBUG)
+		Elf_Addr relro_addr = exe_obj->relro_addr;
+		if (dynp->d_tag == DT_DEBUG &&
+		    ((Elf_Addr)map_link + sizeof(*map_link) <= relro_addr ||
+		     (Elf_Addr)map_link >= relro_addr + exe_obj->relro_size)) {
 			_dl_mprotect(map_link, sizeof(*map_link),
 			    PROT_READ|PROT_WRITE);
-#endif
-		*map_link = _dl_debug_map;
-#ifdef __mips__
-		if (dynp->d_tag == DT_DEBUG)
+			*map_link = _dl_debug_map;
 			_dl_mprotect(map_link, sizeof(*map_link),
 			    PROT_READ|PROT_EXEC);
+		} else
 #endif
+			*map_link = _dl_debug_map;
 	}
 
 

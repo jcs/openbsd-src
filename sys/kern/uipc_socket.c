@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_socket.c,v 1.227 2018/08/21 12:34:11 bluhm Exp $	*/
+/*	$OpenBSD: uipc_socket.c,v 1.230 2018/11/30 09:23:31 claudio Exp $	*/
 /*	$NetBSD: uipc_socket.c,v 1.21 1996/02/04 02:17:52 christos Exp $	*/
 
 /*
@@ -129,6 +129,7 @@ socreate(int dom, struct socket **aso, int type, int proto)
 	if (prp->pr_type != type)
 		return (EPROTOTYPE);
 	so = pool_get(&socket_pool, PR_WAITOK | PR_ZERO);
+	sigio_init(&so->so_sigio);
 	TAILQ_INIT(&so->so_q0);
 	TAILQ_INIT(&so->so_q);
 	so->so_type = type;
@@ -214,6 +215,7 @@ sofree(struct socket *so, int s)
 			return;
 		}
 	}
+	sigio_free(&so->so_sigio);
 #ifdef SOCKET_SPLICE
 	if (so->so_sp) {
 		if (issplicedback(so))
@@ -250,6 +252,8 @@ soclose(struct socket *so, int flags)
 	int s, error = 0;
 
 	s = solock(so);
+	/* Revoke async IO early. There is a final revocation in sofree(). */
+	sigio_free(&so->so_sigio);
 	if (so->so_options & SO_ACCEPTCONN) {
 		while ((so2 = TAILQ_FIRST(&so->so_q0)) != NULL) {
 			(void) soqremque(so2, 0);
@@ -573,7 +577,7 @@ nopages:
 			 * for protocol headers in first mbuf.
 			 */
 			if (atomic && m == top && len < mlen - max_hdr)
-				MH_ALIGN(m, len);
+				m_align(m, len);
 		}
 
 		error = uiomove(mtod(m, caddr_t), len, uio);
@@ -661,9 +665,9 @@ soreceive(struct socket *so, struct mbuf **paddr, struct uio *uio,
 
 	mp = mp0;
 	if (paddr)
-		*paddr = 0;
+		*paddr = NULL;
 	if (controlp)
-		*controlp = 0;
+		*controlp = NULL;
 	if (flagsp)
 		flags = *flagsp &~ MSG_EOR;
 	else
@@ -810,8 +814,13 @@ dontblock:
 		}
 	}
 	while (m && m->m_type == MT_CONTROL && error == 0) {
+		int skip = 0;
 		if (flags & MSG_PEEK) {
-			if (controlp)
+			if (mtod(m, struct cmsghdr *)->cmsg_type ==
+			    SCM_RIGHTS) {
+				/* don't leak internalized SCM_RIGHTS msgs */
+				skip = 1;
+			} else if (controlp)
 				*controlp = m_copym(m, 0, m->m_len, M_NOWAIT);
 			m = m->m_next;
 		} else {
@@ -822,9 +831,7 @@ dontblock:
 			m = so->so_rcv.sb_mb;
 			sbsync(&so->so_rcv, nextrecord);
 			if (controlp) {
-				if (pr->pr_domain->dom_externalize &&
-				    mtod(cm, struct cmsghdr *)->cmsg_type ==
-				    SCM_RIGHTS) {
+				if (pr->pr_domain->dom_externalize) {
 					error =
 					    (*pr->pr_domain->dom_externalize)
 					    (cm, controllen, flags);
@@ -835,8 +842,7 @@ dontblock:
 				 * Dispose of any SCM_RIGHTS message that went
 				 * through the read path rather than recv.
 				 */
-				if (pr->pr_domain->dom_dispose &&
-				    mtod(cm, struct cmsghdr *)->cmsg_type == SCM_RIGHTS)
+				if (pr->pr_domain->dom_dispose)
 					pr->pr_domain->dom_dispose(cm);
 				m_free(cm);
 			}
@@ -845,7 +851,7 @@ dontblock:
 			nextrecord = so->so_rcv.sb_mb->m_nextpkt;
 		else
 			nextrecord = so->so_rcv.sb_mb;
-		if (controlp) {
+		if (controlp && !skip) {
 			orig_resid = 0;
 			controlp = &(*controlp)->m_next;
 		}
@@ -1921,7 +1927,7 @@ void
 sohasoutofband(struct socket *so)
 {
 	KERNEL_LOCK();
-	csignal(so->so_pgid, SIGURG, so->so_siguid, so->so_sigeuid);
+	pgsigio(&so->so_sigio, SIGURG, 0);
 	selwakeup(&so->so_rcv.sb_sel);
 	KERNEL_UNLOCK();
 }
@@ -2080,6 +2086,7 @@ so_print(void *v,
 	(*pr)("so_state: 0x%04x\n", so->so_state);
 	(*pr)("so_pcb: %p\n", so->so_pcb);
 	(*pr)("so_proto: %p\n", so->so_proto);
+	(*pr)("so_sigio: %p\n", so->so_sigio.sir_sigio);
 
 	(*pr)("so_head: %p\n", so->so_head);
 	(*pr)("so_onq: %p\n", so->so_onq);
@@ -2090,9 +2097,6 @@ so_print(void *v,
 	(*pr)("so_qlen: %i\n", so->so_qlen);
 	(*pr)("so_qlimit: %i\n", so->so_qlimit);
 	(*pr)("so_timeo: %i\n", so->so_timeo);
-	(*pr)("so_pgid: %i\n", so->so_pgid);
-	(*pr)("so_siguid: %i\n", so->so_siguid);
-	(*pr)("so_sigeuid: %i\n", so->so_sigeuid);
 	(*pr)("so_obmark: %lu\n", so->so_oobmark);
 
 	(*pr)("so_sp: %p\n", so->so_sp);

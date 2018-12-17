@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_usrreq.c,v 1.135 2018/11/09 14:14:31 claudio Exp $	*/
+/*	$OpenBSD: uipc_usrreq.c,v 1.137 2018/11/21 17:07:07 claudio Exp $	*/
 /*	$NetBSD: uipc_usrreq.c,v 1.18 1996/02/09 19:00:50 christos Exp $	*/
 
 /*
@@ -663,6 +663,13 @@ unp_externalize(struct mbuf *rights, socklen_t controllen, int flags)
 	struct file *fp;
 	int nfds, error = 0;
 
+	/*
+	 * This code only works because SCM_RIGHTS is the only supported
+	 * control message type on unix sockets. Enforce this here.
+	 */
+	if (cm->cmsg_type != SCM_RIGHTS || cm->cmsg_level != SOL_SOCKET)
+		return EINVAL;
+
 	nfds = (cm->cmsg_len - CMSG_ALIGN(sizeof(*cm))) /
 	    sizeof(struct fdpass);
 	if (controllen < CMSG_ALIGN(sizeof(struct cmsghdr)))
@@ -800,6 +807,8 @@ unp_internalize(struct mbuf *control, struct proc *p)
 	 * Check for two potential msg_controllen values because
 	 * IETF stuck their nose in a place it does not belong.
 	 */ 
+	if (control->m_len < CMSG_LEN(0) || cm->cmsg_len < CMSG_LEN(0))
+		return (EINVAL);
 	if (cm->cmsg_type != SCM_RIGHTS || cm->cmsg_level != SOL_SOCKET ||
 	    !(cm->cmsg_len == control->m_len ||
 	    control->m_len == CMSG_ALIGN(cm->cmsg_len)))

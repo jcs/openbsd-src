@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.c,v 1.104 2018/10/15 10:35:41 reyk Exp $	*/
+/*	$OpenBSD: vmd.c,v 1.108 2018/12/09 12:26:38 claudio Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -62,6 +62,7 @@ int	 vmd_check_vmh(struct vm_dump_header *);
 int	 vm_instance(struct privsep *, struct vmd_vm **,
 	    struct vmop_create_params *, uid_t);
 int	 vm_checkinsflag(struct vmop_create_params *, unsigned int, uid_t);
+uint32_t vm_claimid(const char *, int);
 
 struct vmd	*env;
 
@@ -115,6 +116,7 @@ vmd_dispatch_control(int fd, struct privsep_proc *p, struct imsg *imsg)
 			cmd = IMSG_VMDOP_START_VM_RESPONSE;
 		}
 		break;
+	case IMSG_VMDOP_WAIT_VM_REQUEST:
 	case IMSG_VMDOP_TERMINATE_VM_REQUEST:
 		IMSG_SIZE_CHECK(imsg, &vid);
 		memcpy(&vid, imsg->data, sizeof(vid));
@@ -450,7 +452,8 @@ vmd_dispatch_vmm(int fd, struct privsep_proc *p, struct imsg *imsg)
 			    __func__, vmr.vmr_id);
 			break;
 		}
-		if (vmr.vmr_result != EAGAIN) {
+		if (vmr.vmr_result != EAGAIN ||
+		    vm->vm_params.vmc_bootdevice) {
 			if (vm->vm_from_config)
 				vm_stop(vm, 0, __func__);
 			else
@@ -1169,6 +1172,28 @@ vm_remove(struct vmd_vm *vm, const char *caller)
 	free(vm);
 }
 
+uint32_t
+vm_claimid(const char *name, int uid)
+{
+	struct name2id *n2i = NULL;
+
+	TAILQ_FOREACH(n2i, env->vmd_known, entry)
+		if (strcmp(n2i->name, name) == 0 && n2i->uid == uid)
+			return n2i->id;
+
+	if (++env->vmd_nvm == 0)
+		fatalx("too many vms");
+	if ((n2i = calloc(1, sizeof(struct name2id))) == NULL)
+		fatalx("could not alloc vm name");
+	n2i->id = env->vmd_nvm;
+	n2i->uid = uid;
+	if (strlcpy(n2i->name, name, sizeof(n2i->name)) >= sizeof(n2i->name))
+		fatalx("overlong vm name");
+	TAILQ_INSERT_TAIL(env->vmd_known, n2i, entry);
+
+	return n2i->id;
+}
+
 int
 vm_register(struct privsep *ps, struct vmop_create_params *vmc,
     struct vmd_vm **ret_vm, uint32_t id, uid_t uid)
@@ -1300,11 +1325,8 @@ vm_register(struct privsep *ps, struct vmop_create_params *vmc,
 	vm->vm_cdrom = -1;
 	vm->vm_iev.ibuf.fd = -1;
 
-	if (++env->vmd_nvm == 0)
-		fatalx("too many vms");
-
 	/* Assign a new internal Id if not specified */
-	vm->vm_vmid = id == 0 ? env->vmd_nvm : id;
+	vm->vm_vmid = (id == 0) ? vm_claimid(vcp->vcp_name, uid) : id;
 
 	log_debug("%s: registering vm %d", __func__, vm->vm_vmid);
 	TAILQ_INSERT_TAIL(env->vmd_vms, vm, vm_entry);
@@ -1920,6 +1942,25 @@ prefixlen2mask(uint8_t prefixlen)
 		prefixlen = 32;
 
 	return (htonl(0xffffffff << (32 - prefixlen)));
+}
+
+void
+prefixlen2mask6(uint8_t prefixlen, struct in6_addr *mask)
+{
+	struct in6_addr	 s6;
+	int		 i;
+
+	if (prefixlen > 128)
+		prefixlen = 128;
+
+	memset(&s6, 0, sizeof(s6));
+	for (i = 0; i < prefixlen / 8; i++)
+		s6.s6_addr[i] = 0xff;
+	i = prefixlen % 8;
+	if (i)
+		s6.s6_addr[prefixlen / 8] = 0xff00 >> i;
+
+	memcpy(mask, &s6, sizeof(s6));
 }
 
 void

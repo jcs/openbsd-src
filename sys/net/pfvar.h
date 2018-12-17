@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfvar.h,v 1.486 2018/09/13 19:53:58 bluhm Exp $ */
+/*	$OpenBSD: pfvar.h,v 1.488 2018/12/10 16:48:15 kn Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -278,19 +278,6 @@ struct pfi_dynaddr {
 	!(a)->addr32[0] && !(a)->addr32[1] && \
 	!(a)->addr32[2] && !(a)->addr32[3] )) \
 
-#define PF_MATCHA(n, a, m, b, f) \
-	pf_match_addr(n, a, m, b, f)
-
-#define PF_ACPY(a, b, f) \
-	pf_addrcpy(a, b, f)
-
-#define PF_AINC(a, f) \
-	pf_addr_inc(a, f)
-
-#define PF_POOLMASK(a, b, c, d, f) \
-	pf_poolmask(a, b, c, d, f)
-
-
 #define	PF_MISMATCHAW(aw, x, af, neg, ifp, rtid)			\
 	(								\
 		(((aw)->type == PF_ADDR_NOROUTE &&			\
@@ -308,7 +295,7 @@ struct pfi_dynaddr {
 		    &(aw)->v.a.mask, (x), (af))) ||			\
 		((aw)->type == PF_ADDR_ADDRMASK &&			\
 		    !PF_AZERO(&(aw)->v.a.mask, (af)) &&			\
-		    !PF_MATCHA(0, &(aw)->v.a.addr,			\
+		    !pf_match_addr(0, &(aw)->v.a.addr,			\
 		    &(aw)->v.a.mask, (x), (af))))) !=			\
 		(neg)							\
 	)
@@ -1924,12 +1911,6 @@ struct pf_ruleset 	*pf_get_leaf_ruleset(char *, char **);
 struct pf_anchor 	*pf_create_anchor(struct pf_anchor *, const char *);
 struct pf_ruleset	*pf_find_or_create_ruleset(const char *);
 void			 pf_rs_initialize(void);
-
-#ifdef _KERNEL
-int			 pf_anchor_copyout(const struct pf_ruleset *,
-			    const struct pf_rule *, struct pfioc_rule *);
-void			 pf_anchor_remove(struct pf_rule *);
-#endif /* _KERNEL */
 
 /* The fingerprint functions can be linked into userland programs (tcpdump) */
 int	pf_osfp_add(struct pf_osfp_ioctl *);

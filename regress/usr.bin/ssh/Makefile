@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.97 2018/06/07 04:46:34 djm Exp $
+#	$OpenBSD: Makefile,v 1.99 2018/12/15 00:50:21 tedu Exp $
 
 .ifndef SKIP_UNIT
 SUBDIR=		unittests
@@ -108,8 +108,6 @@ CLEANFILES+=	*.core actual agent-key.* authorized_keys_${USERNAME} \
 		t6.out1 t6.out2 t7.out t7.out.pub t8.out t8.out.pub \
 		t9.out t9.out.pub testdata user_*key* user_ca* user_key*
 
-SUDO_CLEAN+=	/var/run/testdata_${USERNAME} /var/run/keycommand_${USERNAME}
-
 # Enable all malloc(3) randomisations and checks
 TEST_ENV=      "MALLOC_OPTIONS=CFGJRSUX"
 
@@ -211,7 +209,6 @@ c-${s}:
 
 clean: ${CLEAN_SUBDIR}
 	rm -f ${CLEANFILES}
-	test -z "${SUDO}" || ${SUDO} rm -f ${SUDO_CLEAN}
 	rm -rf .putty
 
 .include <bsd.regress.mk>

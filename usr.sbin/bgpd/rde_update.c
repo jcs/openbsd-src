@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_update.c,v 1.103 2018/11/04 12:34:54 claudio Exp $ */
+/*	$OpenBSD: rde_update.c,v 1.105 2018/11/29 12:10:51 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -65,6 +65,22 @@ RB_PROTOTYPE(uptree_attr, update_attr, entry, up_attr_cmp)
 RB_GENERATE(uptree_attr, update_attr, entry, up_attr_cmp)
 
 SIPHASH_KEY uptree_key;
+
+static struct filter_community	comm_no_advertise = {
+	.type = COMMUNITY_TYPE_BASIC,
+	.data1 = COMMUNITY_WELLKNOWN,
+	.data2 = COMMUNITY_NO_ADVERTISE
+};
+static struct filter_community	comm_no_export = {
+	.type = COMMUNITY_TYPE_BASIC,
+	.data1 = COMMUNITY_WELLKNOWN,
+	.data2 = COMMUNITY_NO_EXPORT
+};
+static struct filter_community	comm_no_expsubconfed = {
+	.type = COMMUNITY_TYPE_BASIC,
+	.data1 = COMMUNITY_WELLKNOWN,
+	.data2 = COMMUNITY_NO_EXPSUBCONFED
+};
 
 void
 up_init(struct rde_peer *peer)
@@ -329,14 +345,14 @@ up_test_update(struct rde_peer *peer, struct prefix *p)
 	}
 
 	/* well known communities */
-	if (community_match(asp, COMMUNITY_WELLKNOWN, COMMUNITY_NO_ADVERTISE))
+	if (community_match(asp, &comm_no_advertise, NULL))
 		return (0);
-	if (peer->conf.ebgp && community_match(asp, COMMUNITY_WELLKNOWN,
-	    COMMUNITY_NO_EXPORT))
-		return (0);
-	if (peer->conf.ebgp && community_match(asp, COMMUNITY_WELLKNOWN,
-	    COMMUNITY_NO_EXPSUBCONFED))
-		return (0);
+	if (peer->conf.ebgp) {
+		if (community_match(asp, &comm_no_export, NULL))
+			return (0);
+		if (community_match(asp, &comm_no_expsubconfed, NULL))
+			return (0);
+	}
 
 	/*
 	 * Don't send messages back to originator
@@ -749,7 +765,7 @@ up_generate_attr(struct rde_peer *peer, struct update_attr *upa,
 	u_int16_t	 len = sizeof(up_attr_buf), wlen = 0, plen;
 	u_int8_t	 l;
 	u_int16_t	 nlen = 0;
-	u_char		*ndata = NULL;
+	u_char		*ndata;
 
 	/* origin */
 	if ((r = attr_write(up_attr_buf + wlen, len, ATTR_WELL_KNOWN,
@@ -886,6 +902,7 @@ up_generate_attr(struct rde_peer *peer, struct update_attr *upa,
 						free(ndata);
 						return (-1);
 					}
+					free(ndata);
 				} else {
 					/* everything got removed */
 					r = 0;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ftpd.c,v 1.223 2016/09/03 15:00:48 jca Exp $	*/
+/*	$OpenBSD: ftpd.c,v 1.225 2018/12/11 18:19:55 bluhm Exp $	*/
 /*	$NetBSD: ftpd.c,v 1.15 1995/06/03 22:46:47 mycroft Exp $	*/
 
 /*
@@ -390,10 +390,10 @@ main(int argc, char *argv[])
 	endpwent();
 
 	if (daemon_mode) {
-		int *fds, i, fd;
+		int *fds, fd;
 		struct pollfd *pfds;
 		struct addrinfo hints, *res, *res0;
-		nfds_t n;
+		nfds_t n, i;
 
 		/*
 		 * Detach from parent.
@@ -1809,8 +1809,8 @@ statcmd(void)
 		ispassive++;
 		goto printaddr;
 	} else if (usedefault == 0) {
-		size_t alen;
-		int af, i;
+		size_t alen, i;
+		int af;
 
 		su = (union sockunion *)&data_dest;
 printaddr:
@@ -2545,7 +2545,8 @@ guniquefd(char *local, char **nam)
 {
 	static char new[PATH_MAX];
 	struct stat st;
-	int count, len, fd;
+	size_t len;
+	int count, fd;
 	char *cp;
 
 	cp = strrchr(local, '/');
@@ -2777,7 +2778,7 @@ logxfer(char *name, off_t size, time_t start)
 		    ((guest) ? "*" : pw->pw_name), dhostname);
 		free(vpw);
 
-		if (len >= sizeof(buf) || len == -1) {
+		if (len == -1 || len >= sizeof(buf)) {
 			if ((len = strlen(buf)) == 0)
 				return;		/* should not happen */
 			buf[len - 1] = '\n';

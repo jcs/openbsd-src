@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.47 2018/10/19 10:12:39 reyk Exp $	*/
+/*	$OpenBSD: main.c,v 1.52 2018/12/14 07:56:17 jmc Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -63,6 +63,7 @@ int		 ctl_reset(struct parse_result *, int, char *[]);
 int		 ctl_start(struct parse_result *, int, char *[]);
 int		 ctl_status(struct parse_result *, int, char *[]);
 int		 ctl_stop(struct parse_result *, int, char *[]);
+int		 ctl_waitfor(struct parse_result *, int, char *[]);
 int		 ctl_pause(struct parse_result *, int, char *[]);
 int		 ctl_unpause(struct parse_result *, int, char *[]);
 int		 ctl_send(struct parse_result *, int, char *[]);
@@ -71,21 +72,22 @@ int		 ctl_receive(struct parse_result *, int, char *[]);
 struct ctl_command ctl_commands[] = {
 	{ "console",	CMD_CONSOLE,	ctl_console,	"id" },
 	{ "create",	CMD_CREATE,	ctl_create,
-		"\"path\" [-b base] [-i disk] [-s size]", 1 },
-	{ "load",	CMD_LOAD,	ctl_load,	"\"path\"" },
-	{ "log",	CMD_LOG,	ctl_log,	"[verbose|brief]" },
-	{ "reload",	CMD_RELOAD,	ctl_reload,	"" },
-	{ "reset",	CMD_RESET,	ctl_reset,	"[all|vms|switches]" },
-	{ "show",	CMD_STATUS,	ctl_status,	"[id]" },
-	{ "start",	CMD_START,	ctl_start,	"\"name\""
-	    " [-Lc] [-b image] [-r image] [-m size]\n"
-	    "\t\t[-n switch] [-i count] [-d disk]* [-t name]" },
-	{ "status",	CMD_STATUS,	ctl_status,	"[id]" },
-	{ "stop",	CMD_STOP,	ctl_stop,	"[id|-a] [-fw]" },
+		"disk [-b base | -i disk] [-s size]", 1 },
+	{ "load",	CMD_LOAD,	ctl_load,	"filename" },
+	{ "log",	CMD_LOG,	ctl_log,	"[brief | verbose]" },
 	{ "pause",	CMD_PAUSE,	ctl_pause,	"id" },
-	{ "unpause",	CMD_UNPAUSE,	ctl_unpause,	"id" },
+	{ "receive",	CMD_RECEIVE,	ctl_receive,	"name" ,	1},
+	{ "reload",	CMD_RELOAD,	ctl_reload,	"" },
+	{ "reset",	CMD_RESET,	ctl_reset,	"[all | switches | vms]" },
 	{ "send",	CMD_SEND,	ctl_send,	"id",	1},
-	{ "receive",	CMD_RECEIVE,	ctl_receive,	"id" ,	1},
+	{ "show",	CMD_STATUS,	ctl_status,	"[id]" },
+	{ "start",	CMD_START,	ctl_start,	"name"
+	    " [-cL] [-B device] [-b path] [-d disk] [-i count]\n"
+	    "\t\t[-m size] [-n switch] [-r path] [-t name]" },
+	{ "status",	CMD_STATUS,	ctl_status,	"[id]" },
+	{ "stop",	CMD_STOP,	ctl_stop,	"[id | -a] [-fw]" },
+	{ "unpause",	CMD_UNPAUSE,	ctl_unpause,	"id" },
+	{ "wait",	CMD_WAITFOR,	ctl_waitfor,	"id" },
 	{ NULL }
 };
 
@@ -178,7 +180,7 @@ parse(int argc, char *argv[])
 			err(1, "pledge");
 	}
 	if (ctl->main(&res, argc, argv) != 0)
-		err(1, "failed");
+		exit(1);
 
 	if (ctl_sock != -1) {
 		close(ibuf->fd);
@@ -222,7 +224,7 @@ vmmaction(struct parse_result *res)
 	case CMD_START:
 		ret = vm_start(res->id, res->name, res->size, res->nifs,
 		    res->nets, res->ndisks, res->disks, res->disktypes,
-		    res->path, res->isopath, res->instance);
+		    res->path, res->isopath, res->instance, res->bootdevice);
 		if (ret) {
 			errno = ret;
 			err(1, "start VM operation failed");
@@ -250,6 +252,9 @@ vmmaction(struct parse_result *res)
 	case CMD_RESET:
 		imsg_compose(ibuf, IMSG_CTL_RESET, 0, 0, -1,
 		    &res->mode, sizeof(res->mode));
+		break;
+	case CMD_WAITFOR:
+		waitfor_vm(res->id, res->name);
 		break;
 	case CMD_PAUSE:
 		pause_vm(res->id, res->name);
@@ -310,6 +315,9 @@ vmmaction(struct parse_result *res)
 				done = vm_start_complete(&imsg, &ret,
 				    tty_autoconnect);
 				break;
+			case CMD_WAITFOR:
+				flags = VMOP_WAIT;
+				/* FALLTHROUGH */
 			case CMD_STOP:
 				done = terminate_vm_complete(&imsg, &ret,
 				    flags);
@@ -337,7 +345,10 @@ vmmaction(struct parse_result *res)
 		}
 	}
 
-	return (0);
+	if (ret)
+		return (1);
+	else
+		return (0);
 }
 
 void
@@ -658,7 +669,7 @@ ctl_convert(const char *srcfile, const char *dstfile, int dsttype, size_t dstsiz
 	}
 
 	/* align to megabytes */
-	dst.size = ALIGN(dstsize, 1048576);
+	dst.size = ALIGNSZ(dstsize, 1048576);
 
 	if ((ret = create_imagefile(dst.type, dst.disk, NULL,
 	   dst.size / 1048576, &format)) != 0) {
@@ -832,7 +843,7 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 	argc--;
 	argv++;
 
-	while ((ch = getopt(argc, argv, "b:r:cLm:n:d:i:t:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:B:cd:i:Lm:n:r:t:")) != -1) {
 		switch (ch) {
 		case 'b':
 			if (res->path)
@@ -841,6 +852,18 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 				err(1, "invalid boot image path");
 			if ((res->path = strdup(path)) == NULL)
 				errx(1, "strdup");
+			break;
+		case 'B':
+			if (res->bootdevice)
+				errx(1, "boot device specified multiple times");
+			if (strcmp("disk", optarg) == 0)
+				res->bootdevice = VMBOOTDEV_DISK;
+			else if (strcmp("cdrom", optarg) == 0)
+				res->bootdevice = VMBOOTDEV_CDROM;
+			else if (strcmp("net", optarg) == 0)
+				res->bootdevice = VMBOOTDEV_NET;
+			else
+				errx(1, "unknown boot device %s", optarg);
 			break;
 		case 'r':
 			if (res->isopath)
@@ -941,6 +964,18 @@ ctl_stop(struct parse_result *res, int argc, char *argv[])
 
 int
 ctl_console(struct parse_result *res, int argc, char *argv[])
+{
+	if (argc == 2) {
+		if (parse_vmid(res, argv[1], 0) == -1)
+			errx(1, "invalid id: %s", argv[1]);
+	} else if (argc != 2)
+		ctl_usage(res->ctl);
+
+	return (vmmaction(res));
+}
+
+int
+ctl_waitfor(struct parse_result *res, int argc, char *argv[])
 {
 	if (argc == 2) {
 		if (parse_vmid(res, argv[1], 0) == -1)

@@ -1,4 +1,4 @@
-/*	$OpenBSD: tree.c,v 1.46 2018/08/14 01:26:12 schwarze Exp $ */
+/*	$OpenBSD: tree.c,v 1.49 2018/12/13 05:13:15 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2013,2014,2015,2017,2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -27,6 +27,8 @@
 #include "roff.h"
 #include "mdoc.h"
 #include "man.h"
+#include "tbl.h"
+#include "eqn.h"
 #include "main.h"
 
 static	void	print_box(const struct eqn_box *, int);
@@ -377,35 +379,41 @@ print_span(const struct tbl_span *sp, int indent)
 	switch (sp->pos) {
 	case TBL_SPAN_HORIZ:
 		putchar('-');
-		return;
+		putchar(' ');
+		break;
 	case TBL_SPAN_DHORIZ:
 		putchar('=');
-		return;
+		putchar(' ');
+		break;
 	default:
+		for (dp = sp->first; dp; dp = dp->next) {
+			switch (dp->pos) {
+			case TBL_DATA_HORIZ:
+			case TBL_DATA_NHORIZ:
+				putchar('-');
+				putchar(' ');
+				continue;
+			case TBL_DATA_DHORIZ:
+			case TBL_DATA_NDHORIZ:
+				putchar('=');
+				putchar(' ');
+				continue;
+			default:
+				break;
+			}
+			printf("[\"%s\"", dp->string ? dp->string : "");
+			if (dp->hspans)
+				printf(">%d", dp->hspans);
+			if (dp->vspans)
+				printf("v%d", dp->vspans);
+			if (dp->layout == NULL)
+				putchar('*');
+			else if (dp->layout->pos == TBL_CELL_DOWN)
+				putchar('^');
+			putchar(']');
+			putchar(' ');
+		}
 		break;
 	}
-
-	for (dp = sp->first; dp; dp = dp->next) {
-		switch (dp->pos) {
-		case TBL_DATA_HORIZ:
-		case TBL_DATA_NHORIZ:
-			putchar('-');
-			continue;
-		case TBL_DATA_DHORIZ:
-		case TBL_DATA_NDHORIZ:
-			putchar('=');
-			continue;
-		default:
-			break;
-		}
-		printf("[\"%s\"", dp->string ? dp->string : "");
-		if (dp->spans)
-			printf("(%d)", dp->spans);
-		if (NULL == dp->layout)
-			putchar('*');
-		putchar(']');
-		putchar(' ');
-	}
-
 	printf("(tbl) %d:1\n", sp->line);
 }

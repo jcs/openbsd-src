@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_carp.c,v 1.334 2018/09/24 12:25:52 mpi Exp $	*/
+/*	$OpenBSD: ip_carp.c,v 1.336 2018/12/17 09:17:30 claudio Exp $	*/
 
 /*
  * Copyright (c) 2002 Michael Shalayeff. All rights reserved.
@@ -1095,12 +1095,11 @@ carp_send_ad(struct carp_vhost_entry *vhe)
 			goto retry_later;
 		}
 		len = sizeof(*ip) + sizeof(ch);
-		m->m_pkthdr.len = len;
-		m->m_pkthdr.ph_ifidx = 0;
-		m->m_pkthdr.ph_rtableid = sc->sc_if.if_rdomain;
 		m->m_pkthdr.pf.prio = CARP_IFQ_PRIO;
+		m->m_pkthdr.ph_rtableid = sc->sc_if.if_rdomain;
+		m->m_pkthdr.len = len;
 		m->m_len = len;
-		MH_ALIGN(m, m->m_len);
+		m_align(m, len);
 		ip = mtod(m, struct ip *);
 		ip->ip_v = IPVERSION;
 		ip->ip_hl = sizeof(*ip) >> 2;
@@ -1184,12 +1183,11 @@ carp_send_ad(struct carp_vhost_entry *vhe)
 			goto retry_later;
 		}
 		len = sizeof(*ip6) + sizeof(ch);
-		m->m_pkthdr.len = len;
-		m->m_pkthdr.ph_ifidx = 0;
 		m->m_pkthdr.pf.prio = CARP_IFQ_PRIO;
 		m->m_pkthdr.ph_rtableid = sc->sc_if.if_rdomain;
+		m->m_pkthdr.len = len;
 		m->m_len = len;
-		MH_ALIGN(m, m->m_len);
+		m_align(m, len);
 		m->m_flags |= M_MCAST;
 		ip6 = mtod(m, struct ip6_hdr *);
 		memset(ip6, 0, sizeof(*ip6));
@@ -1257,7 +1255,7 @@ carp_send_ad(struct carp_vhost_entry *vhe)
 retry_later:
 	sc->cur_vhe = NULL;
 	if (advbase != 255 || advskew != 255)
-		timeout_add(&vhe->ad_tmo, tvtohz(&tv));
+		timeout_add_tv(&vhe->ad_tmo, &tv);
 }
 
 /*
@@ -1615,18 +1613,18 @@ carp_setrun(struct carp_vhost_entry *vhe, sa_family_t af)
 			sc->sc_delayed_arp = -1;
 		switch (af) {
 		case AF_INET:
-			timeout_add(&vhe->md_tmo, tvtohz(&tv));
+			timeout_add_tv(&vhe->md_tmo, &tv);
 			break;
 #ifdef INET6
 		case AF_INET6:
-			timeout_add(&vhe->md6_tmo, tvtohz(&tv));
+			timeout_add_tv(&vhe->md6_tmo, &tv);
 			break;
 #endif /* INET6 */
 		default:
 			if (sc->sc_naddrs)
-				timeout_add(&vhe->md_tmo, tvtohz(&tv));
+				timeout_add_tv(&vhe->md_tmo, &tv);
 			if (sc->sc_naddrs6)
-				timeout_add(&vhe->md6_tmo, tvtohz(&tv));
+				timeout_add_tv(&vhe->md6_tmo, &tv);
 			break;
 		}
 		break;
@@ -1636,7 +1634,7 @@ carp_setrun(struct carp_vhost_entry *vhe, sa_family_t af)
 			tv.tv_usec = 1 * 1000000 / 256;
 		else
 			tv.tv_usec = vhe->advskew * 1000000 / 256;
-		timeout_add(&vhe->ad_tmo, tvtohz(&tv));
+		timeout_add_tv(&vhe->ad_tmo, &tv);
 		break;
 	}
 }

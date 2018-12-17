@@ -1,4 +1,4 @@
-.\"     $OpenBSD: mbuf.9,v 1.116 2018/11/09 19:04:15 jmc Exp $
+.\"     $OpenBSD: mbuf.9,v 1.118 2018/12/07 08:37:24 claudio Exp $
 .\"
 .\" Copyright (c) 2001 Jean-Jacques Bernard-Gundol <jjbg@openbsd.org>
 .\" All rights reserved.
@@ -25,7 +25,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: November 9 2018 $
+.Dd $Mdocdate: December 7 2018 $
 .Dt MGET 9
 .Os
 .Sh NAME
@@ -60,8 +60,7 @@
 .Nm MCLGET ,
 .Nm MCLGETI ,
 .Nm MEXTADD ,
-.Nm M_ALIGN ,
-.Nm MH_ALIGN ,
+.Nm m_align ,
 .Nm M_READONLY ,
 .Nm m_leadingspace ,
 .Nm m_trailingspace ,
@@ -130,8 +129,8 @@
 .Fn MCLGETI "struct mbuf *m" "int how" "struct ifnet *ifp" "int len"
 .Fn MEXTADD "struct mbuf *m" "caddr_t buf" "u_int size" "int flags" \
 "void (*free)(caddr_t, u_int, void *)" "void *arg"
-.Fn M_ALIGN "struct mbuf *m" "int len"
-.Fn MH_ALIGN "struct mbuf *m" "int len"
+.Ft void
+.Fn m_align "struct mbuf *m" "int len"
 .Fn M_READONLY "struct mbuf *m"
 .Ft int
 .Fn m_leadingspace "struct mbuf *m"
@@ -746,25 +745,14 @@ Add pre-allocated storage to the mbuf pointed to by
 .Fa m .
 On success, the flag M_EXT is set in the mbuf, and M_EXTWR is specified in
 .Fa flags .
-.It Fn M_ALIGN "struct mbuf *m" "int len"
+.It Fn m_align "struct mbuf *m" "int len"
 Set the
 .Fa m_data
-pointer of the newly allocated mbuf with
-.Fn m_get
-or
-.Fn MGET
-pointed to by
+pointer of the newly allocated mbuf
 .Fa m
 to an object of the specified size
 .Fa len
-at the end of the mbuf, longword aligned.
-.It Fn MH_ALIGN "m" "len"
-Same as
-.Fn M_ALIGN
-except it is for an mbuf allocated with
-.Fn m_gethdr
-or
-.Fn MGETHDR .
+at the end of this mbuf data area, longword aligned.
 .It Fn M_READONLY "struct mbuf *m"
 Check if the data of the mbuf pointed to by
 .Fa m

@@ -1,4 +1,4 @@
-/*	$OpenBSD: smtpd.h,v 1.573 2018/11/08 13:21:00 gilles Exp $	*/
+/*	$OpenBSD: smtpd.h,v 1.594 2018/12/13 17:08:10 gilles Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -99,6 +99,12 @@
 
 #define P_NEWALIASES	0
 #define P_MAKEMAP	1
+
+#define	CERT_ERROR	-1
+#define	CERT_OK		 0
+#define	CERT_NOCA	 1
+#define	CERT_NOCERT	 2
+#define	CERT_INVALID	 3
 
 struct userinfo {
 	char username[SMTPD_VUSERNAME_SIZE];
@@ -202,6 +208,10 @@ enum imsg_type {
 	IMSG_GETADDRINFO_END,
 	IMSG_GETNAMEINFO,
 
+	IMSG_CERT_INIT,
+	IMSG_CERT_CERTIFICATE,
+	IMSG_CERT_VERIFY,
+
 	IMSG_SETUP_KEY,
 	IMSG_SETUP_PEER,
 	IMSG_SETUP_DONE,
@@ -248,8 +258,6 @@ enum imsg_type {
 	IMSG_MDA_LOOKUP_USERINFO,
 	IMSG_MDA_KILL,
 	IMSG_MDA_OPEN_MESSAGE,
-
-	IMSG_MFA_SMTP_RESPONSE,
 
 	IMSG_MTA_DELIVERY_OK,
 	IMSG_MTA_DELIVERY_TEMPFAIL,
@@ -305,19 +313,26 @@ enum imsg_type {
 
 	IMSG_LKA_PROCESSOR_FORK,
 
-	IMSG_SMTP_REPORT_LINK_CONNECT,
-	IMSG_SMTP_REPORT_LINK_DISCONNECT,
-	IMSG_SMTP_REPORT_LINK_TLS,
+	IMSG_REPORT_SMTP_LINK_CONNECT,
+	IMSG_REPORT_SMTP_LINK_DISCONNECT,
+	IMSG_REPORT_SMTP_LINK_IDENTIFY,
+	IMSG_REPORT_SMTP_LINK_TLS,
+	IMSG_REPORT_SMTP_TX_BEGIN,
+	IMSG_REPORT_SMTP_TX_MAIL,
+	IMSG_REPORT_SMTP_TX_RCPT,
+	IMSG_REPORT_SMTP_TX_ENVELOPE,
+	IMSG_REPORT_SMTP_TX_DATA,
+	IMSG_REPORT_SMTP_TX_COMMIT,
+	IMSG_REPORT_SMTP_TX_ROLLBACK,
+	IMSG_REPORT_SMTP_PROTOCOL_CLIENT,
+	IMSG_REPORT_SMTP_PROTOCOL_SERVER,
+	IMSG_REPORT_SMTP_FILTER_RESPONSE,
 
-	IMSG_SMTP_REPORT_TX_BEGIN,
-	IMSG_SMTP_REPORT_TX_ENVELOPE,
-	IMSG_SMTP_REPORT_TX_COMMIT,
-	IMSG_SMTP_REPORT_TX_ROLLBACK,
-
-	IMSG_SMTP_REPORT_PROTOCOL_CLIENT,
-	IMSG_SMTP_REPORT_PROTOCOL_SERVER,
-
-	IMSG_SMTP_FILTER,
+	IMSG_FILTER_SMTP_BEGIN,
+	IMSG_FILTER_SMTP_END,
+	IMSG_FILTER_SMTP_PROTOCOL,
+	IMSG_FILTER_SMTP_DATA_BEGIN,
+	IMSG_FILTER_SMTP_DATA_END,
 
 	IMSG_CA_PRIVENC,
 	IMSG_CA_PRIVDEC
@@ -366,9 +381,9 @@ struct table_backend {
 
 
 enum bounce_type {
-	B_ERROR,
-	B_WARNING,
-	B_DSN
+	B_FAILED,
+	B_DELAYED,
+	B_DELIVERED
 };
 
 enum dsn_ret {
@@ -403,11 +418,13 @@ enum filter_phase {
 	FILTER_MAIL_FROM,
 	FILTER_RCPT_TO,
 	FILTER_DATA,
+	FILTER_DATA_LINE,
 	FILTER_RSET,
 	FILTER_QUIT,
 	FILTER_NOOP,
 	FILTER_HELP,
 	FILTER_WIZ,
+	FILTER_COMMIT,
 	FILTER_PHASES_COUNT     /* must be last */
 };
 
@@ -566,6 +583,7 @@ struct smtpd {
 
 	struct dict		       *sc_processors_dict;
 	struct dict		       *sc_smtp_reporters_dict;
+	struct dict		       *sc_mta_reporters_dict;
 
 	int				sc_ttl;
 #define MAX_BOUNCE_WARN			4
@@ -1038,6 +1056,9 @@ struct filter_rule {
 
 	int8_t				not_rdns;
 	int8_t				rdns;
+
+	int8_t				not_fcrdns;
+	int8_t				fcrdns;
 };
 
 enum filter_status {
@@ -1207,6 +1228,15 @@ void	 ca_imsg(struct mproc *, struct imsg *);
 void	 ca_init(void);
 void	 ca_engine_init(void);
 
+
+/* cert.c */
+int cert_init(const char *, int,
+    void (*)(void *, int, const char *, const void *, size_t), void *);
+int cert_verify(const void *, const char *, int, void (*)(void *, int), void *);
+void cert_dispatch_request(struct mproc *, struct imsg *);
+void cert_dispatch_result(struct mproc *, struct imsg *);
+
+
 /* compress_backend.c */
 struct compress_backend *compress_backend_lookup(const char *);
 size_t	compress_chunk(void *, size_t, void *, size_t);
@@ -1297,19 +1327,30 @@ struct io *lka_proc_get_io(const char *);
 
 
 /* lka_report.c */
-void lka_report_smtp_link_connect(time_t, uint64_t, const char *, const struct sockaddr_storage *, const struct sockaddr_storage *);
-void lka_report_smtp_link_disconnect(time_t, uint64_t);
-void lka_report_smtp_link_tls(time_t, uint64_t, const char *);
-void lka_report_smtp_tx_begin(time_t, uint64_t, uint32_t);
-void lka_report_smtp_tx_envelope(time_t, uint64_t, uint32_t, uint64_t);
-void lka_report_smtp_tx_commit(time_t, uint64_t, uint32_t, size_t);
-void lka_report_smtp_tx_rollback(time_t, uint64_t);
-void lka_report_smtp_protocol_client(time_t, uint64_t, const char *);
-void lka_report_smtp_protocol_server(time_t, uint64_t, const char *);
+void lka_report_smtp_link_connect(const char *, struct timeval *, uint64_t, const char *, int,
+    const struct sockaddr_storage *, const struct sockaddr_storage *);
+void lka_report_smtp_link_disconnect(const char *, struct timeval *, uint64_t);
+void lka_report_smtp_link_identify(const char *, struct timeval *, uint64_t, const char *);
+void lka_report_smtp_link_tls(const char *, struct timeval *, uint64_t, const char *);
+void lka_report_smtp_tx_begin(const char *, struct timeval *, uint64_t, uint32_t);
+void lka_report_smtp_tx_mail(const char *, struct timeval *, uint64_t, uint32_t, const char *, int);
+void lka_report_smtp_tx_rcpt(const char *, struct timeval *, uint64_t, uint32_t, const char *, int);
+void lka_report_smtp_tx_envelope(const char *, struct timeval *, uint64_t, uint32_t, uint64_t);
+void lka_report_smtp_tx_commit(const char *, struct timeval *, uint64_t, uint32_t, size_t);
+void lka_report_smtp_tx_data(const char *, struct timeval *, uint64_t, uint32_t, int);
+void lka_report_smtp_tx_rollback(const char *, struct timeval *, uint64_t, uint32_t);
+void lka_report_smtp_protocol_client(const char *, struct timeval *, uint64_t, const char *);
+void lka_report_smtp_protocol_server(const char *, struct timeval *, uint64_t, const char *);
+void lka_report_smtp_filter_response(const char *, struct timeval *, uint64_t,
+    int, int, const char *);
 
 
 /* lka_filter.c */
-void lka_filter(uint64_t, enum filter_phase, const char *, const char *);
+void lka_filter_begin(uint64_t, const struct sockaddr_storage *, const struct sockaddr_storage *, const char *, int);
+void lka_filter_end(uint64_t);
+void lka_filter_protocol(uint64_t, enum filter_phase, const char *);
+void lka_filter_data_begin(uint64_t);
+void lka_filter_data_end(uint64_t);
 int lka_filter_response(uint64_t, const char *, const char *);
 
 
@@ -1334,7 +1375,7 @@ void mda_unpriv(struct dispatcher *, struct deliver *, const char *, const char 
 
 
 /* mda_variables.c */
-size_t mda_expand_format(char *, size_t, const struct deliver *,
+ssize_t mda_expand_format(char *, size_t, const struct deliver *,
     const struct userinfo *, const char *);
 
 
@@ -1366,6 +1407,7 @@ void m_add_int(struct mproc *, int);
 void m_add_u32(struct mproc *, uint32_t);
 void m_add_size(struct mproc *, size_t);
 void m_add_time(struct mproc *, time_t);
+void m_add_timeval(struct mproc *, struct timeval *tv);
 void m_add_string(struct mproc *, const char *);
 void m_add_data(struct mproc *, const void *, size_t);
 void m_add_evpid(struct mproc *, uint64_t);
@@ -1385,6 +1427,7 @@ void m_get_int(struct msg *, int *);
 void m_get_size(struct msg *, size_t *);
 void m_get_u32(struct msg *, uint32_t *);
 void m_get_time(struct msg *, time_t *);
+void m_get_timeval(struct msg *, struct timeval *);
 void m_get_string(struct msg *, const char **);
 void m_get_data(struct msg *, const void **, size_t *);
 void m_get_evpid(struct msg *, uint64_t *);
@@ -1445,6 +1488,24 @@ int queue_envelope_walk(struct envelope *);
 int queue_message_walk(struct envelope *, uint32_t, int *, void **);
 
 
+/* report_smtp.c */
+void report_smtp_link_connect(const char *, uint64_t, const char *, int,
+    const struct sockaddr_storage *, const struct sockaddr_storage *);
+void report_smtp_link_disconnect(const char *, uint64_t);
+void report_smtp_link_identify(const char *, uint64_t, const char *);
+void report_smtp_link_tls(const char *, uint64_t, const char *);
+void report_smtp_tx_begin(const char *, uint64_t, uint32_t);
+void report_smtp_tx_mail(const char *, uint64_t, uint32_t, const char *, int);
+void report_smtp_tx_rcpt(const char *, uint64_t, uint32_t, const char *, int);
+void report_smtp_tx_envelope(const char *, uint64_t, uint32_t, uint64_t);
+void report_smtp_tx_data(const char *, uint64_t, uint32_t, int);
+void report_smtp_tx_commit(const char *, uint64_t, uint32_t, size_t);
+void report_smtp_tx_rollback(const char *, uint64_t, uint32_t);
+void report_smtp_protocol_client(const char *, uint64_t, const char *);
+void report_smtp_protocol_server(const char *, uint64_t, const char *);
+void report_smtp_filter_response(const char *, uint64_t, int, int, const char *);
+
+
 /* ruleset.c */
 struct rule *ruleset_match(const struct envelope *);
 
@@ -1478,18 +1539,6 @@ void smtp_postprivdrop(void);
 void smtp_imsg(struct mproc *, struct imsg *);
 void smtp_configure(void);
 void smtp_collect(void);
-
-
-/* smtp_report.c */
-void smtp_report_link_connect(uint64_t, const char *, const struct sockaddr_storage *, const struct sockaddr_storage *);
-void smtp_report_link_disconnect(uint64_t);
-void smtp_report_link_tls(uint64_t, const char *);
-void smtp_report_tx_begin(uint64_t, uint32_t);
-void smtp_report_tx_envelope(uint64_t, uint32_t, uint64_t);
-void smtp_report_tx_commit(uint64_t, uint32_t, size_t);
-void smtp_report_tx_rollback(uint64_t);
-void smtp_report_protocol_client(uint64_t, const char *);
-void smtp_report_protocol_server(uint64_t, const char *);
 
 
 /* smtp_session.c */

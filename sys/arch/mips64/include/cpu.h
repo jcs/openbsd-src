@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.124 2018/02/24 11:42:31 visa Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.126 2018/12/05 10:28:21 jsg Exp $	*/
 
 /*-
  * Copyright (c) 1992, 1993
@@ -123,6 +123,7 @@
 #include <sys/device.h>
 #include <machine/intr.h>
 #include <sys/sched.h>
+#include <sys/srp.h>
 
 struct cpu_hwinfo {
 	uint32_t	c0prid;
@@ -402,7 +403,11 @@ void	cp0_calibrate(struct cpu_info *);
 #define	MIPS_LOONGSON	0x42	/* STC LoongSon CPU		ISA III */
 #define	MIPS_VR5400	0x54	/* NEC Vr5400 CPU		ISA IV+ */
 #define	MIPS_LOONGSON2	0x63	/* STC LoongSon2/3 CPU		ISA III+ */
+#define	MIPS_CN63XX	0x90	/* Cavium OCTEON II CN6[23]xx	MIPS64R2 */
+#define	MIPS_CN68XX	0x91	/* Cavium OCTEON II CN68xx	MIPS64R2 */
+#define	MIPS_CN66XX	0x92	/* Cavium OCTEON II CN66xx	MIPS64R2 */
 #define	MIPS_CN61XX	0x93	/* Cavium OCTEON II CN6[01]xx	MIPS64R2 */
+#define	MIPS_CN78XX	0x95	/* Cavium OCTEON III CN7[678]xx	MIPS64R2 */
 #define	MIPS_CN71XX	0x96	/* Cavium OCTEON III CN7[01]xx	MIPS64R2 */
 #define	MIPS_CN73XX	0x97	/* Cavium OCTEON III CN7[23]xx	MIPS64R2 */
 

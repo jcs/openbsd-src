@@ -1,4 +1,4 @@
-/*	$OpenBSD: ber.c,v 1.29 2018/08/12 22:04:09 rob Exp $ */
+/*	$OpenBSD: ber.c,v 1.31 2018/11/27 12:09:38 martijn Exp $ */
 
 /*
  * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -282,11 +282,22 @@ ber_add_nstring(struct ber_element *prev, const char *string0, size_t len)
 	return elm;
 }
 
+struct ber_element *
+ber_add_ostring(struct ber_element *prev, struct ber_octetstring *s)
+{
+	return ber_add_nstring(prev, s->ostr_val, s->ostr_len);
+}
+
 int
 ber_get_string(struct ber_element *elm, char **s)
 {
 	if (elm->be_encoding != BER_TYPE_OCTETSTRING)
 		return -1;
+	/* Some components use getstring on binary data containing \0 */
+#if 0
+	if (memchr(elm->be_val, '\0', elm->be_len) != NULL)
+		return -1;
+#endif
 
 	*s = elm->be_val;
 	return 0;
@@ -300,6 +311,17 @@ ber_get_nstring(struct ber_element *elm, void **p, size_t *len)
 
 	*p = elm->be_val;
 	*len = elm->be_len;
+	return 0;
+}
+
+int
+ber_get_ostring(struct ber_element *elm, struct ber_octetstring *s)
+{
+	if (elm->be_encoding != BER_TYPE_OCTETSTRING)
+		return -1;
+
+	s->ostr_val = elm->be_val;
+	s->ostr_len = elm->be_len;
 	return 0;
 }
 
@@ -894,6 +916,8 @@ ber_free_element(struct ber_element *root)
 void
 ber_free_elements(struct ber_element *root)
 {
+	if (root == NULL)
+		return;
 	if (root->be_sub && (root->be_encoding == BER_TYPE_SEQUENCE ||
 	    root->be_encoding == BER_TYPE_SET))
 		ber_free_elements(root->be_sub);

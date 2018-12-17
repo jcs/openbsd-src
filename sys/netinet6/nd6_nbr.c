@@ -1,4 +1,4 @@
-/*	$OpenBSD: nd6_nbr.c,v 1.124 2018/07/12 16:07:35 florian Exp $	*/
+/*	$OpenBSD: nd6_nbr.c,v 1.126 2018/12/07 10:01:06 florian Exp $	*/
 /*	$KAME: nd6_nbr.c,v 1.61 2001/02/10 16:06:14 jinmei Exp $	*/
 
 /*
@@ -406,7 +406,7 @@ nd6_ns_output(struct ifnet *ifp, struct in6_addr *daddr6,
 
 	icmp6len = sizeof(*nd_ns);
 	m->m_pkthdr.len = m->m_len = sizeof(*ip6) + icmp6len;
-	m->m_data += max_linkhdr;	/* or MH_ALIGN() equivalent? */
+	m_align(m, maxlen);
 
 	/* fill neighbor solicitation packet */
 	ip6 = mtod(m, struct ip6_hdr *);
@@ -891,6 +891,12 @@ nd6_na_output(struct ifnet *ifp, struct in6_addr *daddr6,
 	int icmp6len, maxlen;
 	caddr_t mac = NULL;
 
+#if NCARP > 0
+	/* Do not send NAs for carp addresses if we're not the CARP master. */
+	if (ifp->if_type == IFT_CARP && !carp_iamatch(ifp))
+		return;
+#endif
+
 	/* estimate the size of message */
 	maxlen = sizeof(*ip6) + sizeof(*nd_na);
 	maxlen += (sizeof(struct nd_opt_hdr) + ifp->if_addrlen + 7) & ~7;
@@ -913,7 +919,6 @@ nd6_na_output(struct ifnet *ifp, struct in6_addr *daddr6,
 	}
 	if (m == NULL)
 		return;
-	m->m_pkthdr.ph_ifidx = 0;
 	m->m_pkthdr.ph_rtableid = ifp->if_rdomain;
 
 	if (IN6_IS_ADDR_MULTICAST(daddr6)) {
@@ -925,7 +930,7 @@ nd6_na_output(struct ifnet *ifp, struct in6_addr *daddr6,
 
 	icmp6len = sizeof(*nd_na);
 	m->m_pkthdr.len = m->m_len = sizeof(struct ip6_hdr) + icmp6len;
-	m->m_data += max_linkhdr;	/* or MH_ALIGN() equivalent? */
+	m_align(m, maxlen);
 
 	/* fill neighbor advertisement packet */
 	ip6 = mtod(m, struct ip6_hdr *);
@@ -1010,19 +1015,13 @@ nd6_na_output(struct ifnet *ifp, struct in6_addr *daddr6,
 	} else
 		flags &= ~ND_NA_FLAG_OVERRIDE;
 
-#if NCARP > 0
-	/* Do not send NAs for carp addresses if we're not the CARP master. */
-	if (ifp->if_type == IFT_CARP && !carp_iamatch(ifp))
-		goto bad;
-#endif
-
 	ip6->ip6_plen = htons((u_short)icmp6len);
 	nd_na->nd_na_flags_reserved = flags;
 	nd_na->nd_na_cksum = 0;
 	m->m_pkthdr.csum_flags |= M_ICMP_CSUM_OUT;
 
 	ip6_output(m, NULL, NULL, 0, &im6o, NULL);
-	icmp6stat_inc(icp6s_outhist+ ND_NEIGHBOR_ADVERT);
+	icmp6stat_inc(icp6s_outhist + ND_NEIGHBOR_ADVERT);
 	return;
 
   bad:

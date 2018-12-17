@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmctl.h,v 1.27 2018/10/19 10:12:39 reyk Exp $	*/
+/*	$OpenBSD: vmctl.h,v 1.30 2018/12/06 09:23:15 claudio Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -33,6 +33,7 @@ enum actions {
 	CMD_STATUS,
 	CMD_STOP,
 	CMD_STOPALL,
+	CMD_WAITFOR,
 	CMD_PAUSE,
 	CMD_UNPAUSE,
 	CMD_SEND,
@@ -58,6 +59,7 @@ struct parse_result {
 	char			*instance;
 	unsigned int		 flags;
 	unsigned int		 mode;
+	unsigned int		 bootdevice;
 	struct ctl_command	*ctl;
 };
 
@@ -70,9 +72,6 @@ struct ctl_command {
 };
 
 struct imsgbuf	*ibuf;
-
-#define ALIGN(sz, align)	((sz + align - 1) & ~(align - 1))
-#define MIN(a,b)		(((a)<(b))?(a):(b))
 
 /* main.c */
 int	 vmmaction(struct parse_result *);
@@ -95,10 +94,11 @@ int	 create_imagefile(int, const char *, const char *, long, const char **);
 int	 create_raw_imagefile(const char *, long);
 int	 create_qc2_imagefile(const char *, const char *, long);
 int	 vm_start(uint32_t, const char *, int, int, char **, int,
-	    char **, int *, char *, char *, char *);
+	    char **, int *, char *, char *, char *, unsigned int);
 int	 vm_start_complete(struct imsg *, int *, int);
 void	 terminate_vm(uint32_t, const char *, unsigned int);
 int	 terminate_vm_complete(struct imsg *, int *, unsigned int);
+void	 waitfor_vm(uint32_t, const char *);
 void	 pause_vm(uint32_t, const char *);
 int	 pause_vm_complete(struct imsg *, int *);
 void	 unpause_vm(uint32_t, const char *);

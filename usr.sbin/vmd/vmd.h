@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmd.h,v 1.84 2018/10/19 10:12:39 reyk Exp $	*/
+/*	$OpenBSD: vmd.h,v 1.89 2018/12/10 21:30:33 claudio Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -25,6 +25,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
+#include <netinet6/in6_var.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -78,6 +79,9 @@
 /* 100.64.0.0/10 from rfc6598 (IPv4 Prefix for Shared Address Space) */
 #define VMD_DHCP_PREFIX		"100.64.0.0/10"
 
+/* Unique local address for IPv6 */
+#define VMD_ULA_PREFIX		"fd00::/8"
+
 enum imsg_type {
 	IMSG_VMDOP_START_VM_REQUEST = IMSG_PROC_MAX,
 	IMSG_VMDOP_START_VM_CDROM,
@@ -94,6 +98,7 @@ enum imsg_type {
 	IMSG_VMDOP_RECEIVE_VM_REQUEST,
 	IMSG_VMDOP_RECEIVE_VM_RESPONSE,
 	IMSG_VMDOP_RECEIVE_VM_END,
+	IMSG_VMDOP_WAIT_VM_REQUEST,
 	IMSG_VMDOP_TERMINATE_VM_REQUEST,
 	IMSG_VMDOP_TERMINATE_VM_RESPONSE,
 	IMSG_VMDOP_TERMINATE_VM_EVENT,
@@ -109,6 +114,7 @@ enum imsg_type {
 	IMSG_VMDOP_PRIV_IFDOWN,
 	IMSG_VMDOP_PRIV_IFGROUP,
 	IMSG_VMDOP_PRIV_IFADDR,
+	IMSG_VMDOP_PRIV_IFADDR6,
 	IMSG_VMDOP_PRIV_IFRDOMAIN,
 	IMSG_VMDOP_VM_SHUTDOWN,
 	IMSG_VMDOP_VM_REBOOT,
@@ -140,10 +146,11 @@ struct vmop_id {
 };
 
 struct vmop_ifreq {
-	uint32_t		 vfr_id;
-	char			 vfr_name[IF_NAMESIZE];
-	char			 vfr_value[VM_NAME_MAX];
-	struct ifaliasreq	 vfr_ifra;
+	uint32_t			 vfr_id;
+	char				 vfr_name[IF_NAMESIZE];
+	char				 vfr_value[VM_NAME_MAX];
+	struct sockaddr_storage		 vfr_addr;
+	struct sockaddr_storage		 vfr_mask;
 };
 
 struct vmop_owner {
@@ -166,6 +173,11 @@ struct vmop_create_params {
 	unsigned int		 vmc_checkaccess;
 
 	/* userland-only part of the create params */
+	unsigned int		 vmc_bootdevice;
+#define VMBOOTDEV_AUTO		0
+#define VMBOOTDEV_DISK		1
+#define VMBOOTDEV_CDROM		2
+#define VMBOOTDEV_NET		3
 	unsigned int		 vmc_ifflags[VMM_MAX_NICS_PER_VM];
 #define VMIFF_UP		0x01
 #define VMIFF_LOCKED		0x02
@@ -202,7 +214,7 @@ struct vm_dump_header {
 #define VM_DUMP_SIGNATURE	 VMM_HV_SIGNATURE
 	uint8_t			 vmh_pad[3];
 	uint8_t			 vmh_version;
-#define VM_DUMP_VERSION		 4
+#define VM_DUMP_VERSION		 5
 	struct			 vm_dump_header_cpuid
 	    vmh_cpuids[VM_DUMP_HEADER_CPUID_COUNT];
 } __packed;
@@ -284,6 +296,14 @@ struct vmd_user {
 };
 TAILQ_HEAD(userlist, vmd_user);
 
+struct name2id {
+	char			name[VMM_MAX_NAME_LEN];
+	int			uid;
+	int32_t			id;
+	TAILQ_ENTRY(name2id)	entry;
+};
+TAILQ_HEAD(name2idlist, name2id);
+
 struct address {
 	struct sockaddr_storage	 ss;
 	int			 prefixlen;
@@ -292,7 +312,12 @@ struct address {
 TAILQ_HEAD(addresslist, address);
 
 struct vmd_config {
+	unsigned int		 cfg_flags;
+#define VMD_CFG_INET6		0x01
+#define VMD_CFG_AUTOINET6	0x02
+
 	struct address		 cfg_localprefix;
+	struct address		 cfg_localprefix6;
 };
 
 struct vmd {
@@ -308,11 +333,13 @@ struct vmd {
 
 	uint32_t		 vmd_nvm;
 	struct vmlist		*vmd_vms;
+	struct name2idlist	*vmd_known;
 	uint32_t		 vmd_nswitches;
 	struct switchlist	*vmd_switches;
 	struct userlist		*vmd_users;
 
 	int			 vmd_fd;
+	int			 vmd_fd6;
 	int			 vmd_ptmfd;
 };
 
@@ -372,6 +399,7 @@ void	 user_inc(struct vm_create_params *, struct vmd_user *, int);
 int	 user_checklimit(struct vmd_user *, struct vm_create_params *);
 char	*get_string(uint8_t *, size_t);
 uint32_t prefixlen2mask(uint8_t);
+void	 prefixlen2mask6(u_int8_t, struct in6_addr *);
 void	 getmonotime(struct timeval *);
 
 /* priv.c */
@@ -381,7 +409,9 @@ int	 priv_findname(const char *, const char **);
 int	 priv_validgroup(const char *);
 int	 vm_priv_ifconfig(struct privsep *, struct vmd_vm *);
 int	 vm_priv_brconfig(struct privsep *, struct vmd_switch *);
-uint32_t vm_priv_addr(struct address *, uint32_t, int, int);
+uint32_t vm_priv_addr(struct vmd_config *, uint32_t, int, int);
+int	 vm_priv_addr6(struct vmd_config *, uint32_t, int, int,
+	    struct in6_addr *);
 
 /* vmm.c */
 struct iovec;

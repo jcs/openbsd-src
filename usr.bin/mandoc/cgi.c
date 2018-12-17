@@ -1,4 +1,4 @@
-/*	$OpenBSD: cgi.c,v 1.99 2018/10/19 21:10:00 schwarze Exp $ */
+/*	$OpenBSD: cgi.c,v 1.101 2018/12/14 01:17:46 schwarze Exp $ */
 /*
  * Copyright (c) 2011, 2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2014, 2015, 2016, 2017, 2018 Ingo Schwarze <schwarze@usta.de>
@@ -34,6 +34,7 @@
 #include "roff.h"
 #include "mdoc.h"
 #include "man.h"
+#include "mandoc_parse.h"
 #include "main.h"
 #include "manconf.h"
 #include "mansearch.h"
@@ -856,7 +857,7 @@ resp_format(const struct req *req, const char *file)
 
 	mchars_alloc();
 	mp = mparse_alloc(MPARSE_SO | MPARSE_UTF8 | MPARSE_LATIN1,
-	    MANDOCERR_MAX, NULL, MANDOC_OS_OTHER, req->q.manpath);
+	    MANDOC_OS_OTHER, req->q.manpath);
 	mparse_readfd(mp, fd, file);
 	close(fd);
 
