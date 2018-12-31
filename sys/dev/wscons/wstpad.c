@@ -52,7 +52,7 @@
 #define V_EDGE_RATIO_DEFAULT	205
 #define B_EDGE_RATIO_DEFAULT	410
 #define T_EDGE_RATIO_DEFAULT	512
-#define CENTER_RATIO_DEFAULT	0
+#define CENTER_RATIO_DEFAULT	512
 
 #define TAP_MAXTIME_DEFAULT	180
 #define TAP_CLICKTIME_DEFAULT	180
@@ -1495,11 +1495,10 @@ wstpad_configure(struct wsmouseinput *input)
 	tp->edge.top = (offset ? input->hw.y_max - offset : INT_MAX);
 
 	offset = width * abs(tp->params.center_width) / 8192;
-	tp->edge.center = (input->hw.x_min + input->hw.x_max) * 0.75;
+	tp->edge.center = (input->hw.x_min + input->hw.x_max) / 2;
 	tp->edge.center_left = tp->edge.center - offset;
 	tp->edge.center_right = tp->edge.center + offset;
-	tp->edge.middle = (input->hw.y_max - input->hw.y_min) -
-	    tp->edge.center;
+	tp->edge.middle = (input->hw.y_max - input->hw.y_min) / 2;
 
 	tp->handlers = 0;
 
