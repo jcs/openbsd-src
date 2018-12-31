@@ -211,10 +211,6 @@
 ./etc/rpc
 ./etc/services
 ./etc/signify
-./etc/signify/openbsd-62-base.pub
-./etc/signify/openbsd-62-fw.pub
-./etc/signify/openbsd-62-pkg.pub
-./etc/signify/openbsd-62-syspatch.pub
 ./etc/signify/openbsd-63-base.pub
 ./etc/signify/openbsd-63-fw.pub
 ./etc/signify/openbsd-63-pkg.pub
@@ -2681,6 +2677,7 @@
 ./usr/share/misc/license.template
 ./usr/share/misc/mail.help
 ./usr/share/misc/mail.tildehelp
+./usr/share/misc/mandoc.css
 ./usr/share/misc/mdoc.template
 ./usr/share/misc/mime.types
 ./usr/share/misc/more.help

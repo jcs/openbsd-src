@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ethersubr.c,v 1.255 2018/12/12 05:38:26 dlg Exp $	*/
+/*	$OpenBSD: if_ethersubr.c,v 1.257 2018/12/26 18:32:38 denis Exp $	*/
 /*	$NetBSD: if_ethersubr.c,v 1.19 1996/05/07 02:40:30 thorpej Exp $	*/
 
 /*
@@ -106,6 +106,11 @@ didn't get a copy, you may request one from <license@ipv6.nrl.navy.mil>.
 #include "pppoe.h"
 #if NPPPOE > 0
 #include <net/if_pppoe.h>
+#endif
+
+#include "bpe.h"
+#if NBPE > 0
+#include <net/if_bpe.h>
 #endif
 
 #ifdef INET6
@@ -238,7 +243,11 @@ ether_resolve(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 		if (!ISSET(ifp->if_xflags, IFXF_MPLS))
 			senderr(ENETUNREACH);
 
-		switch (dst->sa_family) {
+		af = dst->sa_family;
+		if (af == AF_MPLS)
+			af = rt->rt_gateway->sa_family;         
+
+		switch (af) {
 		case AF_LINK:
 			if (satosdl(dst)->sdl_alen < sizeof(eh->ether_dhost))
 				senderr(EHOSTUNREACH);
@@ -253,7 +262,6 @@ ether_resolve(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 			break;
 #endif
 		case AF_INET:
-		case AF_MPLS:
 			error = arpresolve(ifp, rt, m, dst, eh->ether_dhost);
 			if (error)
 				return (error);
@@ -440,6 +448,11 @@ ether_input(struct ifnet *ifp, struct mbuf *m, void *cookie)
 	case ETHERTYPE_MPLS_MCAST:
 		input = mpls_input;
 		break;
+#endif
+#if NBPE > 0
+	case ETHERTYPE_PBB:
+		bpe_input(ifp, m);
+		return (1);
 #endif
 	default:
 		goto dropanyway;

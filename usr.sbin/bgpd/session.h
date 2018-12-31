@@ -1,4 +1,4 @@
-/*	$OpenBSD: session.h,v 1.125 2018/10/24 08:26:37 claudio Exp $ */
+/*	$OpenBSD: session.h,v 1.127 2018/12/27 20:23:24 remi Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -143,6 +143,7 @@ struct ctl_conn {
 	struct imsgbuf		ibuf;
 	int			restricted;
 	int			throttled;
+	int			terminate;
 };
 
 TAILQ_HEAD(ctl_conns, ctl_conn)	ctl_conns;
@@ -246,10 +247,11 @@ int	 carp_demote_set(char *, int);
 /* config.c */
 int	 merge_config(struct bgpd_config *, struct bgpd_config *,
 	    struct peer *);
-void	 prepare_listeners(struct bgpd_config *);
+int	 prepare_listeners(struct bgpd_config *);
 int	 get_mpe_label(struct rdomain *);
 
 /* control.c */
+int	control_check(char *);
 int	control_init(int, char *);
 int	control_listen(int);
 void	control_shutdown(int);

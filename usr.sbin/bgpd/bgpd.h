@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.357 2018/12/11 09:02:14 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.361 2018/12/30 13:53:07 denis Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -154,7 +154,8 @@ extern const struct aid aid_vals[];
 #define	AID_INET	1
 #define	AID_INET6	2
 #define	AID_VPN_IPv4	3
-#define	AID_MAX		4
+#define	AID_VPN_IPv6	4
+#define	AID_MAX		5
 #define	AID_MIN		1	/* skip AID_UNSPEC since that is a dummy */
 
 #define AID_VALS	{					\
@@ -162,19 +163,30 @@ extern const struct aid aid_vals[];
 	{ AFI_UNSPEC, AF_UNSPEC, SAFI_NONE, "unspec"},		\
 	{ AFI_IPv4, AF_INET, SAFI_UNICAST, "IPv4 unicast" },	\
 	{ AFI_IPv6, AF_INET6, SAFI_UNICAST, "IPv6 unicast" },	\
-	{ AFI_IPv4, AF_INET, SAFI_MPLSVPN, "IPv4 vpn" }		\
+	{ AFI_IPv4, AF_INET, SAFI_MPLSVPN, "IPv4 vpn" },	\
+	{ AFI_IPv6, AF_INET6, SAFI_MPLSVPN, "IPv6 vpn" }	\
 }
 
 #define AID_PTSIZE	{				\
 	0,						\
 	sizeof(struct pt_entry4),			\
 	sizeof(struct pt_entry6),			\
-	sizeof(struct pt_entry_vpn4)			\
+	sizeof(struct pt_entry_vpn4),			\
+	sizeof(struct pt_entry_vpn6)			\
 }
 
 struct vpn4_addr {
 	u_int64_t	rd;
 	struct in_addr	addr;
+	u_int8_t	labelstack[21];	/* max that makes sense */
+	u_int8_t	labellen;
+	u_int8_t	pad1;
+	u_int8_t	pad2;
+};
+
+struct vpn6_addr {
+	u_int64_t	rd;
+	struct in6_addr	addr;
 	u_int8_t	labelstack[21];	/* max that makes sense */
 	u_int8_t	labellen;
 	u_int8_t	pad1;
@@ -188,6 +200,7 @@ struct bgpd_addr {
 		struct in_addr		v4;
 		struct in6_addr		v6;
 		struct vpn4_addr	vpn4;
+		struct vpn6_addr	vpn6;
 		/* maximum size for a prefix is 256 bits */
 		u_int8_t		addr8[32];
 		u_int16_t		addr16[16];
@@ -198,6 +211,7 @@ struct bgpd_addr {
 #define	v4	ba.v4
 #define	v6	ba.v6
 #define	vpn4	ba.vpn4
+#define	vpn6	ba.vpn6
 #define	addr8	ba.addr8
 #define	addr16	ba.addr16
 #define	addr32	ba.addr32
@@ -437,6 +451,7 @@ enum imsg_type {
 	IMSG_CTL_SHOW_TIMER,
 	IMSG_CTL_LOG_VERBOSE,
 	IMSG_CTL_SHOW_FIB_TABLES,
+	IMSG_CTL_TERMINATE,
 	IMSG_NETWORK_ADD,
 	IMSG_NETWORK_ASPATH,
 	IMSG_NETWORK_ATTR,
@@ -597,6 +612,7 @@ struct kroute {
 struct kroute6 {
 	struct in6_addr	prefix;
 	struct in6_addr	nexthop;
+	u_int32_t	mplslabel;
 	u_int16_t	flags;
 	u_int16_t	labelid;
 	u_short		ifindex;
@@ -742,30 +758,23 @@ struct filter_community {
 	u_int8_t	dflag1;	/* one of set, any, local-as, neighbor-as */
 	u_int8_t	dflag2;
 	u_int8_t	dflag3;
-	u_int32_t	data1;
-	u_int32_t	data2;
-	u_int32_t	data3;
-};
-
-struct filter_extcommunity {
-	u_int16_t	flags;
-	u_int8_t	type;
-	u_int8_t	subtype;	/* if extended type */
 	union {
-		struct ext_as {
-			u_int16_t	as;
-			u_int32_t	val;
-		}		ext_as;
-		struct ext_as4 {
-			u_int32_t	as4;
-			u_int16_t	val;
-		}		ext_as4;
-		struct ext_ip {
-			struct in_addr	addr;
-			u_int16_t	val;
-		}		ext_ip;
-		u_int64_t	ext_opaq;	/* only 48 bits */
-	}		data;
+		struct basic {
+			u_int32_t	data1;
+			u_int32_t	data2;
+		} b;
+		struct large {
+			u_int32_t	data1;
+			u_int32_t	data2;
+			u_int32_t	data3;
+		} l;
+		struct ext {
+			u_int32_t	data1;
+			u_int64_t	data2;
+			u_int8_t	type;
+			u_int8_t	subtype;	/* if extended type */
+		} e;
+	}		c;
 };
 
 struct ctl_show_rib_request {
@@ -774,7 +783,6 @@ struct ctl_show_rib_request {
 	struct bgpd_addr	prefix;
 	struct filter_as	as;
 	struct filter_community community;
-	struct filter_extcommunity extcommunity;
 	u_int32_t		peerid;
 	u_int32_t		flags;
 	u_int8_t		validation_state;
@@ -929,7 +937,6 @@ struct filter_match {
 	struct filter_as		as;
 	struct filter_aslen		aslen;
 	struct filter_community		community[MAX_COMM_MATCH];
-	struct filter_extcommunity	ext_community;
 	struct filter_prefixset		prefixset;
 	struct filter_originset		originset;
 	struct filter_ovs		ovs;
@@ -968,8 +975,6 @@ enum action_types {
 	ACTION_SET_NEXTHOP_SELF,
 	ACTION_DEL_COMMUNITY,
 	ACTION_SET_COMMUNITY,
-	ACTION_DEL_EXT_COMMUNITY,
-	ACTION_SET_EXT_COMMUNITY,
 	ACTION_PFTABLE,
 	ACTION_PFTABLE_ID,
 	ACTION_RTLABEL,
@@ -988,7 +993,6 @@ struct filter_set {
 		struct bgpd_addr		 nexthop;
 		struct nexthop			*nh;
 		struct filter_community		 community;
-		struct filter_extcommunity	 ext_community;
 		char				 pftable[PFTABLE_LEN];
 		char				 rtlabel[RTLABEL_LEN];
 		u_int8_t			 origin;
@@ -1138,7 +1142,6 @@ void		 set_pollfd(struct pollfd *, struct imsgbuf *);
 int		 handle_pollfd(struct pollfd *, struct imsgbuf *);
 
 /* control.c */
-void	control_cleanup(const char *);
 int	control_imsg_relay(struct imsg *);
 
 /* config.c */
@@ -1270,6 +1273,8 @@ int		 nlri_get_prefix(u_char *, u_int16_t, struct bgpd_addr *,
 int		 nlri_get_prefix6(u_char *, u_int16_t, struct bgpd_addr *,
 		     u_int8_t *);
 int		 nlri_get_vpn4(u_char *, u_int16_t, struct bgpd_addr *,
+		     u_int8_t *, int);
+int		 nlri_get_vpn6(u_char *, u_int16_t, struct bgpd_addr *,
 		     u_int8_t *, int);
 int		 prefix_compare(const struct bgpd_addr *,
 		    const struct bgpd_addr *, int);

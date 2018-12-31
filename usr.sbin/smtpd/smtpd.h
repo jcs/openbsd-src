@@ -1,4 +1,4 @@
-/*	$OpenBSD: smtpd.h,v 1.594 2018/12/13 17:08:10 gilles Exp $	*/
+/*	$OpenBSD: smtpd.h,v 1.615 2018/12/28 15:09:28 eric Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -275,10 +275,6 @@ enum imsg_type {
 	IMSG_MTA_LOOKUP_SMARTHOST,
 	IMSG_MTA_OPEN_MESSAGE,
 	IMSG_MTA_SCHEDULE,
-	IMSG_MTA_TLS_INIT,
-	IMSG_MTA_TLS_VERIFY_CERT,
-	IMSG_MTA_TLS_VERIFY_CHAIN,
-	IMSG_MTA_TLS_VERIFY,
 
 	IMSG_SCHED_ENVELOPE_BOUNCE,
 	IMSG_SCHED_ENVELOPE_DELIVER,
@@ -295,10 +291,6 @@ enum imsg_type {
 	IMSG_SMTP_CHECK_SENDER,
 	IMSG_SMTP_EXPAND_RCPT,
 	IMSG_SMTP_LOOKUP_HELO,
-	IMSG_SMTP_TLS_INIT,
-	IMSG_SMTP_TLS_VERIFY_CERT,
-	IMSG_SMTP_TLS_VERIFY_CHAIN,
-	IMSG_SMTP_TLS_VERIFY,
 
 	IMSG_SMTP_REQ_CONNECT,
 	IMSG_SMTP_REQ_HELO,
@@ -362,21 +354,21 @@ struct table {
 	enum table_type			 t_type;
 	char				 t_config[PATH_MAX];
 
-	struct dict			 t_dict;
-
 	void				*t_handle;
 	struct table_backend		*t_backend;
-	void				*t_iter;
 };
 
 struct table_backend {
+	const char *name;
 	const unsigned int	services;
 	int	(*config)(struct table *);
-	void   *(*open)(struct table *);
+	int	(*add)(struct table *, const char *, const char *);
+	void	(*dump)(struct table *);
+	int	(*open)(struct table *);
 	int	(*update)(struct table *);
-	void	(*close)(void *);
-	int	(*lookup)(void *, struct dict *, const char *, enum table_service, union lookup *);
-	int	(*fetch)(void *, struct dict *, enum table_service, union lookup *);
+	void	(*close)(struct table *);
+	int	(*lookup)(struct table *, enum table_service, const char *, char **);
+	int	(*fetch)(struct table *, enum table_service, char **);
 };
 
 
@@ -410,7 +402,7 @@ enum expand_type {
 };
 
 enum filter_phase {
-	FILTER_CONNECTED = 0,
+	FILTER_CONNECT,
 	FILTER_HELO,
 	FILTER_EHLO,
 	FILTER_STARTTLS,
@@ -447,6 +439,7 @@ struct expandnode {
 		char		buffer[EXPAND_BUFFER];
 		struct mailaddr	mailaddr;
 	}			u;
+	char		subaddress[SMTPD_SUBADDRESS_SIZE];
 };
 
 struct expand {
@@ -496,6 +489,7 @@ struct envelope {
 	struct mailaddr			dest;
 
 	char				mda_user[SMTPD_VUSERNAME_SIZE];
+	char				mda_subaddress[SMTPD_SUBADDRESS_SIZE];
 	char				mda_exec[LINE_MAX];
 
 	enum delivery_type		type;
@@ -526,6 +520,7 @@ struct listener {
 	in_port_t		 port;
 	struct timeval		 timeout;
 	struct event		 ev;
+	char			 filter_name[PATH_MAX];
 	char			 pki_name[PATH_MAX];
 	char			 ca_name[PATH_MAX];
 	char			 tag[SMTPD_TAG_SIZE];
@@ -582,8 +577,6 @@ struct smtpd {
 	size_t				sc_scheduler_max_schedule;
 
 	struct dict		       *sc_processors_dict;
-	struct dict		       *sc_smtp_reporters_dict;
-	struct dict		       *sc_mta_reporters_dict;
 
 	int				sc_ttl;
 #define MAX_BOUNCE_WARN			4
@@ -600,8 +593,9 @@ struct smtpd {
 	TAILQ_HEAD(listenerlist, listener)	*sc_listeners;
 
 	TAILQ_HEAD(rulelist, rule)		*sc_rules;
-	TAILQ_HEAD(filterrules, filter_rule)    sc_filter_rules[FILTER_PHASES_COUNT];
 
+
+	struct dict				*sc_filters_dict;
 	struct dict				*sc_dispatchers;
 	struct dispatcher			*sc_dispatcher_bounce;
 
@@ -655,6 +649,7 @@ struct deliver {
 	struct mailaddr		rcpt;
 	struct mailaddr		dest;
 
+	char			mda_subaddress[SMTPD_SUBADDRESS_SIZE];
 	char			mda_exec[LINE_MAX];
 
 	struct userinfo		userinfo;
@@ -1039,26 +1034,61 @@ struct processor {
 	const char		       *chroot;
 };
 
-struct filter_rule {
-	TAILQ_ENTRY(filter_rule)        entry;
+enum filter_type {
+	FILTER_TYPE_BUILTIN,
+	FILTER_TYPE_PROC,
+	FILTER_TYPE_CHAIN,
+};
 
+struct filter_config {
+	char			       *name;
+	enum filter_type		filter_type;
 	enum filter_phase               phase;
 	char                           *reject;
 	char                           *disconnect;
 	char                           *rewrite;
 	char                           *proc;
 
-	int8_t                          not_table;
-	struct table                   *table;
+	const char		      **chain;
+	size_t				chain_size;
+	struct dict			chain_procs;
 
-	int8_t                          not_regex;
-	struct table                   *regex;
+	int8_t				not_fcrdns;
+	int8_t				fcrdns;
 
 	int8_t				not_rdns;
 	int8_t				rdns;
 
-	int8_t				not_fcrdns;
-	int8_t				fcrdns;
+	int8_t                          not_rdns_table;
+	struct table                   *rdns_table;
+
+	int8_t                          not_rdns_regex;
+	struct table                   *rdns_regex;
+
+	int8_t                          not_src_table;
+	struct table                   *src_table;
+
+	int8_t                          not_src_regex;
+	struct table                   *src_regex;
+
+	int8_t                          not_helo_table;
+	struct table                   *helo_table;
+
+	int8_t                          not_helo_regex;
+	struct table                   *helo_regex;
+
+	int8_t                          not_mail_from_table;
+	struct table                   *mail_from_table;
+
+	int8_t                          not_mail_from_regex;
+	struct table                   *mail_from_regex;
+
+	int8_t                          not_rcpt_to_table;
+	struct table                   *rcpt_to_table;
+
+	int8_t                          not_rcpt_to_regex;
+	struct table                   *rcpt_to_regex;
+
 };
 
 enum filter_status {
@@ -1077,37 +1107,6 @@ enum mda_resp_status {
 	MDA_OK,
 	MDA_TEMPFAIL,
 	MDA_PERMFAIL
-};
-
-struct ca_cert_req_msg {
-	uint64_t		reqid;
-	char			name[HOST_NAME_MAX+1];
-	int			fallback;
-};
-
-struct ca_cert_resp_msg {
-	uint64_t		reqid;
-	enum ca_resp_status	status;
-	char			name[HOST_NAME_MAX+1];
-	char		       *cert;
-	off_t			cert_len;
-};
-
-struct ca_vrfy_req_msg {
-	uint64_t		reqid;
-	char			name[HOST_NAME_MAX+1];
-	int			fallback;
-	unsigned char  	       *cert;
-	off_t			cert_len;
-	size_t			n_chain;
-	size_t			chain_offset;
-	unsigned char	      **chain_cert;
-	off_t		       *chain_cert_len;
-};
-
-struct ca_vrfy_resp_msg {
-	uint64_t		reqid;
-	enum ca_resp_status	status;
 };
 
 struct msg_walkinfo {
@@ -1184,13 +1183,24 @@ struct rule {
 	int8_t	flag_tag;
 	int8_t	flag_from;
 	int8_t	flag_for;
+	int8_t	flag_from_rdns;
 	int8_t	flag_from_socket;
+
+	int8_t	flag_tag_regex;
+	int8_t	flag_from_regex;
+	int8_t	flag_for_regex;
 
 	int8_t	flag_smtp_helo;
 	int8_t	flag_smtp_starttls;
 	int8_t	flag_smtp_auth;
 	int8_t	flag_smtp_mail_from;
 	int8_t	flag_smtp_rcpt_to;
+
+	int8_t	flag_smtp_helo_regex;
+	int8_t	flag_smtp_starttls_regex;
+	int8_t	flag_smtp_auth_regex;
+	int8_t	flag_smtp_mail_from_regex;
+	int8_t	flag_smtp_rcpt_to_regex;
 
 
 	char	*table_tag;
@@ -1322,11 +1332,14 @@ int lka(void);
 
 
 /* lka_proc.c */
+int lka_proc_ready(void);
 void lka_proc_forked(const char *, int);
 struct io *lka_proc_get_io(const char *);
 
 
 /* lka_report.c */
+void lka_report_init(void);
+void lka_report_register_hook(const char *, const char *);
 void lka_report_smtp_link_connect(const char *, struct timeval *, uint64_t, const char *, int,
     const struct sockaddr_storage *, const struct sockaddr_storage *);
 void lka_report_smtp_link_disconnect(const char *, struct timeval *, uint64_t);
@@ -1346,7 +1359,11 @@ void lka_report_smtp_filter_response(const char *, struct timeval *, uint64_t,
 
 
 /* lka_filter.c */
-void lka_filter_begin(uint64_t, const struct sockaddr_storage *, const struct sockaddr_storage *, const char *, int);
+void lka_filter_init(void);
+void lka_filter_register_hook(const char *, const char *);
+void lka_filter_ready(void);
+int lka_filter_proc_in_session(uint64_t, const char *);
+void lka_filter_begin(uint64_t, const char *, const struct sockaddr_storage *, const struct sockaddr_storage *, const char *, int);
 void lka_filter_end(uint64_t);
 void lka_filter_protocol(uint64_t, enum filter_phase, const char *);
 void lka_filter_data_begin(uint64_t);
@@ -1579,19 +1596,21 @@ struct stat_value *stat_timespec(struct timespec *);
 
 
 /* table.c */
-struct table *table_find(struct smtpd *, const char *, const char *);
-struct table *table_create(struct smtpd *, const char *, const char *, const char *,
+struct table *table_find(struct smtpd *, const char *);
+struct table *table_create(struct smtpd *, const char *, const char *,
     const char *);
 int	table_config(struct table *);
 int	table_open(struct table *);
 int	table_update(struct table *);
 void	table_close(struct table *);
+void	table_dump(struct table *);
 int	table_check_use(struct table *, uint32_t, uint32_t);
 int	table_check_type(struct table *, uint32_t);
 int	table_check_service(struct table *, uint32_t);
-int	table_lookup(struct table *, struct dict *, const char *, enum table_service,
+int	table_match(struct table *, enum table_service, const char *);
+int	table_lookup(struct table *, enum table_service, const char *,
     union lookup *);
-int	table_fetch(struct table *, struct dict *, enum table_service, union lookup *);
+int	table_fetch(struct table *, enum table_service, union lookup *);
 void table_destroy(struct smtpd *, struct table *);
 void table_add(struct table *, const char *, const char *);
 int table_domain_match(const char *, const char *);
@@ -1601,8 +1620,6 @@ int table_regex_match(const char *, const char *);
 void	table_open_all(struct smtpd *);
 void	table_dump_all(struct smtpd *);
 void	table_close_all(struct smtpd *);
-int table_parse_lookup(enum table_service, const char *, const char *,
-    union lookup *);
 
 
 /* to.c */

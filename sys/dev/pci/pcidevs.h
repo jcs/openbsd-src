@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1871 2018/12/16 15:11:30 deraadt Exp 
+ *	OpenBSD: pcidevs,v 1.1873 2018/12/18 04:25:16 tedu Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -4739,7 +4739,8 @@
 #define	PCI_PRODUCT_INTEL_CORE7G_Y_GT2	0x591e		/* HD Graphics 615 */
 #define	PCI_PRODUCT_INTEL_CORE7G_U_GT3_15W	0x5926		/* Iris Plus Graphics 640 */
 #define	PCI_PRODUCT_INTEL_CORE7G_U_GT3_28W	0x5927		/* Iris Plus Graphics 650 */
-#define	PCI_PRODUCT_INTEL_APOLLOLAKE_IGD	0x5a85		/* HD Graphics 500 */
+#define	PCI_PRODUCT_INTEL_APOLLOLAKE_IGD_1	0x5a84		/* HD Graphics 505 */
+#define	PCI_PRODUCT_INTEL_APOLLOLAKE_IGD_2	0x5a85		/* HD Graphics 500 */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_HDA	0x5a98		/* Apollo Lake HD Audio */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_TXE	0x5a9a		/* Apollo Lake TXE */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_XHCI	0x5aa8		/* Apollo Lake xHCI */
@@ -4748,6 +4749,9 @@
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_SPI_1	0x5ac2		/* Apollo Lake SPI */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_SPI_2	0x5ac4		/* Apollo Lake SPI */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_SPI_3	0x5ac6		/* Apollo Lake SPI */
+#define	PCI_PRODUCT_INTEL_APOLLOLAKE_SDMMC	0x5aca		/* Apollo Lake SD/MMC */
+#define	PCI_PRODUCT_INTEL_APOLLOLAKE_EMMC	0x5acc		/* Apollo Lake eMMC */
+#define	PCI_PRODUCT_INTEL_APOLLOLAKE_SDIO	0x5ad0		/* Apollo Lake SDIO */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_SMB	0x5ad4		/* Apollo Lake SMBus */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_PCIE_1	0x5ad8		/* Apollo Lake PCIE */
 #define	PCI_PRODUCT_INTEL_APOLLOLAKE_PCIE_2	0x5ad9		/* Apollo Lake PCIE */
@@ -5145,6 +5149,7 @@
 #define	PCI_PRODUCT_INTEL_100SERIES_LP_UART_3	0x9d66		/* 100 Series UART */
 #define	PCI_PRODUCT_INTEL_100SERIES_LP_HDA	0x9d70		/* 100 Series HD Audio */
 #define	PCI_PRODUCT_INTEL_200SERIES_U_HDA	0x9d71		/* 200 Series HD Audio */
+#define	PCI_PRODUCT_INTEL_WL_9560_1	0x9df0		/* Dual Band Wireless AC 9560 */
 #define	PCI_PRODUCT_INTEL_PINEVIEW_DMI	0xa000		/* Pineview DMI */
 #define	PCI_PRODUCT_INTEL_PINEVIEW_IGC_1	0xa001		/* Pineview Video */
 #define	PCI_PRODUCT_INTEL_PINEVIEW_IGC_2	0xa002		/* Pineview Video */

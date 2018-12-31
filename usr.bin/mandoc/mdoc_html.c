@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_html.c,v 1.193 2018/12/15 23:33:20 schwarze Exp $ */
+/*	$OpenBSD: mdoc_html.c,v 1.197 2018/12/31 10:35:51 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2014,2015,2016,2017,2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -281,7 +281,7 @@ synopsis_pre(struct html *h, const struct roff_node *n)
 }
 
 void
-html_mdoc(void *arg, const struct roff_man *mdoc)
+html_mdoc(void *arg, const struct roff_meta *mdoc)
 {
 	struct html		*h;
 	struct roff_node	*n;
@@ -296,16 +296,16 @@ html_mdoc(void *arg, const struct roff_man *mdoc)
 		if (n->type == ROFFT_COMMENT)
 			print_gen_comment(h, n);
 		t = print_otag(h, TAG_HEAD, "");
-		print_mdoc_head(&mdoc->meta, h);
+		print_mdoc_head(mdoc, h);
 		print_tagq(h, t);
 		print_otag(h, TAG_BODY, "");
 	}
 
-	mdoc_root_pre(&mdoc->meta, h);
+	mdoc_root_pre(mdoc, h);
 	t = print_otag(h, TAG_DIV, "c", "manual-text");
-	print_mdoc_nodelist(&mdoc->meta, n, h);
+	print_mdoc_nodelist(mdoc, n, h);
 	print_tagq(h, t);
-	mdoc_root_post(&mdoc->meta, h);
+	mdoc_root_post(mdoc, h);
 	print_tagq(h, NULL);
 }
 
@@ -364,7 +364,8 @@ print_mdoc_node(MDOC_ARGS)
 		 * (i.e., within a <PRE>) don't print the newline.
 		 */
 		if (*n->string == ' ' && n->flags & NODE_LINE &&
-		    (h->flags & (HTML_LITERAL | HTML_NONEWLINE)) == 0)
+		    (h->flags & HTML_NONEWLINE) == 0 &&
+		    (n->flags & NODE_NOFILL) == 0)
 			print_otag(h, TAG_BR, "");
 		if (NODE_DELIMC & n->flags)
 			h->flags |= HTML_NOSPACE;
@@ -532,9 +533,10 @@ mdoc_sh_pre(MDOC_ARGS)
 		for (sn = n; sn != NULL; sn = sn->next) {
 			tsec = print_otag(h, TAG_LI, "");
 			id = html_make_id(sn->head, 0);
-			print_otag(h, TAG_A, "hR", id);
+			tsub = print_otag(h, TAG_A, "hR", id);
 			free(id);
 			print_mdoc_nodelist(meta, sn->head->child, h);
+			print_tagq(h, tsub);
 			tsub = NULL;
 			for (subn = sn->body->child; subn != NULL;
 			    subn = subn->next) {
@@ -793,7 +795,7 @@ mdoc_it_pre(MDOC_ARGS)
 static int
 mdoc_bl_pre(MDOC_ARGS)
 {
-	char		 cattr[28];
+	char		 cattr[32];
 	struct mdoc_bl	*bl;
 	enum htmltag	 elemtype;
 
@@ -912,7 +914,7 @@ mdoc_sx_pre(MDOC_ARGS)
 static int
 mdoc_bd_pre(MDOC_ARGS)
 {
-	int			 comp, sv;
+	int			 comp;
 	struct roff_node	*nn;
 
 	if (n->type == ROFFT_HEAD)
@@ -946,12 +948,6 @@ mdoc_bd_pre(MDOC_ARGS)
 		return 1;
 
 	print_otag(h, TAG_PRE, "c", "Li");
-
-	/* This can be recursive: save & set our literal state. */
-
-	sv = h->flags & HTML_LITERAL;
-	h->flags |= HTML_LITERAL;
-
 	for (nn = n->child; nn; nn = nn->next) {
 		print_mdoc_node(meta, nn, h);
 		/*
@@ -980,10 +976,6 @@ mdoc_bd_pre(MDOC_ARGS)
 
 		h->flags |= HTML_NOSPACE;
 	}
-
-	if (0 == sv)
-		h->flags &= ~HTML_LITERAL;
-
 	return 0;
 }
 

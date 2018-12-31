@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.205 2018/12/17 11:24:30 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.207 2018/12/30 13:53:07 denis Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -282,6 +282,19 @@ struct pt_entry_vpn4 {
 	u_int8_t			 pad2;
 };
 
+struct pt_entry_vpn6 {
+	RB_ENTRY(pt_entry)		 pt_e;
+	u_int8_t			 aid;
+	u_int8_t			 prefixlen;
+	u_int16_t			 refcnt;
+	struct in6_addr			 prefix6;
+	u_int64_t			 rd;
+	u_int8_t			 labelstack[21];
+	u_int8_t			 labellen;
+	u_int8_t			 pad1;
+	u_int8_t			 pad2;
+};
+
 struct prefix {
 	LIST_ENTRY(prefix)		 rib_l, nexthop_l;
 	struct rib_entry		*re;
@@ -375,12 +388,12 @@ int	 community_large_set(struct rde_aspath *, struct filter_community *,
 void	 community_large_delete(struct rde_aspath *, struct filter_community *,
 	    struct rde_peer *);
 int	 community_ext_match(struct rde_aspath *,
-	    struct filter_extcommunity *, u_int16_t);
+	    struct filter_community *, struct rde_peer *);
 int	 community_ext_set(struct rde_aspath *,
-	    struct filter_extcommunity *, u_int16_t);
+	    struct filter_community *, struct rde_peer *);
 void	 community_ext_delete(struct rde_aspath *,
-	    struct filter_extcommunity *, u_int16_t);
-int	 community_ext_conv(struct filter_extcommunity *, u_int16_t,
+	    struct filter_community *, struct rde_peer *);
+int	 community_ext_conv(struct filter_community *, struct rde_peer *,
 	    u_int64_t *);
 u_char	*community_ext_delete_non_trans(u_char *, u_int16_t, u_int16_t *);
 

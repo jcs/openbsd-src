@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_etherip.c,v 1.40 2018/11/12 23:57:06 dlg Exp $	*/
+/*	$OpenBSD: if_etherip.c,v 1.42 2018/12/17 23:42:47 dlg Exp $	*/
 /*
  * Copyright (c) 2015 Kazuya GODA <goda@openbsd.org>
  *
@@ -326,9 +326,18 @@ etherip_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		error = ifmedia_ioctl(ifp, ifr, &sc->sc_media, cmd);
 		break;
 
+	case SIOCADDMULTI:
+	case SIOCDELMULTI:
+		break;
+
 	default:
 		error = ether_ioctl(ifp, &sc->sc_ac, cmd, data);
 		break;
+	}
+
+	if (error == ENETRESET) {
+		/* no hardware to program */
+		error = 0;
 	}
 
 	return (error);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.590 2018/11/12 16:46:02 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.598 2018/12/28 16:01:39 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -138,6 +138,7 @@ void		 interface_link_forceup(char *, int);
 void		 interface_state(struct interface_info *);
 void		 get_hw_address(struct interface_info *);
 void		 tick_msg(const char *, int, time_t);
+void		 rtm_dispatch(struct interface_info *, struct rt_msghdr *);
 
 struct client_lease *apply_defaults(struct client_lease *);
 struct client_lease *clone_lease(struct client_lease *);
@@ -307,42 +308,63 @@ get_hw_address(struct interface_info *ifi)
 }
 
 void
-routehandler(struct interface_info *ifi, int routefd)
+routefd_handler(struct interface_info *ifi, int routefd)
+{
+	struct rt_msghdr		*rtm;
+	char				*buf, *lim, *next;
+	ssize_t				 n;
+
+	buf = calloc(1, 2048);
+	if (buf == NULL)
+		fatal("rtm buf");
+
+	do {
+		n = read(routefd, buf, 2048);
+	} while (n == -1 && errno == EINTR);
+	if (n == -1) {
+		log_warn("%s: routing socket", log_procname);
+		goto done;
+	}
+	if (n == 0)
+		fatalx("%s: routing socket closed", log_procname);
+
+	lim = buf + n;
+	for (next = buf; next < lim && quit == 0; next += rtm->rtm_msglen) {
+		rtm = (struct rt_msghdr *)next;
+		if (lim < next + sizeof(rtm->rtm_msglen) ||
+		    lim < next + rtm->rtm_msglen)
+			fatalx("%s: partial rtm in buffer", log_procname);
+
+		if (rtm->rtm_version != RTM_VERSION)
+			continue;
+
+		rtm_dispatch(ifi, rtm);
+	}
+
+done:
+	free(buf);
+	return;
+}
+
+void
+rtm_dispatch(struct interface_info *ifi, struct rt_msghdr *rtm)
 {
 	struct ether_addr		 hw;
-	struct rt_msghdr		*rtm;
 	struct if_msghdr		*ifm;
 	struct if_announcemsghdr	*ifan;
 	struct ifa_msghdr		*ifam;
 	struct if_ieee80211_data	*ifie;
-	char				*rtmmsg;
-	ssize_t				 n;
 	int				 newlinkup, oldlinkup;
-
-	rtmmsg = calloc(1, 2048);
-	if (rtmmsg == NULL)
-		fatal("rtmmsg");
-
-	do {
-		n = read(routefd, rtmmsg, 2048);
-	} while (n == -1 && errno == EINTR);
-	if (n == -1)
-		goto done;
-
-	rtm = (struct rt_msghdr *)rtmmsg;
-	if ((size_t)n < sizeof(rtm->rtm_msglen) || n < rtm->rtm_msglen ||
-	    rtm->rtm_version != RTM_VERSION)
-		goto done;
 
 	switch (rtm->rtm_type) {
 	case RTM_PROPOSAL:
 		if (rtm->rtm_index != ifi->index ||
 		    rtm->rtm_priority != RTP_PROPOSAL_DHCLIENT)
-			goto done;
+			return;
 		if ((rtm->rtm_flags & RTF_PROTO3) != 0) {
 			if (rtm->rtm_seq == (int32_t)ifi->xid) {
 				ifi->flags |= IFI_IN_CHARGE;
-				goto done;
+				return;
 			} else if ((ifi->flags & IFI_IN_CHARGE) != 0) {
 				log_debug("%s: yielding responsibility",
 				    log_procname);
@@ -354,9 +376,11 @@ routehandler(struct interface_info *ifi, int routefd)
 			quit = INTERNALSIG;
 		}
 		break;
+
 	case RTM_DESYNC:
 		log_warnx("%s: RTM_DESYNC", log_procname);
 		break;
+
 	case RTM_IFINFO:
 		ifm = (struct if_msghdr *)rtm;
 		if (ifm->ifm_index != ifi->index)
@@ -375,7 +399,7 @@ routehandler(struct interface_info *ifi, int routefd)
 				tick_msg("", 0, INT64_MAX);
 				log_warnx("%s: LLADDR changed", log_procname);
 				quit = SIGHUP;
-				goto done;
+				return;
 			}
 		}
 
@@ -387,44 +411,46 @@ routehandler(struct interface_info *ifi, int routefd)
 			state_preboot(ifi);
 		}
 		break;
+
 	case RTM_80211INFO:
 		if (rtm->rtm_index != ifi->index)
 			break;
 		ifie = &((struct if_ieee80211_msghdr *)rtm)->ifim_ifie;
-		if (ifi->ssid_len != ifie->ifie_nwid_len ||
-		    memcmp(ifi->ssid, ifie->ifie_nwid, ifie->ifie_nwid_len)
-		    != 0) {
+		if (ifi->ssid_len != ifie->ifie_nwid_len || memcmp(ifi->ssid,
+		    ifie->ifie_nwid, ifie->ifie_nwid_len) != 0) {
 			tick_msg("", 0, INT64_MAX);
 			log_warnx("%s: SSID changed", log_procname);
 			quit = SIGHUP;
-			goto done;
+			return;
 		}
 		break;
+
 	case RTM_IFANNOUNCE:
 		ifan = (struct if_announcemsghdr *)rtm;
-		if (ifan->ifan_what == IFAN_DEPARTURE &&
-		    ifan->ifan_index == ifi->index)
+		if (ifan->ifan_what == IFAN_DEPARTURE && ifan->ifan_index ==
+		    ifi->index)
 			fatalx("departed");
 		break;
+
 	case RTM_NEWADDR:
 	case RTM_DELADDR:
 		/* Need to check if it is time to write resolv.conf. */
 		ifam = (struct ifa_msghdr *)rtm;
 		if (get_ifa_family((char *)ifam + ifam->ifam_hdrlen,
 		    ifam->ifam_addrs) != AF_INET)
-			goto done;
+			return;
 		break;
+
 	default:
 		break;
 	}
 
-	/* Something has happened. Try to write out the resolv.conf. */
+	/*
+	 * Something has happened that may have granted/revoked responsibility for
+	 * resolv.conf.
+	 */
 	if (ifi->active != NULL && (ifi->flags & IFI_IN_CHARGE) != 0)
 		write_resolv_conf();
-
-done:
-	free(rtmmsg);
-	return;
 }
 
 char **saved_argv;
@@ -654,9 +680,9 @@ main(int argc, char *argv[])
 	}
 
 	/* Register the interface. */
-	ifi->ufdesc = get_udp_sock(ifi->rdomain);
-	ifi->bfdesc = get_bpf_sock(ifi->name);
-	ifi->rbuf_max = configure_bpf_sock(ifi->bfdesc);
+	ifi->udpfd = get_udp_sock(ifi->rdomain);
+	ifi->bpffd = get_bpf_sock(ifi->name);
+	ifi->rbuf_max = configure_bpf_sock(ifi->bpffd);
 	ifi->rbuf = malloc(ifi->rbuf_max);
 	if (ifi->rbuf == NULL)
 		fatal("bpf input buffer");
@@ -686,8 +712,6 @@ main(int argc, char *argv[])
 	}
 
 	time(&ifi->startup_time);
-	tick_msg(NULL, 0, ifi->startup_time);	/* Set time to stop ticking. */
-
 	ifi->state = S_PREBOOT;
 	state_preboot(ifi);
 
@@ -969,7 +993,7 @@ bind_lease(struct interface_info *ifi)
 	int			 rslt, seen;
 
 	time(&cur_time);
-	if ((cmd_opts & OPT_VERBOSE) == 0)
+	if (log_getverbose() == 0)
 		tick_msg("lease", 1, ifi->first_sending);
 
 	lease = apply_defaults(ifi->offer);
@@ -1362,7 +1386,7 @@ send_discover(struct interface_info *ifi)
 	 * background.
 	 */
 	if (cur_time < ifi->startup_time + config->link_timeout) {
-		if ((cmd_opts & OPT_VERBOSE) == 0)
+		if (log_getverbose() == 0)
 			tick_msg("lease", 0, ifi->first_sending);
 		ifi->interval = 1;
 	} else {
@@ -1486,7 +1510,7 @@ send_request(struct interface_info *ifi)
 	 * background.
 	 */
 	if (cur_time < ifi->startup_time + config->link_timeout) {
-		if ((cmd_opts & OPT_VERBOSE) == 0)
+		if (log_getverbose() == 0)
 			tick_msg("lease", 0, ifi->first_sending);
 		ifi->interval = 1;
 	} else {
@@ -2592,7 +2616,7 @@ take_charge(struct interface_info *ifi, int routefd)
 			fatal("routefd: ERR|HUP|NVAL");
 		if (nfds == 0 || (fds[0].revents & POLLIN) == 0)
 			continue;
-		routehandler(ifi, routefd);
+		routefd_handler(ifi, routefd);
 	}
 }
 
@@ -2755,7 +2779,7 @@ lease_rebind(struct client_lease *lease)
 void
 tick_msg(const char *preamble, int success, time_t start)
 {
-	static int	preamble_sent;
+	static int	preamble_sent, sleeping;
 	static time_t	stop;
 	time_t		cur_time;
 
@@ -2772,12 +2796,11 @@ tick_msg(const char *preamble, int success, time_t start)
 		return;
 	}
 
-	if (preamble == NULL) {
-		stop = start + config->link_timeout;
-		return;
-	}
+	if (stop == 0)
+		stop = cur_time + config->link_timeout;
 
-	if (isatty(STDERR_FILENO) == 0 || cur_time < start + GRACE_SECONDS)
+	if (isatty(STDERR_FILENO) == 0 || sleeping == 1 || cur_time < start +
+	    GRACE_SECONDS)
 		return;
 
 	if (preamble_sent == 0) {
@@ -2797,7 +2820,7 @@ tick_msg(const char *preamble, int success, time_t start)
 		fprintf(stderr, " sleeping\n");
 		fflush(stderr);
 		go_daemon();
-		preamble_sent = 0;
+		sleeping = 1;	/* OPT_FOREGROUND means isatty() == 1! */
 	}
 }
 
@@ -2907,6 +2930,6 @@ propose_release(struct interface_info *ifi)
 			fatal("routefd: ERR|HUP|NVAL");
 		if (nfds == 0 || (fds[0].revents & POLLIN) == 0)
 			continue;
-		routehandler(ifi, routefd);
+		routefd_handler(ifi, routefd);
 	}
 }

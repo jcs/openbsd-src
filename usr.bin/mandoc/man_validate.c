@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_validate.c,v 1.112 2018/12/14 05:17:45 schwarze Exp $ */
+/*	$OpenBSD: man_validate.c,v 1.116 2018/12/31 10:03:38 schwarze Exp $ */
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010, 2012-2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -46,6 +46,8 @@ static	void	  check_root(CHKARGS);
 static	void	  check_text(CHKARGS);
 
 static	void	  post_AT(CHKARGS);
+static	void	  post_EE(CHKARGS);
+static	void	  post_EX(CHKARGS);
 static	void	  post_IP(CHKARGS);
 static	void	  post_OP(CHKARGS);
 static	void	  post_SH(CHKARGS);
@@ -76,8 +78,6 @@ static	const v_check man_valids[MAN_MAX - MAN_TH] = {
 	NULL,       /* I */
 	NULL,       /* IR */
 	NULL,       /* RI */
-	NULL,       /* nf */
-	NULL,       /* fi */
 	NULL,       /* RE */
 	check_part, /* RS */
 	NULL,       /* DT */
@@ -88,8 +88,8 @@ static	const v_check man_valids[MAN_MAX - MAN_TH] = {
 	NULL,       /* SY */
 	NULL,       /* YS */
 	post_OP,    /* OP */
-	NULL,       /* EX */
-	NULL,       /* EE */
+	post_EX,    /* EX */
+	post_EE,    /* EE */
 	post_UR,    /* UR */
 	NULL,       /* UE */
 	post_UR,    /* MT */
@@ -99,7 +99,7 @@ static	const v_check man_valids[MAN_MAX - MAN_TH] = {
 
 /* Validate the subtree rooted at man->last. */
 void
-man_node_validate(struct roff_man *man)
+man_validate(struct roff_man *man)
 {
 	struct roff_node *n;
 	const v_check	 *cp;
@@ -126,7 +126,7 @@ man_node_validate(struct roff_man *man)
 
 	man->last = man->last->child;
 	while (man->last != NULL) {
-		man_node_validate(man);
+		man_validate(man);
 		if (man->last == n)
 			man->last = man->last->child;
 		else
@@ -158,7 +158,7 @@ man_node_validate(struct roff_man *man)
 		if (*cp)
 			(*cp)(man, n);
 		if (man->last == n)
-			man_state(man, n);
+			n->flags |= NODE_VALID;
 		break;
 	}
 }
@@ -205,13 +205,27 @@ check_text(CHKARGS)
 {
 	char		*cp, *p;
 
-	if (MAN_LITERAL & man->flags)
+	if (n->flags & NODE_NOFILL)
 		return;
 
 	cp = n->string;
 	for (p = cp; NULL != (p = strchr(p, '\t')); p++)
 		mandoc_msg(MANDOCERR_FI_TAB,
 		    n->line, n->pos + (int)(p - cp), NULL);
+}
+
+static void
+post_EE(CHKARGS)
+{
+	if ((n->flags & NODE_NOFILL) == 0)
+		mandoc_msg(MANDOCERR_FI_SKIP, n->line, n->pos, "EE");
+}
+
+static void
+post_EX(CHKARGS)
+{
+	if (n->flags & NODE_NOFILL)
+		mandoc_msg(MANDOCERR_NF_SKIP, n->line, n->pos, "EX");
 }
 
 static void

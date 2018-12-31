@@ -1,4 +1,4 @@
-/*	$OpenBSD: mdoc_validate.c,v 1.280 2018/12/14 05:17:45 schwarze Exp $ */
+/*	$OpenBSD: mdoc_validate.c,v 1.284 2018/12/31 08:38:17 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2018 Ingo Schwarze <schwarze@openbsd.org>
@@ -286,7 +286,7 @@ static	const char * const secnames[SEC__MAX] = {
 
 /* Validate the subtree rooted at mdoc->last. */
 void
-mdoc_node_validate(struct roff_man *mdoc)
+mdoc_validate(struct roff_man *mdoc)
 {
 	struct roff_node *n, *np;
 	const v_post *p;
@@ -317,7 +317,7 @@ mdoc_node_validate(struct roff_man *mdoc)
 
 	mdoc->last = mdoc->last->child;
 	while (mdoc->last != NULL) {
-		mdoc_node_validate(mdoc);
+		mdoc_validate(mdoc);
 		if (mdoc->last == n)
 			mdoc->last = mdoc->last->child;
 		else
@@ -334,9 +334,7 @@ mdoc_node_validate(struct roff_man *mdoc)
 		if (n->sec != SEC_SYNOPSIS ||
 		    (np->tok != MDOC_Cd && np->tok != MDOC_Fd))
 			check_text(mdoc, n->line, n->pos, n->string);
-		if (np->tok != MDOC_Ql && np->tok != MDOC_Dl &&
-		    (np->tok != MDOC_Bd ||
-		     (mdoc->flags & MDOC_LITERAL) == 0) &&
+		if ((n->flags & NODE_NOFILL) == 0 &&
 		    (np->tok != MDOC_It || np->type != ROFFT_HEAD ||
 		     np->parent->parent->norm->Bl.type != LIST_diag))
 			check_text_em(mdoc, n->line, n->pos, n->string);
@@ -409,7 +407,7 @@ check_text(struct roff_man *mdoc, int ln, int pos, char *p)
 {
 	char		*cp;
 
-	if (MDOC_LITERAL & mdoc->flags)
+	if (mdoc->last->flags & NODE_NOFILL)
 		return;
 
 	for (cp = p; NULL != (p = strchr(p, '\t')); p++)
@@ -1937,7 +1935,7 @@ post_root(POST_ARGS)
 		while (*arch != NULL && strcmp(*arch, mdoc->meta.arch))
 			arch++;
 		if (*arch == NULL) {
-			n = mdoc->first->child;
+			n = mdoc->meta.first->child;
 			while (n->tok != MDOC_Dt ||
 			    n->child == NULL ||
 			    n->child->next == NULL ||
@@ -1953,7 +1951,7 @@ post_root(POST_ARGS)
 
 	/* Check that we begin with a proper `Sh'. */
 
-	n = mdoc->first->child;
+	n = mdoc->meta.first->child;
 	while (n != NULL &&
 	    (n->type == ROFFT_COMMENT ||
 	     (n->tok >= MDOC_Dd &&
