@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.261 2018/11/12 15:09:17 visa Exp $	*/
+/*	$OpenBSD: proc.h,v 1.263 2019/01/06 12:59:45 visa Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -202,6 +202,7 @@ struct process {
 	struct	tusage ps_tu;		/* accumulated times. */
 	struct	rusage ps_cru;		/* sum of stats for reaped children */
 	struct	itimerval ps_timer[3];	/* timers, indexed by ITIMER_* */
+	struct	timeout ps_rucheck_to;	/* resource limit check timer */
 
 	u_int64_t ps_wxcounter;
 
@@ -211,7 +212,6 @@ struct process {
 	size_t ps_uvncount;		/* count of unveil names allocated */
 	int ps_uvshrink;		/* do we need to shrink vnode list */
 	int ps_uvdone;			/* no more unveil is permitted */
-	int ps_uvpcwdgone;		/* need to reevaluate cwd unveil */
 
 /* End area that is zeroed on creation. */
 #define	ps_endzero	ps_startcopy

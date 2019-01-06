@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gre.c,v 1.143 2018/12/17 23:42:47 dlg Exp $ */
+/*	$OpenBSD: if_gre.c,v 1.145 2019/01/04 11:16:03 benno Exp $ */
 /*	$NetBSD: if_gre.c,v 1.9 1999/10/25 19:18:11 drochner Exp $ */
 
 /*
@@ -297,13 +297,16 @@ static int	gre_input_key(struct mbuf **, int *, int, int, uint8_t,
 static struct mbuf *
 		gre_ipv4_patch(const struct gre_tunnel *, struct mbuf *,
 		    uint8_t);
+#ifdef INET6
 static struct mbuf *
 		gre_ipv6_patch(const struct gre_tunnel *, struct mbuf *,
 		    uint8_t);
+#endif
+#ifdef MPLS
 static struct mbuf *
 		gre_mpls_patch(const struct gre_tunnel *, struct mbuf *,
 		    uint8_t);
-
+#endif
 static void	gre_keepalive_send(void *);
 static void	gre_keepalive_recv(struct ifnet *ifp, struct mbuf *);
 static void	gre_keepalive_hold(void *);
@@ -1205,6 +1208,7 @@ gre_ipv4_patch(const struct gre_tunnel *tunnel, struct mbuf *m, uint8_t otos)
 	return (m);
 }
 
+#ifdef INET6
 static struct mbuf *
 gre_ipv6_patch(const struct gre_tunnel *tunnel, struct mbuf *m, uint8_t otos)
 {
@@ -1231,7 +1235,9 @@ gre_ipv6_patch(const struct gre_tunnel *tunnel, struct mbuf *m, uint8_t otos)
 
 	return (m);
 }
+#endif
 
+#ifdef MPLS
 static struct mbuf *
 gre_mpls_patch(const struct gre_tunnel *tunnel, struct mbuf *m, uint8_t otos)
 {
@@ -1244,6 +1250,7 @@ gre_mpls_patch(const struct gre_tunnel *tunnel, struct mbuf *m, uint8_t otos)
 
 	return (m);
 }
+#endif
 
 static int
 egre_input(const struct gre_tunnel *key, struct mbuf *m, int hlen)
