@@ -1074,6 +1074,7 @@
 ./usr/share/man/man3p/warnings::register.3p
 ./usr/share/man/man3p/writemain.3p
 ./usr/share/man/man4/aac.4
+./usr/share/man/man4/abcrtc.4
 ./usr/share/man/man4/ac97.4
 ./usr/share/man/man4/acphy.4
 ./usr/share/man/man4/acpi.4
@@ -1175,6 +1176,7 @@
 ./usr/share/man/man4/arm64/acpipci.4
 ./usr/share/man/man4/arm64/agtimer.4
 ./usr/share/man/man4/arm64/ampintc.4
+./usr/share/man/man4/arm64/apm.4
 ./usr/share/man/man4/arm64/efi.4
 ./usr/share/man/man4/arm64/intro.4
 ./usr/share/man/man4/armv7/agtimer.4
@@ -1427,6 +1429,7 @@
 ./usr/share/man/man4/imxgpio.4
 ./usr/share/man/man4/imxiic.4
 ./usr/share/man/man4/imxrtc.4
+./usr/share/man/man4/imxsrc.4
 ./usr/share/man/man4/imxuart.4
 ./usr/share/man/man4/inet.4
 ./usr/share/man/man4/inet6.4
@@ -1451,6 +1454,7 @@
 ./usr/share/man/man4/iwn.4
 ./usr/share/man/man4/ix.4
 ./usr/share/man/man4/ixgb.4
+./usr/share/man/man4/ixl.4
 ./usr/share/man/man4/jmb.4
 ./usr/share/man/man4/jme.4
 ./usr/share/man/man4/jmphy.4
@@ -1598,6 +1602,7 @@
 ./usr/share/man/man4/octeon/octcit.4
 ./usr/share/man/man4/octeon/octciu.4
 ./usr/share/man/man4/octeon/octcrypto.4
+./usr/share/man/man4/octeon/octgpio.4
 ./usr/share/man/man4/octeon/octmmc.4
 ./usr/share/man/man4/octeon/octrng.4
 ./usr/share/man/man4/octeon/octrtc.4
@@ -2104,6 +2109,7 @@
 ./usr/share/man/man5/ttys.5
 ./usr/share/man/man5/tzfile.5
 ./usr/share/man/man5/unbound.conf.5
+./usr/share/man/man5/unwind.conf.5
 ./usr/share/man/man5/usermgmt.conf.5
 ./usr/share/man/man5/utmp.5
 ./usr/share/man/man5/uuencode.5
@@ -2165,6 +2171,8 @@
 ./usr/share/man/man8/amd64/wsmoused.8
 ./usr/share/man/man8/amq.8
 ./usr/share/man/man8/arm64/MAKEDEV.8
+./usr/share/man/man8/arm64/apm.8
+./usr/share/man/man8/arm64/apmd.8
 ./usr/share/man/man8/arm64/eeprom.8
 ./usr/share/man/man8/armv7/MAKEDEV.8
 ./usr/share/man/man8/armv7/eeprom.8
@@ -2469,6 +2477,8 @@
 ./usr/share/man/man8/unbound-checkconf.8
 ./usr/share/man/man8/unbound-control.8
 ./usr/share/man/man8/unbound.8
+./usr/share/man/man8/unwind.8
+./usr/share/man/man8/unwindctl.8
 ./usr/share/man/man8/usbdevs.8
 ./usr/share/man/man8/vipw.8
 ./usr/share/man/man8/vmctl.8

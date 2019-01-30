@@ -1,4 +1,4 @@
-/*	$OpenBSD: rad.c,v 1.16 2018/09/16 08:53:02 bluhm Exp $	*/
+/*	$OpenBSD: rad.c,v 1.18 2019/01/29 15:43:33 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -82,8 +82,6 @@ uint32_t cmd_opts;
 void
 main_sig_handler(int sig, short event, void *arg)
 {
-	struct rad_conf	empty_conf;
-
 	/*
 	 * Normal signal handler rules don't apply because libevent
 	 * decouples for us.
@@ -92,9 +90,7 @@ main_sig_handler(int sig, short event, void *arg)
 	switch (sig) {
 	case SIGTERM:
 	case SIGINT:
-		memset(&empty_conf, 0, sizeof(empty_conf));
-		(void)main_imsg_send_config(&empty_conf);
-		(void)main_imsg_compose_frontend(IMSG_SHUTDOWN, 0, NULL, 0);
+		main_shutdown();
 		break;
 	case SIGHUP:
 		if (main_reload() == -1)
@@ -286,13 +282,13 @@ main(int argc, char *argv[])
 	    sizeof(filt)) == -1)
 		fatal("ICMP6_FILTER");
 
-	if ((frontend_routesock = socket(PF_ROUTE, SOCK_RAW | SOCK_CLOEXEC,
+	if ((frontend_routesock = socket(AF_ROUTE, SOCK_RAW | SOCK_CLOEXEC,
 	    AF_INET6)) < 0)
 		fatal("route socket");
 
 	rtfilter = ROUTE_FILTER(RTM_IFINFO) | ROUTE_FILTER(RTM_NEWADDR) |
 	    ROUTE_FILTER(RTM_DELADDR);
-	if (setsockopt(frontend_routesock, PF_ROUTE, ROUTE_MSGFILTER,
+	if (setsockopt(frontend_routesock, AF_ROUTE, ROUTE_MSGFILTER,
 	    &rtfilter, sizeof(rtfilter)) < 0)
 		fatal("setsockopt(ROUTE_MSGFILTER)");
 
@@ -434,9 +430,6 @@ main_dispatch_frontend(int fd, short event, void *bula)
 			/* Already checked by frontend. */
 			memcpy(&verbose, imsg.data, sizeof(verbose));
 			log_setverbose(verbose);
-			break;
-		case IMSG_SHUTDOWN:
-			shut = 1;
 			break;
 		default:
 			log_debug("%s: error handling imsg %d", __func__,

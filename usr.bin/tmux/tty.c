@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.311 2018/11/19 13:35:41 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.313 2019/01/20 15:57:27 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1102,7 +1102,7 @@ tty_clear_area(struct tty *tty, const struct window_pane *wp, u_int py,
 		 * background colour isn't default (because it doesn't work
 		 * after SGR 0).
 		 */
-		if (tty->term_type == TTY_VT420 && COLOUR_DEFAULT(bg)) {
+		if (tty->term_type == TTY_VT420 && !COLOUR_DEFAULT(bg)) {
 			xsnprintf(tmp, sizeof tmp, "\033[32;%u;%u;%u;%u$x",
 			    py + 1, px + 1, py + ny, px + nx);
 			tty_puts(tty, tmp);
@@ -2240,7 +2240,7 @@ tty_colours(struct tty *tty, const struct grid_cell *gc)
 					tty_puts(tty, "\033[49m");
 				else if (tc->bg != 0)
 					tty_putcode1(tty, TTYC_SETAB, 0);
-				tc->bg = gc->fg;
+				tc->bg = gc->bg;
 			}
 		}
 	}

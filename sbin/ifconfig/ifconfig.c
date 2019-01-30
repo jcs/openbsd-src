@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.387 2018/11/29 00:12:34 dlg Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.391 2019/01/23 22:17:58 krw Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -198,6 +198,7 @@ void	setifllprio(const char *, int);
 void	setifnwid(const char *, int);
 void	setifjoin(const char *, int);
 void	delifjoin(const char *, int);
+void	delifjoinlist(const char *, int);
 void	showjoin(const char *, int);
 void	setifbssid(const char *, int);
 void	setifnwkey(const char *, int);
@@ -397,7 +398,7 @@ const struct	cmd {
 	{ "join",	NEXTARG,	A_JOIN,		setifjoin },
 	{ "-join",	NEXTARG,	0,		delifjoin },
 	{ "joinlist",	NEXTARG0,	0,		showjoin },
-	{ "-joinlist",	-1,		0,		delifjoin },
+	{ "-joinlist",	-1,		0,		delifjoinlist },
 	{ "bssid",	NEXTARG,	0,		setifbssid },
 	{ "-bssid",	-1,		0,		setifbssid },
 	{ "nwkey",	NEXTARG,	0,		setifnwkey },
@@ -1719,6 +1720,10 @@ setifnwid(const char *val, int d)
 		errx(1, "nwid and join may not be used at the same time");
 	}
 
+	if (strlen(nwidname) != 0) {
+		errx(1, "nwid may not be specified twice");
+	}
+
 	if (d != 0) {
 		/* no network id is especially desired */
 		memset(&nwid, 0, sizeof(nwid));
@@ -1740,14 +1745,12 @@ setifnwid(const char *val, int d)
 void
 process_join_commands(void)
 {
-	int len;
-
 	if (!(actions & A_JOIN))
 		return;
 
 	ifr.ifr_data = (caddr_t)&join;
 	if (ioctl(s, SIOCS80211JOIN, (caddr_t)&ifr) < 0)
-		warn("SIOCS80211JOIN");
+		err(1, "SIOCS80211JOIN");
 }
 
 void
@@ -1759,6 +1762,10 @@ setifjoin(const char *val, int d)
 		errx(1, "nwid and join may not be used at the same time");
 	}
 
+	if (strlen(joinname) != 0) {
+		errx(1, "join may not be specified twice");
+	}
+
 	if (d != 0) {
 		/* no network id is especially desired */
 		memset(&join, 0, sizeof(join));
@@ -1767,6 +1774,8 @@ setifjoin(const char *val, int d)
 		len = sizeof(join.i_nwid);
 		if (get_string(val, NULL, join.i_nwid, &len) == NULL)
 			return;
+		if (len == 0)
+			join.i_flags |= IEEE80211_JOIN_ANY;
 	}
 	join.i_len = len;
 	(void)strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
@@ -1788,18 +1797,41 @@ delifjoin(const char *val, int d)
 	if (d == -1) {
 		ifr.ifr_data = (caddr_t)&join;
 		if (ioctl(s, SIOCS80211JOIN, (caddr_t)&ifr) < 0)
-			warn("SIOCS80211JOIN");
-		return;
+			err(1, "SIOCS80211JOIN");
 	}
 
 	len = sizeof(join.i_nwid);
 	if (get_string(val, NULL, join.i_nwid, &len) == NULL)
 		return;
 	join.i_len = len;
+	if (len == 0)
+		join.i_flags |= IEEE80211_JOIN_ANY;
 	(void)strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 	ifr.ifr_data = (caddr_t)&join;
 	if (ioctl(s, SIOCS80211JOIN, (caddr_t)&ifr) < 0)
-		warn("SIOCS80211JOIN");
+		err(1, "SIOCS80211JOIN");
+}
+
+void
+delifjoinlist(const char *val, int d)
+{
+	struct ieee80211_join join;
+	int len;
+
+	memset(&join, 0, sizeof(join));
+	len = 0;
+	join.i_flags |= (IEEE80211_JOIN_DEL | IEEE80211_JOIN_DEL_ALL);
+
+	if (d == -1) {
+		ifr.ifr_data = (caddr_t)&join;
+		if (ioctl(s, SIOCS80211JOIN, (caddr_t)&ifr) < 0)
+			err(1, "SIOCS80211JOIN");
+		return;
+	}
+
+	ifr.ifr_data = (caddr_t)&join;
+	if (ioctl(s, SIOCS80211JOIN, (caddr_t)&ifr) < 0)
+		err(1, "SIOCS80211JOIN");
 }
 
 void

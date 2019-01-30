@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.156 2018/06/13 01:37:54 krw Exp $	*/
+/*	$OpenBSD: kroute.c,v 1.158 2019/01/26 23:14:36 krw Exp $	*/
 
 /*
  * Copyright 2012 Kenneth R Westerback <krw@openbsd.org>
@@ -66,7 +66,7 @@ get_routes(int rdomain, size_t *len)
 	size_t		 needed;
 
 	mib[0] = CTL_NET;
-	mib[1] = PF_ROUTE;
+	mib[1] = PF_ROUTE;	/* PF_ROUTE (not AF_ROUTE) for sysctl(2)! */
 	mib[2] = 0;
 	mib[3] = AF_INET;
 	mib[4] = NET_RT_FLAGS;
@@ -670,7 +670,7 @@ default_route_index(int rdomain, int routefd)
 			log_debug("%s: writev(RTM_GET) - no default route",
 			    log_procname);
 		else
-			log_warn("%s: writev(RTM_GET)", log_procname); 
+			log_warn("%s: writev(RTM_GET)", log_procname);
 		return 0;
 	}
 

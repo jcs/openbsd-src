@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.93 2019/01/04 23:56:19 dlg Exp $
+# $OpenBSD: GENERIC,v 1.95 2019/01/23 09:58:08 phessler Exp $
 #
 # GENERIC machine description file
 #
@@ -36,6 +36,7 @@ config		bsd	swap generic
 # The main bus device
 mainbus0	at root
 cpu0		at mainbus?
+apm0		at mainbus?
 efi0		at mainbus?
 acpi0		at mainbus?
 acpibtn*	at acpi?
@@ -117,6 +118,7 @@ imxiic*		at fdt?
 iic*		at imxiic?
 imxesdhc*	at fdt?
 sdmmc*		at imxesdhc?
+imxsrc*		at fdt?
 imxpd*		at fdt?
 imxdwusb*	at fdt?
 imxspi*		at fdt?

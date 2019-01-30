@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh.c,v 1.497 2018/12/27 03:25:25 djm Exp $ */
+/* $OpenBSD: ssh.c,v 1.500 2019/01/19 21:43:56 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -625,7 +625,6 @@ main(int ac, char **av)
 	if ((ssh = ssh_alloc_session_state()) == NULL)
 		fatal("Couldn't allocate session state");
 	channel_init_channels(ssh);
-	active_state = ssh; /* XXX legacy API compat */
 
 	/* Parse command-line arguments. */
 	host = NULL;
@@ -1327,7 +1326,7 @@ main(int ac, char **av)
 		int sock;
 		if ((sock = muxclient(options.control_path)) >= 0) {
 			ssh_packet_set_connection(ssh, sock, sock);
-			packet_set_mux();
+			ssh_packet_set_mux(ssh);
 			goto skip_connect;
 		}
 	}
@@ -1354,10 +1353,8 @@ main(int ac, char **av)
 	if (addrs != NULL)
 		freeaddrinfo(addrs);
 
-	packet_set_timeout(options.server_alive_interval,
+	ssh_packet_set_timeout(ssh, options.server_alive_interval,
 	    options.server_alive_count_max);
-
-	ssh = active_state; /* XXX */
 
 	if (timeout_ms > 0)
 		debug3("timeout: %d ms remain after connect", timeout_ms);
@@ -1466,7 +1463,7 @@ main(int ac, char **av)
 	ssh_login(ssh, &sensitive_data, host, (struct sockaddr *)&hostaddr,
 	    options.port, pw, timeout_ms);
 
-	if (packet_connection_is_on_socket()) {
+	if (ssh_packet_connection_is_on_socket(ssh)) {
 		verbose("Authenticated to %s ([%s]:%d).", host,
 		    ssh_remote_ipaddr(ssh), ssh_remote_port(ssh));
 	} else {
@@ -1500,7 +1497,7 @@ main(int ac, char **av)
 
  skip_connect:
 	exit_status = ssh_session2(ssh, pw);
-	packet_close();
+	ssh_packet_close(ssh);
 
 	if (options.control_path != NULL && muxserver_sock != -1)
 		unlink(options.control_path);
@@ -1575,6 +1572,8 @@ static void
 ssh_confirm_remote_forward(struct ssh *ssh, int type, u_int32_t seq, void *ctxt)
 {
 	struct Forward *rfwd = (struct Forward *)ctxt;
+	u_int port;
+	int r;
 
 	/* XXX verbose() on failure? */
 	debug("remote forward %s for: listen %s%s%d, connect %s:%d",
@@ -1586,12 +1585,25 @@ ssh_confirm_remote_forward(struct ssh *ssh, int type, u_int32_t seq, void *ctxt)
 	    rfwd->connect_host, rfwd->connect_port);
 	if (rfwd->listen_path == NULL && rfwd->listen_port == 0) {
 		if (type == SSH2_MSG_REQUEST_SUCCESS) {
-			rfwd->allocated_port = packet_get_int();
-			logit("Allocated port %u for remote forward to %s:%d",
-			    rfwd->allocated_port,
-			    rfwd->connect_host, rfwd->connect_port);
-			channel_update_permission(ssh,
-			    rfwd->handle, rfwd->allocated_port);
+			if ((r = sshpkt_get_u32(ssh, &port)) != 0)
+				fatal("%s: %s", __func__, ssh_err(r));
+			if (port > 65535) {
+				error("Invalid allocated port %u for remote "
+				    "forward to %s:%d", port,
+				    rfwd->connect_host, rfwd->connect_port);
+				/* Ensure failure processing runs below */
+				type = SSH2_MSG_REQUEST_FAILURE;
+				channel_update_permission(ssh,
+				    rfwd->handle, -1);
+			} else {
+				rfwd->allocated_port = (int)port;
+				logit("Allocated port %u for remote "
+				    "forward to %s:%d",
+				    rfwd->allocated_port, rfwd->connect_host,
+				    rfwd->connect_port);
+				channel_update_permission(ssh,
+				    rfwd->handle, rfwd->allocated_port);
+			}
 		} else {
 			channel_update_permission(ssh, rfwd->handle, -1);
 		}
@@ -1748,7 +1760,7 @@ ssh_session2_setup(struct ssh *ssh, int id, int success, void *arg)
 {
 	extern char **environ;
 	const char *display;
-	int interactive = tty_flag;
+	int r, interactive = tty_flag;
 	char *proto = NULL, *data = NULL;
 
 	if (!success)
@@ -1774,11 +1786,12 @@ ssh_session2_setup(struct ssh *ssh, int id, int success, void *arg)
 	if (options.forward_agent) {
 		debug("Requesting authentication agent forwarding.");
 		channel_request_start(ssh, id, "auth-agent-req@openssh.com", 0);
-		packet_send();
+		if ((r = sshpkt_send(ssh)) != 0)
+			fatal("%s: %s", __func__, ssh_err(r));
 	}
 
 	/* Tell the packet module whether this is an interactive session. */
-	packet_set_interactive(interactive,
+	ssh_packet_set_interactive(ssh, interactive,
 	    options.ip_qos_interactive, options.ip_qos_bulk);
 
 	client_session2_setup(ssh, id, tty_flag, subsystem_flag, getenv("TERM"),
@@ -1835,7 +1848,7 @@ ssh_session2_open(struct ssh *ssh)
 static int
 ssh_session2(struct ssh *ssh, struct passwd *pw)
 {
-	int devnull, id = -1;
+	int r, devnull, id = -1;
 	char *cp, *tun_fwd_ifname = NULL;
 
 	/* XXX should be pre-session */
@@ -1865,7 +1878,7 @@ ssh_session2(struct ssh *ssh, struct passwd *pw)
 	}
 
 	/* Start listening for multiplex clients */
-	if (!packet_get_mux())
+	if (!ssh_packet_get_mux(ssh))
 		muxserver_listen(ssh);
 
 	/*
@@ -1899,7 +1912,7 @@ ssh_session2(struct ssh *ssh, struct passwd *pw)
 	if (!no_shell_flag)
 		id = ssh_session2_open(ssh);
 	else {
-		packet_set_interactive(
+		ssh_packet_set_interactive(ssh,
 		    options.control_master == SSHCTL_MASTER_NO,
 		    options.ip_qos_interactive, options.ip_qos_bulk);
 	}
@@ -1908,10 +1921,12 @@ ssh_session2(struct ssh *ssh, struct passwd *pw)
 	if (options.control_master == SSHCTL_MASTER_NO &&
 	    (datafellows & SSH_NEW_OPENSSH)) {
 		debug("Requesting no-more-sessions@openssh.com");
-		packet_start(SSH2_MSG_GLOBAL_REQUEST);
-		packet_put_cstring("no-more-sessions@openssh.com");
-		packet_put_char(0);
-		packet_send();
+		if ((r = sshpkt_start(ssh, SSH2_MSG_GLOBAL_REQUEST)) != 0 ||
+		    (r = sshpkt_put_cstring(ssh,
+		    "no-more-sessions@openssh.com")) != 0 ||
+		    (r = sshpkt_put_u8(ssh, 0)) != 0 ||
+		    (r = sshpkt_send(ssh)) != 0)
+			fatal("%s: %s", __func__, ssh_err(r));
 	}
 
 	/* Execute a local command */

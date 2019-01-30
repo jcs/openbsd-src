@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.310 2019/01/03 21:52:31 beck Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.313 2019/01/23 00:37:51 cheloha Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -92,6 +92,7 @@ int dofutimens(struct proc *, int, struct timespec [2]);
 int dounmount_leaf(struct mount *, int, struct proc *);
 int unveil_add(struct proc *, struct nameidata *, const char *);
 void unveil_removevnode(struct vnode *vp);
+void unveil_free_traversed_vnodes(struct nameidata *);
 ssize_t unveil_find_cover(struct vnode *, struct proc *);
 struct unveil *unveil_lookup(struct vnode *, struct proc *, ssize_t *);
 
@@ -911,7 +912,7 @@ sys_unveil(struct proc *p, void *v, register_t *retval)
 
 	nd.ni_pledge = PLEDGE_UNVEIL;
 	if ((error = namei(&nd)) != 0)
-		return (error);
+		goto end;
 
 	/*
 	 * XXX Any access to the file or directory will allow us to
@@ -921,9 +922,10 @@ sys_unveil(struct proc *p, void *v, register_t *retval)
 	    (VOP_ACCESS(nd.ni_vp, VREAD, p->p_ucred, p) == 0 ||
 	    VOP_ACCESS(nd.ni_vp, VWRITE, p->p_ucred, p) == 0 ||
 	    VOP_ACCESS(nd.ni_vp, VEXEC, p->p_ucred, p) == 0)) ||
-	    VOP_ACCESS(nd.ni_dvp, VREAD, p->p_ucred, p) == 0 ||
+	    (nd.ni_dvp &&
+	    (VOP_ACCESS(nd.ni_dvp, VREAD, p->p_ucred, p) == 0 ||
 	    VOP_ACCESS(nd.ni_dvp, VWRITE, p->p_ucred, p) == 0 ||
-	    VOP_ACCESS(nd.ni_dvp, VEXEC, p->p_ucred, p) == 0);
+	    VOP_ACCESS(nd.ni_dvp, VEXEC, p->p_ucred, p) == 0)));
 
 	/* release lock from namei, but keep ref */
 	if (nd.ni_vp)
@@ -948,6 +950,10 @@ sys_unveil(struct proc *p, void *v, register_t *retval)
 		vrele(nd.ni_vp);
 	if (nd.ni_dvp && nd.ni_dvp != nd.ni_vp)
 		vrele(nd.ni_dvp);
+
+	pool_put(&namei_pool, nd.ni_cnd.cn_pnbuf);
+end:
+	unveil_free_traversed_vnodes(&nd);
 
 	return (error);
 }
@@ -2416,6 +2422,8 @@ sys_utimes(struct proc *p, void *v, register_t *retval)
 		error = copyin(tvp, tv, sizeof(tv));
 		if (error)
 			return (error);
+		if (!timerisvalid(&tv[0]) || !timerisvalid(&tv[1]))
+			return (EINVAL);
 		TIMEVAL_TO_TIMESPEC(&tv[0], &ts[0]);
 		TIMEVAL_TO_TIMESPEC(&tv[1], &ts[1]);
 	} else
@@ -2436,13 +2444,21 @@ sys_utimensat(struct proc *p, void *v, register_t *retval)
 
 	struct timespec ts[2];
 	const struct timespec *tsp;
-	int error;
+	int error, i;
 
 	tsp = SCARG(uap, times);
 	if (tsp != NULL) {
 		error = copyin(tsp, ts, sizeof(ts));
 		if (error)
 			return (error);
+		for (i = 0; i < nitems(ts); i++) {
+			if (ts[i].tv_nsec == UTIME_NOW)
+				continue;
+			if (ts[i].tv_nsec == UTIME_OMIT)
+				continue;
+			if (!timespecisvalid(&ts[i]))
+				return (EINVAL);
+		}
 	} else
 		ts[0].tv_nsec = ts[1].tv_nsec = UTIME_NOW;
 
@@ -2504,20 +2520,10 @@ dovutimens(struct proc *p, struct vnode *vp, struct timespec ts[2])
 			ts[1] = now;
 	}
 
-	if (ts[0].tv_nsec != UTIME_OMIT) {
-		if (ts[0].tv_nsec < 0 || ts[0].tv_nsec >= 1000000000) {
-			vrele(vp);
-			return (EINVAL);
-		}
+	if (ts[0].tv_nsec != UTIME_OMIT)
 		vattr.va_atime = ts[0];
-	}
-	if (ts[1].tv_nsec != UTIME_OMIT) {
-		if (ts[1].tv_nsec < 0 || ts[1].tv_nsec >= 1000000000) {
-			vrele(vp);
-			return (EINVAL);
-		}
+	if (ts[1].tv_nsec != UTIME_OMIT)
 		vattr.va_mtime = ts[1];
-	}
 
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	if (vp->v_mount->mnt_flag & MNT_RDONLY)
@@ -2548,6 +2554,8 @@ sys_futimes(struct proc *p, void *v, register_t *retval)
 		error = copyin(tvp, tv, sizeof(tv));
 		if (error)
 			return (error);
+		if (!timerisvalid(&tv[0]) || !timerisvalid(&tv[1]))
+			return (EINVAL);
 		TIMEVAL_TO_TIMESPEC(&tv[0], &ts[0]);
 		TIMEVAL_TO_TIMESPEC(&tv[1], &ts[1]);
 	} else
@@ -2565,13 +2573,21 @@ sys_futimens(struct proc *p, void *v, register_t *retval)
 	} */ *uap = v;
 	struct timespec ts[2];
 	const struct timespec *tsp;
-	int error;
+	int error, i;
 
 	tsp = SCARG(uap, times);
 	if (tsp != NULL) {
 		error = copyin(tsp, ts, sizeof(ts));
 		if (error)
 			return (error);
+		for (i = 0; i < nitems(ts); i++) {
+			if (ts[i].tv_nsec == UTIME_NOW)
+				continue;
+			if (ts[i].tv_nsec == UTIME_OMIT)
+				continue;
+			if (!timespecisvalid(&ts[i]))
+				return (EINVAL);
+		}
 	} else
 		ts[0].tv_nsec = ts[1].tv_nsec = UTIME_NOW;
 

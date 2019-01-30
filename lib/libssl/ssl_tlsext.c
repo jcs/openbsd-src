@@ -1,8 +1,8 @@
-/* $OpenBSD: ssl_tlsext.c,v 1.26 2018/11/09 05:02:53 beck Exp $ */
+/* $OpenBSD: ssl_tlsext.c,v 1.38 2019/01/28 15:52:17 beck Exp $ */
 /*
- * Copyright (c) 2016, 2017 Joel Sing <jsing@openbsd.org>
+ * Copyright (c) 2016, 2017, 2019 Joel Sing <jsing@openbsd.org>
  * Copyright (c) 2017 Doug Hogan <doug@openbsd.org>
- * Copyright (c) 2017 Bob Beck <beck@openbsd.org>
+ * Copyright (c) 2018-2019 Bob Beck <beck@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,20 +16,39 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+#include <openssl/curve25519.h>
 #include <openssl/ocsp.h>
 
 #include "ssl_locl.h"
 
 #include "bytestring.h"
-#include "ssl_tlsext.h"
 #include "ssl_sigalgs.h"
+#include "ssl_tlsext.h"
+
+
+static int
+tlsext_u16_prefixed_builder(CBB *parent, uint8_t *bytes, size_t len)
+{
+	CBB child;
+
+	if (!CBB_add_u16_length_prefixed(parent, &child))
+		return 0;
+
+	if (!CBB_add_bytes(&child, bytes, len))
+		return 0;
+
+	if (!CBB_flush(parent))
+		return 0;
+
+	return 1;
+}
 
 /*
  * Supported Application-Layer Protocol Negotiation - RFC 7301
  */
 
 int
-tlsext_alpn_clienthello_needs(SSL *s)
+tlsext_alpn_client_needs(SSL *s)
 {
 	/* ALPN protos have been specified and this is the initial handshake */
 	return s->internal->alpn_client_proto_list != NULL &&
@@ -37,25 +56,16 @@ tlsext_alpn_clienthello_needs(SSL *s)
 }
 
 int
-tlsext_alpn_clienthello_build(SSL *s, CBB *cbb)
+tlsext_alpn_client_build(SSL *s, CBB *cbb)
 {
-	CBB protolist;
 
-	if (!CBB_add_u16_length_prefixed(cbb, &protolist))
-		return 0;
-
-	if (!CBB_add_bytes(&protolist, s->internal->alpn_client_proto_list,
-	    s->internal->alpn_client_proto_list_len))
-		return 0;
-
-	if (!CBB_flush(cbb))
-		return 0;
-
-	return 1;
+	return (tlsext_u16_prefixed_builder(cbb,
+		s->internal->alpn_client_proto_list,
+		s->internal->alpn_client_proto_list_len));
 }
 
 int
-tlsext_alpn_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_alpn_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	CBS proto_name_list, alpn;
 	const unsigned char *selected;
@@ -103,13 +113,13 @@ tlsext_alpn_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 }
 
 int
-tlsext_alpn_serverhello_needs(SSL *s)
+tlsext_alpn_server_needs(SSL *s)
 {
 	return S3I(s)->alpn_selected != NULL;
 }
 
 int
-tlsext_alpn_serverhello_build(SSL *s, CBB *cbb)
+tlsext_alpn_server_build(SSL *s, CBB *cbb)
 {
 	CBB list, selected;
 
@@ -130,7 +140,7 @@ tlsext_alpn_serverhello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_alpn_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_alpn_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	CBS list, proto;
 
@@ -167,13 +177,14 @@ tlsext_alpn_serverhello_parse(SSL *s, CBS *cbs, int *alert)
  * Supported Groups - RFC 7919 section 2
  */
 int
-tlsext_supportedgroups_clienthello_needs(SSL *s)
+tlsext_supportedgroups_client_needs(SSL *s)
 {
-	return ssl_has_ecc_ciphers(s);
+	return ssl_has_ecc_ciphers(s) ||
+	    (S3I(s)->hs_tls13.max_version >= TLS1_3_VERSION);
 }
 
 int
-tlsext_supportedgroups_clienthello_build(SSL *s, CBB *cbb)
+tlsext_supportedgroups_client_build(SSL *s, CBB *cbb)
 {
 	const uint16_t *groups;
 	size_t groups_len;
@@ -201,7 +212,7 @@ tlsext_supportedgroups_clienthello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_supportedgroups_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_supportedgroups_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	CBS grouplist;
 	size_t groups_len;
@@ -254,19 +265,19 @@ tlsext_supportedgroups_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 
 /* This extension is never used by the server. */
 int
-tlsext_supportedgroups_serverhello_needs(SSL *s)
+tlsext_supportedgroups_server_needs(SSL *s)
 {
 	return 0;
 }
 
 int
-tlsext_supportedgroups_serverhello_build(SSL *s, CBB *cbb)
+tlsext_supportedgroups_server_build(SSL *s, CBB *cbb)
 {
 	return 0;
 }
 
 int
-tlsext_supportedgroups_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_supportedgroups_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	/*
 	 * Servers should not send this extension per the RFC.
@@ -347,25 +358,25 @@ tlsext_ecpf_parse(SSL *s, CBS *cbs, int *alert)
 }
 
 int
-tlsext_ecpf_clienthello_needs(SSL *s)
+tlsext_ecpf_client_needs(SSL *s)
 {
 	return ssl_has_ecc_ciphers(s);
 }
 
 int
-tlsext_ecpf_clienthello_build(SSL *s, CBB *cbb)
+tlsext_ecpf_client_build(SSL *s, CBB *cbb)
 {
 	return tlsext_ecpf_build(s, cbb);
 }
 
 int
-tlsext_ecpf_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_ecpf_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	return tlsext_ecpf_parse(s, cbs, alert);
 }
 
 int
-tlsext_ecpf_serverhello_needs(SSL *s)
+tlsext_ecpf_server_needs(SSL *s)
 {
 	if (s->version == DTLS1_VERSION)
 		return 0;
@@ -374,13 +385,13 @@ tlsext_ecpf_serverhello_needs(SSL *s)
 }
 
 int
-tlsext_ecpf_serverhello_build(SSL *s, CBB *cbb)
+tlsext_ecpf_server_build(SSL *s, CBB *cbb)
 {
 	return tlsext_ecpf_build(s, cbb);
 }
 
 int
-tlsext_ecpf_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_ecpf_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	return tlsext_ecpf_parse(s, cbs, alert);
 }
@@ -389,13 +400,13 @@ tlsext_ecpf_serverhello_parse(SSL *s, CBS *cbs, int *alert)
  * Renegotiation Indication - RFC 5746.
  */
 int
-tlsext_ri_clienthello_needs(SSL *s)
+tlsext_ri_client_needs(SSL *s)
 {
 	return (s->internal->renegotiate);
 }
 
 int
-tlsext_ri_clienthello_build(SSL *s, CBB *cbb)
+tlsext_ri_client_build(SSL *s, CBB *cbb)
 {
 	CBB reneg;
 
@@ -411,7 +422,7 @@ tlsext_ri_clienthello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_ri_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_ri_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	CBS reneg;
 
@@ -439,13 +450,13 @@ tlsext_ri_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 }
 
 int
-tlsext_ri_serverhello_needs(SSL *s)
+tlsext_ri_server_needs(SSL *s)
 {
 	return (S3I(s)->send_connection_binding);
 }
 
 int
-tlsext_ri_serverhello_build(SSL *s, CBB *cbb)
+tlsext_ri_server_build(SSL *s, CBB *cbb)
 {
 	CBB reneg;
 
@@ -464,7 +475,7 @@ tlsext_ri_serverhello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_ri_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_ri_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	CBS reneg, prev_client, prev_server;
 
@@ -521,21 +532,40 @@ tlsext_ri_serverhello_parse(SSL *s, CBS *cbs, int *alert)
  * Signature Algorithms - RFC 5246 section 7.4.1.4.1.
  */
 int
-tlsext_sigalgs_clienthello_needs(SSL *s)
+tlsext_sigalgs_client_needs(SSL *s)
 {
 	return (TLS1_get_client_version(s) >= TLS1_2_VERSION);
 }
 
 int
-tlsext_sigalgs_clienthello_build(SSL *s, CBB *cbb)
+tlsext_sigalgs_client_build(SSL *s, CBB *cbb)
 {
 	CBB sigalgs;
 
 	if (!CBB_add_u16_length_prefixed(cbb, &sigalgs))
 		return 0;
 
-	if (!ssl_sigalgs_build(&sigalgs, tls12_sigalgs, tls12_sigalgs_len))
+	switch (TLS1_get_client_version(s)) {
+	case TLS1_2_VERSION:
+		if (!ssl_sigalgs_build(&sigalgs, tls12_sigalgs, tls12_sigalgs_len))
+			return 0;
+		break;
+	case TLS1_3_VERSION:
+		if  (S3I(s)->hs_tls13.min_version < TLS1_3_VERSION) {
+			if (!ssl_sigalgs_build(&sigalgs, tls12_sigalgs,
+			    tls12_sigalgs_len))
+			    return 0;
+		}
+		else {
+			if (!ssl_sigalgs_build(&sigalgs, tls13_sigalgs,
+			    tls13_sigalgs_len))
+			    return 0;
+		}
+		break;
+	default:
+		/* Should not happen */
 		return 0;
+	}
 
 	if (!CBB_flush(cbb))
 		return 0;
@@ -544,30 +574,41 @@ tlsext_sigalgs_clienthello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_sigalgs_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_sigalgs_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	CBS sigalgs;
 
 	if (!CBS_get_u16_length_prefixed(cbs, &sigalgs))
 		return 0;
 
-	return tls1_process_sigalgs(s, &sigalgs);
+	switch (s->version) {
+	case TLS1_3_VERSION:
+		return tls1_process_sigalgs(s, &sigalgs, tls13_sigalgs,
+		    tls13_sigalgs_len);
+	case TLS1_2_VERSION:
+		return tls1_process_sigalgs(s, &sigalgs, tls12_sigalgs,
+		    tls12_sigalgs_len);
+	default:
+		break;
+	}
+
+	return 0;
 }
 
 int
-tlsext_sigalgs_serverhello_needs(SSL *s)
+tlsext_sigalgs_server_needs(SSL *s)
 {
 	return 0;
 }
 
 int
-tlsext_sigalgs_serverhello_build(SSL *s, CBB *cbb)
+tlsext_sigalgs_server_build(SSL *s, CBB *cbb)
 {
 	return 0;
 }
 
 int
-tlsext_sigalgs_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_sigalgs_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	/* As per the RFC, servers must not send this extension. */
 	return 0;
@@ -577,13 +618,13 @@ tlsext_sigalgs_serverhello_parse(SSL *s, CBS *cbs, int *alert)
  * Server Name Indication - RFC 6066, section 3.
  */
 int
-tlsext_sni_clienthello_needs(SSL *s)
+tlsext_sni_client_needs(SSL *s)
 {
 	return (s->tlsext_hostname != NULL);
 }
 
 int
-tlsext_sni_clienthello_build(SSL *s, CBB *cbb)
+tlsext_sni_client_build(SSL *s, CBB *cbb)
 {
 	CBB server_name_list, host_name;
 
@@ -603,7 +644,7 @@ tlsext_sni_clienthello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_sni_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_sni_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	CBS server_name_list, host_name;
 	uint8_t name_type;
@@ -661,19 +702,19 @@ tlsext_sni_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 }
 
 int
-tlsext_sni_serverhello_needs(SSL *s)
+tlsext_sni_server_needs(SSL *s)
 {
 	return (s->session->tlsext_hostname != NULL);
 }
 
 int
-tlsext_sni_serverhello_build(SSL *s, CBB *cbb)
+tlsext_sni_server_build(SSL *s, CBB *cbb)
 {
 	return 1;
 }
 
 int
-tlsext_sni_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_sni_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	if (s->tlsext_hostname == NULL || CBS_len(cbs) != 0) {
 		*alert = TLS1_AD_UNRECOGNIZED_NAME;
@@ -711,14 +752,14 @@ tlsext_sni_serverhello_parse(SSL *s, CBS *cbs, int *alert)
  */
 
 int
-tlsext_ocsp_clienthello_needs(SSL *s)
+tlsext_ocsp_client_needs(SSL *s)
 {
 	return (s->tlsext_status_type == TLSEXT_STATUSTYPE_ocsp &&
 	    s->version != DTLS1_VERSION);
 }
 
 int
-tlsext_ocsp_clienthello_build(SSL *s, CBB *cbb)
+tlsext_ocsp_client_build(SSL *s, CBB *cbb)
 {
 	CBB respid_list, respid, exts;
 	unsigned char *ext_data;
@@ -762,7 +803,7 @@ tlsext_ocsp_clienthello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_ocsp_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_ocsp_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	int failure = SSL_AD_DECODE_ERROR;
 	CBS respid_list, respid, exts;
@@ -836,19 +877,19 @@ tlsext_ocsp_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 }
 
 int
-tlsext_ocsp_serverhello_needs(SSL *s)
+tlsext_ocsp_server_needs(SSL *s)
 {
 	return s->internal->tlsext_status_expected;
 }
 
 int
-tlsext_ocsp_serverhello_build(SSL *s, CBB *cbb)
+tlsext_ocsp_server_build(SSL *s, CBB *cbb)
 {
 	return 1;
 }
 
 int
-tlsext_ocsp_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_ocsp_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	if (s->tlsext_status_type == -1) {
 		*alert = TLS1_AD_UNSUPPORTED_EXTENSION;
@@ -863,7 +904,7 @@ tlsext_ocsp_serverhello_parse(SSL *s, CBS *cbs, int *alert)
  * SessionTicket extension - RFC 5077 section 3.2
  */
 int
-tlsext_sessionticket_clienthello_needs(SSL *s)
+tlsext_sessionticket_client_needs(SSL *s)
 {
 	/*
 	 * Send session ticket extension when enabled and not overridden.
@@ -884,7 +925,7 @@ tlsext_sessionticket_clienthello_needs(SSL *s)
 }
 
 int
-tlsext_sessionticket_clienthello_build(SSL *s, CBB *cbb)
+tlsext_sessionticket_client_build(SSL *s, CBB *cbb)
 {
 	/*
 	 * Signal that we support session tickets by sending an empty
@@ -927,7 +968,7 @@ tlsext_sessionticket_clienthello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_sessionticket_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_sessionticket_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	if (s->internal->tls_session_ticket_ext_cb) {
 		if (!s->internal->tls_session_ticket_ext_cb(s, CBS_data(cbs),
@@ -948,22 +989,21 @@ tlsext_sessionticket_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 }
 
 int
-tlsext_sessionticket_serverhello_needs(SSL *s)
+tlsext_sessionticket_server_needs(SSL *s)
 {
 	return (s->internal->tlsext_ticket_expected &&
 	    !(SSL_get_options(s) & SSL_OP_NO_TICKET));
 }
 
 int
-tlsext_sessionticket_serverhello_build(SSL *s, CBB *cbb)
+tlsext_sessionticket_server_build(SSL *s, CBB *cbb)
 {
 	/* Empty ticket */
-
 	return 1;
 }
 
 int
-tlsext_sessionticket_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_sessionticket_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	if (s->internal->tls_session_ticket_ext_cb) {
 		if (!s->internal->tls_session_ticket_ext_cb(s, CBS_data(cbs),
@@ -991,13 +1031,13 @@ tlsext_sessionticket_serverhello_parse(SSL *s, CBS *cbs, int *alert)
 #ifndef OPENSSL_NO_SRTP
 
 int
-tlsext_srtp_clienthello_needs(SSL *s)
+tlsext_srtp_client_needs(SSL *s)
 {
 	return SSL_IS_DTLS(s) && SSL_get_srtp_profiles(s) != NULL;
 }
 
 int
-tlsext_srtp_clienthello_build(SSL *s, CBB *cbb)
+tlsext_srtp_client_build(SSL *s, CBB *cbb)
 {
 	CBB profiles, mki;
 	int ct, i;
@@ -1034,7 +1074,7 @@ tlsext_srtp_clienthello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_srtp_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_srtp_server_parse(SSL *s, CBS *cbs, int *alert)
 {
 	SRTP_PROTECTION_PROFILE *cprof, *sprof;
 	STACK_OF(SRTP_PROTECTION_PROFILE) *clnt = NULL, *srvr;
@@ -1114,13 +1154,13 @@ tlsext_srtp_clienthello_parse(SSL *s, CBS *cbs, int *alert)
 }
 
 int
-tlsext_srtp_serverhello_needs(SSL *s)
+tlsext_srtp_server_needs(SSL *s)
 {
 	return SSL_IS_DTLS(s) && SSL_get_selected_srtp_profile(s) != NULL;
 }
 
 int
-tlsext_srtp_serverhello_build(SSL *s, CBB *cbb)
+tlsext_srtp_server_build(SSL *s, CBB *cbb)
 {
 	SRTP_PROTECTION_PROFILE *profile;
 	CBB srtp, mki;
@@ -1144,7 +1184,7 @@ tlsext_srtp_serverhello_build(SSL *s, CBB *cbb)
 }
 
 int
-tlsext_srtp_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_srtp_client_parse(SSL *s, CBS *cbs, int *alert)
 {
 	STACK_OF(SRTP_PROTECTION_PROFILE) *clnt;
 	SRTP_PROTECTION_PROFILE *prof;
@@ -1194,6 +1234,402 @@ tlsext_srtp_serverhello_parse(SSL *s, CBS *cbs, int *alert)
 
 #endif /* OPENSSL_NO_SRTP */
 
+/*
+ * TLSv1.3 Key Share - RFC 8446 section 4.2.8.
+ */
+int
+tlsext_keyshare_client_needs(SSL *s)
+{
+	/* XXX once this gets initialized when we get tls13_client.c */
+	if (S3I(s)->hs_tls13.max_version == 0)
+		return 0;
+	return (!SSL_IS_DTLS(s) && S3I(s)->hs_tls13.max_version >=
+	    TLS1_3_VERSION);
+}
+
+int
+tlsext_keyshare_x25519_generate(SSL *s, CBB *keyshare)
+{
+	uint8_t *public_key = NULL, *private_key = NULL;
+	CBB key_exchange;
+
+	/* Generate X25519 key pair. */
+	if ((public_key = malloc(X25519_KEY_LENGTH)) == NULL)
+		goto err;
+	if ((private_key = malloc(X25519_KEY_LENGTH)) == NULL)
+		goto err;
+	X25519_keypair(public_key, private_key);
+
+	/* Add the group and serialize the public key. */
+	if (!CBB_add_u16(keyshare, tls1_ec_nid2curve_id(NID_X25519)))
+		goto err;
+	if (!CBB_add_u16_length_prefixed(keyshare, &key_exchange))
+		goto err;
+	if (!CBB_add_bytes(&key_exchange, public_key, X25519_KEY_LENGTH))
+		goto err;
+
+	S3I(s)->hs_tls13.x25519_public = public_key;
+	S3I(s)->hs_tls13.x25519_private = private_key;
+
+	return 1;
+
+ err:
+	freezero(public_key, X25519_KEY_LENGTH);
+	freezero(private_key, X25519_KEY_LENGTH);
+
+	return 0;
+}
+
+int
+tlsext_keyshare_client_build(SSL *s, CBB *cbb)
+{
+	CBB client_shares;
+
+	/* Generate and provide key shares. */
+	if (!CBB_add_u16_length_prefixed(cbb, &client_shares))
+		return 0;
+
+	if (!tlsext_keyshare_x25519_generate(s, &client_shares) ||
+	    !CBB_flush(cbb))
+		return 0;
+
+	return (1);
+}
+
+int
+tlsext_keyshare_server_parse(SSL *s, CBS *cbs, int *alert)
+{
+	CBS client_shares;
+	CBS key_exchange;
+	uint16_t group;
+	size_t out_len;
+	int ret = 0;
+
+	if (!CBS_get_u16_length_prefixed(cbs, &client_shares))
+		goto err;
+
+	if (CBS_len(cbs) != 0)
+		goto err;
+
+	while (CBS_len(&client_shares) > 0) {
+
+		/* Unpack client share. */
+		if (!CBS_get_u16(&client_shares, &group))
+			goto err;
+
+		if (!CBS_get_u16_length_prefixed(&client_shares, &key_exchange))
+			goto err;
+
+		/*
+		 * Skip this client share if not X25519
+		 * XXX support other groups later.
+		 * XXX enforce group can only appear once.
+		 */
+		if (S3I(s)->hs_tls13.x25519_peer_public != NULL ||
+		    group != tls1_ec_nid2curve_id(NID_X25519))
+			continue;
+
+		if (CBS_len(&key_exchange) != X25519_KEY_LENGTH)
+			goto err;
+
+		if (!CBS_stow(&key_exchange, &S3I(s)->hs_tls13.x25519_peer_public,
+		    &out_len))
+			goto err;
+
+		ret = 1;
+	}
+
+	return ret;
+
+ err:
+	*alert = SSL_AD_DECODE_ERROR;
+	return 0;
+}
+
+int
+tlsext_keyshare_server_needs(SSL *s)
+{
+	if (SSL_IS_DTLS(s) || s->version < TLS1_3_VERSION)
+		return 0;
+
+	return tlsext_extension_seen(s, TLSEXT_TYPE_key_share);
+}
+
+int
+tlsext_keyshare_server_build(SSL *s, CBB *cbb)
+{
+	/* X25519 */
+	if (S3I(s)->hs_tls13.x25519_peer_public == NULL)
+		return 0;
+
+	if (!tlsext_keyshare_x25519_generate(s, cbb) ||
+	    !CBB_flush(cbb))
+		return 0;
+
+	return 1;
+}
+
+int
+tlsext_keyshare_client_parse(SSL *s, CBS *cbs, int *alert)
+{
+	CBS key_exchange;
+	uint16_t group;
+	size_t out_len;
+
+	/* Unpack server share. */
+	if (!CBS_get_u16(cbs, &group))
+		goto err;
+
+	/* Handle other groups and verify that they're valid. */
+	if (group != tls1_ec_nid2curve_id(NID_X25519))
+		goto err;
+
+	if (!CBS_get_u16_length_prefixed(cbs, &key_exchange))
+		goto err;
+
+	if (CBS_len(&key_exchange) != X25519_KEY_LENGTH)
+		goto err;
+
+	if (!CBS_stow(&key_exchange, &S3I(s)->hs_tls13.x25519_peer_public,
+	    &out_len))
+		goto err;
+
+	return 1;
+
+ err:
+	*alert = SSL_AD_DECODE_ERROR;
+	return 0;
+}
+
+/*
+ * Supported Versions - RFC 8446 section 4.2.1.
+ */
+int
+tlsext_versions_client_needs(SSL *s)
+{
+	if (SSL_IS_DTLS(s))
+		return 0;
+	return (S3I(s)->hs_tls13.max_version >= TLS1_3_VERSION);
+}
+
+int
+tlsext_versions_client_build(SSL *s, CBB *cbb)
+{
+	uint16_t max, min;
+	uint16_t version;
+	CBB versions;
+
+	max = S3I(s)->hs_tls13.max_version;
+	min = S3I(s)->hs_tls13.min_version;
+
+	if (min < TLS1_VERSION)
+		return 0;
+
+	if (!CBB_add_u8_length_prefixed(cbb, &versions))
+		return 0;
+
+	/* XXX - fix, but contiguous for now... */
+	for (version = max; version >= min; version--) {
+		if (!CBB_add_u16(&versions, version))
+			return 0;
+	}
+
+	if (!CBB_flush(cbb))
+		return 0;
+
+	return 1;
+}
+
+int
+tlsext_versions_server_parse(SSL *s, CBS *cbs, int *alert)
+{
+	CBS versions;
+	uint16_t version;
+	uint16_t max, min;
+	uint16_t matched_version = 0;
+
+	max = S3I(s)->hs_tls13.max_version;
+	min = S3I(s)->hs_tls13.min_version;
+
+	if (!CBS_get_u8_length_prefixed(cbs, &versions))
+		goto err;
+
+	 while (CBS_len(&versions) > 0) {
+		if (!CBS_get_u16(&versions, &version))
+			goto err;
+		/*
+		 * XXX What is below implements client preference, and
+		 * ignores any server preference entirely.
+		 */
+		if (matched_version == 0 && version >= min && version <= max)
+			matched_version = version;
+	}
+
+	/*
+	 * XXX if we haven't mached a version we should
+	 * fail - but we currently need to succeed to
+	 * ignore this before the server code for 1.3
+	 * is set up and initialized.
+	 */
+	if (max == 0)
+		return 1; /* XXX */
+
+	if (matched_version != 0)  {
+		s->version = matched_version;
+		return 1;
+	}
+
+	*alert = SSL_AD_PROTOCOL_VERSION;
+	return 0;
+
+err:
+	*alert = SSL_AD_DECODE_ERROR;
+	return 0;
+}
+
+int
+tlsext_versions_server_needs(SSL *s)
+{
+	return (!SSL_IS_DTLS(s) && s->version >= TLS1_3_VERSION);
+}
+
+int
+tlsext_versions_server_build(SSL *s, CBB *cbb)
+{
+	if (!CBB_add_u16(cbb, TLS1_3_VERSION))
+		return 0;
+	/* XXX set 1.2 in legacy version?  */
+
+	return 1;
+}
+
+int
+tlsext_versions_client_parse(SSL *s, CBS *cbs, int *alert)
+{
+	uint16_t selected_version;
+
+	if (!CBS_get_u16(cbs, &selected_version)) {
+		*alert = SSL_AD_DECODE_ERROR;
+		return 0;
+	}
+
+	if (selected_version < TLS1_3_VERSION) {
+		*alert = SSL_AD_ILLEGAL_PARAMETER;
+		return 0;
+	}
+
+	/* XXX test between min and max once initialization code goes in */
+	S3I(s)->hs_tls13.server_version = selected_version;
+
+	return 1;
+}
+
+
+/*
+ * Cookie - RFC 8446 section 4.2.2.
+ */
+
+int
+tlsext_cookie_client_needs(SSL *s)
+{
+	if (SSL_IS_DTLS(s))
+		return 0;
+	if (S3I(s)->hs_tls13.max_version < TLS1_3_VERSION)
+		return 0;
+	return (S3I(s)->hs_tls13.cookie_len > 0 &&
+	    S3I(s)->hs_tls13.cookie != NULL);
+}
+
+int
+tlsext_cookie_client_build(SSL *s, CBB *cbb)
+{
+	return (tlsext_u16_prefixed_builder(cbb,
+	    S3I(s)->hs_tls13.cookie, S3I(s)->hs_tls13.cookie_len));
+}
+
+int
+tlsext_cookie_server_parse(SSL *s, CBS *cbs, int *alert)
+{
+	CBS cookie;
+
+	if (!CBS_get_u16_length_prefixed(cbs, &cookie))
+		goto err;
+
+	if (CBS_len(&cookie) != S3I(s)->hs_tls13.cookie_len)
+		goto err;
+
+	/*
+	 * Check provided cookie value against what server previously
+	 * sent - client *MUST* send the same cookie with new CR after
+	 * a cookie is sent by the server with an HRR.
+	 */
+	if (!CBS_mem_equal(&cookie, S3I(s)->hs_tls13.cookie,
+	    S3I(s)->hs_tls13.cookie_len)) {
+		/* XXX special cookie mismatch alert? */
+		*alert = SSL_AD_ILLEGAL_PARAMETER;
+		return 0;
+	}
+
+	return 1;
+
+ err:
+	*alert = SSL_AD_DECODE_ERROR;
+	return 0;
+}
+
+int
+tlsext_cookie_server_needs(SSL *s)
+{
+
+	if (SSL_IS_DTLS(s))
+		return 0;
+	if (S3I(s)->hs_tls13.max_version < TLS1_3_VERSION)
+		return 0;
+	/*
+	 * Server needs to set cookie value in tls13 handshake
+	 * in order to send one, should only be sent with HRR.
+	 */
+	return (S3I(s)->hs_tls13.cookie_len > 0 &&
+	    S3I(s)->hs_tls13.cookie != NULL);
+}
+
+int
+tlsext_cookie_server_build(SSL *s, CBB *cbb)
+{
+	return (tlsext_u16_prefixed_builder(cbb,
+	    S3I(s)->hs_tls13.cookie, S3I(s)->hs_tls13.cookie_len));
+}
+
+int
+tlsext_cookie_client_parse(SSL *s, CBS *cbs, int *alert)
+{
+	CBS cookie;
+
+	/*
+	 * XXX This currently assumes we will not get a second
+	 * HRR from a server with a cookie to process after accepting
+	 * one from the server in the same handshake
+	 */
+	if (S3I(s)->hs_tls13.cookie != NULL ||
+	    S3I(s)->hs_tls13.cookie_len != 0) {
+		*alert = SSL_AD_ILLEGAL_PARAMETER;
+		return 0;
+	}
+
+	if (!CBS_get_u16_length_prefixed(cbs, &cookie))
+		goto err;
+
+	if (!CBS_stow(&cookie, &S3I(s)->hs_tls13.cookie,
+	    &S3I(s)->hs_tls13.cookie_len))
+		goto err;
+
+	return 1;
+
+ err:
+	*alert = SSL_AD_DECODE_ERROR;
+	return 0;
+}
+
 struct tls_extension_funcs {
 	int (*needs)(SSL *s);
 	int (*build)(SSL *s, CBB *cbb);
@@ -1202,127 +1638,182 @@ struct tls_extension_funcs {
 
 struct tls_extension {
 	uint16_t type;
-	struct tls_extension_funcs clienthello;
-	struct tls_extension_funcs serverhello;
+	uint16_t messages;
+	struct tls_extension_funcs client;
+	struct tls_extension_funcs server;
 };
 
 static struct tls_extension tls_extensions[] = {
 	{
-		.type = TLSEXT_TYPE_server_name,
-		.clienthello = {
-			.needs = tlsext_sni_clienthello_needs,
-			.build = tlsext_sni_clienthello_build,
-			.parse = tlsext_sni_clienthello_parse,
+		.type = TLSEXT_TYPE_supported_versions,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_SH |
+		    SSL_TLSEXT_MSG_HRR,
+		.client = {
+			.needs = tlsext_versions_client_needs,
+			.build = tlsext_versions_client_build,
+			.parse = tlsext_versions_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_sni_serverhello_needs,
-			.build = tlsext_sni_serverhello_build,
-			.parse = tlsext_sni_serverhello_parse,
+		.server = {
+			.needs = tlsext_versions_server_needs,
+			.build = tlsext_versions_server_build,
+			.parse = tlsext_versions_client_parse,
+		},
+	},
+	{
+		.type = TLSEXT_TYPE_key_share,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_SH |
+		    SSL_TLSEXT_MSG_HRR,
+		.client = {
+			.needs = tlsext_keyshare_client_needs,
+			.build = tlsext_keyshare_client_build,
+			.parse = tlsext_keyshare_server_parse,
+		},
+		.server = {
+			.needs = tlsext_keyshare_server_needs,
+			.build = tlsext_keyshare_server_build,
+			.parse = tlsext_keyshare_client_parse,
+		},
+	},
+	{
+		.type = TLSEXT_TYPE_server_name,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_EE,
+		.client = {
+			.needs = tlsext_sni_client_needs,
+			.build = tlsext_sni_client_build,
+			.parse = tlsext_sni_server_parse,
+		},
+		.server = {
+			.needs = tlsext_sni_server_needs,
+			.build = tlsext_sni_server_build,
+			.parse = tlsext_sni_client_parse,
 		},
 	},
 	{
 		.type = TLSEXT_TYPE_renegotiate,
-		.clienthello = {
-			.needs = tlsext_ri_clienthello_needs,
-			.build = tlsext_ri_clienthello_build,
-			.parse = tlsext_ri_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_SH,
+		.client = {
+			.needs = tlsext_ri_client_needs,
+			.build = tlsext_ri_client_build,
+			.parse = tlsext_ri_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_ri_serverhello_needs,
-			.build = tlsext_ri_serverhello_build,
-			.parse = tlsext_ri_serverhello_parse,
+		.server = {
+			.needs = tlsext_ri_server_needs,
+			.build = tlsext_ri_server_build,
+			.parse = tlsext_ri_client_parse,
 		},
 	},
 	{
 		.type = TLSEXT_TYPE_status_request,
-		.clienthello = {
-			.needs = tlsext_ocsp_clienthello_needs,
-			.build = tlsext_ocsp_clienthello_build,
-			.parse = tlsext_ocsp_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_CR |
+		    SSL_TLSEXT_MSG_CT,
+		.client = {
+			.needs = tlsext_ocsp_client_needs,
+			.build = tlsext_ocsp_client_build,
+			.parse = tlsext_ocsp_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_ocsp_serverhello_needs,
-			.build = tlsext_ocsp_serverhello_build,
-			.parse = tlsext_ocsp_serverhello_parse,
+		.server = {
+			.needs = tlsext_ocsp_server_needs,
+			.build = tlsext_ocsp_server_build,
+			.parse = tlsext_ocsp_client_parse,
 		},
 	},
 	{
 		.type = TLSEXT_TYPE_ec_point_formats,
-		.clienthello = {
-			.needs = tlsext_ecpf_clienthello_needs,
-			.build = tlsext_ecpf_clienthello_build,
-			.parse = tlsext_ecpf_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_SH,
+		.client = {
+			.needs = tlsext_ecpf_client_needs,
+			.build = tlsext_ecpf_client_build,
+			.parse = tlsext_ecpf_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_ecpf_serverhello_needs,
-			.build = tlsext_ecpf_serverhello_build,
-			.parse = tlsext_ecpf_serverhello_parse,
+		.server = {
+			.needs = tlsext_ecpf_server_needs,
+			.build = tlsext_ecpf_server_build,
+			.parse = tlsext_ecpf_client_parse,
 		},
 	},
 	{
 		.type = TLSEXT_TYPE_supported_groups,
-		.clienthello = {
-			.needs = tlsext_supportedgroups_clienthello_needs,
-			.build = tlsext_supportedgroups_clienthello_build,
-			.parse = tlsext_supportedgroups_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_EE,
+		.client = {
+			.needs = tlsext_supportedgroups_client_needs,
+			.build = tlsext_supportedgroups_client_build,
+			.parse = tlsext_supportedgroups_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_supportedgroups_serverhello_needs,
-			.build = tlsext_supportedgroups_serverhello_build,
-			.parse = tlsext_supportedgroups_serverhello_parse,
+		.server = {
+			.needs = tlsext_supportedgroups_server_needs,
+			.build = tlsext_supportedgroups_server_build,
+			.parse = tlsext_supportedgroups_client_parse,
 		},
 	},
 	{
 		.type = TLSEXT_TYPE_session_ticket,
-		.clienthello = {
-			.needs = tlsext_sessionticket_clienthello_needs,
-			.build = tlsext_sessionticket_clienthello_build,
-			.parse = tlsext_sessionticket_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_SH,
+		.client = {
+			.needs = tlsext_sessionticket_client_needs,
+			.build = tlsext_sessionticket_client_build,
+			.parse = tlsext_sessionticket_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_sessionticket_serverhello_needs,
-			.build = tlsext_sessionticket_serverhello_build,
-			.parse = tlsext_sessionticket_serverhello_parse,
+		.server = {
+			.needs = tlsext_sessionticket_server_needs,
+			.build = tlsext_sessionticket_server_build,
+			.parse = tlsext_sessionticket_client_parse,
 		},
 	},
 	{
 		.type = TLSEXT_TYPE_signature_algorithms,
-		.clienthello = {
-			.needs = tlsext_sigalgs_clienthello_needs,
-			.build = tlsext_sigalgs_clienthello_build,
-			.parse = tlsext_sigalgs_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_CR,
+		.client = {
+			.needs = tlsext_sigalgs_client_needs,
+			.build = tlsext_sigalgs_client_build,
+			.parse = tlsext_sigalgs_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_sigalgs_serverhello_needs,
-			.build = tlsext_sigalgs_serverhello_build,
-			.parse = tlsext_sigalgs_serverhello_parse,
+		.server = {
+			.needs = tlsext_sigalgs_server_needs,
+			.build = tlsext_sigalgs_server_build,
+			.parse = tlsext_sigalgs_client_parse,
 		},
 	},
 	{
 		.type = TLSEXT_TYPE_application_layer_protocol_negotiation,
-		.clienthello = {
-			.needs = tlsext_alpn_clienthello_needs,
-			.build = tlsext_alpn_clienthello_build,
-			.parse = tlsext_alpn_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_EE,
+		.client = {
+			.needs = tlsext_alpn_client_needs,
+			.build = tlsext_alpn_client_build,
+			.parse = tlsext_alpn_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_alpn_serverhello_needs,
-			.build = tlsext_alpn_serverhello_build,
-			.parse = tlsext_alpn_serverhello_parse,
+		.server = {
+			.needs = tlsext_alpn_server_needs,
+			.build = tlsext_alpn_server_build,
+			.parse = tlsext_alpn_client_parse,
+		},
+	},
+	{
+		.type = TLSEXT_TYPE_cookie,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_HRR,
+		.client = {
+			.needs = tlsext_cookie_client_needs,
+			.build = tlsext_cookie_client_build,
+			.parse = tlsext_cookie_server_parse,
+		},
+		.server = {
+			.needs = tlsext_cookie_server_needs,
+			.build = tlsext_cookie_server_build,
+			.parse = tlsext_cookie_client_parse,
 		},
 	},
 #ifndef OPENSSL_NO_SRTP
 	{
 		.type = TLSEXT_TYPE_use_srtp,
-		.clienthello = {
-			.needs = tlsext_srtp_clienthello_needs,
-			.build = tlsext_srtp_clienthello_build,
-			.parse = tlsext_srtp_clienthello_parse,
+		.messages = SSL_TLSEXT_MSG_CH | SSL_TLSEXT_MSG_EE,
+		.client = {
+			.needs = tlsext_srtp_client_needs,
+			.build = tlsext_srtp_client_build,
+			.parse = tlsext_srtp_server_parse,
 		},
-		.serverhello = {
-			.needs = tlsext_srtp_serverhello_needs,
-			.build = tlsext_srtp_serverhello_build,
-			.parse = tlsext_srtp_serverhello_parse,
+		.server = {
+			.needs = tlsext_srtp_server_needs,
+			.build = tlsext_srtp_server_build,
+			.parse = tlsext_srtp_client_parse,
 		},
 	}
 #endif /* OPENSSL_NO_SRTP */
@@ -1333,7 +1824,7 @@ static struct tls_extension tls_extensions[] = {
 /* Ensure that extensions fit in a uint32_t bitmask. */
 CTASSERT(N_TLS_EXTENSIONS <= (sizeof(uint32_t) * 8));
 
-static struct tls_extension *
+struct tls_extension *
 tls_extension_find(uint16_t type, size_t *tls_extensions_idx)
 {
 	size_t i;
@@ -1348,30 +1839,51 @@ tls_extension_find(uint16_t type, size_t *tls_extensions_idx)
 	return NULL;
 }
 
-static struct tls_extension_funcs *
-tlsext_funcs(struct tls_extension *tlsext, int is_serverhello)
+int
+tlsext_extension_seen(SSL *s, uint16_t type)
 {
-	if (is_serverhello)
-		return &tlsext->serverhello;
+	size_t idx;
 
-	return &tlsext->clienthello;	
+	if (tls_extension_find(type, &idx) == NULL)
+		return 0;
+	return ((S3I(s)->hs.extensions_seen & (1 << idx)) != 0);
+}
+
+static struct tls_extension_funcs *
+tlsext_funcs(struct tls_extension *tlsext, int is_server)
+{
+	if (is_server)
+		return &tlsext->server;
+
+	return &tlsext->client;
 }
 
 static int
-tlsext_build(SSL *s, CBB *cbb, int is_serverhello)
+tlsext_build(SSL *s, CBB *cbb, int is_server, uint16_t msg_type)
 {
 	struct tls_extension_funcs *ext;
 	struct tls_extension *tlsext;
 	CBB extensions, extension_data;
 	int extensions_present = 0;
 	size_t i;
+	uint16_t version;
+
+	if (is_server)
+		version = s->version;
+	else
+		version = TLS1_get_client_version(s);
 
 	if (!CBB_add_u16_length_prefixed(cbb, &extensions))
 		return 0;
 
 	for (i = 0; i < N_TLS_EXTENSIONS; i++) {
 		tlsext = &tls_extensions[i];
-		ext = tlsext_funcs(tlsext, is_serverhello);
+		ext = tlsext_funcs(tlsext, is_server);
+
+		/* RFC 8446 Section 4.2 */
+		if (version >= TLS1_3_VERSION &&
+		    !(tlsext->messages & msg_type))
+			continue;
 
 		if (!ext->needs(s))
 			continue;
@@ -1397,14 +1909,21 @@ tlsext_build(SSL *s, CBB *cbb, int is_serverhello)
 }
 
 static int
-tlsext_parse(SSL *s, CBS *cbs, int *alert, int is_serverhello)
+tlsext_parse(SSL *s, CBS *cbs, int *alert, int is_server, uint16_t msg_type)
 {
 	struct tls_extension_funcs *ext;
 	struct tls_extension *tlsext;
 	CBS extensions, extension_data;
-	uint32_t extensions_seen = 0;
 	uint16_t type;
 	size_t idx;
+	uint16_t version;
+
+	S3I(s)->hs.extensions_seen = 0;
+
+	if (is_server)
+		version = s->version;
+	else
+		version = TLS1_get_client_version(s);
 
 	/* An empty extensions block is valid. */
 	if (CBS_len(cbs) == 0)
@@ -1422,7 +1941,7 @@ tlsext_parse(SSL *s, CBS *cbs, int *alert, int is_serverhello)
 			return 0;
 
 		if (s->internal->tlsext_debug_cb != NULL)
-			s->internal->tlsext_debug_cb(s, is_serverhello, type,
+			s->internal->tlsext_debug_cb(s, is_server, type,
 			    (unsigned char *)CBS_data(&extension_data),
 			    CBS_len(&extension_data),
 			    s->internal->tlsext_debug_arg);
@@ -1431,12 +1950,19 @@ tlsext_parse(SSL *s, CBS *cbs, int *alert, int is_serverhello)
 		if ((tlsext = tls_extension_find(type, &idx)) == NULL)
 			continue;
 
-		/* Check for duplicate known extensions. */
-		if ((extensions_seen & (1 << idx)) != 0)
+		/* RFC 8446 Section 4.2 */
+		if (version >= TLS1_3_VERSION &&
+		    !(tlsext->messages & msg_type)) {
+			*alert = SSL_AD_ILLEGAL_PARAMETER;
 			return 0;
-		extensions_seen |= (1 << idx);
+		}
 
-		ext = tlsext_funcs(tlsext, is_serverhello);
+		/* Check for duplicate known extensions. */
+		if ((S3I(s)->hs.extensions_seen & (1 << idx)) != 0)
+			return 0;
+		S3I(s)->hs.extensions_seen |= (1 << idx);
+
+		ext = tlsext_funcs(tlsext, is_server);
 		if (!ext->parse(s, &extension_data, alert))
 			return 0;
 
@@ -1448,7 +1974,7 @@ tlsext_parse(SSL *s, CBS *cbs, int *alert, int is_serverhello)
 }
 
 static void
-tlsext_clienthello_reset_state(SSL *s)
+tlsext_client_reset_state(SSL *s)
 {
 	s->internal->servername_done = 0;
 	s->tlsext_status_type = -1;
@@ -1459,39 +1985,39 @@ tlsext_clienthello_reset_state(SSL *s)
 }
 
 int
-tlsext_clienthello_build(SSL *s, CBB *cbb)
+tlsext_client_build(SSL *s, CBB *cbb, uint16_t msg_type)
 {
-	return tlsext_build(s, cbb, 0);
+	return tlsext_build(s, cbb, 0, msg_type);
 }
 
 int
-tlsext_clienthello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_server_parse(SSL *s, CBS *cbs, int *alert, uint16_t msg_type)
 {
 	/* XXX - this possibly should be done by the caller... */
-	tlsext_clienthello_reset_state(s);
+	tlsext_client_reset_state(s);
 
-	return tlsext_parse(s, cbs, alert, 0);
+	return tlsext_parse(s, cbs, alert, 0, msg_type);
 }
 
 static void
-tlsext_serverhello_reset_state(SSL *s)
+tlsext_server_reset_state(SSL *s)
 {
-	S3I(s)->renegotiate_seen = 0;   
+	S3I(s)->renegotiate_seen = 0;
 	free(S3I(s)->alpn_selected);
 	S3I(s)->alpn_selected = NULL;
 }
 
 int
-tlsext_serverhello_build(SSL *s, CBB *cbb)
+tlsext_server_build(SSL *s, CBB *cbb, uint16_t msg_type)
 {
-	return tlsext_build(s, cbb, 1);
+	return tlsext_build(s, cbb, 1, msg_type);
 }
 
 int
-tlsext_serverhello_parse(SSL *s, CBS *cbs, int *alert)
+tlsext_client_parse(SSL *s, CBS *cbs, int *alert, uint16_t msg_type)
 {
 	/* XXX - this possibly should be done by the caller... */
-	tlsext_serverhello_reset_state(s);
+	tlsext_server_reset_state(s);
 
-	return tlsext_parse(s, cbs, alert, 1);
+	return tlsext_parse(s, cbs, alert, 1, msg_type);
 }

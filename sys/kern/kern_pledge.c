@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_pledge.c,v 1.245 2018/11/17 23:10:08 cheloha Exp $	*/
+/*	$OpenBSD: kern_pledge.c,v 1.250 2019/01/22 00:59:31 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>
@@ -43,6 +43,7 @@
 #include <sys/dkio.h>
 #include <sys/mtio.h>
 #include <sys/audioio.h>
+#include <sys/videoio.h>
 #include <net/bpf.h>
 #include <net/route.h>
 #include <net/if.h>
@@ -69,9 +70,10 @@
 #include "audio.h"
 #include "bpfilter.h"
 #include "pf.h"
+#include "video.h"
 #include "pty.h"
 
-#if defined(__amd64__) || defined(__i386__)
+#if defined(__amd64__)
 #include "vmm.h"
 #if NVMM > 0
 #include <machine/conf.h>
@@ -396,6 +398,7 @@ static const struct {
 	{ "tty",		PLEDGE_TTY },
 	{ "unix",		PLEDGE_UNIX },
 	{ "unveil",		PLEDGE_UNVEIL },
+	{ "video",		PLEDGE_VIDEO },
 	{ "vminfo",		PLEDGE_VMINFO },
 	{ "vmm",		PLEDGE_VMM },
 	{ "wpath",		PLEDGE_WPATH },
@@ -617,7 +620,8 @@ pledge_namei(struct proc *p, struct nameidata *ni, char *origpath)
 		/* when avoiding YP mode, getpw* functions touch this */
 		if (ni->ni_pledge == PLEDGE_RPATH &&
 		    strcmp(path, "/var/run/ypbind.lock") == 0) {
-			if (p->p_p->ps_pledge & PLEDGE_GETPW) {
+			if ((p->p_p->ps_pledge & PLEDGE_GETPW) ||
+			    (ni->ni_unveil == UNVEIL_INSPECT)) {
 				ni->ni_cnd.cn_flags |= BYPASSUNVEIL;
 				return (0);
 			} else
@@ -921,62 +925,52 @@ pledge_sysctl(struct proc *p, int miblen, int *mib, void *new)
 	if (miblen >= 3 &&			/* ntpd(8) to read sensors */
 	    mib[0] == CTL_HW && mib[1] == HW_SENSORS)
 		return (0);
-
-	if (miblen == 2 &&		/* getdomainname() */
-	    mib[0] == CTL_KERN && mib[1] == KERN_DOMAINNAME)
-		return (0);
-	if (miblen == 2 &&		/* gethostname() */
-	    mib[0] == CTL_KERN && mib[1] == KERN_HOSTNAME)
-		return (0);
+	
 	if (miblen == 6 &&		/* if_nameindex() */
 	    mib[0] == CTL_NET && mib[1] == PF_ROUTE &&
 	    mib[2] == 0 && mib[3] == 0 && mib[4] == NET_RT_IFNAMES)
 		return (0);
-	if (miblen == 2 &&		/* uname() */
-	    mib[0] == CTL_KERN && mib[1] == KERN_OSTYPE)
-		return (0);
-	if (miblen == 2 &&		/* uname() */
-	    mib[0] == CTL_KERN && mib[1] == KERN_OSRELEASE)
-		return (0);
-	if (miblen == 2 &&		/* uname() */
-	    mib[0] == CTL_KERN && mib[1] == KERN_OSVERSION)
-		return (0);
-	if (miblen == 2 &&		/* uname() */
-	    mib[0] == CTL_KERN && mib[1] == KERN_VERSION)
-		return (0);
-	if (miblen == 2 &&		/* kern.clockrate */
-	    mib[0] == CTL_KERN && mib[1] == KERN_CLOCKRATE)
-		return (0);
-	if (miblen == 2 &&		/* kern.argmax */
-	    mib[0] == CTL_KERN && mib[1] == KERN_ARGMAX)
-		return (0);
-	if (miblen == 2 &&		/* kern.ngroups */
-	    mib[0] == CTL_KERN && mib[1] == KERN_NGROUPS)
-		return (0);
-	if (miblen == 2 &&		/* kern.sysvshm */
-	    mib[0] == CTL_KERN && mib[1] == KERN_SYSVSHM)
-		return (0);
-	if (miblen == 2 &&		/* kern.posix1version */
-	    mib[0] == CTL_KERN && mib[1] == KERN_POSIX1)
-		return (0);
-	if (miblen == 2 &&		/* uname() */
-	    mib[0] == CTL_HW && mib[1] == HW_MACHINE)
-		return (0);
-	if (miblen == 2 &&		/* getpagesize() */
-	    mib[0] == CTL_HW && mib[1] == HW_PAGESIZE)
-		return (0);
-	if (miblen == 2 &&		/* setproctitle() */
-	    mib[0] == CTL_VM && mib[1] == VM_PSSTRINGS)
-		return (0);
-	if (miblen == 2 &&		/* hw.ncpu / hw.ncpuonline */
-	    mib[0] == CTL_HW && (mib[1] == HW_NCPU || mib[1] == HW_NCPUONLINE))
-		return (0);
-	if (miblen == 2 &&		/* vm.loadavg / getloadavg(3) */
-	    mib[0] == CTL_VM && mib[1] == VM_LOADAVG)
-		return (0);
-	if (miblen == 2 &&		/* vm.malloc_conf */
-	    mib[0] == CTL_VM && mib[1] == VM_MALLOC_CONF)
-		return (0);
+
+	if (miblen == 2) {
+		switch (mib[0]) {
+		case CTL_KERN:
+			switch (mib[1]) {
+			case KERN_DOMAINNAME:	/* getdomainname() */
+			case KERN_HOSTNAME:	/* gethostname() */
+			case KERN_OSTYPE:	/* uname() */
+			case KERN_OSRELEASE:	/* uname() */
+			case KERN_OSVERSION:	/* uname() */
+			case KERN_VERSION:	/* uname() */
+			case KERN_CLOCKRATE:	/* kern.clockrate */
+			case KERN_ARGMAX:	/* kern.argmax */
+			case KERN_NGROUPS:	/* kern.ngroups */
+			case KERN_SYSVSHM:	/* kern.sysvshm */
+			case KERN_POSIX1:	/* kern.posix1version */
+				return (0);
+			}
+			break;
+		case CTL_HW:
+			switch (mib[1]) {
+			case HW_MACHINE: 	/* uname() */
+			case HW_PAGESIZE: 	/* getpagesize() */
+			case HW_NCPU:		/* hw.ncpu */
+			case HW_NCPUONLINE:	/* hw.ncpuonline */
+				return (0);
+			}
+			break;
+		case CTL_VM:
+			switch (mib[1]) {
+			case VM_PSSTRINGS:	/* setproctitle() */
+			case VM_LOADAVG:	/* vm.loadavg / getloadavg(3) */
+			case VM_MALLOC_CONF:	/* vm.malloc_conf */
+				return (0);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+
 #ifdef CPU_SSE
 	if (miblen == 2 &&		/* i386 libm tests for SSE */
 	    mib[0] == CTL_MACHDEP && mib[1] == CPU_SSE)
@@ -1158,6 +1152,35 @@ pledge_ioctl(struct proc *p, long com, struct file *fp)
 			break;
 		}
 	}
+
+#if NVIDEO > 0
+	if ((p->p_p->ps_pledge & PLEDGE_VIDEO)) {
+		switch (com) {
+		case VIDIOC_QUERYCAP:
+		case VIDIOC_TRY_FMT:
+		case VIDIOC_ENUM_FMT:
+		case VIDIOC_S_FMT:
+		case VIDIOC_QUERYCTRL:
+		case VIDIOC_G_CTRL:
+		case VIDIOC_S_CTRL:
+		case VIDIOC_G_PARM:
+		case VIDIOC_S_PARM:
+		case VIDIOC_REQBUFS:
+		case VIDIOC_QBUF:
+		case VIDIOC_DQBUF:
+		case VIDIOC_QUERYBUF:
+		case VIDIOC_STREAMON:
+		case VIDIOC_STREAMOFF:
+		case VIDIOC_ENUM_FRAMESIZES:
+		case VIDIOC_ENUM_FRAMEINTERVALS:
+			if (fp->f_type == DTYPE_VNODE &&
+			    vp->v_type == VCHR &&
+			    cdevsw[major(vp->v_rdev)].d_open == videoopen)
+				return (0);
+			break;
+		}
+	}
+#endif
 
 #if NPF > 0
 	if ((p->p_p->ps_pledge & PLEDGE_PF)) {

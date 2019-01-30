@@ -1,4 +1,4 @@
-/* $OpenBSD: packet.c,v 1.279 2019/01/04 03:23:00 djm Exp $ */
+/* $OpenBSD: packet.c,v 1.282 2019/01/21 10:35:09 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -1785,10 +1785,10 @@ sshpkt_fmt_connection_id(struct ssh *ssh, char *s, size_t l)
 /*
  * Pretty-print connection-terminating errors and exit.
  */
-void
-sshpkt_fatal(struct ssh *ssh, const char *tag, int r)
+static void
+sshpkt_vfatal(struct ssh *ssh, int r, const char *fmt, va_list ap)
 {
-	char remote_id[512];
+	char *tag = NULL, remote_id[512];
 
 	sshpkt_fmt_connection_id(ssh, remote_id, sizeof(remote_id));
 
@@ -1822,12 +1822,29 @@ sshpkt_fatal(struct ssh *ssh, const char *tag, int r)
 		}
 		/* FALLTHROUGH */
 	default:
+		if (vasprintf(&tag, fmt, ap) == -1) {
+			ssh_packet_clear_keys(ssh);
+			logdie("%s: could not allocate failure message",
+			    __func__);
+		}
 		ssh_packet_clear_keys(ssh);
 		logdie("%s%sConnection %s %s: %s",
 		    tag != NULL ? tag : "", tag != NULL ? ": " : "",
 		    ssh->state->server_side ? "from" : "to",
 		    remote_id, ssh_err(r));
 	}
+}
+
+void
+sshpkt_fatal(struct ssh *ssh, int r, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	sshpkt_vfatal(ssh, r, fmt, ap);
+	/* NOTREACHED */
+	va_end(ap);
+	logdie("%s: should have exited", __func__);
 }
 
 /*
@@ -1865,10 +1882,10 @@ ssh_packet_disconnect(struct ssh *ssh, const char *fmt,...)
 	 * for it to get sent.
 	 */
 	if ((r = sshpkt_disconnect(ssh, "%s", buf)) != 0)
-		sshpkt_fatal(ssh, __func__, r);
+		sshpkt_fatal(ssh, r, "%s", __func__);
 
 	if ((r = ssh_packet_write_wait(ssh)) != 0)
-		sshpkt_fatal(ssh, __func__, r);
+		sshpkt_fatal(ssh, r, "%s", __func__);
 
 	/* Close the connection. */
 	ssh_packet_close(ssh);
@@ -2499,6 +2516,12 @@ sshpkt_get_cstring(struct ssh *ssh, char **valp, size_t *lenp)
 	return sshbuf_get_cstring(ssh->state->incoming_packet, valp, lenp);
 }
 
+int
+sshpkt_getb_froms(struct ssh *ssh, struct sshbuf **valp)
+{
+	return sshbuf_froms(ssh->state->incoming_packet, valp);
+}
+
 #ifdef WITH_OPENSSL
 int
 sshpkt_get_ec(struct ssh *ssh, EC_POINT *v, const EC_GROUP *g)
@@ -2506,11 +2529,10 @@ sshpkt_get_ec(struct ssh *ssh, EC_POINT *v, const EC_GROUP *g)
 	return sshbuf_get_ec(ssh->state->incoming_packet, v, g);
 }
 
-
 int
-sshpkt_get_bignum2(struct ssh *ssh, BIGNUM *v)
+sshpkt_get_bignum2(struct ssh *ssh, BIGNUM **valp)
 {
-	return sshbuf_get_bignum2(ssh->state->incoming_packet, v);
+	return sshbuf_get_bignum2(ssh->state->incoming_packet, valp);
 }
 #endif /* WITH_OPENSSL */
 

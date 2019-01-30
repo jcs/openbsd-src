@@ -1,4 +1,4 @@
-#	$OpenBSD: rc,v 1.529 2018/07/23 11:54:49 florian Exp $
+#	$OpenBSD: rc,v 1.532 2019/01/26 10:59:07 florian Exp $
 
 # System startup script run by init on autoboot or after single-user.
 # Output and error are redirected to console by init, and the console is the
@@ -382,7 +382,6 @@ ln -fh /bsd /bsd.booted
 rm -f /fastboot
 
 # Set flags on ttys.
-echo 'setting tty flags'
 ttyflags -a
 
 # Set keyboard encoding.
@@ -475,7 +474,7 @@ dmesg >/var/run/dmesg.boot
 make_keys
 
 echo -n 'starting early daemons:'
-start_daemon syslogd ldattach pflogd nsd rebound unbound ntpd
+start_daemon syslogd ldattach pflogd nsd rebound unwind unbound ntpd
 start_daemon iscsid isakmpd iked sasyncd ldapd npppd
 echo '.'
 
@@ -507,7 +506,7 @@ fi
 
 # Store ACPI tables in /var/db/acpi to be used by sendbug(1).
 if [[ -x /usr/sbin/acpidump ]]; then
-	acpidump -o /var/db/acpi/
+	acpidump -q -o /var/db/acpi/
 fi
 
 if [[ $check_quotas == YES ]]; then

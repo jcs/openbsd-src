@@ -1,4 +1,4 @@
-/* $OpenBSD: sshconnect2.c,v 1.292 2019/01/04 03:27:50 djm Exp $ */
+/* $OpenBSD: sshconnect2.c,v 1.301 2019/01/21 10:38:54 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  * Copyright (c) 2008 Damien Miller.  All rights reserved.
@@ -188,23 +188,24 @@ ssh_kex2(struct ssh *ssh, char *host, struct sockaddr *hostaddr, u_short port)
 	}
 
 	if (options.rekey_limit || options.rekey_interval)
-		packet_set_rekey_limits(options.rekey_limit,
+		ssh_packet_set_rekey_limits(ssh, options.rekey_limit,
 		    options.rekey_interval);
 
 	/* start key exchange */
 	if ((r = kex_setup(ssh, myproposal)) != 0)
 		fatal("kex_setup: %s", ssh_err(r));
 #ifdef WITH_OPENSSL
-	ssh->kex->kex[KEX_DH_GRP1_SHA1] = kexdh_client;
-	ssh->kex->kex[KEX_DH_GRP14_SHA1] = kexdh_client;
-	ssh->kex->kex[KEX_DH_GRP14_SHA256] = kexdh_client;
-	ssh->kex->kex[KEX_DH_GRP16_SHA512] = kexdh_client;
-	ssh->kex->kex[KEX_DH_GRP18_SHA512] = kexdh_client;
+	ssh->kex->kex[KEX_DH_GRP1_SHA1] = kex_gen_client;
+	ssh->kex->kex[KEX_DH_GRP14_SHA1] = kex_gen_client;
+	ssh->kex->kex[KEX_DH_GRP14_SHA256] = kex_gen_client;
+	ssh->kex->kex[KEX_DH_GRP16_SHA512] = kex_gen_client;
+	ssh->kex->kex[KEX_DH_GRP18_SHA512] = kex_gen_client;
 	ssh->kex->kex[KEX_DH_GEX_SHA1] = kexgex_client;
 	ssh->kex->kex[KEX_DH_GEX_SHA256] = kexgex_client;
-	ssh->kex->kex[KEX_ECDH_SHA2] = kexecdh_client;
+	ssh->kex->kex[KEX_ECDH_SHA2] = kex_gen_client;
 #endif
-	ssh->kex->kex[KEX_C25519_SHA256] = kexc25519_client;
+	ssh->kex->kex[KEX_C25519_SHA256] = kex_gen_client;
+	ssh->kex->kex[KEX_KEM_SNTRUP4591761X25519_SHA512] = kex_gen_client;
 	ssh->kex->verify_host_key=&verify_host_key_callback;
 
 	ssh_dispatch_run_fatal(ssh, DISPATCH_BLOCK, &ssh->kex->done);
@@ -274,8 +275,8 @@ struct cauthctxt {
 
 struct cauthmethod {
 	char	*name;		/* string to compare against server's list */
-	int	(*userauth)(Authctxt *authctxt);
-	void	(*cleanup)(Authctxt *authctxt);
+	int	(*userauth)(struct ssh *ssh);
+	void	(*cleanup)(struct ssh *ssh);
 	int	*enabled;	/* flag in option struct that enables method */
 	int	*batch_flag;	/* flag in option struct that disables method */
 };
@@ -291,14 +292,14 @@ int	input_userauth_info_req(int, u_int32_t, struct ssh *);
 int	input_userauth_pk_ok(int, u_int32_t, struct ssh *);
 int	input_userauth_passwd_changereq(int, u_int32_t, struct ssh *);
 
-int	userauth_none(Authctxt *);
-int	userauth_pubkey(Authctxt *);
-int	userauth_passwd(Authctxt *);
-int	userauth_kbdint(Authctxt *);
-int	userauth_hostbased(Authctxt *);
+int	userauth_none(struct ssh *);
+int	userauth_pubkey(struct ssh *);
+int	userauth_passwd(struct ssh *);
+int	userauth_kbdint(struct ssh *);
+int	userauth_hostbased(struct ssh *);
 
 #ifdef GSSAPI
-int	userauth_gssapi(Authctxt *authctxt);
+int	userauth_gssapi(struct ssh *);
 int	input_gssapi_response(int type, u_int32_t, struct ssh *);
 int	input_gssapi_token(int type, u_int32_t, struct ssh *);
 int	input_gssapi_hash(int type, u_int32_t, struct ssh *);
@@ -306,9 +307,9 @@ int	input_gssapi_error(int, u_int32_t, struct ssh *);
 int	input_gssapi_errtok(int, u_int32_t, struct ssh *);
 #endif
 
-void	userauth(Authctxt *, char *);
+void	userauth(struct ssh *, char *);
 
-static int sign_and_send_pubkey(struct ssh *ssh, Authctxt *, Identity *);
+static int sign_and_send_pubkey(struct ssh *ssh, Identity *);
 static void pubkey_prepare(Authctxt *);
 static void pubkey_cleanup(Authctxt *);
 static void pubkey_reset(Authctxt *);
@@ -412,7 +413,6 @@ ssh_userauth2(struct ssh *ssh, const char *local_user,
 int
 input_userauth_service_accept(int type, u_int32_t seq, struct ssh *ssh)
 {
-	Authctxt *authctxt = ssh->authctxt;
 	int r;
 
 	if (ssh_packet_remaining(ssh) > 0) {
@@ -430,7 +430,7 @@ input_userauth_service_accept(int type, u_int32_t seq, struct ssh *ssh)
 	debug("SSH2_MSG_SERVICE_ACCEPT received");
 
 	/* initial userauth request */
-	userauth_none(authctxt);
+	userauth_none(ssh);
 
 	ssh_dispatch_set(ssh, SSH2_MSG_EXT_INFO, &input_userauth_error);
 	ssh_dispatch_set(ssh, SSH2_MSG_USERAUTH_SUCCESS, &input_userauth_success);
@@ -449,12 +449,12 @@ input_userauth_ext_info(int type, u_int32_t seqnr, struct ssh *ssh)
 }
 
 void
-userauth(Authctxt *authctxt, char *authlist)
+userauth(struct ssh *ssh, char *authlist)
 {
-	struct ssh *ssh = active_state; /* XXX */
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 
 	if (authctxt->method != NULL && authctxt->method->cleanup != NULL)
-		authctxt->method->cleanup(authctxt);
+		authctxt->method->cleanup(ssh);
 
 	free(authctxt->methoddata);
 	authctxt->methoddata = NULL;
@@ -476,7 +476,7 @@ userauth(Authctxt *authctxt, char *authlist)
 		    SSH2_MSG_USERAUTH_PER_METHOD_MAX, NULL);
 
 		/* and try new method */
-		if (method->userauth(authctxt) != 0) {
+		if (method->userauth(ssh) != 0) {
 			debug2("we sent a %s packet, wait for reply", method->name);
 			break;
 		} else {
@@ -490,8 +490,7 @@ userauth(Authctxt *authctxt, char *authlist)
 int
 input_userauth_error(int type, u_int32_t seq, struct ssh *ssh)
 {
-	fatal("input_userauth_error: bad message during authentication: "
-	    "type %d", type);
+	fatal("%s: bad message during authentication: type %d", __func__, type);
 	return 0;
 }
 
@@ -499,17 +498,20 @@ input_userauth_error(int type, u_int32_t seq, struct ssh *ssh)
 int
 input_userauth_banner(int type, u_int32_t seq, struct ssh *ssh)
 {
-	char *msg, *lang;
-	u_int len;
+	char *msg = NULL;
+	size_t len;
+	int r;
 
 	debug3("%s", __func__);
-	msg = packet_get_string(&len);
-	lang = packet_get_string(NULL);
+	if ((r = sshpkt_get_cstring(ssh, &msg, &len)) != 0 ||
+	    (r = sshpkt_get_cstring(ssh, NULL, NULL)) != 0)
+		goto out;
 	if (len > 0 && options.log_level >= SYSLOG_LEVEL_INFO)
 		fmprintf(stderr, "%s", msg);
+	r = 0;
+ out:
 	free(msg);
-	free(lang);
-	return 0;
+	return r;
 }
 
 /* ARGSUSED */
@@ -519,11 +521,11 @@ input_userauth_success(int type, u_int32_t seq, struct ssh *ssh)
 	Authctxt *authctxt = ssh->authctxt;
 
 	if (authctxt == NULL)
-		fatal("input_userauth_success: no authentication context");
+		fatal("%s: no authentication context", __func__);
 	free(authctxt->authlist);
 	authctxt->authlist = NULL;
 	if (authctxt->method != NULL && authctxt->method->cleanup != NULL)
-		authctxt->method->cleanup(authctxt);
+		authctxt->method->cleanup(ssh);
 	free(authctxt->methoddata);
 	authctxt->methoddata = NULL;
 	authctxt->success = 1;			/* break out */
@@ -567,7 +569,7 @@ input_userauth_failure(int type, u_int32_t seq, struct ssh *ssh)
 	}
 	debug("Authentications that can continue: %s", authlist);
 
-	userauth(authctxt, authlist);
+	userauth(ssh, authlist);
 	authlist = NULL;
  out:
 	free(authlist);
@@ -654,7 +656,7 @@ input_userauth_pk_ok(int type, u_int32_t seq, struct ssh *ssh)
 	}
 	ident = format_identity(id);
 	debug("Server accepts key: %s", ident);
-	sent = sign_and_send_pubkey(ssh, authctxt, id);
+	sent = sign_and_send_pubkey(ssh, id);
 	r = 0;
  done:
 	sshkey_free(key);
@@ -665,15 +667,15 @@ input_userauth_pk_ok(int type, u_int32_t seq, struct ssh *ssh)
 
 	/* try another method if we did not send a packet */
 	if (r == 0 && sent == 0)
-		userauth(authctxt, NULL);
+		userauth(ssh, NULL);
 	return r;
 }
 
 #ifdef GSSAPI
 int
-userauth_gssapi(Authctxt *authctxt)
+userauth_gssapi(struct ssh *ssh)
 {
-	struct ssh *ssh = active_state; /* XXX */
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	Gssctxt *gssctxt = NULL;
 	static gss_OID_set gss_supported = NULL;
 	static u_int mech = 0;
@@ -817,7 +819,7 @@ input_gssapi_response(int type, u_int32_t plen, struct ssh *ssh)
 	    oidv[0] != SSH_GSS_OIDTYPE ||
 	    oidv[1] != oidlen - 2) {
 		debug("Badly encoded mechanism OID received");
-		userauth(authctxt, NULL);
+		userauth(ssh, NULL);
 		goto ok;
 	}
 
@@ -830,7 +832,7 @@ input_gssapi_response(int type, u_int32_t plen, struct ssh *ssh)
 	if (GSS_ERROR(process_gssapi_token(ssh, GSS_C_NO_BUFFER))) {
 		/* Start again with next method on list */
 		debug("Trying to start again");
-		userauth(authctxt, NULL);
+		userauth(ssh, NULL);
 		goto ok;
 	}
  ok:
@@ -864,7 +866,7 @@ input_gssapi_token(int type, u_int32_t plen, struct ssh *ssh)
 
 	/* Start again with the next method in the list */
 	if (GSS_ERROR(status)) {
-		userauth(authctxt, NULL);
+		userauth(ssh, NULL);
 		/* ok */
 	}
 	r = 0;
@@ -931,9 +933,9 @@ input_gssapi_error(int type, u_int32_t plen, struct ssh *ssh)
 #endif /* GSSAPI */
 
 int
-userauth_none(Authctxt *authctxt)
+userauth_none(struct ssh *ssh)
 {
-	struct ssh *ssh = active_state; /* XXX */
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	int r;
 
 	/* initial userauth request */
@@ -947,9 +949,9 @@ userauth_none(Authctxt *authctxt)
 }
 
 int
-userauth_passwd(Authctxt *authctxt)
+userauth_passwd(struct ssh *ssh)
 {
-	struct ssh *ssh = active_state; /* XXX */
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	char *password, *prompt = NULL;
 	const char *host = options.host_key_alias ?  options.host_key_alias :
 	    authctxt->host;
@@ -1171,8 +1173,9 @@ id_filename_matches(Identity *id, Identity *private_id)
 }
 
 static int
-sign_and_send_pubkey(struct ssh *ssh, Authctxt *authctxt, Identity *id)
+sign_and_send_pubkey(struct ssh *ssh, Identity *id)
 {
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	struct sshbuf *b = NULL;
 	Identity *private_id, *sign_id = NULL;
 	u_char *signature = NULL;
@@ -1330,8 +1333,9 @@ sign_and_send_pubkey(struct ssh *ssh, Authctxt *authctxt, Identity *id)
 }
 
 static int
-send_pubkey_test(struct ssh *ssh, Authctxt *authctxt, Identity *id)
+send_pubkey_test(struct ssh *ssh, Identity *id)
 {
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	u_char *blob = NULL;
 	char *alg = NULL;
 	size_t bloblen;
@@ -1648,9 +1652,9 @@ try_identity(Identity *id)
 }
 
 int
-userauth_pubkey(Authctxt *authctxt)
+userauth_pubkey(struct ssh *ssh)
 {
-	struct ssh *ssh = active_state; /* XXX */
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	Identity *id;
 	int sent = 0;
 	char *ident;
@@ -1671,7 +1675,7 @@ userauth_pubkey(Authctxt *authctxt)
 				ident = format_identity(id);
 				debug("Offering public key: %s", ident);
 				free(ident);
-				sent = send_pubkey_test(ssh, authctxt, id);
+				sent = send_pubkey_test(ssh, id);
 			}
 		} else {
 			debug("Trying private key: %s", id->filename);
@@ -1679,8 +1683,7 @@ userauth_pubkey(Authctxt *authctxt)
 			if (id->key != NULL) {
 				if (try_identity(id)) {
 					id->isprivate = 1;
-					sent = sign_and_send_pubkey(ssh,
-					    authctxt, id);
+					sent = sign_and_send_pubkey(ssh, id);
 				}
 				sshkey_free(id->key);
 				id->key = NULL;
@@ -1697,9 +1700,9 @@ userauth_pubkey(Authctxt *authctxt)
  * Send userauth request message specifying keyboard-interactive method.
  */
 int
-userauth_kbdint(Authctxt *authctxt)
+userauth_kbdint(struct ssh *ssh)
 {
-	struct ssh *ssh = active_state; /* XXX */
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	int r;
 
 	if (authctxt->attempt_kbdint++ >= options.number_of_password_prompts)
@@ -1795,13 +1798,14 @@ input_userauth_info_req(int type, u_int32_t seq, struct ssh *ssh)
 }
 
 static int
-ssh_keysign(struct sshkey *key, u_char **sigp, size_t *lenp,
+ssh_keysign(struct ssh *ssh, struct sshkey *key, u_char **sigp, size_t *lenp,
     const u_char *data, size_t datalen)
 {
 	struct sshbuf *b;
 	struct stat st;
 	pid_t pid;
-	int i, r, to[2], from[2], status, sock = packet_get_connection_in();
+	int i, r, to[2], from[2], status;
+	int sock = ssh_packet_get_connection_in(ssh);
 	u_char rversion = 0, version = 2;
 	void (*osigchld)(int);
 
@@ -1909,9 +1913,9 @@ ssh_keysign(struct sshkey *key, u_char **sigp, size_t *lenp,
 }
 
 int
-userauth_hostbased(Authctxt *authctxt)
+userauth_hostbased(struct ssh *ssh)
 {
-	struct ssh *ssh = active_state; /* XXX */
+	Authctxt *authctxt = (Authctxt *)ssh->authctxt;
 	struct sshkey *private = NULL;
 	struct sshbuf *b = NULL;
 	u_char *sig = NULL, *keyblob = NULL;
@@ -1975,7 +1979,8 @@ userauth_hostbased(Authctxt *authctxt)
 	    __func__, sshkey_ssh_name(private), fp);
 
 	/* figure out a name for the client host */
-	if ((lname = get_local_name(packet_get_connection_in())) == NULL) {
+	lname = get_local_name(ssh_packet_get_connection_in(ssh));
+	if (lname == NULL) {
 		error("%s: cannot get local ipaddr/name", __func__);
 		goto out;
 	}
@@ -2009,9 +2014,8 @@ userauth_hostbased(Authctxt *authctxt)
 #ifdef DEBUG_PK
 	sshbuf_dump(b, stderr);
 #endif
-	r = ssh_keysign(private, &sig, &siglen,
-	    sshbuf_ptr(b), sshbuf_len(b));
-	if (r != 0) {
+	if ((r = ssh_keysign(ssh, private, &sig, &siglen,
+	    sshbuf_ptr(b), sshbuf_len(b))) != 0) {
 		error("sign using hostkey %s %s failed",
 		    sshkey_ssh_name(private), fp);
 		goto out;

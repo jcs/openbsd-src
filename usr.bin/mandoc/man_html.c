@@ -1,4 +1,4 @@
-/*	$OpenBSD: man_html.c,v 1.119 2019/01/06 04:41:15 schwarze Exp $ */
+/*	$OpenBSD: man_html.c,v 1.123 2019/01/18 14:36:16 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2013-2015, 2017-2019 Ingo Schwarze <schwarze@openbsd.org>
@@ -117,7 +117,7 @@ html_man(void *arg, const struct roff_meta *man)
 	if ((h->oflags & HTML_FRAGMENT) == 0) {
 		print_gen_decls(h);
 		print_otag(h, TAG_HTML, "");
-		if (n->type == ROFFT_COMMENT)
+		if (n != NULL && n->type == ROFFT_COMMENT)
 			print_gen_comment(h, n);
 		t = print_otag(h, TAG_HEAD, "");
 		print_man_head(man, h);
@@ -160,6 +160,9 @@ print_man_node(MAN_ARGS)
 	struct tag	*t;
 	int		 child;
 
+	if (n->type == ROFFT_COMMENT || n->flags & NODE_NOPRT)
+		return;
+
 	html_fillmode(h, n->flags & NODE_NOFILL ? ROFF_nf : ROFF_fi);
 
 	child = 1;
@@ -169,18 +172,18 @@ print_man_node(MAN_ARGS)
 			print_endline(h);
 			return;
 		}
-		t = h->tag;
 		if (*n->string == ' ' && n->flags & NODE_LINE &&
 		    (h->flags & HTML_NONEWLINE) == 0)
 			print_endline(h);
 		else if (n->flags & NODE_DELIMC)
 			h->flags |= HTML_NOSPACE;
+		t = h->tag;
+		t->refcnt++;
 		print_text(h, n->string);
 		break;
-	case ROFFT_COMMENT:
-		return;
 	case ROFFT_EQN:
 		t = h->tag;
+		t->refcnt++;
 		print_eqn(h, n->eqn);
 		break;
 	case ROFFT_TBL:
@@ -208,15 +211,14 @@ print_man_node(MAN_ARGS)
 		 */
 		if (h->tblt != NULL)
 			print_tblclose(h);
-
 		t = h->tag;
+		t->refcnt++;
 		if (n->tok < ROFF_MAX) {
 			roff_html_pre(h, n);
-			if (n->tok != ROFF_sp)
-				print_stagq(h, t);
+			t->refcnt--;
+			print_stagq(h, t);
 			return;
 		}
-
 		assert(n->tok >= MAN_TH && n->tok < MAN_MAX);
 		if (man_html_acts[n->tok - MAN_TH].pre != NULL)
 			child = (*man_html_acts[n->tok - MAN_TH].pre)(man,
@@ -228,6 +230,7 @@ print_man_node(MAN_ARGS)
 		print_man_nodelist(man, n->child, h);
 
 	/* This will automatically close out any font scope. */
+	t->refcnt--;
 	print_stagq(h, t);
 
 	if (n->flags & NODE_NOFILL && n->tok != MAN_YS &&
@@ -296,9 +299,9 @@ man_SH_pre(MAN_ARGS)
 	case ROFFT_HEAD:
 		id = html_make_id(n, 1);
 		if (n->tok == MAN_SH)
-			print_otag(h, TAG_H1, "cTi", "Sh", id);
+			print_otag(h, TAG_H1, "ci", "Sh", id);
 		else
-			print_otag(h, TAG_H2, "cTi", "Ss", id);
+			print_otag(h, TAG_H2, "ci", "Ss", id);
 		if (id != NULL)
 			print_otag(h, TAG_A, "chR", "permalink", id);
 		break;
@@ -510,7 +513,7 @@ man_SY_pre(MAN_ARGS)
 		break;
 	case ROFFT_HEAD:
 		print_otag(h, TAG_TD, "");
-		print_otag(h, TAG_CODE, "cT", "Nm");
+		print_otag(h, TAG_CODE, "c", "Nm");
 		break;
 	case ROFFT_BODY:
 		print_otag(h, TAG_TD, "");
@@ -532,10 +535,10 @@ man_UR_pre(MAN_ARGS)
 		assert(n->child->type == ROFFT_TEXT);
 		if (n->tok == MAN_MT) {
 			mandoc_asprintf(&cp, "mailto:%s", n->child->string);
-			print_otag(h, TAG_A, "cTh", "Mt", cp);
+			print_otag(h, TAG_A, "ch", "Mt", cp);
 			free(cp);
 		} else
-			print_otag(h, TAG_A, "cTh", "Lk", n->child->string);
+			print_otag(h, TAG_A, "ch", "Lk", n->child->string);
 	}
 
 	assert(n->next->type == ROFFT_BODY);

@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_locl.h,v 1.225 2018/11/21 15:13:29 jsing Exp $ */
+/* $OpenBSD: ssl_locl.h,v 1.233 2019/01/24 02:56:41 beck Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -162,6 +162,7 @@
 
 #include "bytestring.h"
 #include "ssl_sigalgs.h"
+#include "tls13_internal.h"
 
 __BEGIN_HIDDEN_DECLS
 
@@ -428,7 +429,29 @@ typedef struct ssl_handshake_st {
 	/* key_block is the record-layer key block for TLS 1.2 and earlier. */
 	int key_block_len;
 	unsigned char *key_block;
+
+	/* Extensions seen in this handshake. */
+	uint32_t extensions_seen;
 } SSL_HANDSHAKE;
+
+typedef struct ssl_handshake_tls13_st {
+	uint16_t min_version;
+	uint16_t max_version;
+	uint16_t version;
+
+	/* Version proposed by peer server. */
+	uint16_t server_version;
+
+	/* X25519 key share. */
+	uint8_t *x25519_public;
+	uint8_t *x25519_private;
+	uint8_t *x25519_peer_public;
+
+	struct tls13_secrets *secrets;
+
+	uint8_t *cookie;
+	size_t cookie_len;
+} SSL_HANDSHAKE_TLS13;
 
 typedef struct ssl_ctx_internal_st {
 	uint16_t min_version;
@@ -592,6 +615,8 @@ typedef struct ssl_ctx_internal_st {
 } SSL_CTX_INTERNAL;
 
 typedef struct ssl_internal_st {
+	struct tls13_ctx *tls13;
+
 	uint16_t min_version;
 	uint16_t max_version;
 
@@ -803,6 +828,7 @@ typedef struct ssl3_state_internal_st {
 	int in_read_app_data;
 
 	SSL_HANDSHAKE hs;
+	SSL_HANDSHAKE_TLS13 hs_tls13;
 
 	struct	{
 		int new_mac_secret_size;
@@ -1032,6 +1058,8 @@ int ssl_version_set_min(const SSL_METHOD *meth, uint16_t ver, uint16_t max_ver,
 int ssl_version_set_max(const SSL_METHOD *meth, uint16_t ver, uint16_t min_ver,
     uint16_t *out_ver);
 uint16_t ssl_max_server_version(SSL *s);
+int ssl_cipher_is_permitted(const SSL_CIPHER *cipher, uint16_t min_ver,
+    uint16_t max_ver);
 
 const SSL_METHOD *dtls1_get_client_method(int ver);
 const SSL_METHOD *dtls1_get_server_method(int ver);
@@ -1291,7 +1319,7 @@ int tls1_process_ticket(SSL *s, const unsigned char *session_id,
     int session_id_len, CBS *ext_block, SSL_SESSION **ret);
 
 long ssl_get_algorithm2(SSL *s);
-int tls1_process_sigalgs(SSL *s, CBS *cbs);
+int tls1_process_sigalgs(SSL *s, CBS *cbs, uint16_t *, size_t);
 
 int tls1_check_ec_server_key(SSL *s);
 

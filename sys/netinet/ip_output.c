@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_output.c,v 1.351 2019/01/06 11:05:09 claudio Exp $	*/
+/*	$OpenBSD: ip_output.c,v 1.353 2019/01/18 20:46:03 claudio Exp $	*/
 /*	$NetBSD: ip_output.c,v 1.28 1996/02/13 23:43:07 christos Exp $	*/
 
 /*
@@ -1241,7 +1241,7 @@ ip_pcbopts(struct mbuf **pcbopt, struct mbuf *m)
 	u_char opt;
 
 	/* turn off any old options */
-	m_free(*pcbopt);
+	m_freem(*pcbopt);
 	*pcbopt = NULL;
 	if (m == NULL || m->m_len == 0) {
 		/*
@@ -1258,19 +1258,19 @@ ip_pcbopts(struct mbuf **pcbopt, struct mbuf *m)
 	if ((n = m_get(M_NOWAIT, MT_SOOPTS)) == NULL)
 		return (ENOBUFS);
 	p = mtod(n, struct ipoption *);
-	p->ipopt_dst.s_addr = 0;
+	memset(p, 0, sizeof (*p));	/* 0 = IPOPT_EOL, needed for padding */
 	n->m_len = sizeof(struct in_addr);
 
 	off = 0;
 	cnt = m->m_len;
-	cp = mtod(m, u_char *) + sizeof(struct in_addr);
+	cp = mtod(m, u_char *);
 
 	while (cnt > 0) {
 		opt = cp[IPOPT_OPTVAL];
 
-		if (opt == IPOPT_NOP || opt == IPOPT_EOL)
+		if (opt == IPOPT_NOP || opt == IPOPT_EOL) {
 			optlen = 1;
-		else {
+		} else {
 			if (cnt < IPOPT_OLEN + sizeof(*cp))
 				goto bad;
 			optlen = cp[IPOPT_OLEN];
@@ -1325,6 +1325,8 @@ ip_pcbopts(struct mbuf **pcbopt, struct mbuf *m)
 		if (opt == IPOPT_EOL)
 			break;
 	}
+	/* pad options to next word, since p was zeroed just adjust off */
+	off = (off + sizeof(int32_t) - 1) & ~(sizeof(int32_t) - 1);
 	n->m_len += off;
 	if (n->m_len > sizeof(*p)) {
  bad:

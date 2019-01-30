@@ -1,7 +1,7 @@
-/*	$OpenBSD: syscalls.c,v 1.18 2018/10/28 22:42:33 beck Exp $	*/
+/*	$OpenBSD: syscalls.c,v 1.20 2019/01/17 03:26:19 beck Exp $	*/
 
 /*
- * Copyright (c) 2017-2018 Bob Beck <beck@openbsd.org>
+ * Copyright (c) 2017-2019 Bob Beck <beck@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -835,6 +835,23 @@ test_dotdotup(int do_uv)
 	return 0;
 }
 
+static int
+test_kn(int do_uv)
+{
+	if (do_uv) {
+		printf("testing read only with one writeable file\n");
+		if (unveil("/", "r") == -1)
+			err(1, "%s:%d - unveil", __FILE__, __LINE__);
+		if (unveil("/dev/null", "rw") == -1)
+			err(1, "%s:%d - unveil", __FILE__, __LINE__);
+	}
+	UV_SHOULD_SUCCEED((open("/dev/null", O_RDWR) == -1), "open");
+	UV_SHOULD_SUCCEED((open("/dev/zero", O_RDONLY) == -1), "open");
+	UV_SHOULD_EACCES((open("/dev/zero", O_RDWR) == -1), "open");
+	return 0;
+}
+
+
 int
 main (int argc, char *argv[])
 {
@@ -880,5 +897,6 @@ main (int argc, char *argv[])
 	failures += runcompare(test_bypassunveil);
 	failures += runcompare_internal(test_fork, 0);
 	failures += runcompare(test_dotdotup);
+	failures += runcompare(test_kn);
 	exit(failures);
 }

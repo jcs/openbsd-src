@@ -1,4 +1,4 @@
-# $OpenBSD: RAMDISK,v 1.77 2019/01/05 02:58:36 jsg Exp $
+# $OpenBSD: RAMDISK,v 1.80 2019/01/29 22:14:32 patrick Exp $
 #
 # GENERIC machine description file
 #
@@ -38,6 +38,7 @@ option		MSDOSFS
 option		INET6
 option		EXT2FS
 option		NFSCLIENT
+option		CRYPTO
 
 makeoptions	KERNEL_BASE_PHYS="0x00200000"
 makeoptions	KERNEL_BASE_VIRT="0xffffff8000200000"
@@ -83,6 +84,7 @@ pci*		at pciecam?
 sdhc*		at fdt?
 sdmmc*		at sdhc?
 xhci*		at fdt?
+ccp*		at fdt?		# AMD Cryptographic Co-processor
 
 # NS16550 compatible serial ports
 com*		at fdt?
@@ -118,6 +120,7 @@ imxiic*		at fdt?
 iic*		at imxiic?
 imxesdhc*	at fdt?
 sdmmc*		at imxesdhc?
+imxsrc*		at fdt?
 imxpd*		at fdt?
 imxdwusb*	at fdt?
 

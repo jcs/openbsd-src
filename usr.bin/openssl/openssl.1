@@ -1,4 +1,4 @@
-.\" $OpenBSD: openssl.1,v 1.95 2018/11/01 07:01:42 tb Exp $
+.\" $OpenBSD: openssl.1,v 1.99 2019/01/28 21:17:25 jmc Exp $
 .\" ====================================================================
 .\" Copyright (c) 1998-2002 The OpenSSL Project.  All rights reserved.
 .\"
@@ -110,7 +110,7 @@
 .\" copied and put under another distribution licence
 .\" [including the GNU Public Licence.]
 .\"
-.Dd $Mdocdate: November 1 2018 $
+.Dd $Mdocdate: January 28 2019 $
 .Dt OPENSSL 1
 .Os
 .Sh NAME
@@ -1010,16 +1010,16 @@ Print BIO debugging information.
 .It Fl Ar digest
 Use the specified message
 .Ar digest .
-The default is MD5.
+The default is SHA256.
 The available digests can be displayed using
 .Nm openssl
 .Cm list-message-digest-commands .
 The following are equivalent:
 .Nm openssl dgst
-.Fl md5
+.Fl sha256
 and
 .Nm openssl
-.Cm md5 .
+.Cm sha256 .
 .It Fl hex
 Digest is to be output as a hex dump.
 This is the default case for a
@@ -1494,6 +1494,7 @@ Print the EC parameters in plain text.
 .Op Fl bufsize Ar number
 .Op Fl debug
 .Op Fl in Ar file
+.Op Fl iter Ar iterations
 .Op Fl iv Ar IV
 .Op Fl K Ar key
 .Op Fl k Ar password
@@ -1504,6 +1505,7 @@ Print the EC parameters in plain text.
 .Op Fl nosalt
 .Op Fl out Ar file
 .Op Fl pass Ar arg
+.Op Fl pbkdf2
 .Op Fl S Ar salt
 .Op Fl salt
 .nr nS 0
@@ -1549,6 +1551,10 @@ This is the default.
 .It Fl in Ar file
 The input file to read from,
 or standard input if not specified.
+.It Fl iter Ar iterations
+Use the pbkdf2 key derivation function, with
+.Ar iterations
+as the number of iterations.
 .It Fl iv Ar IV
 The actual
 .Ar IV
@@ -1626,6 +1632,9 @@ don't do any encryption or decryption.
 Print out the salt, key, and IV used.
 .It Fl pass Ar arg
 The password source.
+.It Fl pbkdf2
+Use the pbkdf2 key derivation function, with
+the default of 10000 iterations.
 .It Fl S Ar salt
 The actual
 .Ar salt
@@ -3063,7 +3072,7 @@ Do not encrypt the private key.
 Do not output the encoded version of the request.
 .It Fl out Ar file
 The output file to write to,
-or standard output if not spceified.
+or standard output if not specified.
 .It Fl outform Cm der | pem
 The output format.
 .It Fl passin Ar arg

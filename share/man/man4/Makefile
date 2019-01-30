@@ -1,6 +1,6 @@
-#	$OpenBSD: Makefile,v 1.698 2018/12/20 23:00:55 dlg Exp $
+#	$OpenBSD: Makefile,v 1.701 2019/01/19 00:27:04 dlg Exp $
 
-MAN=	aac.4 ac97.4 acphy.4 acrtc.4 \
+MAN=	aac.4 abcrtc.4 ac97.4 acphy.4 acrtc.4 \
 	acpi.4 acpiac.4 acpials.4 acpiasus.4 acpibat.4 \
 	acpibtn.4 acpicbkbd.4 acpicpu.4 acpidock.4 acpihve.4 \
 	acpiec.4 acpihpet.4 acpimadt.4 acpimcfg.4 acpiprt.4 acpipwrres.4 \
@@ -33,11 +33,11 @@ MAN=	aac.4 ac97.4 acphy.4 acrtc.4 \
 	hvn.4 hvs.4 hyperv.4 \
 	iatp.4 ichiic.4 ichwdt.4 icmp.4 icmp6.4 icsphy.4 ifmedia.4 \
 	iha.4 ihidev.4 iic.4 ikbd.4 ims.4 imt.4 imxanatop.4 \
-	imxesdhc.4 imxgpc.4 imxgpio.4 imxiic.4 imxrtc.4 imxuart.4 \
+	imxesdhc.4 imxgpc.4 imxgpio.4 imxiic.4 imxrtc.4 imxsrc.4 imxuart.4 \
 	inet.4 inet6.4 inphy.4 iophy.4 \
 	ip.4 ip6.4 ipcomp.4 ipgphy.4 ipmi.4 ips.4 ipsec.4 ipw.4 \
 	isa.4 isagpio.4 isapnp.4 islrtc.4 it.4 itherm.4 iwi.4 iwn.4 iwm.4 \
-	ix.4 ixgb.4 jmb.4 jme.4 jmphy.4 \
+	ix.4 ixgb.4 ixl.4 jmb.4 jme.4 jmphy.4 \
 	kate.4 kcov.4 km.4 ksyms.4 kue.4 lc.4 lge.4 lii.4 lisa.4 lm.4 \
 	lmenv.4 lmn.4 lmtemp.4 lo.4 lpt.4 lxtphy.4 luphy.4 \
 	maestro.4 mainbus.4 malo.4 maxds.4 maxrtc.4 maxtmp.4 mbg.4 midi.4 \

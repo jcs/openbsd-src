@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_tc.c,v 1.34 2018/09/18 20:47:11 bluhm Exp $ */
+/*	$OpenBSD: kern_tc.c,v 1.36 2019/01/20 01:13:03 cheloha Exp $ */
 
 /*
  * Copyright (c) 2000 Poul-Henning Kamp <phk@FreeBSD.org>
@@ -24,6 +24,7 @@
 #include <sys/param.h>
 #include <sys/atomic.h>
 #include <sys/kernel.h>
+#include <sys/mutex.h>
 #include <sys/timeout.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
@@ -70,6 +71,7 @@ struct timehands {
 	int64_t			th_adjustment;
 	u_int64_t		th_scale;
 	u_int	 		th_offset_count;
+	struct bintime		th_boottime;
 	struct bintime		th_offset;
 	struct timeval		th_microtime;
 	struct timespec		th_nanotime;
@@ -79,26 +81,33 @@ struct timehands {
 };
 
 static struct timehands th0;
-static struct timehands th9 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th0};
-static struct timehands th8 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th9};
-static struct timehands th7 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th8};
-static struct timehands th6 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th7};
-static struct timehands th5 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th6};
-static struct timehands th4 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th5};
-static struct timehands th3 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th4};
-static struct timehands th2 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th3};
-static struct timehands th1 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, 0, &th2};
+static struct timehands th9 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th0};
+static struct timehands th8 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th9};
+static struct timehands th7 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th8};
+static struct timehands th6 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th7};
+static struct timehands th5 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th6};
+static struct timehands th4 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th5};
+static struct timehands th3 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th4};
+static struct timehands th2 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th3};
+static struct timehands th1 = { NULL, 0, 0, 0, {0, 0}, {0, 0}, {0, 0}, {0, 0}, 0, &th2};
 static struct timehands th0 = {
 	&dummy_timecounter,
 	0,
 	(uint64_t)-1 / 1000000,
 	0,
+	{0, 0},
 	{1, 0},
 	{0, 0},
 	{0, 0},
 	1,
 	&th1
 };
+
+/*
+ * Protects writes to anything accessed during tc_windup().
+ * tc_windup() must be called before leaving this mutex.
+ */
+struct mutex timecounter_mtx = MUTEX_INITIALIZER(IPL_CLOCK);
 
 static struct timehands *volatile timehands = &th0;
 struct timecounter *timecounter = &dummy_timecounter;
@@ -108,7 +117,6 @@ volatile time_t time_second = 1;
 volatile time_t time_uptime = 0;
 
 struct bintime naptime;
-static struct bintime boottimebin;
 static int timestepwarnings;
 
 void tc_windup(void);
@@ -130,8 +138,32 @@ tc_delta(struct timehands *th)
 /*
  * Functions for reading the time.  We have to loop until we are sure that
  * the timehands that we operated on was not updated under our feet.  See
- * the comment in <sys/time.h> for a description of these 12 functions.
+ * the comment in <sys/time.h> for a description of these functions.
  */
+
+void
+binboottime(struct bintime *bt)
+{
+	struct timehands *th;
+	u_int gen;
+
+	do {
+		th = timehands;
+		gen = th->th_generation;
+		membar_consumer();
+		*bt = th->th_boottime;
+		membar_consumer();
+	} while (gen == 0 || gen != th->th_generation);
+}
+
+void
+microboottime(struct timeval *tvp)
+{
+	struct bintime bt;
+	
+	binboottime(&bt);
+	bintime2timeval(&bt, tvp);
+}
 
 void
 binuptime(struct bintime *bt)
@@ -170,9 +202,18 @@ microuptime(struct timeval *tvp)
 void
 bintime(struct bintime *bt)
 {
+	struct timehands *th;
+	u_int gen;
 
-	binuptime(bt);
-	bintime_add(bt, &boottimebin);
+	do {
+		th = timehands;
+		gen = th->th_generation;
+		membar_consumer();
+		*bt = th->th_offset;
+		bintime_addx(bt, th->th_scale * tc_delta(th));
+		bintime_add(bt, &th->th_boottime);
+		membar_consumer();
+	} while (gen == 0 || gen != th->th_generation);
 }
 
 void
@@ -305,7 +346,6 @@ tc_getfrequency(void)
 /*
  * Step our concept of UTC, aka the realtime clock.
  * This is done by modifying our estimate of when we booted.
- * XXX: not locked.
  */
 void
 tc_setrealtimeclock(const struct timespec *ts)
@@ -313,16 +353,19 @@ tc_setrealtimeclock(const struct timespec *ts)
 	struct timespec ts2;
 	struct bintime bt, bt2;
 
+	mtx_enter(&timecounter_mtx);
 	binuptime(&bt2);
 	timespec2bintime(ts, &bt);
 	bintime_sub(&bt, &bt2);
-	bintime_add(&bt2, &boottimebin);
-	boottimebin = bt;
-	bintime2timespec(&bt, &boottime);
-	enqueue_randomness(ts->tv_sec);
+	bintime_add(&bt2, &timehands->th_boottime);
+	timehands->th_boottime = bt;
 
 	/* XXX fiddle all the little crinkly bits around the fiords... */
 	tc_windup();
+	mtx_leave(&timecounter_mtx);
+
+	enqueue_randomness(ts->tv_sec);
+
 	if (timestepwarnings) {
 		bintime2timespec(&bt2, &ts2);
 		log(LOG_INFO, "Time stepped from %lld.%09ld to %lld.%09ld\n",
@@ -334,35 +377,37 @@ tc_setrealtimeclock(const struct timespec *ts)
 /*
  * Step the monotonic and realtime clocks, triggering any timeouts that
  * should have occurred across the interval.
- * XXX: not locked.
  */
 void
 tc_setclock(const struct timespec *ts)
 {
 	struct bintime bt, bt2;
+	static int first = 1;
 #ifndef SMALL_KERNEL
 	long long adj_ticks;
 #endif
 
 	/*
 	 * When we're called for the first time, during boot when
-	 * the root partition is mounted, boottime is still zero:
-	 * we just need to set it.
+	 * the root partition is mounted, we need to set boottime.
 	 */
-	if (boottimebin.sec == 0) {
+	if (first) {
 		tc_setrealtimeclock(ts);
+		first = 0;
 		return;
 	}
 
 	enqueue_randomness(ts->tv_sec);
 
+	mtx_enter(&timecounter_mtx);
 	timespec2bintime(ts, &bt);
-	bintime_sub(&bt, &boottimebin);
+	bintime_sub(&bt, &timehands->th_boottime);
 	bt2 = timehands->th_offset;
 	timehands->th_offset = bt;
 
 	/* XXX fiddle all the little crinkly bits around the fiords... */
 	tc_windup();
+	mtx_leave(&timecounter_mtx);
 
 #ifndef SMALL_KERNEL
 	/* convert the bintime to ticks */
@@ -391,6 +436,8 @@ tc_windup(void)
 	u_int64_t scale;
 	u_int delta, ncount, ogen;
 	int i;
+
+	MUTEX_ASSERT_LOCKED(&timecounter_mtx);
 
 	/*
 	 * Make the next timehands a copy of the current one, but do not
@@ -441,7 +488,7 @@ tc_windup(void)
 	 * case we missed a leap second.
 	 */
 	bt = th->th_offset;
-	bintime_add(&bt, &boottimebin);
+	bintime_add(&bt, &th->th_boottime);
 	i = bt.sec - tho->th_microtime.tv_sec;
 	if (i > LARGE_STEP)
 		i = 2;
@@ -571,8 +618,11 @@ tc_ticktock(void)
 
 	if (++count < tc_tick)
 		return;
+	if (!mtx_enter_try(&timecounter_mtx))
+		return;
 	count = 0;
 	tc_windup();
+	mtx_leave(&timecounter_mtx);
 }
 
 void

@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtio_pci.c,v 1.18 2017/05/31 08:57:48 sf Exp $	*/
+/*	$OpenBSD: virtio_pci.c,v 1.21 2019/01/19 16:23:46 sf Exp $	*/
 /*	$NetBSD: virtio.c,v 1.3 2011/11/02 23:05:52 njoly Exp $	*/
 
 /*
@@ -38,6 +38,7 @@
 
 #include <dev/pv/virtioreg.h>
 #include <dev/pv/virtiovar.h>
+#include <dev/pci/virtio_pcireg.h>
 
 /*
  * XXX: Before being used on big endian arches, the access to config registers
@@ -46,8 +47,6 @@
  */
 
 #define MAX_MSIX_VECS	8
-#define virtio_set_status(sc, s) virtio_pci_set_status(sc, s)
-#define virtio_device_reset(sc) virtio_set_status((sc), 0)
 
 struct virtio_pci_softc;
 
@@ -328,8 +327,8 @@ virtio_pci_negotiate_features(struct virtio_softc *vsc, uint32_t guest_features,
 	 * indirect descriptors can be switched off by setting bit 1 in the
 	 * driver flags, see config(8)
 	 */
-	if (!(vsc->sc_dev.dv_cfdata->cf_flags & 1) &&
-	    !(vsc->sc_child->dv_cfdata->cf_flags & 1)) {
+	if (!(vsc->sc_dev.dv_cfdata->cf_flags & VIRTIO_CF_NO_INDIRECT) &&
+	    !(vsc->sc_child->dv_cfdata->cf_flags & VIRTIO_CF_NO_INDIRECT)) {
 		guest_features |= VIRTIO_F_RING_INDIRECT_DESC;
 	} else {
 		printf("RingIndirectDesc disabled by UKC\n");

@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.222 2018/12/10 21:13:59 claudio Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.226 2019/01/21 05:44:40 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -5610,9 +5610,8 @@ vmx_handle_rdmsr(struct vcpu *vcpu)
 {
 	uint64_t insn_length;
 	uint64_t *rax, *rdx;
-#ifdef VMM_DEBUG
 	uint64_t *rcx;
-#endif /* VMM_DEBUG */
+	int ret;
 
 	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
 		printf("%s: can't obtain instruction length\n", __func__);
@@ -5626,14 +5625,26 @@ vmx_handle_rdmsr(struct vcpu *vcpu)
 	}
 
 	rax = &vcpu->vc_gueststate.vg_rax;
+	rcx = &vcpu->vc_gueststate.vg_rcx;
 	rdx = &vcpu->vc_gueststate.vg_rdx;
+
+	switch (*rcx) {
+	case MSR_SMBASE:
+		/*
+		 * 34.15.6.3 - Saving Guest State (SMM)
+		 *
+		 * Unsupported, so inject #GP and return without
+		 * advancing %rip.
+		 */
+		ret = vmm_inject_gp(vcpu);
+		return (ret);
+	}
 
 	*rax = 0;
 	*rdx = 0;
 
 #ifdef VMM_DEBUG
 	/* Log the access, to be able to identify unknown MSRs */
-	rcx = &vcpu->vc_gueststate.vg_rcx;
 	DPRINTF("%s: rdmsr exit, msr=0x%llx, data returned to "
 	    "guest=0x%llx:0x%llx\n", __func__, *rcx, *rdx, *rax);
 #endif /* VMM_DEBUG */
@@ -5794,6 +5805,7 @@ vmx_handle_wrmsr(struct vcpu *vcpu)
 {
 	uint64_t insn_length;
 	uint64_t *rax, *rdx, *rcx;
+	int ret;
 
 	if (vmread(VMCS_INSTRUCTION_LENGTH, &insn_length)) {
 		printf("%s: can't obtain instruction length\n", __func__);
@@ -5814,6 +5826,15 @@ vmx_handle_wrmsr(struct vcpu *vcpu)
 		case MSR_MISC_ENABLE:
 			vmx_handle_misc_enable_msr(vcpu);
 			break;
+		case MSR_SMM_MONITOR_CTL:
+			/*
+			 * 34.15.5 - Enabling dual monitor treatment
+			 *
+			 * Unsupported, so inject #GP and return without
+			 * advancing %rip.
+			 */
+			ret = vmm_inject_gp(vcpu);
+			return (ret);
 #ifdef VMM_DEBUG
 		default:
 			/*
@@ -5847,6 +5868,7 @@ svm_handle_msr(struct vcpu *vcpu)
 	uint64_t insn_length, msr;
 	uint64_t *rax, *rcx, *rdx;
 	struct vmcb *vmcb = (struct vmcb *)vcpu->vc_control_va;
+	int i;
 
 	/* XXX: Validate RDMSR / WRMSR insn_length */
 	insn_length = 2;
@@ -5867,9 +5889,16 @@ svm_handle_msr(struct vcpu *vcpu)
 #endif /* VMM_DEBUG */
 		}
 	} else {
-		msr = rdmsr(*rcx);
-		*rax = msr & 0xFFFFFFFFULL;
-		*rdx = msr >> 32;
+		i = rdmsr_safe(*rcx, &msr);
+		if (i == 0) {
+			*rax = msr & 0xFFFFFFFFULL;
+			*rdx = msr >> 32;
+		} else {
+			DPRINTF("%s: rdmsr for unsupported MSR 0x%llx\n",
+			    __func__, *rcx);
+			*rax = 0;
+			*rdx = 0;
+		}
 	}
 
 	vcpu->vc_gueststate.vg_rip += insn_length;
@@ -5892,7 +5921,7 @@ svm_handle_msr(struct vcpu *vcpu)
 int
 vmm_handle_cpuid(struct vcpu *vcpu)
 {
-	uint64_t insn_length;
+	uint64_t insn_length, cr4;
 	uint64_t *rax, *rbx, *rcx, *rdx, cpuid_limit;
 	struct vmcb *vmcb;
 	uint32_t eax, ebx, ecx, edx;
@@ -5906,6 +5935,11 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 			return (EINVAL);
 		}
 
+		if (vmread(VMCS_GUEST_IA32_CR4, &cr4)) {
+			DPRINTF("%s: can't obtain cr4\n", __func__);
+			return (EINVAL);
+		}
+
 		rax = &vcpu->vc_gueststate.vg_rax;
 		msr_store =
 		    (struct vmx_msr_store *)vcpu->vc_vmx_msr_exit_save_va;
@@ -5916,6 +5950,7 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		insn_length = 2;
 		vmcb = (struct vmcb *)vcpu->vc_control_va;
 		rax = &vmcb->v_rax;
+		cr4 = vmcb->v_cr4;
 	}
 
 	rbx = &vcpu->vc_gueststate.vg_rbx;
@@ -5977,6 +6012,13 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		*rbx = cpu_ebxfeature & 0x0000FFFF;
 		*rbx |= (vcpu->vc_id & 0xFF) << 24;
 		*rcx = (cpu_ecxfeature | CPUIDECX_HV) & VMM_CPUIDECX_MASK;
+
+		/* Guest CR4.OSXSAVE determines presence of CPUIDECX_OSXSAVE */
+		if (cr4 & CR4_OSXSAVE)
+			*rcx |= CPUIDECX_OSXSAVE;
+		else
+			*rcx &= ~CPUIDECX_OSXSAVE;
+
 		*rdx = curcpu()->ci_feature_flags & VMM_CPUIDEDX_MASK;
 		break;
 	case 0x02:	/* Cache and TLB information */
@@ -6282,7 +6324,6 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 		/* Handle vmd(8) injected interrupts */
 		/* Is there an interrupt pending injection? */
 		if (irq != 0xFFFF && vcpu->vc_irqready) {
-			DPRINTF("%s: inject irq %d\n", __func__, irq & 0xFF);
 			vmcb->v_eventinj = (irq & 0xFF) | (1<<31);
 			irq = 0xFFFF;
 		} 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.361 2018/12/30 13:53:07 denis Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.363 2019/01/20 23:27:48 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -573,14 +573,12 @@ RB_HEAD(knexthop_tree, knexthop_node);
 
 struct ktable {
 	char			 descr[PEER_DESCR_LEN];
-	char			 ifmpe[IFNAMSIZ];
 	struct kroute_tree	 krt;
 	struct kroute6_tree	 krt6;
 	struct knexthop_tree	 knt;
 	struct network_head	 krn;
 	u_int			 rtableid;
 	u_int			 nhtableid; /* rdomain id for nexthop lookup */
-	u_int			 ifindex;   /* ifindex of ifmpe */
 	int			 nhrefcnt;  /* refcnt for nexthop table */
 	enum reconf_action	 state;
 	u_int8_t		 fib_conf;  /* configured FIB sync flag */
@@ -670,6 +668,7 @@ struct ctl_neighbor {
 	char			descr[PEER_DESCR_LEN];
 	char			shutcomm[SHUT_COMM_LEN];
 	int			show_timers;
+	int			is_group;
 };
 
 #define	F_PREF_ELIGIBLE	0x01
@@ -783,7 +782,6 @@ struct ctl_show_rib_request {
 	struct bgpd_addr	prefix;
 	struct filter_as	as;
 	struct filter_community community;
-	u_int32_t		peerid;
 	u_int32_t		flags;
 	u_int8_t		validation_state;
 	pid_t			pid;
@@ -1158,7 +1156,7 @@ RB_PROTOTYPE(prefixset_tree, prefixset_item, entry, prefixset_cmp);
 
 /* kroute.c */
 int		 kr_init(void);
-int		 ktable_update(u_int, char *, char *, int, u_int8_t);
+int		 ktable_update(u_int, char *, int, u_int8_t);
 void		 ktable_preload(void);
 void		 ktable_postload(u_int8_t);
 int		 ktable_exists(u_int, u_int *);

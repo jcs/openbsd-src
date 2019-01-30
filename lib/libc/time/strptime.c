@@ -1,4 +1,4 @@
-/*	$OpenBSD: strptime.c,v 1.22 2016/05/23 00:05:15 guenther Exp $ */
+/*	$OpenBSD: strptime.c,v 1.24 2019/01/22 11:09:03 cheloha Exp $ */
 /*	$NetBSD: strptime.c,v 1.12 1998/01/20 21:39:40 mycroft Exp $	*/
 /*-
  * Copyright (c) 1997, 1998, 2005, 2008 The NetBSD Foundation, Inc.
@@ -30,6 +30,7 @@
 
 #include <ctype.h>
 #include <locale.h>
+#include <stdint.h>
 #include <string.h>
 #include <time.h>
 
@@ -71,6 +72,7 @@ static const int mon_lengths[2][MONSPERYEAR] = {
         { 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 };
 
+static	int _conv_num64(const unsigned char **, int64_t *, int64_t, int64_t);
 static	int _conv_num(const unsigned char **, int *, int, int);
 static	int leaps_thru_end_of(const int y);
 static	char *_strptime(const char *, const char *, struct tm *, int);
@@ -330,10 +332,19 @@ literal:
 
 		case 'S':	/* The seconds. */
 			_LEGAL_ALT(_ALT_O);
-			if (!(_conv_num(&bp, &tm->tm_sec, 0, 61)))
+			if (!(_conv_num(&bp, &tm->tm_sec, 0, 60)))
 				return (NULL);
 			break;
-
+		case 's':	/* Seconds since epoch */
+			{
+				int64_t i64;
+				if (!(_conv_num64(&bp, &i64, 0, INT64_MAX)))
+					return (NULL);
+				if (!gmtime_r(&i64, tm))
+					return (NULL);
+				fields = 0xffff;	 /* everything */
+			}
+			break;
 		case 'U':	/* The week of year, beginning on sunday. */
 		case 'W':	/* The week of year, beginning on monday. */
 			_LEGAL_ALT(_ALT_O);
@@ -642,6 +653,29 @@ _conv_num(const unsigned char **buf, int *dest, int llim, int ulim)
 {
 	int result = 0;
 	int rulim = ulim;
+
+	if (**buf < '0' || **buf > '9')
+		return (0);
+
+	/* we use rulim to break out of the loop when we run out of digits */
+	do {
+		result *= 10;
+		result += *(*buf)++ - '0';
+		rulim /= 10;
+	} while ((result * 10 <= ulim) && rulim && **buf >= '0' && **buf <= '9');
+
+	if (result < llim || result > ulim)
+		return (0);
+
+	*dest = result;
+	return (1);
+}
+
+static int
+_conv_num64(const unsigned char **buf, int64_t *dest, int64_t llim, int64_t ulim)
+{
+	int result = 0;
+	int64_t rulim = ulim;
 
 	if (**buf < '0' || **buf > '9')
 		return (0);

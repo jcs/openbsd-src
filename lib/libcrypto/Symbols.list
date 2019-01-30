@@ -667,6 +667,7 @@ CRYPTO_get_mem_ex_functions
 CRYPTO_get_mem_functions
 CRYPTO_get_new_dynlockid
 CRYPTO_get_new_lockid
+CRYPTO_hchacha_20
 CRYPTO_is_mem_check_on
 CRYPTO_lock
 CRYPTO_malloc
@@ -708,6 +709,7 @@ CRYPTO_set_mem_ex_functions
 CRYPTO_set_mem_functions
 CRYPTO_strdup
 CRYPTO_thread_id
+CRYPTO_xchacha_20
 CRYPTO_xts128_encrypt
 Camellia_cbc_encrypt
 Camellia_cfb128_encrypt
@@ -955,6 +957,19 @@ EC_GROUP_set_curve_name
 EC_GROUP_set_generator
 EC_GROUP_set_point_conversion_form
 EC_GROUP_set_seed
+EC_KEY_METHOD_free
+EC_KEY_METHOD_get_compute_key
+EC_KEY_METHOD_get_init
+EC_KEY_METHOD_get_keygen
+EC_KEY_METHOD_get_sign
+EC_KEY_METHOD_get_verify
+EC_KEY_METHOD_new
+EC_KEY_METHOD_set_compute_key
+EC_KEY_METHOD_set_init
+EC_KEY_METHOD_set_keygen
+EC_KEY_METHOD_set_sign
+EC_KEY_METHOD_set_verify
+EC_KEY_OpenSSL
 EC_KEY_check_key
 EC_KEY_clear_flags
 EC_KEY_copy
@@ -965,20 +980,27 @@ EC_KEY_get0_group
 EC_KEY_get0_private_key
 EC_KEY_get0_public_key
 EC_KEY_get_conv_form
+EC_KEY_get_default_method
 EC_KEY_get_enc_flags
+EC_KEY_get_ex_data
 EC_KEY_get_flags
 EC_KEY_get_key_method_data
+EC_KEY_get_method
 EC_KEY_insert_key_method_data
 EC_KEY_new
 EC_KEY_new_by_curve_name
+EC_KEY_new_method
 EC_KEY_precompute_mult
 EC_KEY_print
 EC_KEY_print_fp
 EC_KEY_set_asn1_flag
 EC_KEY_set_conv_form
+EC_KEY_set_default_method
 EC_KEY_set_enc_flags
+EC_KEY_set_ex_data
 EC_KEY_set_flags
 EC_KEY_set_group
+EC_KEY_set_method
 EC_KEY_set_private_key
 EC_KEY_set_public_key
 EC_KEY_set_public_key_affine_coordinates
@@ -1036,6 +1058,7 @@ ENGINE_finish
 ENGINE_free
 ENGINE_get_DH
 ENGINE_get_DSA
+ENGINE_get_EC
 ENGINE_get_ECDH
 ENGINE_get_ECDSA
 ENGINE_get_RAND
@@ -1048,6 +1071,7 @@ ENGINE_get_cmd_defns
 ENGINE_get_ctrl_function
 ENGINE_get_default_DH
 ENGINE_get_default_DSA
+ENGINE_get_default_EC
 ENGINE_get_default_ECDH
 ENGINE_get_default_ECDSA
 ENGINE_get_default_RAND
@@ -1090,6 +1114,7 @@ ENGINE_new
 ENGINE_pkey_asn1_find_str
 ENGINE_register_DH
 ENGINE_register_DSA
+ENGINE_register_EC
 ENGINE_register_ECDH
 ENGINE_register_ECDSA
 ENGINE_register_RAND
@@ -1097,6 +1122,7 @@ ENGINE_register_RSA
 ENGINE_register_STORE
 ENGINE_register_all_DH
 ENGINE_register_all_DSA
+ENGINE_register_all_EC
 ENGINE_register_all_ECDH
 ENGINE_register_all_ECDSA
 ENGINE_register_all_RAND
@@ -1115,6 +1141,7 @@ ENGINE_register_pkey_meths
 ENGINE_remove
 ENGINE_set_DH
 ENGINE_set_DSA
+ENGINE_set_EC
 ENGINE_set_ECDH
 ENGINE_set_ECDSA
 ENGINE_set_RAND
@@ -1126,6 +1153,7 @@ ENGINE_set_ctrl_function
 ENGINE_set_default
 ENGINE_set_default_DH
 ENGINE_set_default_DSA
+ENGINE_set_default_EC
 ENGINE_set_default_ECDH
 ENGINE_set_default_ECDSA
 ENGINE_set_default_RAND
@@ -1151,6 +1179,7 @@ ENGINE_set_pkey_meths
 ENGINE_set_table_flags
 ENGINE_unregister_DH
 ENGINE_unregister_DSA
+ENGINE_unregister_EC
 ENGINE_unregister_ECDH
 ENGINE_unregister_ECDSA
 ENGINE_unregister_RAND
@@ -1309,6 +1338,8 @@ EVP_DigestSignInit
 EVP_DigestUpdate
 EVP_DigestVerifyFinal
 EVP_DigestVerifyInit
+EVP_ENCODE_CTX_free
+EVP_ENCODE_CTX_new
 EVP_EncodeBlock
 EVP_EncodeFinal
 EVP_EncodeInit
@@ -1472,6 +1503,7 @@ EVP_add_digest
 EVP_aead_aes_128_gcm
 EVP_aead_aes_256_gcm
 EVP_aead_chacha20_poly1305
+EVP_aead_xchacha20_poly1305
 EVP_aes_128_cbc
 EVP_aes_128_cbc_hmac_sha1
 EVP_aes_128_ccm

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap.c,v 1.122 2019/01/06 02:15:40 mlarkin Exp $	*/
+/*	$OpenBSD: pmap.c,v 1.127 2019/01/21 06:18:37 mlarkin Exp $	*/
 /*	$NetBSD: pmap.c,v 1.3 2003/05/08 18:13:13 thorpej Exp $	*/
 
 /*
@@ -560,10 +560,11 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 {
 	vaddr_t kva_start = VM_MIN_KERNEL_ADDRESS;
 	struct pmap *kpm;
-	int i;
+	int curslot, i, j, k, p;
 	long ndmpdp;
-	paddr_t dmpd, dmpdp;
+	paddr_t dmpd, dmpdp, start_cur;
 	vaddr_t kva, kva_end;
+	pt_entry_t *pt, *pml2;
 
 	/*
 	 * define the boundaries of the managed kernel virtual address
@@ -657,10 +658,16 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 	 * we map the rest if it exists. We actually use the direct map
 	 * here to set up the page tables, we're assuming that we're still
 	 * operating in the lower 4GB of memory.
+	 *
+	 * Map (up to) the first 512GB of physical memory first. This part
+	 * is handled differently than physical memory > 512GB since we have
+	 * already mapped part of this range in locore0.
 	 */
 	ndmpdp = (max_pa + NBPD_L3 - 1) >> L3_SHIFT;
 	if (ndmpdp < NDML2_ENTRIES)
 		ndmpdp = NDML2_ENTRIES;		/* At least 4GB */
+	if (ndmpdp > 512)
+		ndmpdp = 512;			/* At most 512GB */
 
 	dmpdp = kpm->pm_pdir[PDIR_SLOT_DIRECT] & PG_FRAME;
 
@@ -691,6 +698,57 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 
 	kpm->pm_pdir[PDIR_SLOT_DIRECT] = dmpdp | PG_V | PG_KW | PG_U |
 	    PG_M | pg_nx;
+
+	/* Map any remaining physical memory > 512GB */	
+	for (curslot = 1 ; curslot < NUM_L4_SLOT_DIRECT ; curslot++) {
+		/*
+		 * Start of current range starts at PA (curslot) * 512GB
+		 */
+		start_cur = (paddr_t)(curslot * NBPD_L4);
+		if (max_pa > start_cur) {
+			/* Next 512GB, new PML4e and PML3 page */
+			dmpd = first_avail; first_avail += PAGE_SIZE;
+			pt = (pt_entry_t *)PMAP_DIRECT_MAP(dmpd);
+			kpm->pm_pdir[PDIR_SLOT_DIRECT + curslot] = dmpd |
+			    PG_KW | PG_V | PG_U | PG_M | pg_nx;
+
+			/* How many 1GB entries remain? */
+			p = ((max_pa - start_cur) >> L3_SHIFT);
+			if (max_pa & L2_MASK)
+				p++;
+
+			if (p > NPDPG)
+				p = NPDPG;
+
+			/* Allocate 'p' PML2 pages and populate */
+			for (i = 0; i < p; i++) {
+				dmpd = first_avail; first_avail += PAGE_SIZE;
+				pt[i] = dmpd |
+				    PG_RW | PG_V | PG_U | PG_M | pg_nx;
+
+				pml2 = (pt_entry_t *)PMAP_DIRECT_MAP(dmpd);
+			
+				/*
+				 * All PML2 pages except the last one will be
+				 * filled
+				 */	
+				if (i == p - 1) {
+					k = ((max_pa & L2_MASK) >> L2_SHIFT);
+					if (max_pa & L1_MASK)
+						k++;
+				} else
+					k = NPDPG;
+
+				for (j = 0; j < k; j++) {
+					pml2[j] = curslot * NBPD_L4 +
+					    (uint64_t)i * NBPD_L3 +
+					    (uint64_t)j * NBPD_L2;
+					pml2[j] |= PG_RW | PG_V | pg_g_kern |
+					    PG_U | PG_M | pg_nx | PG_PS;
+				}
+			}
+		}
+	}
 
 	tlbflush();
 
@@ -746,6 +804,90 @@ pmap_bootstrap(paddr_t first_avail, paddr_t max_pa)
 	tlbflush();
 
 	return first_avail;
+}
+
+/*
+ * pmap_randomize
+ *
+ * Randomizes the location of the kernel pmap
+ */
+void
+pmap_randomize(void)
+{
+	pd_entry_t *pml4va, *oldpml4va;
+	paddr_t pml4pa;
+	int i;
+
+	pml4va = km_alloc(PAGE_SIZE, &kv_page, &kp_zero, &kd_nowait);
+	if (pml4va == NULL)
+		panic("%s: km_alloc failed", __func__);
+
+	/* Copy old PML4 page to new one */
+	oldpml4va = pmap_kernel()->pm_pdir;
+	memcpy(pml4va, oldpml4va, PAGE_SIZE);
+
+	/* Switch to new PML4 */
+	pmap_extract(pmap_kernel(), (vaddr_t)pml4va, &pml4pa);
+	lcr3(pml4pa);
+
+	/* Fixup pmap_kernel and proc0's %cr3 */
+	pmap_kernel()->pm_pdirpa = pml4pa;
+	pmap_kernel()->pm_pdir = pml4va;
+	proc0.p_addr->u_pcb.pcb_cr3 = pml4pa;
+
+	/* Fixup recursive PTE PML4E slot. We are only changing the PA */	
+	pml4va[PDIR_SLOT_PTE] = pml4pa | (pml4va[PDIR_SLOT_PTE] & ~PG_FRAME);
+
+	for (i = 0; i < NPDPG; i++) {
+		/* PTE slot already handled earlier */
+		if (i == PDIR_SLOT_PTE)
+			continue;
+
+		if (pml4va[i] & PG_FRAME)
+			pmap_randomize_level(&pml4va[i], 3);
+	}
+
+	/* Wipe out bootstrap PML4 */
+	memset(oldpml4va, 0, PAGE_SIZE);
+	tlbflush();
+}
+
+void
+pmap_randomize_level(pd_entry_t *pde, int level)
+{
+	pd_entry_t *new_pd_va;
+	paddr_t old_pd_pa, new_pd_pa;
+	vaddr_t old_pd_va;
+	struct vm_page *pg;
+	int i;
+
+	if (level == 0)
+		return;
+
+	if (level < 3 && (*pde & PG_PS))
+		return;
+
+	new_pd_va = km_alloc(PAGE_SIZE, &kv_page, &kp_zero, &kd_nowait);
+	if (new_pd_va == NULL)
+		panic("%s: cannot allocate page for L%d page directory",
+		    __func__, level);
+
+	old_pd_pa = *pde & PG_FRAME;
+	old_pd_va = PMAP_DIRECT_MAP(old_pd_pa);
+	pmap_extract(pmap_kernel(), (vaddr_t)new_pd_va, &new_pd_pa);
+	memcpy(new_pd_va, (void *)old_pd_va, PAGE_SIZE);
+	*pde = new_pd_pa | (*pde & ~PG_FRAME);
+
+	tlbflush();
+	memset((void *)old_pd_va, 0, PAGE_SIZE);
+
+	pg = PHYS_TO_VM_PAGE(old_pd_pa);
+	if (pg)
+		uvm_pagefree(pg);
+
+	for (i = 0; i < NPDPG; i++)
+		if (new_pd_va[i] & PG_FRAME)
+			pmap_randomize_level(&new_pd_va[i], level - 1);
 }
 
 /*
@@ -918,7 +1060,6 @@ pmap_free_ptp(struct pmap *pmap, struct vm_page *ptp, vaddr_t va,
  * => pmap should NOT be pmap_kernel()
  */
 
-
 struct vm_page *
 pmap_get_ptp(struct pmap *pmap, vaddr_t va)
 {
@@ -1025,10 +1166,11 @@ void
 pmap_pdp_ctor(pd_entry_t *pdir)
 {
 	paddr_t pdirpa;
-	int npde;
+	int npde, i;
+	struct pmap *kpm = pmap_kernel();
 
 	/* fetch the physical address of the page directory. */
-	(void) pmap_extract(pmap_kernel(), (vaddr_t) pdir, &pdirpa);
+	(void) pmap_extract(kpm, (vaddr_t) pdir, &pdirpa);
 
 	/* zero init area */
 	memset(pdir, 0, PDIR_SLOT_PTE * sizeof(pd_entry_t));
@@ -1046,7 +1188,8 @@ pmap_pdp_ctor(pd_entry_t *pdir)
 	memset(&pdir[PDIR_SLOT_KERN + npde], 0,
 	    (NTOPLEVEL_PDES - (PDIR_SLOT_KERN + npde)) * sizeof(pd_entry_t));
 
-	pdir[PDIR_SLOT_DIRECT] = pmap_kernel()->pm_pdir[PDIR_SLOT_DIRECT];
+	for (i = 0; i < NUM_L4_SLOT_DIRECT; i++)
+		pdir[PDIR_SLOT_DIRECT + i] = kpm->pm_pdir[PDIR_SLOT_DIRECT + i];
 
 #if VM_MIN_KERNEL_ADDRESS != KERNBASE
 	pdir[pl4_pi(KERNBASE)] = PDP_BASE[pl4_pi(KERNBASE)];
@@ -1432,7 +1575,6 @@ pmap_remove_ptes(struct pmap *pmap, struct vm_page *ptp, vaddr_t ptpva,
 		/* end of "for" loop: time for next pte */
 	}
 }
-
 
 /*
  * pmap_remove_pte: remove a single PTE from a PTP
@@ -2059,7 +2201,7 @@ pmap_enter_special(vaddr_t va, paddr_t pa, vm_prot_t prot)
 		if (!pmap_extract(pmap, (vaddr_t)ptp, &npa))
 			panic("%s: can't locate PDPT page\n", __func__);
 
-		pd[l4idx] = (npa | PG_u | PG_RW | PG_V);
+		pd[l4idx] = (npa | PG_RW | PG_V);
 
 		DPRINTF("%s: allocated new PDPT page at phys 0x%llx, "
 		    "setting PML4e[%lld] = 0x%llx\n", __func__,
@@ -2083,7 +2225,7 @@ pmap_enter_special(vaddr_t va, paddr_t pa, vm_prot_t prot)
 		if (!pmap_extract(pmap, (vaddr_t)ptp, &npa))
 			panic("%s: can't locate PD page\n", __func__);
 
-		pd[l3idx] = (npa | PG_u | PG_RW | PG_V);
+		pd[l3idx] = (npa | PG_RW | PG_V);
 
 		DPRINTF("%s: allocated new PD page at phys 0x%llx, "
 		    "setting PDPTe[%lld] = 0x%llx\n", __func__,
@@ -2107,7 +2249,7 @@ pmap_enter_special(vaddr_t va, paddr_t pa, vm_prot_t prot)
 		if (!pmap_extract(pmap, (vaddr_t)ptp, &npa))
 			panic("%s: can't locate PT page\n", __func__);
 
-		pd[l2idx] = (npa | PG_u | PG_RW | PG_V);
+		pd[l2idx] = (npa | PG_RW | PG_V);
 
 		DPRINTF("%s: allocated new PT page at phys 0x%llx, "
 		    "setting PDE[%lld] = 0x%llx\n", __func__,

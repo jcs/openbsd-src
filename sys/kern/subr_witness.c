@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_witness.c,v 1.22 2018/06/26 14:45:16 visa Exp $	*/
+/*	$OpenBSD: subr_witness.c,v 1.27 2019/01/29 14:07:15 visa Exp $	*/
 
 /*-
  * Copyright (c) 2008 Isilon Systems, Inc.
@@ -566,7 +566,7 @@ witness_init(struct lock_object *lock, const struct lock_type *type)
 		pending_locks[pending_cnt++].wh_type = type;
 		if (pending_cnt > WITNESS_PENDLIST)
 			panic("%s: pending locks list is too small, "
-			    "increase WITNESS_PENDLIST\n",
+			    "increase WITNESS_PENDLIST",
 			    __func__);
 	} else
 		lock->lo_witness = enroll(type, lock->lo_name, class);
@@ -803,7 +803,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 	if (lock1 != NULL) {
 		if ((lock1->li_flags & LI_EXCLUSIVE) != 0 &&
 		    (flags & LOP_EXCLUSIVE) == 0) {
-			printf("shared lock of (%s) %s @ %s:%d\n",
+			printf("witness: shared lock of (%s) %s @ %s:%d\n",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 			printf("while exclusively locked from %s:%d\n",
@@ -812,7 +812,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 		}
 		if ((lock1->li_flags & LI_EXCLUSIVE) == 0 &&
 		    (flags & LOP_EXCLUSIVE) != 0) {
-			printf("exclusive lock of (%s) %s @ %s:%d\n",
+			printf("witness: exclusive lock of (%s) %s @ %s:%d\n",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 			printf("while share locked from %s:%d\n",
@@ -884,9 +884,8 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			w_rmatrix[i][i] |= WITNESS_REVERSAL;
 			w->w_reversed = 1;
 			mtx_leave(&w_mtx);
-			printf(
-			    "acquiring duplicate lock of same type: \"%s\"\n",
-			    w->w_type->lt_name);
+			printf("witness: acquiring duplicate lock of "
+			    "same type: \"%s\"\n", w->w_type->lt_name);
 			printf(" 1st %s @ %s:%d\n", plock->li_lock->lo_name,
 			    fixup_filename(plock->li_file), plock->li_line);
 			printf(" 2nd %s @ %s:%d\n", lock->lo_name,
@@ -1000,6 +999,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			/*
 			 * Ok, yell about it.
 			 */
+			printf("witness: ");
 			if (((lock->lo_flags & LO_SLEEPABLE) != 0 &&
 			    (lock1->li_lock->lo_flags & LO_SLEEPABLE) == 0))
 				printf("lock order reversal: "
@@ -1312,7 +1312,7 @@ found:
 	/* First, check for shared/exclusive mismatches. */
 	if ((instance->li_flags & LI_EXCLUSIVE) != 0 && witness_watch > 0 &&
 	    (flags & LOP_EXCLUSIVE) == 0) {
-		printf("shared unlock of (%s) %s @ %s:%d\n",
+		printf("witness: shared unlock of (%s) %s @ %s:%d\n",
 		    class->lc_name, lock->lo_name, fixup_filename(file), line);
 		printf("while exclusively locked from %s:%d\n",
 		    fixup_filename(instance->li_file), instance->li_line);
@@ -1320,7 +1320,7 @@ found:
 	}
 	if ((instance->li_flags & LI_EXCLUSIVE) == 0 && witness_watch > 0 &&
 	    (flags & LOP_EXCLUSIVE) != 0) {
-		printf("exclusive unlock of (%s) %s @ %s:%d\n",
+		printf("witness: exclusive unlock of (%s) %s @ %s:%d\n",
 		    class->lc_name, lock->lo_name, fixup_filename(file), line);
 		printf("while share locked from %s:%d\n",
 		    fixup_filename(instance->li_file),
@@ -1334,7 +1334,7 @@ found:
 	}
 	/* The lock is now being dropped, check for NORELEASE flag */
 	if ((instance->li_flags & LI_NORELEASE) != 0 && witness_watch > 0) {
-		printf("forbidden unlock of (%s) %s @ %s:%d\n",
+		printf("witness: forbidden unlock of (%s) %s @ %s:%d\n",
 		    class->lc_name, lock->lo_name, fixup_filename(file), line);
 		panic("lock marked norelease");
 	}
@@ -1380,13 +1380,14 @@ witness_thread_exit(struct proc *p)
 		for (n = 0; lle != NULL; lle = lle->ll_next)
 			for (i = lle->ll_count - 1; i >= 0; i--) {
 				if (n == 0)
-					printf("Thread %p exiting with "
-					    "the following locks held:\n", p);
+					printf("witness: thread %p exiting "
+					    "with the following locks held:\n",
+					    p);
 				n++;
 				witness_list_lock(&lle->ll_children[i],
 				    printf);
 			}
-		panic("Thread %p cannot exit while holding sleeplocks\n", p);
+		panic("thread %p cannot exit while holding sleeplocks", p);
 	}
 	KASSERT(lle->ll_next == NULL);
 	witness_lock_list_free(lle);
@@ -1424,6 +1425,7 @@ witness_warn(int flags, struct lock_object *lock, const char *fmt, ...)
 			    (lock1->li_lock->lo_flags & LO_SLEEPABLE) != 0)
 				continue;
 			if (n == 0) {
+				printf("witness: ");
 				va_start(ap, fmt);
 				vprintf(fmt, ap);
 				va_end(ap);
@@ -1448,6 +1450,7 @@ witness_warn(int flags, struct lock_object *lock, const char *fmt, ...)
 		    lock1->li_lock == lock && n == 0)
 			return (0);
 
+		printf("witness: ");
 		va_start(ap, fmt);
 		vprintf(fmt, ap);
 		va_end(ap);
@@ -1612,24 +1615,24 @@ adopt(struct witness *parent, struct witness *child)
 			 */
 			if ((w_rmatrix[i][j] & WITNESS_ANCESTOR_MASK) &&
 			    (w_rmatrix[i][j] & WITNESS_DESCENDANT_MASK)) {
-				printf("witness rmatrix paradox! [%d][%d]=%d "
+				printf("witness: rmatrix paradox! [%d][%d]=%d "
 				    "both ancestor and descendant\n",
 				    i, j, w_rmatrix[i][j]);
 #ifdef DDB
 				db_stack_dump();
 #endif
-				printf("Witness disabled.\n");
+				printf("witness disabled\n");
 				witness_watch = -1;
 			}
 			if ((w_rmatrix[j][i] & WITNESS_ANCESTOR_MASK) &&
 			    (w_rmatrix[j][i] & WITNESS_DESCENDANT_MASK)) {
-				printf("witness rmatrix paradox! [%d][%d]=%d "
+				printf("witness: rmatrix paradox! [%d][%d]=%d "
 				    "both ancestor and descendant\n",
 				    j, i, w_rmatrix[j][i]);
 #ifdef DDB
 				db_stack_dump();
 #endif
-				printf("Witness disabled.\n");
+				printf("witness disabled\n");
 				witness_watch = -1;
 			}
 		}
@@ -1686,8 +1689,8 @@ _isitmyx(struct witness *w1, struct witness *w2, int rmask, const char *fname)
 		/* Don't squawk if we're potentially racing with an update. */
 		if (w_mtx.mtx_owner != curcpu())
 			return (0);
-		printf("%s: rmatrix mismatch between %s (index %d) and %s "
-		    "(index %d): w_rmatrix[%d][%d] == %x but "
+		printf("witness: %s: rmatrix mismatch between %s (index %d) "
+		    "and %s (index %d): w_rmatrix[%d][%d] == %x but "
 		    "w_rmatrix[%d][%d] == %x\n",
 		    fname, w1->w_type->lt_name, i1, w2->w_type->lt_name,
 		    i2, i1, i2, r1,
@@ -1695,7 +1698,7 @@ _isitmyx(struct witness *w1, struct witness *w2, int rmask, const char *fname)
 #ifdef DDB
 		db_stack_dump();
 #endif
-		printf("Witness disabled.\n");
+		printf("witness disabled\n");
 		witness_watch = -1;
 	}
 	return (r1 & rmask);
@@ -1747,7 +1750,7 @@ witness_get(void)
 	index = w->w_index;
 	KASSERT(index > 0 && index == w_max_used_index + 1 &&
 	    index < witness_count);
-	bzero(w, sizeof(*w));
+	memset(w, 0, sizeof(*w));
 	w->w_index = index;
 	if (index > w_max_used_index)
 		w_max_used_index = index;
@@ -1793,7 +1796,7 @@ witness_lock_list_get(void)
 	}
 	w_lock_list_free = lle->ll_next;
 	mtx_leave(&w_mtx);
-	bzero(lle, sizeof(*lle));
+	memset(lle, 0, sizeof(*lle));
 	return (lle);
 }
 
@@ -1982,14 +1985,14 @@ witness_assert(const struct lock_object *lock, int flags, const char *file,
 		instance = find_instance(
 		    witness_cpu[cpu_number()].wc_spinlocks, lock);
 	else {
-		panic("Lock (%s) %s is not sleep or spin!",
+		panic("lock (%s) %s is not sleep or spin!",
 		    class->lc_name, lock->lo_name);
 		return;
 	}
 	switch (flags) {
 	case LA_UNLOCKED:
 		if (instance != NULL)
-			panic("Lock (%s) %s locked @ %s:%d.",
+			panic("lock (%s) %s locked @ %s:%d",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 		break;
@@ -2003,7 +2006,7 @@ witness_assert(const struct lock_object *lock, int flags, const char *file,
 	case LA_XLOCKED | LA_RECURSED:
 	case LA_XLOCKED | LA_NOTRECURSED:
 		if (instance == NULL) {
-			panic("Lock (%s) %s not locked @ %s:%d.",
+			panic("lock (%s) %s not locked @ %s:%d",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 			break;
@@ -2011,28 +2014,28 @@ witness_assert(const struct lock_object *lock, int flags, const char *file,
 		if ((flags & LA_XLOCKED) != 0 &&
 		    (instance->li_flags & LI_EXCLUSIVE) == 0)
 			panic(
-			    "Lock (%s) %s not exclusively locked @ %s:%d.",
+			    "lock (%s) %s not exclusively locked @ %s:%d",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 		if ((flags & LA_SLOCKED) != 0 &&
 		    (instance->li_flags & LI_EXCLUSIVE) != 0)
 			panic(
-			    "Lock (%s) %s exclusively locked @ %s:%d.",
+			    "lock (%s) %s exclusively locked @ %s:%d",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 		if ((flags & LA_RECURSED) != 0 &&
 		    (instance->li_flags & LI_RECURSEMASK) == 0)
-			panic("Lock (%s) %s not recursed @ %s:%d.",
+			panic("lock (%s) %s not recursed @ %s:%d",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 		if ((flags & LA_NOTRECURSED) != 0 &&
 		    (instance->li_flags & LI_RECURSEMASK) != 0)
-			panic("Lock (%s) %s recursed @ %s:%d.",
+			panic("lock (%s) %s recursed @ %s:%d",
 			    class->lc_name, lock->lo_name,
 			    fixup_filename(file), line);
 		break;
 	default:
-		panic("Invalid lock assertion at %s:%d.",
+		panic("invalid lock assertion at %s:%d",
 		    fixup_filename(file), line);
 
 	}
@@ -2545,6 +2548,27 @@ witness_debugger(int dump)
 	default:
 		panic("witness: locking error");
 	}
+}
+
+int
+witness_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
+    void *newp, size_t newlen)
+{
+	int error;
+
+	if (namelen != 1)
+		return (ENOTDIR);
+
+	switch (name[0]) {
+	case KERN_WITNESS_WATCH:
+		error = witness_sysctl_watch(oldp, oldlenp, newp, newlen);
+		break;
+	default:
+		error = EOPNOTSUPP;
+		break;
+	}
+
+	return (error);
 }
 
 int

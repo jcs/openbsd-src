@@ -1,4 +1,4 @@
-/*	$OpenBSD: html.c,v 1.119 2019/01/06 04:41:15 schwarze Exp $ */
+/*	$OpenBSD: html.c,v 1.122 2019/01/18 14:36:16 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2011, 2014 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2011-2015, 2017-2019 Ingo Schwarze <schwarze@openbsd.org>
@@ -269,11 +269,19 @@ html_close_paragraph(struct html *h)
 {
 	struct tag	*t;
 
-	for (t = h->tag; t != NULL; t = t->next) {
-		if (t->tag == TAG_P) {
+	for (t = h->tag; t != NULL && t->closed == 0; t = t->next) {
+		switch(t->tag) {
+		case TAG_P:
+		case TAG_PRE:
 			print_tagq(h, t);
 			break;
+		case TAG_A:
+			print_tagq(h, t);
+			continue;
+		default:
+			continue;
 		}
+		break;
 	}
 }
 
@@ -577,6 +585,8 @@ print_otag(struct html *h, enum htmltag tag, const char *fmt, ...)
 		t = mandoc_malloc(sizeof(struct tag));
 		t->tag = tag;
 		t->next = h->tag;
+		t->refcnt = 0;
+		t->closed = 0;
 		h->tag = t;
 	} else
 		t = NULL;
@@ -655,12 +665,6 @@ print_otag(struct html *h, enum htmltag tag, const char *fmt, ...)
 			print_encode(h, arg1, NULL, 1);
 			fmt++;
 			break;
-		case 'T':
-			print_encode(h, arg1, NULL, 1);
-			print_word(h, "\" title=\"");
-			print_encode(h, arg1, NULL, 1);
-			fmt++;
-			break;
 		default:
 			print_encode(h, arg1, NULL, 1);
 			break;
@@ -715,33 +719,32 @@ print_ctag(struct html *h, struct tag *tag)
 {
 	int	 tflags;
 
-	/*
-	 * Remember to close out and nullify the current
-	 * meta-font and table, if applicable.
-	 */
-	if (tag == h->metaf)
-		h->metaf = NULL;
-	if (tag == h->tblt)
-		h->tblt = NULL;
+	if (tag->closed == 0) {
+		tag->closed = 1;
+		if (tag == h->metaf)
+			h->metaf = NULL;
+		if (tag == h->tblt)
+			h->tblt = NULL;
 
-	tflags = htmltags[tag->tag].flags;
-
-	if (tflags & HTML_INDENT)
-		h->indent--;
-	if (tflags & HTML_NOINDENT)
-		h->noindent--;
-	if (tflags & HTML_NLEND)
-		print_endline(h);
-	print_indent(h);
-	print_byte(h, '<');
-	print_byte(h, '/');
-	print_word(h, htmltags[tag->tag].name);
-	print_byte(h, '>');
-	if (tflags & HTML_NLAFTER)
-		print_endline(h);
-
-	h->tag = tag->next;
-	free(tag);
+		tflags = htmltags[tag->tag].flags;
+		if (tflags & HTML_INDENT)
+			h->indent--;
+		if (tflags & HTML_NOINDENT)
+			h->noindent--;
+		if (tflags & HTML_NLEND)
+			print_endline(h);
+		print_indent(h);
+		print_byte(h, '<');
+		print_byte(h, '/');
+		print_word(h, htmltags[tag->tag].name);
+		print_byte(h, '>');
+		if (tflags & HTML_NLAFTER)
+			print_endline(h);
+	}
+	if (tag->refcnt == 0) {
+		h->tag = tag->next;
+		free(tag);
+	}
 }
 
 void
@@ -828,34 +831,31 @@ print_text(struct html *h, const char *word)
 void
 print_tagq(struct html *h, const struct tag *until)
 {
-	struct tag	*tag;
+	struct tag	*this, *next;
 
-	while ((tag = h->tag) != NULL) {
-		print_ctag(h, tag);
-		if (until && tag == until)
-			return;
+	for (this = h->tag; this != NULL; this = next) {
+		next = this == until ? NULL : this->next;
+		print_ctag(h, this);
 	}
 }
 
+/*
+ * Close out all open elements up to but excluding suntil.
+ * Note that a paragraph just inside stays open together with it
+ * because paragraphs include subsequent phrasing content.
+ */
 void
 print_stagq(struct html *h, const struct tag *suntil)
 {
-	struct tag	*tag;
+	struct tag	*this, *next;
 
-	while ((tag = h->tag) != NULL) {
-		if (suntil && tag == suntil)
-			return;
-		print_ctag(h, tag);
+	for (this = h->tag; this != NULL; this = next) {
+		next = this->next;
+		if (this == suntil || (next == suntil &&
+		    (this->tag == TAG_P || this->tag == TAG_PRE)))
+			break;
+		print_ctag(h, this);
 	}
-}
-
-void
-print_paragraph(struct html *h)
-{
-	struct tag	*t;
-
-	t = print_otag(h, TAG_DIV, "c", "Pp");
-	print_tagq(h, t);
 }
 
 

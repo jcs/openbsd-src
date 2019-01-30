@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_vio.c,v 1.6 2018/09/25 13:46:44 mpi Exp $	*/
+/*	$OpenBSD: if_vio.c,v 1.8 2019/01/19 16:23:46 sf Exp $	*/
 
 /*
  * Copyright (c) 2012 Stefan Fritsch, Alexander Fiveg.
@@ -96,6 +96,7 @@
 #define CONFFLAG_QEMU_VLAN_BUG		(1<<8)
 
 static const struct virtio_feature_name virtio_net_feature_names[] = {
+#if VIRTIO_DEBUG
 	{ VIRTIO_NET_F_CSUM,		"CSum" },
 	{ VIRTIO_NET_F_GUEST_CSUM,	"GuestCSum" },
 	{ VIRTIO_NET_F_MAC,		"MAC" },
@@ -115,6 +116,7 @@ static const struct virtio_feature_name virtio_net_feature_names[] = {
 	{ VIRTIO_NET_F_CTRL_VLAN,	"CtrlVLAN" },
 	{ VIRTIO_NET_F_CTRL_RX_EXTRA,	"CtrlRXExtra" },
 	{ VIRTIO_NET_F_GUEST_ANNOUNCE,	"GuestAnnounce" },
+#endif
 	{ 0, 				NULL }
 };
 
@@ -529,8 +531,8 @@ vio_attach(struct device *parent, struct device *self, void *aux)
 	 * VIRTIO_F_RING_EVENT_IDX can be switched off by setting bit 2 in the
 	 * driver flags, see config(8)
 	 */
-	if (!(sc->sc_dev.dv_cfdata->cf_flags & 2) &&
-	    !(vsc->sc_dev.dv_cfdata->cf_flags & 2))
+	if (!(sc->sc_dev.dv_cfdata->cf_flags & VIRTIO_CF_NO_EVENT_IDX) &&
+	    !(vsc->sc_dev.dv_cfdata->cf_flags & VIRTIO_CF_NO_EVENT_IDX))
 		features |= VIRTIO_F_RING_EVENT_IDX;
 	else
 		printf(": RingEventIdx disabled by UKC");

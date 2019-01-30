@@ -1,4 +1,4 @@
-#       $OpenBSD: BSD.x11.dist,v 1.46 2018/06/07 21:23:44 matthieu Exp $
+#       $OpenBSD: BSD.x11.dist,v 1.49 2019/01/20 17:56:55 matthieu Exp $
 
 /set type=dir uname=root gname=wheel mode=0755
 .
@@ -14,8 +14,8 @@
             ..
             xinit
             ..
-	    xsm
-	    ..
+            xsm
+            ..
         ..
         fonts
             conf.avail
@@ -122,8 +122,6 @@
                     ..
                     fvwm
                     ..
-                    proxymngr
-                    ..
                     x11perfcomp
                     ..
                     xedit
@@ -133,8 +131,8 @@
                         ..
                     ..
                 ..
-		locate
-		..
+                locate
+                ..
                 modules
                     dri
                     ..
@@ -142,13 +140,7 @@
                     ..
                     extensions
                     ..
-                    fonts
-                    ..
                     input
-                    ..
-                    linux
-                    ..
-                    multimedia
                     ..
                 ..
                 pkgconfig
@@ -170,8 +162,8 @@
             ..
             share
                 X11
-		    app-defaults
-		    ..
+                    app-defaults
+                    ..
                     locale
                         C
                         ..
@@ -179,8 +171,8 @@
                         ..
                         armscii-8
                         ..
-			cs_CZ.UTF-8
-			..
+                        cs_CZ.UTF-8
+                        ..
                         el_GR.UTF-8
                         ..
                         en_US.UTF-8
@@ -231,11 +223,7 @@
                         ..
                         ja.JIS
                         ..
-                        ja.S90
-                        ..
                         ja.SJIS
-                        ..
-                        ja.U90
                         ..
                         ja_JP.UTF-8
                         ..
@@ -344,8 +332,8 @@
                         types
                         ..
                     ..
-		    xorg.conf.d
-		    ..
+                    xorg.conf.d
+                    ..
                 ..
                 aclocal
                 ..
@@ -416,6 +404,18 @@
                     ..
                     xextproto
                     ..
+                    xorgproto
+                        inputproto
+                        ..
+                        kbproto
+                        ..
+                        x11proto
+                        ..
+                        SIAddresses
+                        ..
+                        xextproto
+                        ..
+                    ..
                     xorg-docs
                     ..
                     xtrans
@@ -425,8 +425,8 @@
                 ..
                 mk
                 ..
-		util-macros
-		..
+                util-macros
+                ..
                 xcb
                 ..
             ..

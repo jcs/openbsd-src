@@ -1,4 +1,4 @@
-/* $OpenBSD: kex.c,v 1.143 2018/12/27 03:25:25 djm Exp $ */
+/* $OpenBSD: kex.c,v 1.150 2019/01/21 12:08:13 djm Exp $ */
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
  *
@@ -98,6 +98,8 @@ static const struct kexalg kexalgs[] = {
 #endif
 	{ KEX_CURVE25519_SHA256, KEX_C25519_SHA256, 0, SSH_DIGEST_SHA256 },
 	{ KEX_CURVE25519_SHA256_OLD, KEX_C25519_SHA256, 0, SSH_DIGEST_SHA256 },
+	{ KEX_SNTRUP4591761X25519_SHA512, KEX_KEM_SNTRUP4591761X25519_SHA512, 0,
+	    SSH_DIGEST_SHA512 },
 	{ NULL, -1, -1, -1},
 };
 
@@ -640,6 +642,7 @@ kex_free(struct kex *kex)
 	sshbuf_free(kex->my);
 	sshbuf_free(kex->client_version);
 	sshbuf_free(kex->server_version);
+	sshbuf_free(kex->client_pub);
 	free(kex->session_id);
 	free(kex->failed_choice);
 	free(kex->hostkey_alg);
@@ -996,6 +999,14 @@ kex_derive_keys(struct ssh *ssh, u_char *hash, u_int hashlen,
 	u_int i, j, mode, ctos;
 	int r;
 
+	/* save initial hash as session id */
+	if (kex->session_id == NULL) {
+		kex->session_id_len = hashlen;
+		kex->session_id = malloc(kex->session_id_len);
+		if (kex->session_id == NULL)
+			return SSH_ERR_ALLOC_FAIL;
+		memcpy(kex->session_id, hash, kex->session_id_len);
+	}
 	for (i = 0; i < NKEYS; i++) {
 		if ((r = derive_key(ssh, 'A'+i, kex->we_need, hash, hashlen,
 		    shared_secret, &keys[i])) != 0) {
@@ -1014,27 +1025,44 @@ kex_derive_keys(struct ssh *ssh, u_char *hash, u_int hashlen,
 	return 0;
 }
 
-#ifdef WITH_OPENSSL
 int
-kex_derive_keys_bn(struct ssh *ssh, u_char *hash, u_int hashlen,
-    const BIGNUM *secret)
+kex_load_hostkey(struct ssh *ssh, struct sshkey **prvp, struct sshkey **pubp)
 {
-	struct sshbuf *shared_secret;
-	int r;
+	struct kex *kex = ssh->kex;
 
-	if ((shared_secret = sshbuf_new()) == NULL)
-		return SSH_ERR_ALLOC_FAIL;
-	if ((r = sshbuf_put_bignum2(shared_secret, secret)) == 0)
-		r = kex_derive_keys(ssh, hash, hashlen, shared_secret);
-	sshbuf_free(shared_secret);
-	return r;
+	*pubp = NULL;
+	*prvp = NULL;
+	if (kex->load_host_public_key == NULL ||
+	    kex->load_host_private_key == NULL)
+		return SSH_ERR_INVALID_ARGUMENT;
+	*pubp = kex->load_host_public_key(kex->hostkey_type,
+	    kex->hostkey_nid, ssh);
+	*prvp = kex->load_host_private_key(kex->hostkey_type,
+	    kex->hostkey_nid, ssh);
+	if (*pubp == NULL)
+		return SSH_ERR_NO_HOSTKEY_LOADED;
+	return 0;
 }
-#endif
 
+int
+kex_verify_host_key(struct ssh *ssh, struct sshkey *server_host_key)
+{
+	struct kex *kex = ssh->kex;
+
+	if (kex->verify_host_key == NULL)
+		return SSH_ERR_INVALID_ARGUMENT;
+	if (server_host_key->type != kex->hostkey_type ||
+	    (kex->hostkey_type == KEY_ECDSA &&
+	    server_host_key->ecdsa_nid != kex->hostkey_nid))
+		return SSH_ERR_KEY_TYPE_MISMATCH;
+	if (kex->verify_host_key(server_host_key, ssh) == -1)
+		return  SSH_ERR_SIGNATURE_INVALID;
+	return 0;
+}
 
 #if defined(DEBUG_KEX) || defined(DEBUG_KEXDH) || defined(DEBUG_KEXECDH)
 void
-dump_digest(char *msg, u_char *digest, int len)
+dump_digest(const char *msg, const u_char *digest, int len)
 {
 	fprintf(stderr, "%s\n", msg);
 	sshbuf_dump_data(digest, len, stderr);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.263 2019/01/05 21:40:44 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.272 2019/01/26 23:26:20 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -41,7 +41,8 @@
 
 #define	LOCAL_PORT	68
 #define	REMOTE_PORT	67
-#define	INTERNALSIG	SIG_ATOMIC_MAX
+#define	TERMINATE	1
+#define	RESTART		2
 #define DB_TIMEFMT	"%w %Y/%m/%d %T UTC"
 #define	RT_BUF_SIZE	2048
 
@@ -80,7 +81,7 @@ enum dhcp_state {
 };
 
 enum actions {
-	ACTION_NONE,
+	ACTION_USELEASE,
 	ACTION_DEFAULT,
 	ACTION_SUPERSEDE,
 	ACTION_PREPEND,
@@ -206,7 +207,7 @@ extern char			*path_lease_db;
 extern char			*log_procname;
 extern struct client_config	*config;
 extern struct imsgbuf		*unpriv_ibuf;
-extern volatile sig_atomic_t	 quit;
+extern int			 quit;
 extern int			 cmd_opts;
 #define		OPT_NOACTION	1
 #define		OPT_VERBOSE	2
@@ -222,6 +223,7 @@ void		 bootreply(struct interface_info *, struct option_data *,
     const char *);
 void		 free_client_lease(struct client_lease *);
 void		 routefd_handler(struct interface_info *, int);
+void		 state_preboot(struct interface_info *);
 
 /* packet.c */
 void		 assemble_eh_header(struct ether_addr, struct ether_header *);
@@ -233,7 +235,8 @@ uint32_t	 checksum(unsigned char *, uint32_t, uint32_t);
 uint32_t	 wrapsum(uint32_t);
 
 /* clparse.c */
-void		 read_conf(char *);
+void		 init_config(void);
+void		 read_conf(char *, char *, struct ether_addr *);
 void		 read_lease_db(char *, struct client_lease_tq *);
 
 /* kroute.c */

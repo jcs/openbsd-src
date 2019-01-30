@@ -1,4 +1,4 @@
-/* $OpenBSD: acpibtn.c,v 1.45 2018/07/01 19:40:49 mlarkin Exp $ */
+/* $OpenBSD: acpibtn.c,v 1.47 2019/01/20 02:45:44 tedu Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -213,6 +213,7 @@ acpibtn_notify(struct aml_node *node, int notify_type, void *arg)
 	struct acpibtn_softc	*sc = arg;
 #ifndef SMALL_KERNEL
 	extern int lid_action;
+	extern int pwr_action;
 	int64_t lid;
 #endif
 
@@ -269,9 +270,21 @@ sleep:
 #endif /* SMALL_KERNEL */
 		break;
 	case ACPIBTN_POWER:
-		if (!acpi_hashidpower && notify_type == 0x80)
-			acpi_addtask(sc->sc_acpi, acpi_powerdown_task,
-			    sc->sc_acpi, 0);
+		if (notify_type == 0x80) {
+			switch (pwr_action) {
+			case 0:
+				break;
+			case 1:
+				if (!acpi_hashidpower)
+					acpi_addtask(sc->sc_acpi,
+					    acpi_powerdown_task, sc->sc_acpi, 0);
+				break;
+#ifndef SMALL_KERNEL
+			case 2:
+				goto sleep;
+#endif
+			}
+		}
 		break;
 	default:
 		printf("%s: spurious acpi button interrupt %i\n", DEVNAME(sc),

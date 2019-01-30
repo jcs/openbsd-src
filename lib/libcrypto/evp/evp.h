@@ -1,4 +1,4 @@
-/* $OpenBSD: evp.h,v 1.70 2018/11/11 06:53:31 tb Exp $ */
+/* $OpenBSD: evp.h,v 1.72 2019/01/22 00:59:21 dlg Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -634,6 +634,8 @@ int EVP_SealInit(EVP_CIPHER_CTX *ctx, const EVP_CIPHER *type,
     int npubk);
 int EVP_SealFinal(EVP_CIPHER_CTX *ctx, unsigned char *out, int *outl);
 
+EVP_ENCODE_CTX *EVP_ENCODE_CTX_new(void);
+void EVP_ENCODE_CTX_free(EVP_ENCODE_CTX *ctx);
 void EVP_EncodeInit(EVP_ENCODE_CTX *ctx);
 int EVP_EncodeUpdate(EVP_ENCODE_CTX *ctx, unsigned char *out, int *outl,
     const unsigned char *in, int inl);
@@ -1241,6 +1243,8 @@ const EVP_AEAD *EVP_aead_aes_256_gcm(void);
 #if !defined(OPENSSL_NO_CHACHA) && !defined(OPENSSL_NO_POLY1305)
 /* EVP_aead_chacha20_poly1305 is ChaCha20 with a Poly1305 authenticator. */
 const EVP_AEAD *EVP_aead_chacha20_poly1305(void);
+/* EVP_aead_xchacha20_poly1305 is XChaCha20 with a Poly1305 authenticator. */
+const EVP_AEAD *EVP_aead_xchacha20_poly1305(void);
 #endif
 
 /* EVP_AEAD_key_length returns the length of the keys used. */
