@@ -155,7 +155,8 @@ azalia_codec_init_vtbl(codec_t *this)
 		break;
 	case 0x10ec0298:
 		this->name = "Realtek ALC298";
-		if (this->subid == 0x320019e5)		/* Huawei Matebook X */
+		if (this->subid == 0x320019e5 ||
+		    this->subid == 0x320119e5)		/* Huawei Matebook X */
 			this->qrks |= AZ_QRK_DOLBY;
 		break;
 	case 0x10ec0660:
