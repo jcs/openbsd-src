@@ -1,4 +1,4 @@
-/* $OpenBSD: pfkeyv2.c,v 1.194 2019/01/13 14:31:55 mpi Exp $ */
+/* $OpenBSD: pfkeyv2.c,v 1.197 2019/02/04 21:40:52 bluhm Exp $ */
 
 /*
  *	@(#)COPYRIGHT	1.1 (NRL) 17 January 1995
@@ -373,7 +373,7 @@ pfkeyv2_usrreq(struct socket *so, int req, struct mbuf *m,
 		break;
 	case PRU_SENSE:
 		/* stat: don't bother with a blocksize. */
-		return (0);
+		break;
 
 	/* minimal support, just implement a fake peer address */
 	case PRU_SOCKADDR:
@@ -386,8 +386,6 @@ pfkeyv2_usrreq(struct socket *so, int req, struct mbuf *m,
 
 	case PRU_RCVOOB:
 	case PRU_RCVD:
-		return (EOPNOTSUPP);
-
 	case PRU_SENDOOB:
 		error = EOPNOTSUPP;
 		break;
@@ -404,8 +402,10 @@ pfkeyv2_usrreq(struct socket *so, int req, struct mbuf *m,
 	}
 
  release:
-	m_freem(control);
-	m_freem(m);
+	if (req != PRU_RCVD && req != PRU_RCVOOB && req != PRU_SENSE) {
+		m_freem(control);
+		m_freem(m);
+	}
 	return (error);
 }
 
@@ -793,7 +793,8 @@ pfkeyv2_get(struct tdb *tdb, void **headers, void **buffer, int *lenp)
 	void *p;
 
 	/* Find how much space we need */
-	i = sizeof(struct sadb_sa) + sizeof(struct sadb_lifetime);
+	i = sizeof(struct sadb_sa) + sizeof(struct sadb_lifetime) +
+	    sizeof(struct sadb_x_counter);
 
 	if (tdb->tdb_soft_allocations || tdb->tdb_soft_bytes ||
 	    tdb->tdb_soft_timeout || tdb->tdb_soft_first_use)
@@ -954,6 +955,9 @@ pfkeyv2_get(struct tdb *tdb, void **headers, void **buffer, int *lenp)
 		export_tap(&p, tdb);
 	}
 #endif
+
+	headers[SADB_X_EXT_COUNTER] = p;
+	export_counter(&p, tdb);
 
 	rval = 0;
 
@@ -2041,12 +2045,16 @@ ret:
 				seen |= (1LL << i);
 
 		if ((seen & sadb_exts_allowed_out[smsg->sadb_msg_type])
-		    != seen)
+		    != seen) {
+		    	rval = EPERM;
 			goto realret;
+		}
 
 		if ((seen & sadb_exts_required_out[smsg->sadb_msg_type]) !=
-		    sadb_exts_required_out[smsg->sadb_msg_type])
+		    sadb_exts_required_out[smsg->sadb_msg_type]) {
+		    	rval = EPERM;
 			goto realret;
+		}
 	}
 
 	rval = pfkeyv2_sendmessage(headers, mode, so, 0, 0, rdomain);

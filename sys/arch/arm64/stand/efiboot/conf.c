@@ -1,4 +1,4 @@
-/*	$OpenBSD: conf.c,v 1.15 2018/04/08 13:27:22 kettenis Exp $	*/
+/*	$OpenBSD: conf.c,v 1.17 2019/01/31 23:17:26 kettenis Exp $	*/
 
 /*
  * Copyright (c) 1996 Michael Shalayeff
@@ -27,16 +27,25 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/disklabel.h>
 #include <lib/libsa/stand.h>
 #include <lib/libsa/tftp.h>
 #include <lib/libsa/ufs.h>
 #include <dev/cons.h>
 
+#include <dev/biovar.h>
+#include <dev/softraidvar.h>
+
+#include <efi.h>
+
+#include "disk.h"
 #include "efiboot.h"
 #include "efidev.h"
 #include "efipxe.h"
+#include "softraid_arm64.h"
 
-const char version[] = "0.13";
+const char version[] = "0.14";
 int	debug = 0;
 
 struct fs_ops file_system[] = {
@@ -52,6 +61,7 @@ int nfsys = nitems(file_system);
 struct devsw	devsw[] = {
 	{ "tftp", tftpstrategy, tftpopen, tftpclose, tftpioctl },
 	{ "sd", efistrategy, efiopen, eficlose, efiioctl },
+	{ "sr", srstrategy, sropen, srclose, srioctl },
 };
 int ndevs = nitems(devsw);
 

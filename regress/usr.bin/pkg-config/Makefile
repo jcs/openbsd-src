@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.59 2018/05/18 12:23:20 jasper Exp $
+#	$OpenBSD: Makefile,v 1.61 2019/02/04 20:18:27 jasper Exp $
 
 REGRESS_TARGETS=cmp-vers1-1 \
 		cmp-vers1-2 \
@@ -82,6 +82,9 @@ REGRESS_TARGETS=cmp-vers1-1 \
 		find-config-3 \
 		find-config-4 \
 		find-config-5 \
+		validate-1 \
+		validate-2 \
+		validate-3 \
 		variable-get-1 \
 		variable-set \
 		variables-1 \
@@ -89,6 +92,8 @@ REGRESS_TARGETS=cmp-vers1-1 \
 		variables-3 \
 		variables-4 \
 		variables-5 \
+		variables-6 \
+		variables-7 \
 		filter-system-dirs-1 \
 		filter-system-dirs-2 \
 		filter-system-dirs-3 \
@@ -568,6 +573,23 @@ find-config-5:
 	# Multiple existential tests combined (with space)
 	@${VPCONFIG} --exists vers1 vers2
 
+validate-1:
+	# Ensure it doesn't process dependencies
+	@${VPCONFIG} --validate missing-req
+
+validate-2:
+	# Test for empty files
+	@echo "Package file '${.CURDIR}/pcdir//corrupt3.pc' appears to be empty" > ${WANT}
+	@echo "Package 'corrupt3' has no Name: field" >> ${WANT}
+	@! ${VPCONFIG} --validate corrupt3
+	@diff -u ${WANT} ${GOT}
+
+validate-3:
+	# Test for missing fields
+	@echo "Package 'corrupt2' has no Name: field" > ${WANT}
+	@! ${VPCONFIG} --validate corrupt2
+	@diff -u ${WANT} ${GOT}
+
 variable-get-1:
 	# Test --variable
 	@echo "/tmp" > ${WANT}
@@ -609,6 +631,18 @@ variables-5:
 	# Test --variable
 	@echo ' -lfoo-1' > ${WANT}
 	@${VPCONFIG} --libs variables
+	@diff -u ${WANT} ${GOT}
+
+variables-6:
+	# Test variable overriding from environment
+	@echo ' -lfoo-2' > ${WANT}
+	@PKG_CONFIG_VARIABLES_FOO_API_VERSION=2 ${VPCONFIG} --libs variables
+	@diff -u ${WANT} ${GOT}
+
+variables-7:
+	# Ensure variable overriding only uses uppercase keys
+	@echo ' -lfoo-1' > ${WANT}
+	@PKG_CONFIG_variables_foo_api_version=2 ${VPCONFIG} --libs variables
 	@diff -u ${WANT} ${GOT}
 
 filter-system-dirs-1:

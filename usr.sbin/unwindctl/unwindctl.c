@@ -1,4 +1,4 @@
-/*	$OpenBSD: unwindctl.c,v 1.2 2019/01/27 12:41:39 florian Exp $	*/
+/*	$OpenBSD: unwindctl.c,v 1.4 2019/02/03 12:02:30 florian Exp $	*/
 
 /*
  * Copyright (c) 2005 Claudio Jeker <claudio@openbsd.org>
@@ -38,6 +38,7 @@
 #include <unistd.h>
 
 #include "unwind.h"
+#include "captiveportal.h"
 #include "frontend.h"
 #include "resolver.h"
 #include "parser.h"
@@ -108,6 +109,19 @@ main(int argc, char *argv[])
 	imsg_init(ibuf, ctl_sock);
 	done = 0;
 
+	/* Check for root-only actions */
+	switch (res->action) {
+	case LOG_DEBUG:
+	case LOG_VERBOSE:
+	case LOG_BRIEF:
+	case RELOAD:
+		if (geteuid() != 0)
+			errx(1, "need root privileges");
+		break;
+	default:
+		break;
+	}
+
 	/* Process user request. */
 	switch (res->action) {
 	case LOG_DEBUG:
@@ -125,6 +139,12 @@ main(int argc, char *argv[])
 	case RELOAD:
 		imsg_compose(ibuf, IMSG_CTL_RELOAD, 0, 0, -1, NULL, 0);
 		printf("reload request sent.\n");
+		done = 1;
+		break;
+	case PORTAL:
+		imsg_compose(ibuf, IMSG_CTL_RECHECK_CAPTIVEPORTAL, 0, 0, -1,
+		    NULL, 0);
+		printf("recheck request sent.\n");
 		done = 1;
 		break;
 	case STATUS_RECURSOR:
@@ -197,11 +217,28 @@ show_status_msg(struct imsg *imsg)
 {
 	static int			 header;
 	struct ctl_resolver_info	*cri;
+	enum captive_portal_state	 captive_portal_state;
 
-	if (!header++)
+	if (imsg->hdr.type != IMSG_CTL_CAPTIVEPORTAL_INFO && !header++)
 		printf("%8s %16s %s\n", "selected", "type", "status");
 
 	switch (imsg->hdr.type) {
+	case IMSG_CTL_CAPTIVEPORTAL_INFO:
+		memcpy(&captive_portal_state, imsg->data,
+		    sizeof(captive_portal_state));
+		switch (captive_portal_state) {
+		case PORTAL_UNCHECKED:
+		case PORTAL_UNKNOWN:
+			printf("captive portal is %s\n\n",
+			    captive_portal_state_str[captive_portal_state]);
+			break;
+		case BEHIND:
+		case NOT_BEHIND:
+			printf("%s captive portal\n\n",
+			    captive_portal_state_str[captive_portal_state]);
+			break;
+		}
+		break;
 	case IMSG_CTL_RESOLVER_INFO:
 		cri = imsg->data;
 		printf("%8s %16s %s\n", cri->selected ? "*" : " ",
