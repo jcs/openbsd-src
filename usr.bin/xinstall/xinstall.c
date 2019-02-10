@@ -1,4 +1,4 @@
-/*	$OpenBSD: xinstall.c,v 1.67 2018/09/16 02:44:07 millert Exp $	*/
+/*	$OpenBSD: xinstall.c,v 1.69 2019/02/09 22:08:25 schwarze Exp $	*/
 /*	$NetBSD: xinstall.c,v 1.9 1995/12/20 10:25:17 jonathan Exp $	*/
 
 /*

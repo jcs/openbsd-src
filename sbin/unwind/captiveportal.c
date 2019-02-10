@@ -1,4 +1,4 @@
-/*	$OpenBSD: captiveportal.c,v 1.1 2019/02/03 12:02:30 florian Exp $	*/
+/*	$OpenBSD: captiveportal.c,v 1.3 2019/02/08 08:21:05 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>

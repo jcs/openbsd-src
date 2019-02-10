@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.55 2019/01/30 09:20:56 stsp Exp $ */
+/* $OpenBSD: bwfm.c,v 1.57 2019/02/07 07:39:56 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>
@@ -2040,7 +2040,7 @@ bwfm_rx(struct bwfm_softc *sc, struct mbuf *m)
 			ni = ieee80211_find_node(ic,
 			    (void *)&e->ehdr.ether_shost);
 			if (ni == NULL) {
-				m_free(m);
+				m_freem(m);
 				return;
 			}
 		} else
@@ -2140,7 +2140,7 @@ bwfm_rx_assoc_ind(struct bwfm_softc *sc, struct bwfm_event *e, size_t len,
 	m->m_pkthdr.len = m->m_len = pktlen;
 	ni = ieee80211_find_node(ic, wh->i_addr2);
 	if (ni == NULL) {
-		m_free(m);
+		m_freem(m);
 		return;
 	}
 	rxi.rxi_flags = 0;
@@ -2195,7 +2195,7 @@ bwfm_rx_leave_ind(struct bwfm_softc *sc, struct bwfm_event *e, size_t len,
 	m->m_pkthdr.len = m->m_len = pktlen;
 	ni = ieee80211_find_node(ic, wh->i_addr2);
 	if (ni == NULL) {
-		m_free(m);
+		m_freem(m);
 		return;
 	}
 	rxi.rxi_flags = 0;
@@ -2426,6 +2426,7 @@ bwfm_do_async(struct bwfm_softc *sc,
 	int s;
 
 	s = splsoftnet();
+	KASSERT(ring->queued < BWFM_HOST_CMD_RING_COUNT);
 	if (ring->queued >= BWFM_HOST_CMD_RING_COUNT) {
 		splx(s);
 		return;

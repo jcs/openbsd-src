@@ -1,4 +1,4 @@
-/* $OpenBSD: rsa.c,v 1.11 2019/02/05 12:45:47 inoguchi Exp $ */
+/* $OpenBSD: rsa.c,v 1.13 2019/02/09 15:49:21 inoguchi Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -58,7 +58,6 @@
 
 #include <openssl/opensslconf.h>
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -236,19 +235,10 @@ static struct option rsa_options[] = {
 };
 
 static void
-show_ciphers(const OBJ_NAME *name, void *arg)
-{
-	static int n;
-
-	if (!islower((unsigned char)*name->name))
-		return;
-
-	fprintf(stderr, " -%-24s%s", name->name, (++n % 3 ? "" : "\n"));
-}
-
-static void
 rsa_usage()
 {
+	int n = 0;
+
 	fprintf(stderr,
 	    "usage: rsa [-ciphername] [-check] [-in file] "
 	    "[-inform fmt]\n"
@@ -259,7 +249,7 @@ rsa_usage()
 	fprintf(stderr, "\n");
 
 	fprintf(stderr, "Valid ciphername values:\n\n");
-	OBJ_NAME_do_all_sorted(OBJ_NAME_TYPE_CIPHER_METH, show_ciphers, NULL);
+	OBJ_NAME_do_all_sorted(OBJ_NAME_TYPE_CIPHER_METH, show_cipher, &n);
 	fprintf(stderr, "\n");
 }
 

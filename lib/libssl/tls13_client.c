@@ -1,4 +1,4 @@
-/* $OpenBSD: tls13_client.c,v 1.2 2019/02/04 16:18:15 jsing Exp $ */
+/* $OpenBSD: tls13_client.c,v 1.5 2019/02/09 15:26:15 jsing Exp $ */
 /*
  * Copyright (c) 2018, 2019 Joel Sing <jsing@openbsd.org>
  *
@@ -35,14 +35,16 @@ tls13_connect(struct tls13_ctx *ctx)
 }
 
 static int
-tls13_client_init(SSL *s)
+tls13_client_init(struct tls13_ctx *ctx)
 {
-	if (!ssl_supported_version_range(s, &S3I(s)->hs_tls13.min_version,
-	    &S3I(s)->hs_tls13.max_version)) {
+	SSL *s = ctx->ssl;
+
+	if (!ssl_supported_version_range(s, &ctx->hs->min_version,
+	    &ctx->hs->max_version)) {
 		SSLerror(s, SSL_R_NO_PROTOCOLS_AVAILABLE);
 		return 0;
 	}
-	s->client_version = s->version = S3I(s)->hs_tls13.max_version;
+	s->client_version = s->version = ctx->hs->max_version;
 
 	if (!ssl_get_new_session(s, 0)) /* XXX */
 		return 0;
@@ -68,8 +70,9 @@ tls13_legacy_connect(SSL *ssl)
 		}
 		ssl->internal->tls13 = ctx;
 		ctx->ssl = ssl;
+		ctx->hs = &S3I(ssl)->hs_tls13;
 
-		if (!tls13_client_init(ssl)) {
+		if (!tls13_client_init(ctx)) {
 			if (ERR_peek_error() == 0)
 				SSLerror(ssl, ERR_R_INTERNAL_ERROR); /* XXX */
 			return -1;
@@ -183,19 +186,19 @@ tls13_server_hello_process(struct tls13_ctx *ctx, CBS *cbs)
 	 * within range and not TLS 1.3 or greater (which must use the
 	 * supported version extension.
 	 */
-	if (S3I(s)->hs_tls13.server_version != 0) {
+	if (ctx->hs->server_version != 0) {
 		if (legacy_version != TLS1_2_VERSION) {
 			/* XXX - alert. */
 			goto err;
 		}
 	} else {
-		if (legacy_version < S3I(s)->hs_tls13.min_version ||
-		    legacy_version > S3I(s)->hs_tls13.max_version ||
+		if (legacy_version < ctx->hs->min_version ||
+		    legacy_version > ctx->hs->max_version ||
 		    legacy_version > TLS1_2_VERSION) {
 			/* XXX - alert. */
 			goto err;
 		}
-		S3I(s)->hs_tls13.server_version = legacy_version;
+		ctx->hs->server_version = legacy_version;
 	}
 
 	/* XXX - session_id must match. */
@@ -210,7 +213,7 @@ tls13_server_hello_process(struct tls13_ctx *ctx, CBS *cbs)
 		/* XXX - alert. */
 		goto err;
 	}
-	if (S3I(s)->hs_tls13.server_version == TLS1_3_VERSION &&
+	if (ctx->hs->server_version == TLS1_3_VERSION &&
 	    cipher->algorithm_ssl != SSL_TLSV1_3) {
 		/* XXX - alert. */
 		goto err;
@@ -230,6 +233,8 @@ tls13_server_hello_process(struct tls13_ctx *ctx, CBS *cbs)
 	return 1;
 
  err:
+	/* XXX - send alert. */
+
 	return 0;
 }
 
@@ -251,26 +256,27 @@ tls13_server_hello_recv(struct tls13_ctx *ctx)
 	if (!tls13_server_hello_process(ctx, &cbs))
 		goto err;
 
-	if (S3I(s)->hs_tls13.server_version < TLS1_3_VERSION) {
+	if (ctx->hs->server_version < TLS1_3_VERSION) {
 		/* XXX - switch back to legacy client. */
+		goto err;
 	}
 
 	if (ctx->handshake_stage.hs_type & WITH_HRR)
 		return 1;
 
 	/* XXX - handle other key share types. */
-	if (S3I(s)->hs_tls13.x25519_peer_public == NULL) {
+	if (ctx->hs->x25519_peer_public == NULL) {
 		/* XXX - alert. */
 		goto err;
 	}
 	if ((shared_key = malloc(X25519_KEY_LENGTH)) == NULL)
 		goto err;
-	if (!X25519(shared_key, S3I(s)->hs_tls13.x25519_private,
-	    S3I(s)->hs_tls13.x25519_peer_public))
+	if (!X25519(shared_key, ctx->hs->x25519_private,
+	    ctx->hs->x25519_peer_public))
 		goto err;
 
 	s->session->cipher = S3I(s)->hs.new_cipher;
-	s->session->ssl_version = S3I(s)->hs_tls13.server_version;
+	s->session->ssl_version = ctx->hs->server_version;
 
 	if ((ctx->aead = tls13_cipher_aead(S3I(s)->hs.new_cipher)) == NULL)
 		goto err;
@@ -282,9 +288,9 @@ tls13_server_hello_recv(struct tls13_ctx *ctx)
 	S3I(ctx->ssl)->hs_tls13.secrets = secrets;
 
 	/* XXX - pass in hash. */
-	if (!tls1_handshake_hash_init(s))
+	if (!tls1_transcript_hash_init(s))
 		goto err;
-	if (!tls1_handshake_hash_value(s, buf, sizeof(buf), &hash_len))
+	if (!tls1_transcript_hash_value(s, buf, sizeof(buf), &hash_len))
 		goto err;
 	context.data = buf;
 	context.len = hash_len;
@@ -295,8 +301,8 @@ tls13_server_hello_recv(struct tls13_ctx *ctx)
 		goto err;
 
 	/* Handshake secrets. */
-	if (!tls13_derive_handshake_secrets(S3I(s)->hs_tls13.secrets,
-	    shared_key, X25519_KEY_LENGTH, &context))
+	if (!tls13_derive_handshake_secrets(ctx->hs->secrets, shared_key,
+	    X25519_KEY_LENGTH, &context))
 		goto err;
 
 	tls13_record_layer_set_aead(ctx->rl, ctx->aead);
@@ -313,4 +319,27 @@ tls13_server_hello_recv(struct tls13_ctx *ctx)
  err:
 	freezero(shared_key, X25519_KEY_LENGTH);
 	return ret;
+}
+
+int
+tls13_server_encrypted_extensions_recv(struct tls13_ctx *ctx)
+{
+	int alert;
+	CBS cbs;
+
+	if (!tls13_handshake_msg_content(ctx->hs_msg, &cbs))
+		goto err;
+
+	if (!tlsext_client_parse(ctx->ssl, &cbs, &alert, SSL_TLSEXT_MSG_EE))
+		goto err;
+
+	if (CBS_len(&cbs) != 0)
+		goto err;
+
+	return 1;
+
+ err:
+	/* XXX - send alert. */
+
+	return 0;
 }

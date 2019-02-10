@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_locl.h,v 1.233 2019/01/24 02:56:41 beck Exp $ */
+/* $OpenBSD: ssl_locl.h,v 1.235 2019/02/10 13:04:29 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -451,6 +451,10 @@ typedef struct ssl_handshake_tls13_st {
 
 	uint8_t *cookie;
 	size_t cookie_len;
+
+	/* Preserved transcript hash. */
+	uint8_t transcript_hash[EVP_MAX_MD_SIZE];
+	size_t transcript_hash_len;
 } SSL_HANDSHAKE_TLS13;
 
 typedef struct ssl_ctx_internal_st {
@@ -1262,11 +1266,11 @@ int dtls1_enc(SSL *s, int snd);
 int ssl_init_wbio_buffer(SSL *s, int push);
 void ssl_free_wbio_buffer(SSL *s);
 
-int tls1_handshake_hash_init(SSL *s);
-int tls1_handshake_hash_update(SSL *s, const unsigned char *buf, size_t len);
-int tls1_handshake_hash_value(SSL *s, const unsigned char *out, size_t len,
+int tls1_transcript_hash_init(SSL *s);
+int tls1_transcript_hash_update(SSL *s, const unsigned char *buf, size_t len);
+int tls1_transcript_hash_value(SSL *s, const unsigned char *out, size_t len,
     size_t *outlen);
-void tls1_handshake_hash_free(SSL *s);
+void tls1_transcript_hash_free(SSL *s);
 
 int tls1_transcript_init(SSL *s);
 void tls1_transcript_free(SSL *s);
