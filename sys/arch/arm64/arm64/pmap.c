@@ -1,4 +1,4 @@
-/* $OpenBSD: pmap.c,v 1.58 2018/09/12 11:58:28 kettenis Exp $ */
+/* $OpenBSD: pmap.c,v 1.60 2019/02/10 22:45:58 tedu Exp $ */
 /*
  * Copyright (c) 2008-2009,2014-2016 Dale Rahn <drahn@dalerahn.com>
  *

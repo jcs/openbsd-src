@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mpw.c,v 1.31 2019/01/30 01:09:36 dlg Exp $ */
+/*	$OpenBSD: if_mpw.c,v 1.33 2019/02/11 00:11:24 dlg Exp $ */
 
 /*
  * Copyright (c) 2015 Rafael Zalamena <rzalamena@openbsd.org>
@@ -83,7 +83,10 @@ mpw_clone_create(struct if_clone *ifc, int unit)
 	struct mpw_softc *sc;
 	struct ifnet *ifp;
 
-	sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK|M_ZERO);
+	sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK|M_CANFAIL|M_ZERO);
+	if (sc == NULL)
+		return (ENOMEM);
+
 	ifp = &sc->sc_if;
 	snprintf(ifp->if_xname, sizeof(ifp->if_xname), "%s%d",
 	    ifc->ifc_name, unit);
@@ -390,7 +393,7 @@ mpw_start(struct ifnet *ifp)
 			memset(shim, 0, sizeof(*shim));
 		}
 
-		m = m_prepend(m0, sizeof(*shim), M_NOWAIT);
+		m0 = m_prepend(m0, sizeof(*shim), M_NOWAIT);
 		if (m0 == NULL)
 			continue;
 
