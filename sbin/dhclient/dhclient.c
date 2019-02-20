@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.622 2019/01/22 03:48:24 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.625 2019/02/13 21:18:32 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -109,20 +109,6 @@ const struct in_addr inaddr_broadcast = { INADDR_BROADCAST };
 
 struct client_config *config;
 struct imsgbuf *unpriv_ibuf;
-
-struct proposal {
-	uint8_t		rtstatic[RTSTATIC_LEN];
-	uint8_t		rtsearch[RTSEARCH_LEN];
-	uint8_t		rtdns[RTDNS_LEN];
-	struct in_addr	ifa;
-	struct in_addr	netmask;
-	unsigned int	rtstatic_len;
-	unsigned int	rtsearch_len;
-	unsigned int	rtdns_len;
-	int		mtu;
-	int		addrs;
-	int		inits;
-};
 
 void		 usage(void);
 int		 res_hnok_list(const char *);
@@ -278,6 +264,7 @@ interface_state(struct interface_info *ifi)
 
 	newlinkup = LINK_STATE_IS_UP(ifi->link_state);
 	if (newlinkup != oldlinkup) {
+		tick_msg("", 0, INT64_MAX);
 		log_debug("%s: link %s -> %s", log_procname,
 		    (oldlinkup != 0) ? "up" : "down",
 		    (newlinkup != 0) ? "up" : "down");
@@ -913,7 +900,7 @@ dhcpnak(struct interface_info *ifi, const char *src)
 	}
 
 	log_debug("%s: DHCPNAK from %s", log_procname, src);
-	delete_address(ifi->active->address);
+	revoke_proposal(ifi->configured);
 
 	/* XXX Do we really want to remove a NAK'd lease from the database? */
 	TAILQ_REMOVE(&ifi->lease_db, ifi->active, next);
@@ -934,7 +921,6 @@ void
 bind_lease(struct interface_info *ifi)
 {
 	struct client_lease	*lease, *pl, *ll;
-	struct proposal		*offered_proposal = NULL;
 	struct proposal		*effective_proposal = NULL;
 	char			*msg = NULL;
 	time_t			 cur_time, renewal;
@@ -975,19 +961,7 @@ bind_lease(struct interface_info *ifi)
 	ifi->configured = effective_proposal;
 	effective_proposal = NULL;
 
-	set_resolv_conf(ifi->name,
-	    ifi->configured->rtsearch,
-	    ifi->configured->rtsearch_len,
-	    ifi->configured->rtdns,
-	    ifi->configured->rtdns_len);
-
-	set_mtu(ifi->configured->inits, ifi->configured->mtu);
-
-	set_address(ifi->name, ifi->configured->ifa, ifi->configured->netmask);
-
-	set_routes(ifi->configured->ifa, ifi->configured->netmask,
-	    ifi->configured->rtstatic, ifi->configured->rtstatic_len);
-
+	propose(ifi->configured);
 	rslt = asprintf(&msg, "bound to %s from %s",
 	    inet_ntoa(ifi->active->address),
 	    (ifi->offer_src == NULL) ? "<unknown>" : ifi->offer_src);
@@ -1030,12 +1004,12 @@ newlease:
 	write_resolv_conf();
 
 	free_client_lease(lease);
-	free(offered_proposal);
 	free(effective_proposal);
 	free(ifi->offer_src);
 	ifi->offer_src = NULL;
 
 	if (msg != NULL) {
+		tick_msg("", 0, INT64_MAX);
 		if ((cmd_opts & OPT_FOREGROUND) != 0) {
 			/* log msg on console only. */
 			;
@@ -2678,7 +2652,7 @@ release_lease(struct interface_info *ifi)
 	make_release(ifi, ifi->active);
 	send_release(ifi);
 
-	delete_address(ifi->configured->ifa);
+	revoke_proposal(ifi->configured);
 	imsg_flush(unpriv_ibuf);
 
 	TAILQ_REMOVE(&ifi->lease_db, ifi->active, next);

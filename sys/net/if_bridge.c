@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bridge.c,v 1.319 2019/01/29 17:47:35 mpi Exp $	*/
+/*	$OpenBSD: if_bridge.c,v 1.321 2019/02/14 18:19:13 mpi Exp $	*/
 
 /*
  * Copyright (c) 1999, 2000 Jason L. Wright (jason@thought.net)
@@ -36,7 +36,6 @@
 #include "pf.h"
 #include "carp.h"
 #include "vlan.h"
-#include "mpw.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -311,13 +310,7 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			error = ifpromisc(ifs, 1);
 			if (error != 0)
 				break;
-		}
-#if NMPW > 0
-		else if (ifs->if_type == IFT_MPLSTUNNEL) {
-			/* Nothing needed */
-		}
-#endif /* NMPW */
-		else {
+		} else {
 			error = EINVAL;
 			break;
 		}
@@ -367,8 +360,7 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			error = ENOENT;
 			break;
 		}
-		if (ifs->if_type != IFT_ETHER &&
-		    ifs->if_type != IFT_MPLSTUNNEL) {
+		if (ifs->if_type != IFT_ETHER) {
 			error = EINVAL;
 			break;
 		}
@@ -690,14 +682,15 @@ bridge_init(struct bridge_softc *sc)
 {
 	struct ifnet *ifp = &sc->sc_if;
 
-	if ((ifp->if_flags & IFF_RUNNING) == IFF_RUNNING)
+	if (ISSET(ifp->if_flags, IFF_RUNNING))
 		return;
 
-	ifp->if_flags |= IFF_RUNNING;
 	bstp_initialization(sc->sc_stp);
 
 	if (sc->sc_brttimeout != 0)
 		timeout_add_sec(&sc->sc_brtimeout, sc->sc_brttimeout);
+
+	SET(ifp->if_flags, IFF_RUNNING);
 }
 
 /*
@@ -708,17 +701,15 @@ bridge_stop(struct bridge_softc *sc)
 {
 	struct ifnet *ifp = &sc->sc_if;
 
-	/*
-	 * If we're not running, there's nothing to do.
-	 */
-	if ((ifp->if_flags & IFF_RUNNING) == 0)
+	if (!ISSET(ifp->if_flags, IFF_RUNNING))
 		return;
 
-	timeout_del(&sc->sc_brtimeout);
+	CLR(ifp->if_flags, IFF_RUNNING);
+
+	if (!timeout_del(&sc->sc_brtimeout))
+		timeout_barrier(&sc->sc_brtimeout);
 
 	bridge_rtflush(sc, IFBF_FLUSHDYN);
-
-	ifp->if_flags &= ~IFF_RUNNING;
 }
 
 /*
@@ -813,15 +804,6 @@ bridge_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *sa,
 			    (bif->bif_flags & IFBIF_STP) &&
 			    (bif->bif_state == BSTP_IFSTATE_DISCARDING))
 				continue;
-#if NMPW > 0
-			/*
-			 * Split horizon: avoid broadcasting messages from
-			 * wire to another wire.
-			 */
-			if (ifp->if_type == IFT_MPLSTUNNEL &&
-			    dst_if->if_type == IFT_MPLSTUNNEL)
-				continue;
-#endif /* NMPW */
 			if ((bif->bif_flags & IFBIF_DISCOVER) == 0 &&
 			    (m->m_flags & (M_BCAST | M_MCAST)) == 0)
 				continue;
@@ -1276,16 +1258,6 @@ bridge_broadcast(struct bridge_softc *sc, struct ifnet *ifp,
 
 		if (bridge_localbroadcast(dst_if, eh, m))
 			sc->sc_if.if_oerrors++;
-
-#if NMPW > 0
-		/*
-		 * Split horizon: avoid broadcasting messages from wire to
-		 * another wire.
-		 */
-		if (ifp->if_type == IFT_MPLSTUNNEL &&
-		    dst_if->if_type == IFT_MPLSTUNNEL)
-			continue;
-#endif /* NMPW */
 
 		/* If last one, reuse the passed-in mbuf */
 		if (SLIST_NEXT(bif, bif_next) == NULL) {

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pcidump.c,v 1.47 2018/04/08 13:55:40 kettenis Exp $	*/
+/*	$OpenBSD: pcidump.c,v 1.49 2019/02/19 21:32:42 dlg Exp $	*/
 
 /*
  * Copyright (c) 2006, 2007 David Gwynne <loki@animata.net>
@@ -330,7 +330,7 @@ dump_pci_powerstate(int bus, int dev, int func, uint8_t ptr)
 	if (pci_read(bus, dev, func, ptr + PCI_PMCSR, &pmcsr) != 0)
 		return;
 
-	printf("\t	State: D%d", pmcsr & PCI_PMCSR_STATE_MASK);
+	printf("\t\tState: D%d", pmcsr & PCI_PMCSR_STATE_MASK);
 	if (pmcsr & PCI_PMCSR_PME_EN)
 		printf(" PME# enabled");
 	if (pmcsr & PCI_PMCSR_PME_STATUS)
@@ -445,11 +445,14 @@ dump_caplist(int bus, int dev, int func, u_int8_t ptr)
 		if (cap >= nitems(pci_capnames))
 			cap = 0;
 		printf("%s\n", pci_capnames[cap]);
-		if (cap == PCI_CAP_PWRMGMT)
+		switch (cap) {
+		case PCI_CAP_PWRMGMT:
 			dump_pci_powerstate(bus, dev, func, ptr);
-		if (cap == PCI_CAP_PCIEXPRESS) {
+			break;
+		case PCI_CAP_PCIEXPRESS:
 			dump_pcie_linkspeed(bus, dev, func, ptr);
 			dump_pcie_enhanced_caplist(bus, dev, func);
+			break;
 		}
 		ptr = PCI_CAPLIST_NEXT(reg);
 	}

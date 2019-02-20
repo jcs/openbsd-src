@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.365 2019/02/11 15:44:25 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.373 2019/02/19 09:13:23 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -220,11 +220,12 @@ struct bgpd_addr {
 #define	LISTENER_LISTENING	0x02
 
 struct listen_addr {
-	TAILQ_ENTRY(listen_addr)	 entry;
-	struct sockaddr_storage		 sa;
-	int				 fd;
-	enum reconf_action		 reconf;
-	u_int8_t			 flags;
+	TAILQ_ENTRY(listen_addr)	entry;
+	struct sockaddr_storage		sa;
+	int				fd;
+	enum reconf_action		reconf;
+	socklen_t			sa_len;
+	u_int8_t			flags;
 };
 
 TAILQ_HEAD(listen_addrs, listen_addr);
@@ -638,6 +639,7 @@ struct kif {
 	u_int8_t		 if_type;
 	u_int8_t		 link_state;
 	u_int8_t		 nh_reachable;	/* for nexthop verification */
+	u_int8_t		 depend_state;	/* for session depend on */
 };
 
 struct session_up {
@@ -1062,38 +1064,37 @@ extern struct rib_names ribnames;
 #define AS_NONE		0
 
 struct rde_memstats {
-	int64_t		path_cnt;
-	int64_t		path_refs;
-	int64_t		prefix_cnt;
-	int64_t		rib_cnt;
-	int64_t		pt_cnt[AID_MAX];
-	int64_t		nexthop_cnt;
-	int64_t		aspath_cnt;
-	int64_t		aspath_size;
-	int64_t		aspath_refs;
-	int64_t		attr_cnt;
-	int64_t		attr_refs;
-	int64_t		attr_data;
-	int64_t		attr_dcnt;
-	int64_t		aset_cnt;
-	int64_t		aset_size;
-	int64_t		aset_nmemb;
-	int64_t		pset_cnt;
-	int64_t		pset_size;
+	long long	path_cnt;
+	long long	path_refs;
+	long long	prefix_cnt;
+	long long	rib_cnt;
+	long long	pt_cnt[AID_MAX];
+	long long	nexthop_cnt;
+	long long	aspath_cnt;
+	long long	aspath_size;
+	long long	aspath_refs;
+	long long	attr_cnt;
+	long long	attr_refs;
+	long long	attr_data;
+	long long	attr_dcnt;
+	long long	aset_cnt;
+	long long	aset_size;
+	long long	aset_nmemb;
+	long long	pset_cnt;
+	long long	pset_size;
 };
 
 struct rde_hashstats {
 	char		name[16];
-	int64_t		num;
-	int64_t		min;
-	int64_t		max;
-	int64_t		sum;
-	int64_t		sumq;
+	long long	num;
+	long long	min;
+	long long	max;
+	long long	sum;
+	long long	sumq;
 };
 
 #define	MRT_FILE_LEN	512
 #define	MRT2MC(x)	((struct mrt_config *)(x))
-#define	MRT_MAX_TIMEOUT	7200
 
 enum mrt_type {
 	MRT_NONE,
@@ -1181,6 +1182,7 @@ void		 kr_ifinfo(char *);
 void		 kr_net_reload(u_int, u_int64_t, struct network_head *);
 int		 kr_reload(void);
 struct in6_addr	*prefixlen2mask6(u_int8_t prefixlen);
+int		 get_mpe_config(const char *, u_int *, u_int *);
 
 /* log.c */
 void		 log_peer_info(const struct peer_config *, const char *, ...)
@@ -1195,7 +1197,7 @@ void		 mrt_clear_seq(void);
 void		 mrt_write(struct mrt *);
 void		 mrt_clean(struct mrt *);
 void		 mrt_init(struct imsgbuf *, struct imsgbuf *);
-int		 mrt_timeout(struct mrt_head *);
+time_t		 mrt_timeout(struct mrt_head *);
 void		 mrt_reconfigure(struct mrt_head *);
 void		 mrt_handler(struct mrt_head *);
 struct mrt	*mrt_get(struct mrt_head *, struct mrt *);
@@ -1254,7 +1256,7 @@ int			 set_equal(const struct set_table *,
 /* util.c */
 const char	*log_addr(const struct bgpd_addr *);
 const char	*log_in6addr(const struct in6_addr *);
-const char	*log_sockaddr(struct sockaddr *);
+const char	*log_sockaddr(struct sockaddr *, socklen_t);
 const char	*log_as(u_int32_t);
 const char	*log_rd(u_int64_t);
 const char	*log_ext_subtype(u_int8_t, u_int8_t);
@@ -1288,12 +1290,12 @@ int		 aid2afi(u_int8_t, u_int16_t *, u_int8_t *);
 int		 afi2aid(u_int16_t, u_int8_t, u_int8_t *);
 sa_family_t	 aid2af(u_int8_t);
 int		 af2aid(sa_family_t, u_int8_t, u_int8_t *);
-struct sockaddr	*addr2sa(struct bgpd_addr *, u_int16_t);
+struct sockaddr	*addr2sa(struct bgpd_addr *, u_int16_t, socklen_t *);
 void		 sa2addr(struct sockaddr *, struct bgpd_addr *);
 uint64_t	 ift2ifm(uint8_t);
 const char *	 get_media_descr(uint64_t);
 const char *	 get_linkstate(uint8_t, int);
-const char *	 get_baudrate(u_int64_t, char *);
+const char *	 get_baudrate(unsigned long long, char *);
 
 static const char * const log_procnames[] = {
 	"parent",

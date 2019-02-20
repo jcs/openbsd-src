@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.230 2019/02/11 15:44:25 claudio Exp $ */
+/*	$OpenBSD: kroute.c,v 1.232 2019/02/18 09:58:19 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -17,6 +17,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/tree.h>
@@ -25,6 +26,7 @@
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <net/if_dl.h>
+#include <net/if_types.h>
 #include <net/route.h>
 #include <netmpls/mpls.h>
 #include <err.h>
@@ -154,7 +156,6 @@ int			 kif_kr_remove(struct kroute_node *);
 int			 kif_kr6_insert(struct kroute6_node *);
 int			 kif_kr6_remove(struct kroute6_node *);
 
-int			 kif_validate(struct kif *);
 int			 kroute_validate(struct kroute *);
 int			 kroute6_validate(struct kroute6 *);
 void			 knexthop_validate(struct ktable *,
@@ -2235,7 +2236,7 @@ kif_kr6_remove(struct kroute6_node *kr)
  * nexthop validation
  */
 
-int
+static int
 kif_validate(struct kif *kif)
 {
 	if (!(kif->flags & IFF_UP))
@@ -2252,6 +2253,26 @@ kif_validate(struct kif *kif)
 
 	return (1);
 }
+
+/*
+ * return 1 when the interface is up and the link state is up or unknwown
+ * except when this is a carp interface, then return 1 only when link state
+ * is up
+ */
+static int
+kif_depend_state(struct kif *kif)
+{
+	if (!(kif->flags & IFF_UP))
+		return (0);
+
+
+	if (kif->if_type == IFT_CARP &&
+	    kif->link_state == LINK_STATE_UNKNOWN)
+		return (0);
+
+	return LINK_STATE_IS_UP(kif->link_state);
+}
+
 
 int
 kroute_validate(struct kroute *kr)
@@ -2654,6 +2675,7 @@ if_change(u_short ifindex, int flags, struct if_data *ifd,
 	kif->k.if_type = ifd->ifi_type;
 	kif->k.rdomain = ifd->ifi_rdomain;
 	kif->k.baudrate = ifd->ifi_baudrate;
+	kif->k.depend_state = kif_depend_state(&kif->k);
 
 	send_imsg_session(IMSG_IFINFO, 0, &kif->k, sizeof(kif->k));
 
@@ -2712,6 +2734,44 @@ if_announce(void *msg, u_int rdomain)
 		kif_remove(kif, rdomain);
 		break;
 	}
+}
+
+int
+get_mpe_config(const char *name, u_int *rdomain, u_int *label)
+{
+	struct  ifreq	ifr;
+	struct shim_hdr	shim;
+	int		s;
+
+	*label = 0;
+	*rdomain = 0;
+
+	s = socket(AF_INET, SOCK_DGRAM, 0);
+	if (s == -1)
+		return (-1);
+
+	bzero(&shim, sizeof(shim));
+	bzero(&ifr, sizeof(ifr));
+	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+	ifr.ifr_data = (caddr_t)&shim;
+
+	if (ioctl(s, SIOCGETLABEL, (caddr_t)&ifr) == -1) {
+		close(s);
+		return (-1);
+	}
+
+	ifr.ifr_data = NULL;
+	if (ioctl(s, SIOCGIFRDOMAIN, (caddr_t)&ifr) == -1) {
+		close(s);
+		return (-1);
+	}
+
+	close(s);
+
+	*rdomain = ifr.ifr_rdomainid;
+	*label = shim.shim_label;
+
+	return (0);
 }
 
 /*
@@ -3255,6 +3315,7 @@ fetchifs(int ifindex)
 		kif->k.rdomain = ifm.ifm_data.ifi_rdomain;
 		kif->k.baudrate = ifm.ifm_data.ifi_baudrate;
 		kif->k.nh_reachable = kif_validate(&kif->k);
+		kif->k.depend_state = kif_depend_state(&kif->k);
 
 		if ((sa = rti_info[RTAX_IFP]) != NULL)
 			if (sa->sa_family == AF_LINK) {

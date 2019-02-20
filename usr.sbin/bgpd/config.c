@@ -1,4 +1,4 @@
-/*	$OpenBSD: config.c,v 1.80 2019/02/11 15:44:25 claudio Exp $ */
+/*	$OpenBSD: config.c,v 1.83 2019/02/18 09:58:19 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -18,11 +18,6 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <sys/ioctl.h>
-
-#include <netmpls/mpls.h>
 
 #include <errno.h>
 #include <ifaddrs.h>
@@ -397,7 +392,7 @@ prepare_listeners(struct bgpd_config *conf)
 		la->fd = -1;
 		la->flags = DEFAULT_LISTENER;
 		la->reconf = RECONF_REINIT;
-		la->sa.ss_len = sizeof(struct sockaddr_in);
+		la->sa_len = sizeof(struct sockaddr_in);
 		((struct sockaddr_in *)&la->sa)->sin_family = AF_INET;
 		((struct sockaddr_in *)&la->sa)->sin_addr.s_addr =
 		    htonl(INADDR_ANY);
@@ -409,7 +404,7 @@ prepare_listeners(struct bgpd_config *conf)
 		la->fd = -1;
 		la->flags = DEFAULT_LISTENER;
 		la->reconf = RECONF_REINIT;
-		la->sa.ss_len = sizeof(struct sockaddr_in6);
+		la->sa_len = sizeof(struct sockaddr_in6);
 		((struct sockaddr_in6 *)&la->sa)->sin6_family = AF_INET6;
 		((struct sockaddr_in6 *)&la->sa)->sin6_port = htons(BGP_PORT);
 		TAILQ_INSERT_TAIL(conf->listen_addrs, la, entry);
@@ -437,24 +432,25 @@ prepare_listeners(struct bgpd_config *conf)
 		    &opt, sizeof(opt)) == -1)
 			fatal("setsockopt SO_REUSEADDR");
 
-		if (bind(la->fd, (struct sockaddr *)&la->sa, la->sa.ss_len) ==
+		if (bind(la->fd, (struct sockaddr *)&la->sa, la->sa_len) ==
 		    -1) {
 			switch (la->sa.ss_family) {
 			case AF_INET:
 				log_warn("cannot bind to %s:%u",
-				    log_sockaddr((struct sockaddr *)&la->sa),
-				    ntohs(((struct sockaddr_in *)
+				    log_sockaddr((struct sockaddr *)&la->sa,
+				    la->sa_len), ntohs(((struct sockaddr_in *)
 				    &la->sa)->sin_port));
 				break;
 			case AF_INET6:
 				log_warn("cannot bind to [%s]:%u",
-				    log_sockaddr((struct sockaddr *)&la->sa),
-				    ntohs(((struct sockaddr_in6 *)
+				    log_sockaddr((struct sockaddr *)&la->sa,
+				    la->sa_len), ntohs(((struct sockaddr_in6 *)
 				    &la->sa)->sin6_port));
 				break;
 			default:
 				log_warn("cannot bind to %s",
-				    log_sockaddr((struct sockaddr *)&la->sa));
+				    log_sockaddr((struct sockaddr *)&la->sa,
+				    la->sa_len));
 				break;
 			}
 			close(la->fd);
@@ -466,46 +462,6 @@ prepare_listeners(struct bgpd_config *conf)
 	}
 
 	return (r);
-}
-
-int
-get_mpe_config(const char *name, u_int *rdomain, u_int *label)
-{
-	struct  ifreq	ifr;
-	struct shim_hdr	shim;
-	int		s;
-
-	*label = 0;
-	*rdomain = 0;
-
-	s = socket(AF_INET, SOCK_DGRAM, 0);
-	if (s == -1)
-		return (-1);
-
-	bzero(&shim, sizeof(shim));
-	bzero(&ifr, sizeof(ifr));
-	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
-	ifr.ifr_data = (caddr_t)&shim;
-
-	if (ioctl(s, SIOCGETLABEL, (caddr_t)&ifr) == -1) {
-		close(s);
-		return (-1);
-	}
-
-	ifr.ifr_data = NULL;
-	if (ioctl(s, SIOCGIFRDOMAIN, (caddr_t)&ifr) == -1) {
-		close(s);
-		return (-1);
-	}
-
-	close(s);
-
-	*rdomain = ifr.ifr_rdomainid;
-	*label = shim.shim_label;
-
-	log_debug("%s: rdomain %u label %u", __func__, *rdomain, *label);
-
-	return (0);
 }
 
 void

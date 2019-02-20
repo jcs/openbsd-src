@@ -1,4 +1,4 @@
-/*	$OpenBSD: bridgectl.c,v 1.13 2018/12/12 14:19:15 mpi Exp $	*/
+/*	$OpenBSD: bridgectl.c,v 1.15 2019/02/17 15:21:31 mpi Exp $	*/
 
 /*
  * Copyright (c) 1999, 2000 Jason L. Wright (jason@thought.net)
@@ -90,9 +90,8 @@ bridgectl_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			break;
 		}
 
-		ifs = bridge_rtupdate(sc, &bareq->ifba_dst, ifs, 1,
-		    bareq->ifba_flags, NULL);
-		if (ifs == NULL)
+		if (bridge_rtupdate(sc, &bareq->ifba_dst, ifs, 1,
+		    bareq->ifba_flags, NULL))
 			error = ENOMEM;
 		break;
 	case SIOCBRDGDADDR:
@@ -180,14 +179,14 @@ bridgectl_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	return (error);
 }
 
-struct ifnet *
+int
 bridge_rtupdate(struct bridge_softc *sc, struct ether_addr *ea,
     struct ifnet *ifp, int setflags, u_int8_t flags, struct mbuf *m)
 {
 	struct bridge_rtnode *p, *q;
 	struct bridge_tunneltag	*brtag = NULL;
 	u_int32_t h;
-	int dir;
+	int dir, error = 0;
 
 	if (m != NULL) {
 		/* Check if the mbuf was tagged with a tunnel endpoint addr */
@@ -283,9 +282,9 @@ bridge_rtupdate(struct bridge_softc *sc, struct ether_addr *ea,
 	} while (p != NULL);
 
 done:
-	ifp = NULL;
+	error = 1;
 want:
-	return (ifp);
+	return (error);
 }
 
 struct bridge_rtnode *
@@ -321,10 +320,14 @@ void
 bridge_rtage(void *vsc)
 {
 	struct bridge_softc *sc = vsc;
+	struct ifnet *ifp = &sc->sc_if;
 	struct bridge_rtnode *n, *p;
 	int i;
 
 	KERNEL_ASSERT_LOCKED();
+
+	if (!ISSET(ifp->if_flags, IFF_RUNNING))
+		return;
 
 	for (i = 0; i < BRIDGE_RTABLE_SIZE; i++) {
 		n = LIST_FIRST(&sc->sc_rts[i]);

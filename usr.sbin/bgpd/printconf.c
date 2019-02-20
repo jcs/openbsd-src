@@ -1,4 +1,4 @@
-/*	$OpenBSD: printconf.c,v 1.128 2019/02/11 15:44:25 claudio Exp $	*/
+/*	$OpenBSD: printconf.c,v 1.131 2019/02/18 11:43:44 claudio Exp $	*/
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -205,16 +205,16 @@ print_community(struct filter_community *c)
 		case EXT_COMMUNITY_TRANS_TWO_AS:
 		case EXT_COMMUNITY_TRANS_FOUR_AS:
 			printf("%s:%llu ", log_as(c->c.e.data1),
-			    c->c.e.data2);
+			    (unsigned long long)c->c.e.data2);
 			break;
 		case EXT_COMMUNITY_TRANS_IPV4:
 			addr.s_addr = htonl(c->c.e.data1);
 			printf("%s:%llu ", inet_ntoa(addr),
-			    c->c.e.data2);
+			    (unsigned long long)c->c.e.data2);
 			break;
 		case EXT_COMMUNITY_TRANS_OPAQUE:
 		case EXT_COMMUNITY_TRANS_EVPN:
-			printf("0x%llx ", c->c.e.data2);
+			printf("0x%llx ", (unsigned long long)c->c.e.data2);
 			break;
 		case EXT_COMMUNITY_NON_TRANS_OPAQUE:
 			switch (c->c.e.data2) {
@@ -230,7 +230,7 @@ print_community(struct filter_community *c)
 			}
 			break;
 		default:
-			printf("0x%llx ", c->c.e.data2);
+			printf("0x%llx ", (unsigned long long)c->c.e.data2);
 			break;
 		}
 	}
@@ -367,7 +367,7 @@ print_mainconf(struct bgpd_config *conf)
 
 	TAILQ_FOREACH(la, conf->listen_addrs, entry)
 		printf("listen on %s\n",
-		    log_sockaddr((struct sockaddr *)&la->sa));
+		    log_sockaddr((struct sockaddr *)&la->sa, la->sa_len));
 
 	if (conf->flags & BGPD_FLAG_NEXTHOP_BGP)
 		printf("nexthop qualify via bgp\n");
@@ -394,7 +394,7 @@ print_l3vpn(struct l3vpn *vpn)
 	struct network *n;
 
 	printf("vpn \"%s\" on %s {\n", vpn->descr, vpn->ifmpe);
-	printf("\n\t%s\n", log_rd(vpn->rd));
+	printf("\t%s\n", log_rd(vpn->rd));
 
 	print_l3vpn_targets(&vpn->export, "export-target");
 	print_l3vpn_targets(&vpn->import, "import-target");

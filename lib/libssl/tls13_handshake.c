@@ -1,4 +1,4 @@
-/*	$OpenBSD: tls13_handshake.c,v 1.26 2019/02/11 17:48:15 jsing Exp $	*/
+/*	$OpenBSD: tls13_handshake.c,v 1.28 2019/02/14 18:06:35 jsing Exp $	*/
 /*
  * Copyright (c) 2018-2019 Theo Buehler <tb@openbsd.org>
  * Copyright (c) 2019 Joel Sing <jsing@openbsd.org>
@@ -294,8 +294,10 @@ tls13_handshake_perform(struct tls13_ctx *ctx)
 		if ((action = tls13_handshake_active_action(ctx)) == NULL)
 			return TLS13_IO_FAILURE;
 
-		if (action->handshake_complete)
+		if (action->handshake_complete) {
+			tls13_record_layer_handshake_completed(ctx->rl);
 			return TLS13_IO_SUCCESS;
+		}
 
 		if (action->sender == ctx->mode) {
 			if ((ret = tls13_handshake_send_action(ctx, action)) <= 0)
@@ -459,12 +461,6 @@ tls13_client_finished_recv(struct tls13_ctx *ctx)
 }
 
 int
-tls13_client_finished_send(struct tls13_ctx *ctx)
-{
-	return 0;
-}
-
-int
 tls13_client_key_update_send(struct tls13_ctx *ctx)
 {
 	return 0;
@@ -504,12 +500,6 @@ tls13_server_certificate_request_send(struct tls13_ctx *ctx)
 
 int
 tls13_server_certificate_verify_send(struct tls13_ctx *ctx)
-{
-	return 0;
-}
-
-int
-tls13_server_finished_recv(struct tls13_ctx *ctx)
 {
 	return 0;
 }

@@ -1,11 +1,11 @@
-#	$OpenBSD: Makefile,v 1.3 2019/02/11 16:36:34 deraadt Exp $
+#	$OpenBSD: Makefile,v 1.6 2019/02/16 10:46:22 florian Exp $
 
 PROG=	rsync
-SRCS=	blocks.c child.c client.c downloader.c fargs.c flist.c hash.c \
-	io.c log.c md4.c mkpath.c receiver.c sender.c server.c session.c \
+SRCS=	blocks.c child.c client.c downloader.c fargs.c flist.c hash.c ids.c \
+	io.c log.c mkpath.c mktemp.c receiver.c sender.c server.c session.c \
 	socket.c symlinks.c uploader.c main.c
-LDADD+= -lm
-DPADD+= ${LIBM}
+LDADD+= -lcrypto -lm
+DPADD+= ${LIBCRYPTO} ${LIBM}
 xMAN=	rsync.1
 
 CFLAGS+=-g -W -Wall -Wextra -Wno-unused-parameter

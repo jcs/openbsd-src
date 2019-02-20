@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.370 2019/02/11 15:44:25 claudio Exp $ */
+/*	$OpenBSD: parse.y,v 1.379 2019/02/18 16:31:46 claudio Exp $ */
 
 /*
  * Copyright (c) 2002, 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -30,7 +30,6 @@
 #include <netinet/in.h>
 #include <netinet/ip_ipsp.h>
 #include <arpa/inet.h>
-#include <netmpls/mpls.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -39,6 +38,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 
@@ -164,7 +164,7 @@ static void	 add_roa_set(struct prefixset_item *, u_int32_t, u_int8_t);
 
 typedef struct {
 	union {
-		int64_t			 number;
+		long long		 number;
 		char			*string;
 		struct bgpd_addr	 addr;
 		u_int8_t		 u8;
@@ -578,13 +578,15 @@ conf_main	: AS as4number		{
 		}
 		| LISTEN ON address	{
 			struct listen_addr	*la;
+			struct sockaddr		*sa;
 
 			if ((la = calloc(1, sizeof(struct listen_addr))) ==
 			    NULL)
 				fatal("parse conf_main listen on calloc");
 
 			la->fd = -1;
-			memcpy(&la->sa, addr2sa(&$3, BGP_PORT), sizeof(la->sa));
+			sa = addr2sa(&$3, BGP_PORT, &la->sa_len);
+			memcpy(&la->sa, sa, la->sa_len);
 			TAILQ_INSERT_TAIL(conf->listen_addrs, la, entry);
 		}
 		| FIBPRIORITY NUMBER		{
@@ -1047,8 +1049,9 @@ l3vpn		: VPN STRING ON STRING			{
 			u_int rdomain, label;
 
 			if (get_mpe_config($4, &rdomain, &label) == -1) {
-				yyerror("troubles getting config of %s", $4);
 				if ((cmd_opts & BGPD_OPT_NOACTION) == 0) {
+					yyerror("troubles getting config of %s",
+					    $4);
 					free($4);
 					free($2);
 					YYERROR;
@@ -1110,7 +1113,7 @@ l3vpnopts	: RD STRING {
 				yyerror("bad encoding of rd");
 				YYERROR;
 			}
-			rd = betoh64(rd) & 0xffffffffffffULL;
+			rd = be64toh(rd) & 0xffffffffffffULL;
 			switch (ext.c.e.type) {
 			case EXT_COMMUNITY_TRANS_TWO_AS:
 				rd |= (0ULL << 48);
@@ -1703,7 +1706,7 @@ safi		: NONE		{ $$ = SAFI_NONE; }
 		| VPN		{ $$ = SAFI_MPLSVPN; }
 		;
 
-nettype		: STATIC { $$ = 1; },
+nettype		: STATIC { $$ = 1; }
 		| CONNECTED { $$ = 0; }
 		;
 
@@ -3146,7 +3149,7 @@ top:
 	if (c == '-' || isdigit(c)) {
 		do {
 			*p++ = c;
-			if ((unsigned)(p-buf) >= sizeof(buf)) {
+			if ((size_t)(p-buf) >= sizeof(buf)) {
 				yyerror("string too long");
 				return (findeol());
 			}
@@ -3185,7 +3188,7 @@ nodigits:
 	if (isalnum(c) || c == ':' || c == '_' || c == '*') {
 		do {
 			*p++ = c;
-			if ((unsigned)(p-buf) >= sizeof(buf)) {
+			if ((size_t)(p-buf) >= sizeof(buf)) {
 				yyerror("string too long");
 				return (findeol());
 			}
@@ -3462,7 +3465,7 @@ symget(const char *nam)
 static int
 getcommunity(char *s, int large, u_int32_t *val, u_int8_t *flag)
 {
-	int64_t		 max = USHRT_MAX;
+	long long	 max = USHRT_MAX;
 	const char	*errstr;
 
 	*flag = 0;
@@ -3481,7 +3484,7 @@ getcommunity(char *s, int large, u_int32_t *val, u_int8_t *flag)
 		max = UINT_MAX;
 	*val = strtonum(s, 0, max, &errstr);
 	if (errstr) {
-		yyerror("Community %s is %s (max: %llu)", s, errstr, max);
+		yyerror("Community %s is %s (max: %lld)", s, errstr, max);
 		return -1;
 	}
 	return 0;
@@ -3673,7 +3676,7 @@ parseextcommunity(struct filter_community *c, char *t, char *s)
 	u_int64_t	 ullval;
 	u_int32_t	 uval;
 	char		*p, *ep;
-	int		 type, subtype;
+	int		 type = 0, subtype = 0;
 
 	if (parsesubtype(t, &type, &subtype) == 0) {
 		yyerror("Bad ext-community unknown type");

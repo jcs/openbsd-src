@@ -1,4 +1,4 @@
-/*	$Id: child.c,v 1.3 2019/02/11 21:41:22 deraadt Exp $ */
+/*	$Id: child.c,v 1.7 2019/02/18 21:55:27 benno Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -46,20 +46,20 @@ rsync_child(const struct opts *opts, int fd, const struct fargs *f)
 
 	if ((args = fargs_cmdline(&sess, f)) == NULL) {
 		ERRX1(&sess, "fargs_cmdline");
-		exit(EXIT_FAILURE);
+		exit(1);
 	}
 
-	for (i = 0; NULL != args[i]; i++)
+	for (i = 0; args[i] != NULL; i++)
 		LOG2(&sess, "exec[%zu] = %s", i, args[i]);
 
 	/* Make sure the child's stdin is from the sender. */
 
 	if (dup2(fd, STDIN_FILENO) == -1) {
 		ERR(&sess, "dup2");
-		exit(EXIT_FAILURE);
+		exit(1);
 	} if (dup2(fd, STDOUT_FILENO) == -1) {
 		ERR(&sess, "dup2");
-		exit(EXIT_FAILURE);
+		exit(1);
 	}
 
 	/* Here we go... */
@@ -67,6 +67,6 @@ rsync_child(const struct opts *opts, int fd, const struct fargs *f)
 	execvp(args[0], args);
 
 	ERR(&sess, "%s: execvp", args[0]);
-	exit(EXIT_FAILURE);
+	exit(1);
 	/* NOTREACHED */
 }

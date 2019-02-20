@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.42 2018/12/30 13:53:07 denis Exp $ */
+/*	$OpenBSD: util.c,v 1.45 2019/02/18 12:35:08 claudio Exp $ */
 
 /*
  * Copyright (c) 2006 Claudio Jeker <claudio@openbsd.org>
@@ -74,7 +74,6 @@ log_in6addr(const struct in6_addr *addr)
 	u_int16_t		tmp16;
 
 	bzero(&sa_in6, sizeof(sa_in6));
-	sa_in6.sin6_len = sizeof(sa_in6);
 	sa_in6.sin6_family = AF_INET6;
 	memcpy(&sa_in6.sin6_addr, addr, sizeof(sa_in6.sin6_addr));
 
@@ -87,15 +86,15 @@ log_in6addr(const struct in6_addr *addr)
 		sa_in6.sin6_addr.s6_addr[3] = 0;
 	}
 
-	return (log_sockaddr((struct sockaddr *)&sa_in6));
+	return (log_sockaddr((struct sockaddr *)&sa_in6, sizeof(sa_in6)));
 }
 
 const char *
-log_sockaddr(struct sockaddr *sa)
+log_sockaddr(struct sockaddr *sa, socklen_t len)
 {
 	static char	buf[NI_MAXHOST];
 
-	if (getnameinfo(sa, sa->sa_len, buf, sizeof(buf), NULL, 0,
+	if (getnameinfo(sa, len, buf, sizeof(buf), NULL, 0,
 	    NI_NUMERICHOST))
 		return ("(unknown)");
 	else
@@ -121,7 +120,7 @@ log_rd(u_int64_t rd)
 	u_int32_t	u32;
 	u_int16_t	u16;
 
-	rd = betoh64(rd);
+	rd = be64toh(rd);
 	switch (rd >> 48) {
 	case EXT_COMMUNITY_TRANS_TWO_AS:
 		u32 = rd & 0xffffffff;
@@ -697,9 +696,9 @@ prefix_compare(const struct bgpd_addr *a, const struct bgpd_addr *b,
 	case AID_VPN_IPv4:
 		if (prefixlen > 32)
 			return (-1);
-		if (betoh64(a->vpn4.rd) > betoh64(b->vpn4.rd))
+		if (be64toh(a->vpn4.rd) > be64toh(b->vpn4.rd))
 			return (1);
-		if (betoh64(a->vpn4.rd) < betoh64(b->vpn4.rd))
+		if (be64toh(a->vpn4.rd) < be64toh(b->vpn4.rd))
 			return (-1);
 		mask = htonl(prefixlen2mask(prefixlen));
 		aa = ntohl(a->vpn4.addr.s_addr & mask);
@@ -715,9 +714,9 @@ prefix_compare(const struct bgpd_addr *a, const struct bgpd_addr *b,
 	case AID_VPN_IPv6:
 		if (prefixlen > 128)
 			return (-1);
-		if (betoh64(a->vpn6.rd) > betoh64(b->vpn6.rd))
+		if (be64toh(a->vpn6.rd) > be64toh(b->vpn6.rd))
 			return (1);
-		if (betoh64(a->vpn6.rd) < betoh64(b->vpn6.rd))
+		if (be64toh(a->vpn6.rd) < be64toh(b->vpn6.rd))
 			return (-1);
 		for (i = 0; i < prefixlen / 8; i++)
 			if (a->vpn6.addr.s6_addr[i] != b->vpn6.addr.s6_addr[i])
@@ -839,7 +838,7 @@ af2aid(sa_family_t af, u_int8_t safi, u_int8_t *aid)
 }
 
 struct sockaddr *
-addr2sa(struct bgpd_addr *addr, u_int16_t port)
+addr2sa(struct bgpd_addr *addr, u_int16_t port, socklen_t *len)
 {
 	static struct sockaddr_storage	 ss;
 	struct sockaddr_in		*sa_in = (struct sockaddr_in *)&ss;
@@ -852,17 +851,17 @@ addr2sa(struct bgpd_addr *addr, u_int16_t port)
 	switch (addr->aid) {
 	case AID_INET:
 		sa_in->sin_family = AF_INET;
-		sa_in->sin_len = sizeof(struct sockaddr_in);
 		sa_in->sin_addr.s_addr = addr->v4.s_addr;
 		sa_in->sin_port = htons(port);
+		*len = sizeof(struct sockaddr_in);
 		break;
 	case AID_INET6:
 		sa_in6->sin6_family = AF_INET6;
-		sa_in6->sin6_len = sizeof(struct sockaddr_in6);
 		memcpy(&sa_in6->sin6_addr, &addr->v6,
 		    sizeof(sa_in6->sin6_addr));
 		sa_in6->sin6_port = htons(port);
 		sa_in6->sin6_scope_id = addr->scope_id;
+		*len = sizeof(struct sockaddr_in6);
 		break;
 	}
 
@@ -938,7 +937,7 @@ get_linkstate(uint8_t if_type, int link_state)
 }
 
 const char *
-get_baudrate(u_int64_t baudrate, char *unit)
+get_baudrate(unsigned long long baudrate, char *unit)
 {
 	static char bbuf[16];
 

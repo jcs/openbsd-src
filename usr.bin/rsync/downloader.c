@@ -1,4 +1,4 @@
-/*	$Id: downloader.c,v 1.4 2019/02/11 21:41:22 deraadt Exp $ */
+/*	$Id: downloader.c,v 1.17 2019/02/18 22:47:34 benno Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -22,15 +22,15 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <math.h>
-#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
+#include <openssl/md4.h>
+
 #include "extern.h"
-#include "md4.h"
 
 /*
  * A small optimisation: have a 1 MB pre-write buffer.
@@ -85,7 +85,7 @@ log_file(struct sess *sess,
 	if (sess->opts->server)
 		return;
 
-	frac = 0 == dl->total ? 100.0 :
+	frac = (dl->total == 0) ? 100.0 :
 		100.0 * dl->downloaded / dl->total;
 
 	if (dl->total > 1024 * 1024 * 1024) {
@@ -295,17 +295,14 @@ buf_copy(struct sess *sess,
 int
 rsync_downloader(struct download *p, struct sess *sess, int *ofd)
 {
+	int		 c;
 	int32_t		 idx, rawtok;
-	uint32_t	 hash;
 	const struct flist *f;
-	size_t		 sz, dirlen, tok;
-	const char	*cp;
-	mode_t		 perm;
+	size_t		 sz, tok;
 	struct stat	 st;
 	char		*buf = NULL;
 	unsigned char	 ourmd[MD4_DIGEST_LENGTH],
 			 md[MD4_DIGEST_LENGTH];
-	struct timespec	 tv[2];
 
 	/*
 	 * If we don't have a download already in session, then the next
@@ -415,47 +412,16 @@ rsync_downloader(struct download *p, struct sess *sess, int *ofd)
 
 		*ofd = -1;
 
-		/*
-		 * Create the temporary file.
-		 * Use a simple scheme of path/.FILE.RANDOM, where we
-		 * fill in RANDOM with an arc4random number.
-		 * The tricky part is getting into the directory if
-		 * we're in recursive mode.
-		 */
+		/* Create the temporary file. */
 
-		hash = arc4random();
-		if (sess->opts->recursive &&
-		    NULL != (cp = strrchr(f->path, '/'))) {
-			dirlen = cp - f->path;
-			if (asprintf(&p->fname, "%.*s/.%s.%" PRIu32,
-			    (int)dirlen, f->path,
-			    f->path + dirlen + 1, hash) < 0)
-				p->fname = NULL;
-		} else {
-			if (asprintf(&p->fname, ".%s.%" PRIu32,
-			    f->path, hash) < 0)
-				p->fname = NULL;
-		}
-		if (p->fname == NULL) {
-			ERR(sess, "asprintf");
+		if (mktemplate(sess, &p->fname, 
+		    f->path, sess->opts->recursive) == -1) {
+			ERRX1(sess, "mktemplate");
 			goto out;
 		}
 
-		/*
-		 * Inherit permissions from the source file if we're new
-		 * or specifically told with -p.
-		 */
-
-		if (!sess->opts->preserve_perms)
-			perm = -1 == p->ofd ? f->st.mode : st.st_mode;
-		else
-			perm = f->st.mode;
-
-		p->fd = openat(p->rootfd, p->fname,
-			O_APPEND|O_WRONLY|O_CREAT|O_EXCL, perm);
-
-		if (p->fd == -1) {
-			ERR(sess, "%s: openat", p->fname);
+		if ((p->fd = mkstempat(p->rootfd, p->fname)) == -1) {
+			ERR(sess, "mkstempat");
 			goto out;
 		}
 
@@ -481,6 +447,7 @@ rsync_downloader(struct download *p, struct sess *sess, int *ofd)
 	 * a token indicator.
 	 */
 
+again:
 	assert(p->state == DOWNLOAD_READ_REMOTE);
 	assert(p->fname != NULL);
 	assert(p->fd != -1);
@@ -509,6 +476,15 @@ rsync_downloader(struct download *p, struct sess *sess, int *ofd)
 		LOG4(sess, "%s: received %zu B block", p->fname, sz);
 		MD4_Update(&p->ctx, buf, sz);
 		free(buf);
+
+		/* Fast-track more reads as they arrive. */
+
+		if ((c = io_read_check(sess, p->fdin)) < 0) {
+			ERRX1(sess, "io_read_check");
+			goto out;
+		} else if (c > 0)
+			goto again;
+
 		return 1;
 	} else if (rawtok < 0) {
 		tok = -rawtok - 1;
@@ -539,6 +515,15 @@ rsync_downloader(struct download *p, struct sess *sess, int *ofd)
 		p->total += sz;
 		LOG4(sess, "%s: copied %zu B", p->fname, sz);
 		MD4_Update(&p->ctx, buf, sz);
+
+		/* Fast-track more reads as they arrive. */
+
+		if ((c = io_read_check(sess, p->fdin)) < 0) {
+			ERRX1(sess, "io_read_check");
+			goto out;
+		} else if (c > 0)
+			goto again;
+
 		return 1;
 	}
 
@@ -568,18 +553,11 @@ rsync_downloader(struct download *p, struct sess *sess, int *ofd)
 		goto out;
 	}
 
-	/* Conditionally adjust file modification time. */
+	/* Adjust our file metadata (uid, mode, etc.). */
 
-	if (sess->opts->preserve_times) {
-		tv[0].tv_sec = time(NULL);
-		tv[0].tv_nsec = 0;
-		tv[1].tv_sec = f->st.mtime;
-		tv[1].tv_nsec = 0;
-		if (futimens(p->fd, tv) == -1) {
-			ERR(sess, "%s: futimens", p->fname);
-			goto out;
-		}
-		LOG4(sess, "%s: updated date", f->path);
+	if (!rsync_set_metadata(sess, 1, p->fd, f, p->fname)) {
+		ERRX1(sess, "rsync_set_metadata");
+		goto out;
 	}
 
 	/* Finally, rename the temporary to the real file. */

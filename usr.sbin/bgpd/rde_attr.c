@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_attr.c,v 1.116 2019/02/04 18:53:10 claudio Exp $ */
+/*	$OpenBSD: rde_attr.c,v 1.118 2019/02/15 09:55:21 claudio Exp $ */
 
 /*
  * Copyright (c) 2004 Claudio Jeker <claudio@openbsd.org>
@@ -23,6 +23,7 @@
 
 #include <netinet/in.h>
 
+#include <endian.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -1204,7 +1205,7 @@ community_ext_matchone(struct filter_community *c, struct rde_peer *peer,
 {
 	u_int64_t	com, mask;
 
-	community = betoh64(community);
+	community = be64toh(community);
 
 	com = (u_int64_t)c->c.e.type << 56;
 	mask = 0xffULL << 56;

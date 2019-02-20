@@ -1,4 +1,4 @@
-/*	$Id: socket.c,v 1.5 2019/02/11 21:41:22 deraadt Exp $ */
+/*	$Id: socket.c,v 1.18 2019/02/18 22:47:34 benno Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -71,13 +71,11 @@ inet_connect(struct sess *sess, int *sd,
 	 * while waiting for this to finish.
 	 */
 
-	c = connect(*sd,
-		(const struct sockaddr *)&src->sa,
-		src->salen);
+	c = connect(*sd, (const struct sockaddr *)&src->sa, src->salen);
 	if (c == -1) {
 		if (errno == ECONNREFUSED || errno == EHOSTUNREACH) {
-			WARNX(sess, "connect refused: "
-				"%s, %s", src->ip, host);
+			WARNX(sess, "connect refused: %s, %s",
+			    src->ip, host);
 			return 0;
 		}
 		ERR(sess, "connect");
@@ -116,25 +114,28 @@ inet_resolve(struct sess *sess, const char *host, size_t *sz)
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = PF_UNSPEC;
-	hints.ai_socktype = SOCK_DGRAM; /* DUMMY */
+	hints.ai_socktype = SOCK_STREAM;
 
-	error = getaddrinfo(host, "873", &hints, &res0);
+	error = getaddrinfo(host, sess->opts->port, &hints, &res0);
 
 	LOG2(sess, "resolving: %s", host);
 
 	if (error == EAI_AGAIN || error == EAI_NONAME) {
-		ERRX(sess, "DNS resolve error: %s: %s",
-			host, gai_strerror(error));
+		ERRX(sess, "could not resolve hostname %s: %s",
+		    host, gai_strerror(error));
+		return NULL;
+	} else if (error == EAI_SERVICE) {
+		ERRX(sess, "could not resolve service rsync: %s",
+		    gai_strerror(error));
 		return NULL;
 	} else if (error) {
-		ERRX(sess, "DNS parse error: %s: %s",
-			host, gai_strerror(error));
+		ERRX(sess, "getaddrinfo: %s: %s", host, gai_strerror(error));
 		return NULL;
 	}
 
 	/* Allocate for all available addresses. */
 
-	for (res = res0; NULL != res; res = res->ai_next)
+	for (res = res0; res != NULL; res = res->ai_next)
 		if (res->ai_family == AF_INET ||
 		    res->ai_family == AF_INET6)
 			srcsz++;
@@ -152,7 +153,7 @@ inet_resolve(struct sess *sess, const char *host, size_t *sz)
 		return NULL;
 	}
 
-	for (i = 0, res = res0; NULL != res; res = res->ai_next) {
+	for (i = 0, res = res0; res != NULL; res = res->ai_next) {
 		if (res->ai_family != AF_INET &&
 		    res->ai_family != AF_INET6)
 			continue;
@@ -170,16 +171,16 @@ inet_resolve(struct sess *sess, const char *host, size_t *sz)
 		if (res->ai_family == AF_INET) {
 			src[i].family = PF_INET;
 			inet_ntop(AF_INET,
-				&(((struct sockaddr_in *)sa)->sin_addr),
-				src[i].ip, INET6_ADDRSTRLEN);
+			    &(((struct sockaddr_in *)sa)->sin_addr),
+			    src[i].ip, INET6_ADDRSTRLEN);
 		} else {
 			src[i].family = PF_INET6;
 			inet_ntop(AF_INET6,
-				&(((struct sockaddr_in6 *)sa)->sin6_addr),
-				src[i].ip, INET6_ADDRSTRLEN);
+			    &(((struct sockaddr_in6 *)sa)->sin6_addr),
+			    src[i].ip, INET6_ADDRSTRLEN);
 		}
 
-		LOG2(sess, "DNS resolved: %s: %s", host, src[i].ip);
+		LOG2(sess, "hostname resolved: %s: %s", host, src[i].ip);
 		i++;
 	}
 
@@ -230,9 +231,9 @@ protocol_line(struct sess *sess, const char *host, const char *cp)
 }
 
 /*
- * Pledges: dns, inet, unveil, rpath, cpath, wpath, stdio, fattr.
+ * Pledges: dns, inet, unix, unveil, rpath, cpath, wpath, stdio, fattr, chown.
  *
- * Pledges (dry-run): -cpath, -wpath, -fattr.
+ * Pledges (dry-run): -unix, -cpath, -wpath, -fattr, -chown.
  * Pledges (!preserve_times): -fattr.
  */
 int
@@ -267,7 +268,7 @@ rsync_socket(const struct opts *opts, const struct fargs *f)
 
 	/* Drop the DNS pledge. */
 
-	if (pledge("stdio rpath wpath cpath fattr inet unveil", NULL) == -1) {
+	if (pledge("stdio unix rpath wpath cpath dpath fattr chown getpw inet unveil", NULL) == -1) {
 		ERR(&sess, "pledge");
 		goto out;
 	}
@@ -288,7 +289,7 @@ rsync_socket(const struct opts *opts, const struct fargs *f)
 	}
 
 	/* Drop the inet pledge. */
-	if (pledge("stdio rpath wpath cpath fattr unveil", NULL) == -1) {
+	if (pledge("stdio unix rpath wpath cpath dpath fattr chown getpw unveil", NULL) == -1) {
 		ERR(&sess, "pledge");
 		goto out;
 	}
@@ -370,7 +371,7 @@ rsync_socket(const struct opts *opts, const struct fargs *f)
 	else
 		i = 1; /* rsync... */
 
-	for ( ; NULL != args[i]; i++)
+	for ( ; args[i] != NULL; i++)
 		if (!io_write_line(&sess, sd, args[i])) {
 			ERRX1(&sess, "io_write_line");
 			goto out;

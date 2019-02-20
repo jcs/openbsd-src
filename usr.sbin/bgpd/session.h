@@ -1,4 +1,4 @@
-/*	$OpenBSD: session.h,v 1.129 2019/02/11 15:44:25 claudio Exp $ */
+/*	$OpenBSD: session.h,v 1.132 2019/02/19 09:13:23 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -149,22 +149,22 @@ struct ctl_conn {
 TAILQ_HEAD(ctl_conns, ctl_conn)	ctl_conns;
 
 struct peer_stats {
-	u_int64_t		 msg_rcvd_open;
-	u_int64_t		 msg_rcvd_update;
-	u_int64_t		 msg_rcvd_notification;
-	u_int64_t		 msg_rcvd_keepalive;
-	u_int64_t		 msg_rcvd_rrefresh;
-	u_int64_t		 msg_sent_open;
-	u_int64_t		 msg_sent_update;
-	u_int64_t		 msg_sent_notification;
-	u_int64_t		 msg_sent_keepalive;
-	u_int64_t		 msg_sent_rrefresh;
-	u_int64_t		 prefix_rcvd_update;
-	u_int64_t		 prefix_rcvd_withdraw;
-	u_int64_t		 prefix_rcvd_eor;
-	u_int64_t		 prefix_sent_update;
-	u_int64_t		 prefix_sent_withdraw;
-	u_int64_t		 prefix_sent_eor;
+	unsigned long long	 msg_rcvd_open;
+	unsigned long long	 msg_rcvd_update;
+	unsigned long long	 msg_rcvd_notification;
+	unsigned long long	 msg_rcvd_keepalive;
+	unsigned long long	 msg_rcvd_rrefresh;
+	unsigned long long	 msg_sent_open;
+	unsigned long long	 msg_sent_update;
+	unsigned long long	 msg_sent_notification;
+	unsigned long long	 msg_sent_keepalive;
+	unsigned long long	 msg_sent_rrefresh;
+	unsigned long long	 prefix_rcvd_update;
+	unsigned long long	 prefix_rcvd_withdraw;
+	unsigned long long	 prefix_rcvd_eor;
+	unsigned long long	 prefix_sent_update;
+	unsigned long long	 prefix_sent_withdraw;
+	unsigned long long	 prefix_sent_eor;
 	time_t			 last_updown;
 	time_t			 last_read;
 	u_int32_t		 prefix_cnt;
@@ -248,7 +248,6 @@ int	 carp_demote_set(char *, int);
 int	 merge_config(struct bgpd_config *, struct bgpd_config *,
 	    struct peer *);
 int	 prepare_listeners(struct bgpd_config *);
-int	 get_mpe_config(const char *, u_int *, u_int *);
 
 /* control.c */
 int	control_check(char *);
@@ -264,7 +263,8 @@ void		 log_statechange(struct peer *, enum session_state,
 		    enum session_events);
 void		 log_notification(const struct peer *, u_int8_t, u_int8_t,
 		    u_char *, u_int16_t, const char *);
-void		 log_conn_attempt(const struct peer *, struct sockaddr *);
+void		 log_conn_attempt(const struct peer *, struct sockaddr *,
+		    socklen_t);
 
 /* mrt.c */
 void		 mrt_dump_bgp_msg(struct mrt *, void *, u_int16_t,
