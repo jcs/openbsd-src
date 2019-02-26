@@ -1,4 +1,4 @@
-/* $OpenBSD: tls13_record_layer.c,v 1.2 2019/02/14 17:55:32 jsing Exp $ */
+/* $OpenBSD: tls13_record_layer.c,v 1.7 2019/02/25 16:52:34 jsing Exp $ */
 /*
  * Copyright (c) 2018, 2019 Joel Sing <jsing@openbsd.org>
  *
@@ -25,6 +25,15 @@
 struct tls13_record_layer {
 	int change_cipher_spec_seen;
 	int handshake_completed;
+
+	/*
+	 * Read and/or write channels are closed due to an alert being
+	 * sent or received. In the case of an error alert both channels
+	 * are closed, whereas in the case of a close notify only one
+	 * channel is closed.
+	 */
+	int read_closed;
+	int write_closed;
 
 	struct tls13_record *rrec;
 	struct tls13_record *wrec;
@@ -176,33 +185,59 @@ tls13_record_layer_handshake_completed(struct tls13_record_layer *rl)
 	rl->handshake_completed = 1;
 }
 
-static int
+static ssize_t
 tls13_record_layer_process_alert(struct tls13_record_layer *rl)
 {
 	uint8_t alert_level, alert_desc;
+	ssize_t ret = TLS13_IO_FAILURE;
 
 	/*
+	 * RFC 8446 - sections 5.1 and 6.
+	 *
 	 * A TLSv1.3 alert record can only contain a single alert - this means
 	 * that processing the alert must consume all of the record. The alert
 	 * will result in one of three things - continuation (user_cancelled),
 	 * read channel closure (close_notify) or termination (all others).
 	 */
 	if (rl->rbuf == NULL)
-		return -1;
+		goto err;
 	if (rl->rbuf_content_type != SSL3_RT_ALERT)
-		return -1;
+		goto err;
 
 	if (!CBS_get_u8(&rl->rbuf_cbs, &alert_level))
-		return -1; /* XXX - decode error alert. */
+		goto err; /* XXX - decode error alert. */
 	if (!CBS_get_u8(&rl->rbuf_cbs, &alert_desc))
-		return -1; /* XXX - decode error alert. */
+		goto err; /* XXX - decode error alert. */
 
 	if (CBS_len(&rl->rbuf_cbs) != 0)
-		return -1;
+		goto err; /* XXX - decode error alert. */
 
 	tls13_record_layer_rbuf_free(rl);
 
-	return rl->alert_cb(alert_level, alert_desc, rl->cb_arg);
+	/*
+	 * Alert level is ignored for closure alerts (RFC 8446 section 6.1),
+	 * however for error alerts (RFC 8446 section 6.2), the alert level
+	 * must be specified as fatal.
+	 */
+	if (alert_desc == SSL_AD_CLOSE_NOTIFY) {
+		rl->read_closed = 1;
+		ret = TLS13_IO_SUCCESS;
+	} else if (alert_desc == SSL_AD_USER_CANCELLED) {
+		/* Ignored at the record layer. */
+		ret = TLS13_IO_SUCCESS;
+	} else if (alert_level == SSL3_AL_FATAL) {
+		rl->read_closed = 1;
+		rl->write_closed = 1;
+		ret = TLS13_IO_EOF;
+	} else {
+		/* XXX - decode error alert. */
+		return TLS13_IO_FAILURE;
+	}
+
+	rl->alert_cb(alert_level, alert_desc, rl->cb_arg);
+
+ err:
+	return ret;
 }
 
 int
@@ -546,8 +581,6 @@ tls13_record_layer_read_record(struct tls13_record_layer *rl)
 	ssize_t ret;
 	CBS cbs;
 
- again: /* XXX */
-
 	if (rl->rrec == NULL) {
 		if ((rl->rrec = tls13_record_new()) == NULL)
 			goto err;
@@ -587,7 +620,7 @@ tls13_record_layer_read_record(struct tls13_record_layer *rl)
 		}
 		rl->change_cipher_spec_seen = 1;
 		tls13_record_layer_rrec_free(rl);
-		goto again; /* XXX */
+		return TLS13_IO_WANT_POLLIN;
 	}
 
 	/*
@@ -634,12 +667,13 @@ ssize_t
 tls13_record_layer_read(struct tls13_record_layer *rl, uint8_t content_type,
     uint8_t *buf, size_t n)
 {
-	int ret;
+	ssize_t ret;
+
+	if (rl->read_closed)
+		return TLS13_IO_EOF;
 
 	/* XXX - loop here with record and byte limits. */
 	/* XXX - send alert... */
-
- again: /* XXX */
 
 	/* If necessary, pull up the next record. */
 	if (CBS_len(&rl->rbuf_cbs) == 0) {
@@ -659,7 +693,7 @@ tls13_record_layer_read(struct tls13_record_layer *rl, uint8_t content_type,
 			if (rl->handshake_completed) {
 				/* XXX - call callback, drop for now... */
 				tls13_record_layer_rbuf_free(rl);
-				goto again;
+				return TLS13_IO_WANT_POLLIN;
 			}
 		}
 
@@ -689,6 +723,9 @@ tls13_record_layer_write_record(struct tls13_record_layer *rl,
     uint8_t content_type, const uint8_t *content, size_t content_len)
 {
 	ssize_t ret;
+
+	if (rl->write_closed)
+		return TLS13_IO_EOF;
 
 	/* See if there is an existing record and attempt to push it out... */
 	if (rl->wrec != NULL) {
@@ -723,7 +760,9 @@ static ssize_t
 tls13_record_layer_write(struct tls13_record_layer *rl, uint8_t content_type,
     const uint8_t *buf, size_t n)
 {
-	/* XXX - handle fragmenting... */
+	if (n > TLS13_RECORD_MAX_PLAINTEXT_LEN)
+		n = TLS13_RECORD_MAX_PLAINTEXT_LEN;
+
 	return tls13_record_layer_write_record(rl, content_type, buf, n);
 }
 

@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_locl.h,v 1.236 2019/02/14 17:50:07 jsing Exp $ */
+/* $OpenBSD: ssl_locl.h,v 1.238 2019/02/25 19:40:05 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *

@@ -1,4 +1,4 @@
-/* $OpenBSD: tls13_internal.h,v 1.19 2019/02/14 17:55:32 jsing Exp $ */
+/* $OpenBSD: tls13_internal.h,v 1.24 2019/02/25 19:44:04 tb Exp $ */
 /*
  * Copyright (c) 2018 Bob Beck <beck@openbsd.org>
  * Copyright (c) 2018 Theo Buehler <tb@openbsd.org>
@@ -36,7 +36,7 @@ __BEGIN_HIDDEN_DECLS
 #define TLS13_IO_WANT_POLLIN	-2
 #define TLS13_IO_WANT_POLLOUT	-3
 
-typedef int (*tls13_alert_cb)(uint8_t _alert_level, uint8_t _alert_desc,
+typedef void (*tls13_alert_cb)(uint8_t _alert_level, uint8_t _alert_desc,
     void *_cb_arg);
 typedef int (*tls13_post_handshake_cb)(void *_cb_arg);
 typedef ssize_t (*tls13_read_cb)(void *_buf, size_t _buflen, void *_cb_arg);
@@ -149,11 +149,11 @@ struct tls13_handshake_stage {
 	uint8_t	message_number;
 };
 
-typedef struct ssl_handshake_tls13_st SSL_HANDSHAKE_TLS13;
+struct ssl_handshake_tls13_st;
 
 struct tls13_ctx {
 	SSL *ssl;
-	SSL_HANDSHAKE_TLS13 *hs;
+	struct ssl_handshake_tls13_st *hs;
 	uint8_t	mode;
 	struct tls13_handshake_stage handshake_stage;
 
@@ -223,6 +223,7 @@ int tls13_client_certificate_verify_send(struct tls13_ctx *ctx);
 int tls13_client_certificate_verify_recv(struct tls13_ctx *ctx);
 int tls13_client_finished_recv(struct tls13_ctx *ctx);
 int tls13_client_finished_send(struct tls13_ctx *ctx);
+int tls13_client_finished_sent(struct tls13_ctx *ctx);
 int tls13_client_key_update_send(struct tls13_ctx *ctx);
 int tls13_client_key_update_recv(struct tls13_ctx *ctx);
 int tls13_server_hello_recv(struct tls13_ctx *ctx);

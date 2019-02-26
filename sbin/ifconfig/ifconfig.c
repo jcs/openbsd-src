@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.393 2019/02/20 04:02:18 deraadt Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.396 2019/02/26 03:57:55 dlg Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -153,7 +153,6 @@ struct	ifaliasreq	addreq;
 
 int	wconfig = 0;
 int	wcwconfig = 0;
-struct	ifmpwreq	imrsave;
 #endif /* SMALL */
 
 char	name[IFNAMSIZ];
@@ -242,17 +241,18 @@ void	clone_create(const char *, int);
 void	clone_destroy(const char *, int);
 void	unsetmediaopt(const char *, int);
 void	setmediainst(const char *, int);
-void	setmpelabel(const char *, int);
-void	process_mpw_commands(void);
-void	setmpwencap(const char *, int);
-void	setmpwlabel(const char *, const char *);
-void	setmpwneighbor(const char *, int);
-void	setmpwcontrolword(const char *, int);
+void	setmplslabel(const char *, int);
+void	unsetmplslabel(const char *, int);
+void	setpwe3cw(const char *, int);
+void	unsetpwe3cw(const char *, int);
+void	setpwe3fat(const char *, int);
+void	unsetpwe3fat(const char *, int);
+void	setpwe3neighbor(const char *, const char *);
+void	unsetpwe3neighbor(const char *, int);
 void	setvlantag(const char *, int);
 void	setvlandev(const char *, int);
 void	unsetvlandev(const char *, int);
-void	mpe_status(void);
-void	mpw_status(void);
+void	mpls_status(void);
 void	setrdomain(const char *, int);
 void	unsetrdomain(const char *, int);
 int	prefix(void *val, int);
@@ -457,12 +457,14 @@ const struct	cmd {
 	{ "-staticarp",	-IFF_STATICARP,	0,		setifflags },
 	{ "mpls",	IFXF_MPLS,	0,		setifxflags },
 	{ "-mpls",	-IFXF_MPLS,	0,		setifxflags },
-	{ "mplslabel",	NEXTARG,	0,		setmpelabel },
-	{ "mpwlabel",	NEXTARG2,	0,		NULL, setmpwlabel },
-	{ "neighbor",	NEXTARG,	0,		setmpwneighbor },
-	{ "controlword", 1,		0,		setmpwcontrolword },
-	{ "-controlword", 0,		0,		setmpwcontrolword },
-	{ "encap",	NEXTARG,	0,		setmpwencap },
+	{ "mplslabel",	NEXTARG,	0,		setmplslabel },
+	{ "-mplslabel",	0,		0,		unsetmplslabel },
+	{ "pwecw",	0,		0,		setpwe3cw },
+	{ "-pwecw",	0,		0,		unsetpwe3cw },
+	{ "pwefat",	0,		0,		setpwe3fat },
+	{ "-pwefat",	0,		0,		unsetpwe3fat },
+	{ "pweneighbor", NEXTARG2,	0,		NULL, setpwe3neighbor },
+	{ "-pweneighbor", 0,		0,		unsetpwe3neighbor },
 	{ "advbase",	NEXTARG,	0,		setcarp_advbase },
 	{ "advskew",	NEXTARG,	0,		setcarp_advskew },
 	{ "carppeer",	NEXTARG,	0,		setcarppeer },
@@ -895,11 +897,6 @@ nextarg:
 
 	/* Process any media commands that may have been issued. */
 	process_media_commands();
-
-#ifndef SMALL
-	/* Process mpw commands */
-	process_mpw_commands();
-#endif
 
 	if (af == AF_INET6 && explicit_prefix == 0) {
 		/*
@@ -1462,7 +1459,7 @@ setia6lifetime(const char *cmd, const char *val)
 	t = time(NULL);
 
 	if (afp->af_af != AF_INET6)
-		errx(1, "%s not allowed for the address family", cmd);
+		errx(1, "%s not allowed for this address family", cmd);
 	if (strcmp(cmd, "vltime") == 0) {
 		in6_addreq.ifra_lifetime.ia6t_expire = t + newval;
 		in6_addreq.ifra_lifetime.ia6t_vltime = newval;
@@ -1481,7 +1478,7 @@ setia6eui64(const char *cmd, int val)
 	struct in6_addr *in6;
 
 	if (afp->af_af != AF_INET6)
-		errx(1, "%s not allowed for the address family", cmd);
+		errx(1, "%s not allowed for this address family", cmd);
 
 	addaf(name, AF_INET6);
 
@@ -3293,8 +3290,7 @@ status(int link, struct sockaddr_dl *sdl, int ls)
 	pfsync_status();
 	pppoe_status();
 	sppp_status();
-	mpe_status();
-	mpw_status();
+	mpls_status();
 	pflow_status();
 	umb_status();
 #endif
@@ -3821,71 +3817,102 @@ delvnetflowid(const char *ignored, int alsoignored)
 }
 
 void
-mpe_status(void)
+pwe3_neighbor(void)
+{
+	const char *prefix = "pwe3 remote label";
+	struct if_laddrreq req;
+	char hbuf[NI_MAXHOST];
+	struct sockaddr_mpls *smpls;
+	int error;
+
+	memset(&req, 0, sizeof(req));
+	if (strlcpy(req.iflr_name, name, sizeof(req.iflr_name)) >=
+	    sizeof(req.iflr_name))
+		errx(1, "pwe3 neighbor: name is too long");
+
+	if (ioctl(s, SIOCGPWE3NEIGHBOR, &req) == -1) {
+		if (errno != EADDRNOTAVAIL)
+			return;
+
+		printf(" %s (unset)", prefix);
+		return;
+	}
+
+	if (req.dstaddr.ss_family != AF_MPLS) {
+		warnc(EPFNOSUPPORT, "pwe3 neighbor");
+		return;
+	}
+	smpls = (struct sockaddr_mpls *)&req.dstaddr;
+
+	error = getnameinfo((struct sockaddr *)&req.addr, sizeof(req.addr),
+	    hbuf, sizeof(hbuf), NULL, 0, NI_NUMERICHOST);
+	if (error != 0) {
+		warnx("%s: %s", prefix, gai_strerror(error));
+		return;
+	}
+
+	printf(" %s %u on %s", prefix, smpls->smpls_label, hbuf);
+}
+
+void
+pwe3_cword(void)
+{
+	struct ifreq req;
+
+	memset(&req, 0, sizeof(req));
+	if (strlcpy(req.ifr_name, name, sizeof(req.ifr_name)) >=
+	    sizeof(req.ifr_name))
+		errx(1, "pwe3 control word: name is too long");
+
+	if (ioctl(s, SIOCGPWE3CTRLWORD, &req) == -1) {
+		return;
+	}
+
+	printf(" %s", req.ifr_pwe3 ? "cw" : "nocw");
+}
+
+void
+pwe3_fword(void)
+{
+	struct ifreq req;
+
+	memset(&req, 0, sizeof(req));
+	if (strlcpy(req.ifr_name, name, sizeof(req.ifr_name)) >=
+	    sizeof(req.ifr_name))
+		errx(1, "pwe3 control word: name is too long");
+
+	if (ioctl(s, SIOCGPWE3FAT, &req) == -1)
+		return;
+
+	printf(" %s", req.ifr_pwe3 ? "fat" : "nofat");
+}
+
+void
+mpls_status(void)
 {
 	struct shim_hdr	shim;
 
 	bzero(&shim, sizeof(shim));
 	ifr.ifr_data = (caddr_t)&shim;
 
-	if (ioctl(s, SIOCGETLABEL , (caddr_t)&ifr) == -1)
-		return;
-	printf("\tmpls label: %d\n", shim.shim_label);
-}
+	if (ioctl(s, SIOCGETLABEL, (caddr_t)&ifr) == -1) {
+		if (errno != EADDRNOTAVAIL)
+			return;
 
-void
-mpw_status(void)
-{
-	struct sockaddr_in *sin;
-	struct ifmpwreq imr;
+		printf("\tmpls: label (unset)");
+	} else
+		printf("\tmpls: label %u", shim.shim_label);
 
-	bzero(&imr, sizeof(imr));
-	ifr.ifr_data = (caddr_t) &imr;
-	if (ioctl(s, SIOCGETMPWCFG, (caddr_t) &ifr) == -1)
-		return;
-
-	printf("\tencapsulation-type ");
-	switch (imr.imr_type) {
-	case IMR_TYPE_NONE:
-		printf("none");
-		break;
-	case IMR_TYPE_ETHERNET:
-		printf("ethernet");
-		break;
-	case IMR_TYPE_ETHERNET_TAGGED:
-		printf("ethernet-tagged");
-		break;
-	default:
-		printf("unknown");
-		break;
-	}
-
-	if (imr.imr_flags & IMR_FLAG_CONTROLWORD)
-		printf(", control-word");
+	pwe3_neighbor();
+	pwe3_cword();
+	pwe3_fword();
 
 	printf("\n");
-
-	printf("\tmpls label: ");
-	if (imr.imr_lshim.shim_label == 0)
-		printf("local none ");
-	else
-		printf("local %u ", imr.imr_lshim.shim_label);
-
-	if (imr.imr_rshim.shim_label == 0)
-		printf("remote none\n");
-	else
-		printf("remote %u\n", imr.imr_rshim.shim_label);
-
-	sin = (struct sockaddr_in *) &imr.imr_nexthop;
-	if (sin->sin_addr.s_addr == 0)
-		printf("\tneighbor: none\n");
-	else
-		printf("\tneighbor: %s\n", inet_ntoa(sin->sin_addr));
 }
 
 /* ARGSUSED */
 void
-setmpelabel(const char *val, int d)
+setmplslabel(const char *val, int d)
 {
 	struct shim_hdr	 shim;
 	const char	*estr;
@@ -3901,108 +3928,111 @@ setmpelabel(const char *val, int d)
 }
 
 void
-process_mpw_commands(void)
+unsetmplslabel(const char *val, int d)
 {
-	struct	sockaddr_in *sin, *sinn;
-	struct	ifmpwreq imr;
+	struct ifreq req;
 
-	if (wconfig == 0)
-		return;
+	memset(&req, 0, sizeof(req));
+	if (strlcpy(req.ifr_name, name, sizeof(req.ifr_name)) >=
+	    sizeof(req.ifr_name))
+		errx(1, "interface name is too long");
 
-	bzero(&imr, sizeof(imr));
-	ifr.ifr_data = (caddr_t) &imr;
-	if (ioctl(s, SIOCGETMPWCFG, (caddr_t) &ifr) == -1)
-		err(1, "SIOCGETMPWCFG");
-
-	if (imrsave.imr_type == 0) {
-		if (imr.imr_type == 0)
-			imrsave.imr_type = IMR_TYPE_ETHERNET;
-
-		imrsave.imr_type = imr.imr_type;
-	}
-	if (wcwconfig == 0)
-		imrsave.imr_flags |= imr.imr_flags;
-
-	if (imrsave.imr_lshim.shim_label == 0 ||
-	    imrsave.imr_rshim.shim_label == 0) {
-		if (imr.imr_lshim.shim_label == 0 ||
-		    imr.imr_rshim.shim_label == 0)
-			errx(1, "mpw local / remote label not specified");
-
-		imrsave.imr_lshim.shim_label = imr.imr_lshim.shim_label;
-		imrsave.imr_rshim.shim_label = imr.imr_rshim.shim_label;
-	}
-
-	sin = (struct sockaddr_in *) &imrsave.imr_nexthop;
-	sinn = (struct sockaddr_in *) &imr.imr_nexthop;
-	if (sin->sin_addr.s_addr == 0) {
-		if (sinn->sin_addr.s_addr == 0)
-			errx(1, "mpw neighbor address not specified");
-
-		sin->sin_family = sinn->sin_family;
-		sin->sin_addr.s_addr = sinn->sin_addr.s_addr;
-	}
-
-	ifr.ifr_data = (caddr_t) &imrsave;
-	if (ioctl(s, SIOCSETMPWCFG, (caddr_t) &ifr) == -1)
-		err(1, "SIOCSETMPWCFG");
+	if (ioctl(s, SIOCDELLABEL, (caddr_t)&ifr) == -1)
+		warn("-mplslabel");
 }
 
 void
-setmpwencap(const char *value, int d)
+setpwe3(unsigned long cmd, const char *cmdname, int value)
 {
-	wconfig = 1;
+	struct ifreq req;
 
-	if (strcmp(value, "ethernet") == 0)
-		imrsave.imr_type = IMR_TYPE_ETHERNET;
-	else if (strcmp(value, "ethernet-tagged") == 0)
-		imrsave.imr_type = IMR_TYPE_ETHERNET_TAGGED;
-	else
-		errx(1, "invalid mpw encapsulation type");
+	memset(&req, 0, sizeof(req));
+	if (strlcpy(req.ifr_name, name, sizeof(req.ifr_name)) >=
+	    sizeof(req.ifr_name))
+		errx(1, "interface name is too long");
+
+	req.ifr_pwe3 = value;
+
+	if (ioctl(s, cmd, &req) == -1)
+		warn("%s", cmdname);
 }
 
 void
-setmpwlabel(const char *local, const char *remote)
+setpwe3cw(const char *val, int d)
 {
-	const	char *errstr;
+	setpwe3(SIOCSPWE3CTRLWORD, "pwecw", 1);
+}
 
-	wconfig = 1;
+void
+unsetpwe3cw(const char *val, int d)
+{
+	setpwe3(SIOCSPWE3CTRLWORD, "-pwecw", 0);
+}
 
-	imrsave.imr_lshim.shim_label = strtonum(local,
+void
+setpwe3fat(const char *val, int d)
+{
+	setpwe3(SIOCSPWE3FAT, "pwefat", 1);
+}
+
+void
+unsetpwe3fat(const char *val, int d)
+{
+	setpwe3(SIOCSPWE3FAT, "-pwefat", 0);
+}
+
+void
+setpwe3neighbor(const char *label, const char *neighbor)
+{
+	struct if_laddrreq req;
+	struct addrinfo hints, *res;
+	struct sockaddr_mpls *smpls = (struct sockaddr_mpls *)&req.dstaddr;;
+	const char *errstr;
+	int error;
+
+	memset(&req, 0, sizeof(req));
+	if (strlcpy(req.iflr_name, name, sizeof(req.iflr_name)) >=
+	    sizeof(req.iflr_name))
+		errx(1, "interface name is too long");
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	error = getaddrinfo(neighbor, NULL, &hints, &res);
+	if (error != 0)
+		errx(1, "pweneighbor %s: %s", neighbor, gai_strerror(error));
+
+	smpls->smpls_len = sizeof(*smpls);
+	smpls->smpls_family = AF_MPLS;
+	smpls->smpls_label = strtonum(label,
 	    (MPLS_LABEL_RESERVED_MAX + 1), MPLS_LABEL_MAX, &errstr);
 	if (errstr != NULL)
-		errx(1, "invalid local label: %s", errstr);
+		errx(1, "pweneighbor: invalid label: %s", errstr);
 
-	imrsave.imr_rshim.shim_label = strtonum(remote,
-	    (MPLS_LABEL_RESERVED_MAX + 1), MPLS_LABEL_MAX, &errstr);
-	if (errstr != NULL)
-		errx(1, "invalid remote label: %s", errstr);
+
+	if (res->ai_addrlen > sizeof(req.addr))
+		errx(1, "pweneighbors: unexpected socklen");
+
+	memcpy(&req.addr, res->ai_addr, res->ai_addrlen);
+
+	freeaddrinfo(res);
+
+	if (ioctl(s, SIOCSPWE3NEIGHBOR, &req) == -1)
+		warn("pweneighbor");
 }
 
 void
-setmpwneighbor(const char *value, int d)
+unsetpwe3neighbor(const char *val, int d)
 {
-	struct sockaddr_in *sin;
+	struct ifreq req;
 
-	wconfig = 1;
+	memset(&req, 0, sizeof(req));
+	if (strlcpy(req.ifr_name, name, sizeof(req.ifr_name)) >=
+	    sizeof(req.ifr_name))
+		errx(1, "interface name is too long");
 
-	sin = (struct sockaddr_in *) &imrsave.imr_nexthop;
-	if (inet_aton(value, &sin->sin_addr) == 0)
-		errx(1, "invalid neighbor addresses");
-
-	sin->sin_family = AF_INET;
-}
-
-void
-setmpwcontrolword(const char *value, int d)
-{
-	wconfig = 1;
-	wcwconfig = 1;
-
-	if (d == 1)
-		imrsave.imr_flags |= IMR_FLAG_CONTROLWORD;
-	else
-		imrsave.imr_flags &= ~IMR_FLAG_CONTROLWORD;
+	if (ioctl(s, SIOCDPWE3NEIGHBOR, &req) == -1)
+		warn("-pweneighbor");
 }
 #endif /* SMALL */
 

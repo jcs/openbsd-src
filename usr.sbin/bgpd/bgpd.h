@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.373 2019/02/19 09:13:23 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.375 2019/02/26 10:49:15 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -656,15 +656,25 @@ struct pftable_msg {
 	u_int8_t		len;
 };
 
+struct ctl_show_interface {
+	char			 ifname[IFNAMSIZ];
+	char			 linkstate[32];
+	char			 media[32];
+	u_int64_t		 baudrate;
+	u_int			 rdomain;
+	u_int8_t		 nh_reachable;
+	u_int8_t		 is_up;
+};
+
 struct ctl_show_nexthop {
-	struct bgpd_addr	addr;
-	struct kif		kif;
+	struct bgpd_addr		addr;
+	struct ctl_show_interface	iface;
 	union {
 		struct kroute		kr4;
 		struct kroute6		kr6;
 	} kr;
-	u_int8_t		valid;
-	u_int8_t		krvalid;
+	u_int8_t			valid;
+	u_int8_t			krvalid;
 };
 
 struct ctl_neighbor {
@@ -774,7 +784,7 @@ struct filter_community {
 		struct ext {
 			u_int32_t	data1;
 			u_int64_t	data2;
-			u_int8_t	type;
+			short		type;
 			u_int8_t	subtype;	/* if extended type */
 		} e;
 	}		c;
@@ -867,8 +877,10 @@ struct filter_peers {
 #define EXT_COMMUNITY_NON_TRANS_IPV4	0x41	/* IPv4 specific */
 #define EXT_COMMUNITY_NON_TRANS_FOUR_AS	0x42	/* 4 octet AS specific */
 #define EXT_COMMUNITY_NON_TRANS_OPAQUE	0x43	/* opaque ext community */
+#define EXT_COMMUNITY_UNKNOWN		-1
 
 /* BGP Origin Validation State Extended Community RFC8097 */
+#define EXT_COMMUNITY_SUBTYPE_OVS	0
 #define EXT_COMMUNITY_OVS_VALID		0
 #define EXT_COMMUNITY_OVS_NOTFOUND	1
 #define EXT_COMMUNITY_OVS_INVALID	2
@@ -878,7 +890,7 @@ struct filter_peers {
 #define EXT_COMMUNITY_FLAG_VALID	0x01
 
 struct ext_comm_pairs {
-	u_int8_t	type;
+	short		type;
 	u_int8_t	subtype;
 	const char	*subname;
 };
@@ -907,7 +919,7 @@ struct ext_comm_pairs {
 	{ EXT_COMMUNITY_TRANS_OPAQUE, 0x06, "ort" },		\
 	{ EXT_COMMUNITY_TRANS_OPAQUE, 0x0d, "defgw" },		\
 								\
-	{ EXT_COMMUNITY_NON_TRANS_OPAQUE, 0x00, "ovs" },	\
+	{ EXT_COMMUNITY_NON_TRANS_OPAQUE, EXT_COMMUNITY_SUBTYPE_OVS, "ovs" }, \
 								\
 	{ EXT_COMMUNITY_TRANS_EVPN, 0x00, "mac-mob" },		\
 	{ EXT_COMMUNITY_TRANS_EVPN, 0x01, "esi-lab" },		\
@@ -1259,7 +1271,7 @@ const char	*log_in6addr(const struct in6_addr *);
 const char	*log_sockaddr(struct sockaddr *, socklen_t);
 const char	*log_as(u_int32_t);
 const char	*log_rd(u_int64_t);
-const char	*log_ext_subtype(u_int8_t, u_int8_t);
+const char	*log_ext_subtype(short, u_int8_t);
 const char	*log_shutcomm(const char *);
 int		 aspath_snprint(char *, size_t, void *, u_int16_t);
 int		 aspath_asprint(char **, void *, u_int16_t);
@@ -1292,9 +1304,6 @@ sa_family_t	 aid2af(u_int8_t);
 int		 af2aid(sa_family_t, u_int8_t, u_int8_t *);
 struct sockaddr	*addr2sa(struct bgpd_addr *, u_int16_t, socklen_t *);
 void		 sa2addr(struct sockaddr *, struct bgpd_addr *);
-uint64_t	 ift2ifm(uint8_t);
-const char *	 get_media_descr(uint64_t);
-const char *	 get_linkstate(uint8_t, int);
 const char *	 get_baudrate(unsigned long long, char *);
 
 static const char * const log_procnames[] = {

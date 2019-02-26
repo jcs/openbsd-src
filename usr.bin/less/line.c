@@ -15,6 +15,8 @@
  * in preparation for output to the screen.
  */
 
+#include <wchar.h>
+
 #include "charset.h"
 #include "less.h"
 
@@ -228,7 +230,7 @@ pshift(int shift)
 	 */
 	while (shifted <= shift && from < curr) {
 		c = linebuf[from];
-		if (ctldisp == OPT_ONPLUS && IS_CSI_START(c)) {
+		if (ctldisp == OPT_ONPLUS && c == ESC) {
 			/* Keep cumulative effect.  */
 			linebuf[to] = c;
 			attr[to++] = attr[from++];
@@ -373,50 +375,53 @@ attr_ewidth(int a)
  * attribute sequence to be inserted, so this must be taken into account.
  */
 static int
-pwidth(LWCHAR ch, int a, LWCHAR prev_ch)
+pwidth(wchar_t ch, int a, wchar_t prev_ch)
 {
 	int w;
 
-	if (ch == '\b')
-		/*
-		 * Backspace moves backwards one or two positions.
-		 * XXX - Incorrect if several '\b' in a row.
-		 */
-		return ((utf_mode && is_wide_char(prev_ch)) ? -2 : -1);
-
-	if (!utf_mode || is_ascii_char(ch)) {
-		if (control_char((char)ch)) {
-			/*
-			 * Control characters do unpredictable things,
-			 * so we don't even try to guess; say it doesn't move.
-			 * This can only happen if the -r flag is in effect.
-			 */
-			return (0);
-		}
-	} else {
-		if (is_composing_char(ch) || is_combining_char(prev_ch, ch)) {
-			/*
-			 * Composing and combining chars take up no space.
-			 *
-			 * Some terminals, upon failure to compose a
-			 * composing character with the character(s) that
-			 * precede(s) it will actually take up one column
-			 * for the composing character; there isn't much
-			 * we could do short of testing the (complex)
-			 * composition process ourselves and printing
-			 * a binary representation when it fails.
-			 */
-			return (0);
-		}
+	/*
+	 * In case of a backspace, back up by the width of the previous
+	 * character.  If that is non-printable (for example another
+	 * backspace) or zero width (for example a combining accent),
+	 * the terminal may actually back up to a character even further
+	 * back, but we no longer know how wide that may have been.
+	 * The best guess possible at this point is that it was
+	 * hopefully width one.
+	 */
+	if (ch == L'\b') {
+		w = wcwidth(prev_ch);
+		if (w <= 0)
+			w = 1;
+		return (-w);
 	}
+
+	w = wcwidth(ch);
+
+	/*
+	 * Non-printable characters can get here if the -r flag is in
+	 * effect, and possibly in some other situations (XXX check that!).
+	 * Treat them as zero width.
+	 * That may not always match their actual behaviour,
+	 * but there is no reasonable way to be more exact.
+	 */
+	if (w == -1)
+		w = 0;
+
+	/*
+	 * Combining accents take up no space.
+	 * Some terminals, upon failure to compose them with the
+	 * characters that precede them, will actually take up one column
+	 * for the combining accent; there isn't much we could do short
+	 * of testing the (complex) composition process ourselves and
+	 * printing a binary representation when it fails.
+	 */
+	if (w == 0)
+		return (0);
 
 	/*
 	 * Other characters take one or two columns,
 	 * plus the width of any attribute enter/exit sequence.
 	 */
-	w = 1;
-	if (is_wide_char(ch))
-		w++;
 	if (curr > 0 && !is_at_equiv(attr[curr-1], a))
 		w += attr_ewidth(attr[curr-1]);
 	if ((apply_at_specials(a) != AT_NORMAL) &&
@@ -458,17 +463,16 @@ backc(void)
 static int
 in_ansi_esc_seq(void)
 {
-	char *p;
+	int i;
 
 	/*
 	 * Search backwards for either an ESC (which means we ARE in a seq);
 	 * or an end char (which means we're NOT in a seq).
 	 */
-	for (p = &linebuf[curr]; p > linebuf; ) {
-		LWCHAR ch = step_char(&p, -1, linebuf);
-		if (IS_CSI_START(ch))
+	for (i = curr - 1; i >= 0; i--) {
+		if (linebuf[i] == ESC)
 			return (1);
-		if (!is_ansi_middle(ch))
+		if (!is_ansi_middle(linebuf[i]))
 			return (0);
 	}
 	return (0);
@@ -528,17 +532,14 @@ store_char(LWCHAR ch, char a, char *rep, off_t pos)
 	if (ctldisp == OPT_ONPLUS && in_ansi_esc_seq()) {
 		if (!is_ansi_end(ch) && !is_ansi_middle(ch)) {
 			/* Remove whole unrecognized sequence.  */
-			char *p = &linebuf[curr];
-			LWCHAR bch;
 			do {
-				bch = step_char(&p, -1, linebuf);
-			} while (p > linebuf && !IS_CSI_START(bch));
-			curr = p - linebuf;
+				curr--;
+			} while (curr > 0 && linebuf[curr] != ESC);
 			return (0);
 		}
 		a = AT_ANSI;	/* Will force re-AT_'ing around it.  */
 		w = 0;
-	} else if (ctldisp == OPT_ONPLUS && IS_CSI_START(ch)) {
+	} else if (ctldisp == OPT_ONPLUS && ch == ESC) {
 		a = AT_ANSI;	/* Will force re-AT_'ing around it.  */
 		w = 0;
 	} else {
@@ -846,7 +847,7 @@ do_append(LWCHAR ch, char *rep, off_t pos)
 	} else if ((!utf_mode || is_ascii_char(ch)) && control_char((char)ch)) {
 do_control_char:
 		if (ctldisp == OPT_ON ||
-		    (ctldisp == OPT_ONPLUS && IS_CSI_START(ch))) {
+		    (ctldisp == OPT_ONPLUS && ch == ESC)) {
 			/*
 			 * Output as a normal character.
 			 */

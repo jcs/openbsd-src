@@ -1,4 +1,4 @@
-/*	$Id: flist.c,v 1.17 2019/02/16 16:25:45 florian Exp $ */
+/*	$Id: flist.c,v 1.19 2019/02/21 22:12:48 benno Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2019 Florian Obser <florian@openbsd.org>
@@ -43,6 +43,7 @@
  * They are sent as the first byte for a file transmission and encode
  * information that affects subsequent transmissions.
  */
+#define FLIST_TOP_LEVEL	 0x0001 /* needed for remote --delete */
 #define FLIST_MODE_SAME  0x0002 /* mode is repeat */
 #define	FLIST_RDEV_SAME  0x0004 /* rdev is repeat */
 #define	FLIST_UID_SAME	 0x0008 /* uid is repeat */
@@ -144,6 +145,9 @@ flist_dedupe(struct sess *sess, struct flist **fl, size_t *sz)
  * If we have the first element as the ".", then that's the "top
  * directory" of our transfer.
  * Otherwise, mark up all top-level directories in the set.
+ * XXX: the FLIST_TOP_LEVEL flag should indicate what is and what isn't
+ * a top-level directory, but I'm not sure if GPL rsync(1) respects it
+ * the same way.
  */
 static void
 flist_topdirs(struct sess *sess, struct flist *fl, size_t flsz)
@@ -291,6 +295,8 @@ flist_send(struct sess *sess, int fdin, int fdout, const struct flist *fl,
 		 */
 
 		flag = FLIST_NAME_LONG;
+		if ((FLSTAT_TOP_DIR & f->st.flags))
+			flag |= FLIST_TOP_LEVEL;
 
 		LOG3(sess, "%s: sending file metadata: "
 			"size %jd, mtime %jd, mode %o",
@@ -387,7 +393,7 @@ flist_send(struct sess *sess, int fdin, int fdout, const struct flist *fl,
 
 	/* Conditionally write identifier lists. */
 
-	if (sess->opts->preserve_uids) {
+	if (sess->opts->preserve_uids && !sess->opts->numeric_ids) {
 		LOG2(sess, "sending uid list: %zu", uidsz);
 		if (!idents_send(sess, fdout, uids, uidsz)) {
 			ERRX1(sess, "idents_send");
@@ -395,7 +401,7 @@ flist_send(struct sess *sess, int fdin, int fdout, const struct flist *fl,
 		}
 	}
 
-	if (sess->opts->preserve_gids) {
+	if (sess->opts->preserve_gids && !sess->opts->numeric_ids) {
 		LOG2(sess, "sending gid list: %zu", gidsz);
 		if (!idents_send(sess, fdout, gids, gidsz)) {
 			ERRX1(sess, "idents_send");
@@ -739,7 +745,7 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 
 	/* Conditionally read the user/group list. */
 
-	if (sess->opts->preserve_uids) {
+	if (sess->opts->preserve_uids && !sess->opts->numeric_ids) {
 		if (!idents_recv(sess, fd, &uids, &uidsz)) {
 			ERRX1(sess, "idents_recv");
 			goto out;
@@ -747,7 +753,7 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 		LOG2(sess, "received uid list: %zu", uidsz);
 	}
 
-	if (sess->opts->preserve_gids) {
+	if (sess->opts->preserve_gids && !sess->opts->numeric_ids) {
 		if (!idents_recv(sess, fd, &gids, &gidsz)) {
 			ERRX1(sess, "idents_recv");
 			goto out;
@@ -765,12 +771,12 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 
 	/* Conditionally remap and reassign identifiers. */
 
-	if (sess->opts->preserve_uids) {
+	if (sess->opts->preserve_uids && !sess->opts->numeric_ids) {
 		idents_remap(sess, 0, uids, uidsz);
 		idents_assign_uid(sess, fl, flsz, uids, uidsz);
 	}
 
-	if (sess->opts->preserve_gids) {
+	if (sess->opts->preserve_gids && !sess->opts->numeric_ids) {
 		idents_remap(sess, 1, gids, gidsz);
 		idents_assign_gid(sess, fl, flsz, gids, gidsz);
 	}

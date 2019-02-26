@@ -1,4 +1,4 @@
-/*	$Id: ids.c,v 1.5 2019/02/14 18:26:52 florian Exp $ */
+/*	$Id: ids.c,v 1.8 2019/02/21 22:13:43 benno Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -45,6 +45,8 @@ idents_free(struct ident *p, size_t sz)
  * Given a list of files with the identifiers as set by the sender,
  * re-assign the identifiers from the list of remapped ones.
  * Don't ever remap wheel/root.
+ * If we can't find the gid in the list (when, e.g., being sent by the
+ * daemon), don't try to map it.
  */
 void
 idents_assign_gid(struct sess *sess, struct flist *fl, size_t flsz,
@@ -52,14 +54,16 @@ idents_assign_gid(struct sess *sess, struct flist *fl, size_t flsz,
 {
 	size_t	 i, j;
 
+	assert(!sess->opts->numeric_ids);
+
 	for (i = 0; i < flsz; i++) {
 		if (fl[i].st.gid == 0)
 			continue;
 		for (j = 0; j < idsz; j++)
 			if ((int32_t)fl[i].st.gid == ids[j].id)
 				break;
-		assert(j < idsz);
-		fl[i].st.gid = ids[j].mapped;
+		if (j < idsz)
+			fl[i].st.gid = ids[j].mapped;
 	}
 }
 
@@ -72,28 +76,26 @@ idents_assign_uid(struct sess *sess, struct flist *fl, size_t flsz,
 {
 	size_t	 i, j;
 
+	assert(!sess->opts->numeric_ids);
+
 	for (i = 0; i < flsz; i++) {
 		if (fl[i].st.uid == 0)
 			continue;
 		for (j = 0; j < idsz; j++)
 			if ((int32_t)fl[i].st.uid == ids[j].id)
 				break;
-		assert(j < idsz);
-		fl[i].st.uid = ids[j].mapped;
+		if (j < idsz)
+			fl[i].st.uid = ids[j].mapped;
 	}
 }
 
 /*
  * Given a list of identifiers from the remote host, fill in our local
  * identifiers of the same names.
- * Use the remote numeric identifier if we can't find the identifier OR
- * the identifier is zero (wheel/root).
- * FIXME: what happens if we don't find the local identifier (we should
- * really warn about this), but the remote identifier maps into a
- * different name for us?
- * These are pretty unexpected things for rsync to do.
- * Another FIXME because we shouldn't let that happen even though the
- * reference rsync does.
+ * Use the remote numeric identifier if we can't find the identifier OR the
+ * identifier is zero (wheel/root).
+ * FIXME: we should at least warn when we can't find an identifier, use
+ * the numeric id, and that numeric id is assigned to a different user.
  */
 void
 idents_remap(struct sess *sess, int isgid, struct ident *ids, size_t idsz)
@@ -102,6 +104,8 @@ idents_remap(struct sess *sess, int isgid, struct ident *ids, size_t idsz)
 	struct group	*grp;
 	struct passwd	*usr;
 	int32_t		 id;
+
+	assert(!sess->opts->numeric_ids);
 
 	for (i = 0; i < idsz; i++) {
 		assert(ids[i].id != 0);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: sysctl.c,v 1.240 2019/01/29 14:07:15 visa Exp $	*/
+/*	$OpenBSD: sysctl.c,v 1.241 2019/02/21 16:37:13 bluhm Exp $	*/
 /*	$NetBSD: sysctl.c,v 1.9 1995/09/30 07:12:50 thorpej Exp $	*/
 
 /*
@@ -2459,6 +2459,8 @@ sysctl_sensors(char *string, char **bufpp, int mib[], int flags, int *typep)
 					continue;
 				if (errno == ENOENT)
 					break;
+				warn("sensors dev %d", dev);
+				return (-1);
 			}
 			snprintf(buf, sizeof(buf), "%s.%s",
 			    string, snsrdev.xname);
@@ -2484,6 +2486,8 @@ sysctl_sensors(char *string, char **bufpp, int mib[], int flags, int *typep)
 				continue;
 			if (errno == ENOENT)
 				break;
+			warn("sensors dev %d", dev);
+			return (-1);
 		}
 		if (strcmp(devname, snsrdev.xname) == 0)
 			break;
