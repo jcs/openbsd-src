@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.52 2018/12/14 07:56:17 jmc Exp $	*/
+/*	$OpenBSD: main.c,v 1.54 2019/03/01 12:47:36 kn Exp $	*/
 
 /*
  * Copyright (c) 2015 Reyk Floeter <reyk@openbsd.org>
@@ -598,6 +598,11 @@ ctl_create(struct parse_result *res, int argc, char *argv[])
 			/* NOTREACHED */
 		}
 	}
+	argc -= optind;
+	argv += optind;
+
+	if (argc > 0)
+		ctl_usage(res->ctl);
 
 	if (input) {
 		if (base && input)
@@ -912,6 +917,11 @@ ctl_start(struct parse_result *res, int argc, char *argv[])
 			/* NOTREACHED */
 		}
 	}
+	argc -= optind;
+	argv += optind;
+
+	if (argc > 0)
+		ctl_usage(res->ctl);
 
 	for (i = res->nnets; i < res->nifs; i++) {
 		/* Add interface that is not attached to a switch */
@@ -953,6 +963,11 @@ ctl_stop(struct parse_result *res, int argc, char *argv[])
 			/* NOTREACHED */
 		}
 	}
+	argc -= optind;
+	argv += optind;
+
+	if (argc > 0)
+		ctl_usage(res->ctl);
 
 	/* VM id is only expected without the -a flag */
 	if ((res->action != CMD_STOPALL && ret == -1) ||
