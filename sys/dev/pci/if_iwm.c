@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.235 2019/02/24 09:37:18 stsp Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.237 2019/02/27 07:47:57 stsp Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>
@@ -4216,7 +4216,7 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	bus_dma_segment_t *seg;
 	uint8_t tid, type;
 	int i, totlen, err, pad;
-	int hdrlen2;
+	int hdrlen2, rtsthres = ic->ic_rtsthreshold;
 
 	wh = mtod(m, struct ieee80211_frame *);
 	hdrlen = ieee80211_get_hdrlen(wh);
@@ -4292,9 +4292,13 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 		flags |= IWM_TX_CMD_FLG_ACK;
 	}
 
+	if (ni->ni_flags & IEEE80211_NODE_HT)
+		rtsthres = ieee80211_mira_get_rts_threshold(&in->in_mn, ic, ni,
+		    totlen + IEEE80211_CRC_LEN);
+
 	if (type == IEEE80211_FC0_TYPE_DATA &&
 	    !IEEE80211_IS_MULTICAST(wh->i_addr1) &&
-	    (totlen + IEEE80211_CRC_LEN > ic->ic_rtsthreshold ||
+	    (totlen + IEEE80211_CRC_LEN > rtsthres ||
 	    (ic->ic_flags & IEEE80211_F_USEPROT)))
 		flags |= IWM_TX_CMD_FLG_PROT_REQUIRE;
 
@@ -5352,6 +5356,9 @@ iwm_mac_ctxt_cmd_common(struct iwm_softc *sc, struct iwm_node *in,
 		case IEEE80211_HTPROT_NONHT_MIXED:
 			cmd->protection_flags |=
 			    htole32(IWM_MAC_PROT_FLG_HT_PROT);
+			if (ic->ic_protmode == IEEE80211_PROT_CTSONLY)
+				cmd->protection_flags |=
+				    htole32(IWM_MAC_PROT_FLG_SELF_CTS_EN);
 			break;
 		case IEEE80211_HTPROT_20MHZ:
 			if (ic->ic_htcaps & IEEE80211_HTCAP_CBW20_40) {
@@ -5359,6 +5366,9 @@ iwm_mac_ctxt_cmd_common(struct iwm_softc *sc, struct iwm_node *in,
 				cmd->protection_flags |=
 				    htole32(IWM_MAC_PROT_FLG_HT_PROT |
 				    IWM_MAC_PROT_FLG_FAT_PROT);
+				if (ic->ic_protmode == IEEE80211_PROT_CTSONLY)
+					cmd->protection_flags |= htole32(
+					    IWM_MAC_PROT_FLG_SELF_CTS_EN);
 			}
 			break;
 		default:

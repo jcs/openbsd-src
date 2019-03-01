@@ -1,4 +1,4 @@
-#	$OpenBSD: files,v 1.666 2018/12/20 23:00:55 dlg Exp $
+#	$OpenBSD: files,v 1.669 2019/02/28 06:06:28 dlg Exp $
 #	$NetBSD: files,v 1.87 1996/05/19 17:17:50 jonathan Exp $
 
 #	@(#)files.newconf	7.5 (Berkeley) 5/10/93
@@ -59,6 +59,7 @@ define	onewire_bitbang
 # net device attributes - we have generic code for ether(net)
 define	crypto
 define	ether
+define	mpls
 define	sppp
 define	wlan
 
@@ -561,8 +562,9 @@ pseudo-device gre: ifnet
 pseudo-device mobileip: ifnet
 pseudo-device crypto: ifnet
 pseudo-device trunk: ifnet, ether, ifmedia
-pseudo-device mpe: ifnet, ether
-pseudo-device mpw: ifnet, ether
+pseudo-device mpe: ifnet, mpls
+pseudo-device mpw: ifnet, mpls, ether
+pseudo-device mpip: ifnet, mpls
 pseudo-device bpe: ifnet, ether, ifmedia
 pseudo-device vether: ifnet, ether
 pseudo-device pppx: ifnet
@@ -691,6 +693,7 @@ file kern/kern_unveil.c
 file kern/kern_sched.c
 file kern/kern_sensors.c
 file kern/kern_sig.c
+file kern/kern_smr.c
 file kern/kern_subr.c
 file kern/kern_sysctl.c
 file kern/kern_synch.c
@@ -813,7 +816,8 @@ file net/if_mobileip.c			mobileip		needs-count
 file net/if_trunk.c			trunk			needs-count
 file net/trunklacp.c			trunk
 file net/if_mpe.c			mpe			needs-count
-file net/if_mpw.c			mpw & bridge		needs-count
+file net/if_mpw.c			mpw			needs-count
+file net/if_mpip.c			mpip
 file net/if_bpe.c			bpe			needs-count
 file net/if_vether.c			vether			needs-count
 file net/if_pair.c			pair			needs-count

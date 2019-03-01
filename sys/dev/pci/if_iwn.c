@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwn.c,v 1.207 2019/02/26 08:51:15 kn Exp $	*/
+/*	$OpenBSD: if_iwn.c,v 1.209 2019/02/27 04:10:38 stsp Exp $	*/
 
 /*-
  * Copyright (c) 2007-2010 Damien Bergamini <damien.bergamini@free.fr>
@@ -2167,11 +2167,10 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
 	if (chan > IEEE80211_CHAN_MAX)
 		chan = IEEE80211_CHAN_MAX;
 
-	if (ni == ic->ic_bss) {
+	/* Fix current channel. */
+	if (ni == ic->ic_bss)
 		bss_chan = ni->ni_chan;
-		/* Fix current channel. */
-		ni->ni_chan = &ic->ic_channels[chan];
-	}
+	ni->ni_chan = &ic->ic_channels[chan];
 
 #if NBPFILTER > 0
 	if (sc->sc_drvbpf != NULL) {
@@ -3069,8 +3068,13 @@ iwn_tx(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 
 	/* Check if frame must be protected using RTS/CTS or CTS-to-self. */
 	if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
+		int rtsthres = ic->ic_rtsthreshold;
+		if (ni->ni_flags & IEEE80211_NODE_HT)
+			rtsthres = ieee80211_mira_get_rts_threshold(&wn->mn,
+			    ic, ni, totlen + IEEE80211_CRC_LEN);
+
 		/* NB: Group frames are sent using CCK in 802.11b/g/n (2GHz). */
-		if (totlen + IEEE80211_CRC_LEN > ic->ic_rtsthreshold) {
+		if (totlen + IEEE80211_CRC_LEN > rtsthres) {
 			flags |= IWN_TX_NEED_RTS;
 		} else if ((ic->ic_flags & IEEE80211_F_USEPROT) &&
 		    ridx >= IWN_RIDX_OFDM6) {
