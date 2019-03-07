@@ -199,6 +199,8 @@ struct acpi_softc *acpi_softc;
 /* XXX move this into dsdt softc at some point */
 extern struct aml_node aml_root;
 
+extern char *hw_vendor;
+
 struct cfdriver acpi_cd = {
 	NULL, "acpi", DV_DULL
 };
@@ -2223,6 +2225,17 @@ acpi_gpe(struct acpi_softc *sc, int gpe, void *arg)
 {
 	struct aml_node *node = arg;
 	uint8_t mask, en;
+
+	/*
+	 * Some Lenovo laptops will trigger this level GPE (possibly related to
+	 * Thunderbolt) in a tight loop causing an interrupt storm.  If it
+	 * fires, just leave it masked.
+	 */
+	if (gpe == 0x6f && !sc->gpe_table[gpe].edge && hw_vendor != NULL &&
+	    strncmp(hw_vendor, "LENOVO", 6) == 0) {
+		printf("acpi: ignoring level GPE 0x6f\n");
+		return 0;
+	}
 
 	dnprintf(10, "handling GPE %.2x\n", gpe);
 	aml_evalnode(sc, node, 0, NULL, NULL);
