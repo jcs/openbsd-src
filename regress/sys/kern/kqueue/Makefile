@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.23 2018/08/24 12:46:39 visa Exp $
+#	$OpenBSD: Makefile,v 1.26 2019/03/04 19:35:28 anton Exp $
 
 PROG=	kqueue-test
 CFLAGS+=-Wall
@@ -22,8 +22,10 @@ kq-tun: ${PROG}
 	@EVENT_SHOW_METHOD=yes EVENT_NOPOLL=yes EVENT_NOKQUEUE=yes ${SUDO} ./${PROG} -t
 	@EVENT_SHOW_METHOD=yes EVENT_NOSELECT=yes EVENT_NOKQUEUE=yes ${SUDO} ./${PROG} -t
 	@-${SUDO} rm -f /dev/tun98 /dev/tun99
-kq-pty: ${PROG}
-	${SUDO} ./${PROG} -T
+kq-pty-1: ${PROG}
+	${SUDO} ./${PROG} -T1
+kq-pty-2: ${PROG}
+	${SUDO} ./${PROG} -T2
 kq-signal: ${PROG}
 	./${PROG} -s
 kq-fdpass: ${PROG}
@@ -41,9 +43,22 @@ kq-regress-2: ${PROG}
 kq-regress-3: ${PROG}
 	./${PROG} -R3
 
-REGRESS_TARGETS=kq-pipe kq-fork kq-process kq-random kq-pty kq-signal \
-	kq-fdpass kq-flock kq-timer kq-invalid-timer kq-regress-1 \
-	kq-regress-2 kq-regress-3
+TESTS+=	kq-fdpass
+TESTS+=	kq-flock
+TESTS+=	kq-fork
+TESTS+=	kq-invalid-timer
+TESTS+=	kq-pipe
+TESTS+=	kq-process
+TESTS+=	kq-pty-1
+TESTS+=	kq-pty-2
+TESTS+=	kq-random
+TESTS+=	kq-regress-1
+TESTS+=	kq-regress-2
+TESTS+=	kq-regress-3
+TESTS+=	kq-signal
+TESTS+=	kq-timer
+
+REGRESS_TARGETS=${TESTS}
 # kq-tun broke at some point, apparently from a change in tun routing
 REGRESS_ROOT_TARGETS=${REGRESS_TARGETS}
 .PHONY: ${REGRESS_TARGETS}

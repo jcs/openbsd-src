@@ -1,4 +1,4 @@
-/*	$OpenBSD: tty_pty.c,v 1.90 2018/08/30 06:16:30 anton Exp $	*/
+/*	$OpenBSD: tty_pty.c,v 1.92 2019/03/06 09:36:27 tb Exp $	*/
 /*	$NetBSD: tty_pty.c,v 1.33.4.1 1996/06/02 09:08:11 mrg Exp $	*/
 
 /*
