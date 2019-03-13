@@ -1,4 +1,4 @@
-/* $OpenBSD: xhci.c,v 1.93 2019/03/01 19:15:59 patrick Exp $ */
+/* $OpenBSD: xhci.c,v 1.95 2019/03/12 18:13:40 patrick Exp $ */
 
 /*
  * Copyright (c) 2014-2015 Martin Pieuchot
@@ -721,11 +721,11 @@ xhci_event_xfer(struct xhci_softc *sc, uint64_t paddr, uint32_t status,
 
 	switch (code) {
 	case XHCI_CODE_RING_UNDERRUN:
-		DPRINTF(("%s: slot %u underrun wih %zu TRB\n", DEVNAME(sc),
+		DPRINTF(("%s: slot %u underrun with %zu TRB\n", DEVNAME(sc),
 		    slot, xp->ring.ntrb - xp->free_trbs));
 		return;
 	case XHCI_CODE_RING_OVERRUN:
-		DPRINTF(("%s: slot %u overrun wih %zu TRB\n", DEVNAME(sc),
+		DPRINTF(("%s: slot %u overrun with %zu TRB\n", DEVNAME(sc),
 		    slot, xp->ring.ntrb - xp->free_trbs));
 		return;
 	default:
@@ -1986,7 +1986,7 @@ const usb_config_descriptor_t xhci_confd = {
 	1,
 	1,
 	0,
-	UC_SELF_POWERED,
+	UC_BUS_POWERED | UC_SELF_POWERED,
 	0                      /* max power */
 };
 

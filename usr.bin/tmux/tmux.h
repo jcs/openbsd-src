@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.856 2019/03/08 10:34:20 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.862 2019/03/12 23:21:45 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -517,6 +517,7 @@ struct msg_stderr_data {
 #define MODE_BRACKETPASTE 0x400
 #define MODE_FOCUSON 0x800
 #define MODE_MOUSE_ALL 0x1000
+#define MODE_ORIGIN 0x2000
 
 #define ALL_MODES 0xffffff
 #define ALL_MOUSE_MODES (MODE_MOUSE_STANDARD|MODE_MOUSE_BUTTON|MODE_MOUSE_ALL)
@@ -578,6 +579,7 @@ enum utf8_state {
 #define GRID_FLAG_EXTENDED 0x8
 #define GRID_FLAG_SELECTED 0x10
 #define GRID_FLAG_NOPALETTE 0x20
+#define GRID_FLAG_CLEARED 0x40
 
 /* Grid line flags. */
 #define GRID_LINE_WRAPPED 0x1
@@ -721,7 +723,10 @@ struct window_mode_entry {
 	const struct window_mode	*mode;
 	void				*data;
 
+	struct screen			*screen;
 	u_int				 prefix;
+
+	TAILQ_ENTRY (window_mode_entry)	 entry;
 };
 
 /* Child window structure. */
@@ -767,6 +772,7 @@ struct window_pane {
 
 	int		 fd;
 	struct bufferevent *event;
+	u_int		 disabled;
 
 	struct event	 resize_timer;
 
@@ -792,7 +798,7 @@ struct window_pane {
 	struct grid	*saved_grid;
 	struct grid_cell saved_cell;
 
-	struct window_mode_entry *mode;
+	TAILQ_HEAD (, window_mode_entry) modes;
 	struct event	 modetimer;
 	time_t		 modelast;
 	char		*searchstr;
@@ -1388,8 +1394,7 @@ struct client {
 	 CLIENT_REDRAWSTATUSALWAYS|	\
 	 CLIENT_REDRAWBORDERS)
 #define CLIENT_NOSIZEFLAGS	\
-	(CLIENT_EXIT|		\
-	 CLIENT_DEAD|		\
+	(CLIENT_DEAD|		\
 	 CLIENT_SUSPENDED|	\
 	 CLIENT_DETACHING)
 	int		 flags;
@@ -2096,7 +2101,7 @@ void	 screen_write_deleteline(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_clearline(struct screen_write_ctx *, u_int);
 void	 screen_write_clearendofline(struct screen_write_ctx *, u_int);
 void	 screen_write_clearstartofline(struct screen_write_ctx *, u_int);
-void	 screen_write_cursormove(struct screen_write_ctx *, u_int, u_int);
+void	 screen_write_cursormove(struct screen_write_ctx *, int, int, int);
 void	 screen_write_reverseindex(struct screen_write_ctx *, u_int);
 void	 screen_write_scrollregion(struct screen_write_ctx *, u_int, u_int);
 void	 screen_write_linefeed(struct screen_write_ctx *, int, u_int);
@@ -2207,6 +2212,7 @@ int		 window_pane_set_mode(struct window_pane *,
 		     const struct window_mode *, struct cmd_find_state *,
 		     struct args *);
 void		 window_pane_reset_mode(struct window_pane *);
+void		 window_pane_reset_mode_all(struct window_pane *);
 void		 window_pane_key(struct window_pane *, struct client *,
 		     struct session *, struct winlink *, key_code,
 		     struct mouse_event *);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_tc.c,v 1.37 2019/01/31 05:00:18 cheloha Exp $ */
+/*	$OpenBSD: kern_tc.c,v 1.39 2019/03/10 21:16:15 cheloha Exp $ */
 
 /*
  * Copyright (c) 2000 Poul-Henning Kamp <phk@FreeBSD.org>
@@ -115,6 +115,8 @@ static struct timecounter *timecounters = &dummy_timecounter;
 
 volatile time_t time_second = 1;
 volatile time_t time_uptime = 0;
+
+int64_t adjtimedelta;		/* unapplied time correction (microseconds) */
 
 struct bintime naptime;
 static int timestepwarnings;
@@ -358,6 +360,12 @@ tc_setrealtimeclock(const struct timespec *ts)
 	timespec2bintime(ts, &bt);
 	bintime_sub(&bt, &bt2);
 	bintime_add(&bt2, &timehands->th_boottime);
+
+	/*
+	 * Adjtime in progress is meaningless or harmful after
+	 * setting the clock. Cancel adjtime and then set new time.
+	 */
+	adjtimedelta = 0;
 	timehands->th_boottime = bt;
 
 	/* XXX fiddle all the little crinkly bits around the fiords... */
@@ -447,12 +455,15 @@ void
 tc_windup(void)
 {
 	struct bintime bt;
+	struct timecounter *active_tc;
 	struct timehands *th, *tho;
 	u_int64_t scale;
 	u_int delta, ncount, ogen;
 	int i;
 
 	MUTEX_ASSERT_LOCKED(&timecounter_mtx);
+
+	active_tc = timecounter;
 
 	/*
 	 * Make the next timehands a copy of the current one, but do not
@@ -472,8 +483,8 @@ tc_windup(void)
 	 * Update the offset fields accordingly.
 	 */
 	delta = tc_delta(th);
-	if (th->th_counter != timecounter)
-		ncount = timecounter->tc_get_timecount(timecounter);
+	if (th->th_counter != active_tc)
+		ncount = active_tc->tc_get_timecount(active_tc);
 	else
 		ncount = 0;
 	th->th_offset_count += delta;
@@ -516,8 +527,8 @@ tc_windup(void)
 	bintime2timespec(&bt, &th->th_nanotime);
 
 	/* Now is a good time to change timecounters. */
-	if (th->th_counter != timecounter) {
-		th->th_counter = timecounter;
+	if (th->th_counter != active_tc) {
+		th->th_counter = active_tc;
 		th->th_offset_count = ncount;
 	}
 
@@ -720,4 +731,13 @@ tc_adjfreq(int64_t *old, int64_t *new)
 		timecounter->tc_freq_adj = *new;
 	}
 	return 0;
+}
+
+void
+tc_adjtime(int64_t *old, int64_t *new)
+{
+	if (old != NULL)
+		*old = adjtimedelta;
+	if (new != NULL)
+		adjtimedelta = *new;
 }

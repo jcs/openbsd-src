@@ -1,4 +1,4 @@
-/*	$OpenBSD: slaacd.c,v 1.34 2019/03/05 15:46:37 pamela Exp $	*/
+/*	$OpenBSD: slaacd.c,v 1.36 2019/03/11 22:53:29 pamela Exp $	*/
 
 /*
  * Copyright (c) 2017 Florian Obser <florian@openbsd.org>
@@ -412,13 +412,15 @@ main_dispatch_frontend(int fd, short event, void *bula)
 			break;
 #ifndef	SMALL
 		case IMSG_CTL_LOG_VERBOSE:
-			/* Already checked by frontend. */
+			if (IMSG_DATA_SIZE(imsg) != sizeof(verbose))
+				fatalx("%s: IMSG_CTL_LOG_VERBOSE wrong length: "
+				    "%lu", __func__, IMSG_DATA_SIZE(imsg));
 			memcpy(&verbose, imsg.data, sizeof(verbose));
 			log_setverbose(verbose);
 			break;
 		case IMSG_UPDATE_ADDRESS:
 			if (IMSG_DATA_SIZE(imsg) != sizeof(imsg_addrinfo))
-				fatal("%s: IMSG_UPDATE_ADDRESS wrong length: "
+				fatalx("%s: IMSG_UPDATE_ADDRESS wrong length: "
 				    "%lu", __func__, IMSG_DATA_SIZE(imsg));
 			memcpy(&imsg_addrinfo, imsg.data,
 			    sizeof(imsg_addrinfo));
@@ -427,7 +429,7 @@ main_dispatch_frontend(int fd, short event, void *bula)
 			break;
 		case IMSG_UPDATE_LINK_STATE:
 			if (IMSG_DATA_SIZE(imsg) != sizeof(imsg_link_state))
-				fatal("%s: IMSG_UPDATE_LINK_STATE wrong "
+				fatalx("%s: IMSG_UPDATE_LINK_STATE wrong "
 				    "length: %lu", __func__,
 				    IMSG_DATA_SIZE(imsg));
 			memcpy(&imsg_link_state, imsg.data,
@@ -438,7 +440,7 @@ main_dispatch_frontend(int fd, short event, void *bula)
 #endif	/* SMALL */
 		case IMSG_UPDATE_IF:
 			if (IMSG_DATA_SIZE(imsg) != sizeof(imsg_ifinfo))
-				fatal("%s: IMSG_UPDATE_IF wrong length: %lu",
+				fatalx("%s: IMSG_UPDATE_IF wrong length: %lu",
 				    __func__, IMSG_DATA_SIZE(imsg));
 			memcpy(&imsg_ifinfo, imsg.data, sizeof(imsg_ifinfo));
 			if (get_soiikey(imsg_ifinfo.soiikey) == -1)
@@ -499,7 +501,7 @@ main_dispatch_engine(int fd, short event, void *bula)
 		switch (imsg.hdr.type) {
 		case IMSG_PROPOSAL:
 			if (IMSG_DATA_SIZE(imsg) != sizeof(proposal))
-				fatal("%s: IMSG_PROPOSAL wrong "
+				fatalx("%s: IMSG_PROPOSAL wrong "
 				    "length: %lu", __func__,
 				    IMSG_DATA_SIZE(imsg));
 			memcpy(&proposal, imsg.data, sizeof(proposal));
@@ -507,7 +509,7 @@ main_dispatch_engine(int fd, short event, void *bula)
 			break;
 		case IMSG_CONFIGURE_ADDRESS:
 			if (IMSG_DATA_SIZE(imsg) != sizeof(address))
-				fatal("%s: IMSG_CONFIGURE_ADDRESS wrong "
+				fatalx("%s: IMSG_CONFIGURE_ADDRESS wrong "
 				    "length: %lu", __func__,
 				    IMSG_DATA_SIZE(imsg));
 			memcpy(&address, imsg.data, sizeof(address));
@@ -515,7 +517,7 @@ main_dispatch_engine(int fd, short event, void *bula)
 			break;
 		case IMSG_CONFIGURE_DFR:
 			if (IMSG_DATA_SIZE(imsg) != sizeof(dfr))
-				fatal("%s: IMSG_CONFIGURE_DFR wrong "
+				fatalx("%s: IMSG_CONFIGURE_DFR wrong "
 				    "length: %lu", __func__,
 				    IMSG_DATA_SIZE(imsg));
 			memcpy(&dfr, imsg.data, sizeof(dfr));
@@ -523,7 +525,7 @@ main_dispatch_engine(int fd, short event, void *bula)
 			break;
 		case IMSG_WITHDRAW_DFR:
 			if (IMSG_DATA_SIZE(imsg) != sizeof(dfr))
-				fatal("%s: IMSG_WITHDRAW_DFR wrong "
+				fatalx("%s: IMSG_WITHDRAW_DFR wrong "
 				    "length: %lu", __func__,
 				    IMSG_DATA_SIZE(imsg));
 			memcpy(&dfr, imsg.data, sizeof(dfr));

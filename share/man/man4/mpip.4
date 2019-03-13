@@ -1,6 +1,6 @@
-.\"	$OpenBSD: mpw.4,v 1.5 2019/03/11 18:55:29 jmc Exp $
+.\"	$OpenBSD: mpip.4,v 1.2 2019/03/11 18:55:29 jmc Exp $
 .\"
-.\" Copyright (C) 2015 Rafael Zalamena <rzalamena@openbsd.org>
+.\" Copyright (C) 2019 David Gwynne <dlg@openbsd.org>
 .\"
 .\" Permission to use, copy, modify, and distribute this software for any
 .\" purpose with or without fee is hereby granted, provided that the above
@@ -15,24 +15,23 @@
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
 .Dd $Mdocdate: March 11 2019 $
-.Dt MPW 4
+.Dt MPIP 4
 .Os
 .Sh NAME
-.Nm mpw
-.Nd MPLS Ethernet pseudowire
+.Nm mpip
+.Nd MPLS IP layer 2 pseudowire
 .Sh SYNOPSIS
-.Cd "pseudo-device mpw"
+.Cd "pseudo-device mpip"
 .Sh DESCRIPTION
 The
 .Nm
-interface is used to create an MPLS Ethernet layer 2 tunnel between
-two points.
+interface is used to create an MPLS IP layer 2 tunnel between two points.
 .Pp
 An
 .Nm
 interface can be created at runtime using the
 .Sy ifconfig Nm Ns Ar N Cm create
-command or by setting up a
+command, or by setting up a
 .Xr hostname.if 5
 configuration file for
 .Xr netstart 8 .
@@ -49,22 +48,23 @@ but it is also possible to configure them manually using
 Create a pseudowire with local label 20 and remote label 21 on
 neighbor 10.254.0.1:
 .Bd -literal -offset indent
-# ifconfig mpw5 create
-# ifconfig mpw5 mplslabel 20 pweneighbor 21 10.254.0.1
-# ifconfig mpw5 up
+# ifconfig mpip5 create
+# ifconfig mpip5 mplslabel 20 pweneighbor 21 10.254.0.1
+# ifconfig mpip5 up
 .Ed
 .Pp
-Enable the use of the Pseudowire Emulation Edge-to-Edge (PWE3)
-Control Word, and disable the use of a Flow label for Flow-Aware
+Disable the use of the Pseudowire Emulation Edge-to-Edge (PWE3)
+Control Word, and enable the use of a Flow label for Flow-Aware
 Transport of Pseudowires:
 .Bd -literal -offset indent
-# ifconfig mpw5 pwecw -pwefat
+# ifconfig mpip5 -pwecw pwefat
 .Ed
 .Sh SEE ALSO
 .Xr hostname.if 5 ,
 .Xr ifconfig 8 ,
 .Xr ldpd 8 ,
 .Xr netstart 8
+.Sh STANDARDS
 .Rs
 .%A S. Bryant
 .%A P. Pate
@@ -98,9 +98,4 @@ for Use over an MPLS PSN
 The
 .Nm
 kernel interface first appeared in
-.Ox 5.8 .
-.Sh AUTHORS
-The
-.Nm
-driver was written by
-.An Rafael Zalamena Aq Mt rzalamena@openbsd.org .
+.Ox 6.5 .

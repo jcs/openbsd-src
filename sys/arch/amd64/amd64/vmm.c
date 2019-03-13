@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.229 2019/02/20 06:59:16 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.232 2019/03/10 08:27:28 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -1313,7 +1313,7 @@ vm_impl_init(struct vm *vm, struct proc *p)
 /*
  * vm_impl_deinit_vmx
  *
- * Intel VMX specific VM initialization routine
+ * Intel VMX specific VM deinitialization routine
  *
  * Parameters:
  *  vm: VM to deinit
@@ -1327,7 +1327,7 @@ vm_impl_deinit_vmx(struct vm *vm)
 /*
  * vm_impl_deinit_svm
  *
- * AMD SVM specific VM initialization routine
+ * AMD SVM specific VM deinitialization routine
  *
  * Parameters:
  *  vm: VM to deinit
@@ -2559,7 +2559,7 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 			/* Page walk length 4 supported */
 			eptp |= ((IA32_EPT_PAGE_WALK_LENGTH - 1) << 3);
 		} else {
-			DPRINTF("EPT page walk length 4 not supported");
+			DPRINTF("EPT page walk length 4 not supported\n");
 			ret = EINVAL;
 			goto exit;
 		}
@@ -2567,7 +2567,9 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 		if (msr & IA32_EPT_VPID_CAP_WB) {
 			/* WB cache type supported */
 			eptp |= IA32_EPT_PAGING_CACHE_TYPE_WB;
-		}
+		} else
+			DPRINTF("%s: no WB cache type available, guest VM "
+			    "will run uncached\n", __func__);
 
 		DPRINTF("Guest EPTP = 0x%llx\n", eptp);
 		if (vmwrite(VMCS_GUEST_IA32_EPTP, eptp)) {
