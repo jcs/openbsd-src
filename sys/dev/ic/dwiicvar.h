@@ -34,6 +34,8 @@
 
 #include <dev/ic/dwiicreg.h>
 
+#include "acpi.h"
+
 /* #define DWIIC_DEBUG */
 
 #ifdef DWIIC_DEBUG
@@ -99,4 +101,8 @@ void		dwiic_write(struct dwiic_softc *, int, uint32_t);
 int		dwiic_i2c_exec(void *, i2c_op_t, i2c_addr_t, const void *,
 		    size_t, void *, size_t, int);
 
-int		dwiic_acpi_found_hid(struct aml_node *node, void *arg);
+#if NACPI > 0
+int		dwiic_acpi_found_hid(struct aml_node *, void *);
+void		dwiic_acpi_get_params(struct dwiic_softc *, char *, uint16_t *,
+		    uint16_t *, uint32_t *);
+#endif
