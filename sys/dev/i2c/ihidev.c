@@ -128,7 +128,7 @@ ihidev_attach(struct device *parent, struct device *self, void *aux)
 			printf(", can't establish interrupt");
 	}
 
-	if (sc->sc_ih == NULL) {
+	if (ia->ia_poll) {
 		printf(" (polling)");
 		sc->sc_poll = 1;
 		sc->sc_fastpoll = 1;
@@ -580,6 +580,16 @@ ihidev_hid_desc_parse(struct ihidev_softc *sc)
 	return (0);
 }
 
+void
+ihidev_poll(void *arg)
+{
+	struct ihidev_softc *sc = arg;
+
+	sc->sc_dopoll = 1;
+	ihidev_intr(sc);
+	sc->sc_dopoll = 0;
+}
+
 int
 ihidev_intr(void *arg)
 {
@@ -589,6 +599,13 @@ ihidev_intr(void *arg)
 	int res, i, fast = 0;
 	u_char *p;
 	u_int rep = 0;
+
+	if (sc->sc_poll && !sc->sc_dopoll) {
+		printf("%s: received interrupt while polling, disabling "
+		    "polling\n", sc->sc_dev.dv_xname);
+		sc->sc_poll = 0;
+		timeout_del(&sc->sc_timer);
+	}
 
 	/*
 	 * XXX: force I2C_F_POLL for now to avoid dwiic interrupting
@@ -741,7 +758,7 @@ ihidev_open(struct ihidev *scd)
 
 	if (sc->sc_poll) {
 		if (!timeout_initialized(&sc->sc_timer))
-			timeout_set(&sc->sc_timer, (void *)ihidev_intr, sc);
+			timeout_set(&sc->sc_timer, (void *)ihidev_poll, sc);
 		if (!timeout_pending(&sc->sc_timer))
 			timeout_add(&sc->sc_timer, FAST_POLL_MS);
 	}

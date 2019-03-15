@@ -113,6 +113,7 @@ struct i2c_attach_args {
 	char		*ia_name;	/* chip name */
 	void		*ia_cookie;	/* pass extra info from bus to dev */
 	void		*ia_intr;	/* interrupt info */
+	int		ia_poll;	/* to force polling */
 };
 
 /*

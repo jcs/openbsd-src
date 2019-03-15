@@ -462,8 +462,9 @@ dwiic_acpi_found_ihidev(struct dwiic_softc *sc, struct aml_node *node,
 
 	aml_freevalue(&res);
 
-	if (!sc->sc_poll_ihidev &&
-	    !(crs.irq_int == 0 && crs.gpio_int_node == NULL))
+	if (sc->sc_poll_ihidev)
+		ia.ia_poll = 1;
+	if (!(crs.irq_int == 0 && crs.gpio_int_node == NULL))
 		ia.ia_intr = &crs;
 
 	if (config_found(sc->sc_iic, &ia, dwiic_i2c_print)) {
