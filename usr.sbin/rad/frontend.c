@@ -1,4 +1,4 @@
-/*	$OpenBSD: frontend.c,v 1.24 2019/03/12 18:47:57 pamela Exp $	*/
+/*	$OpenBSD: frontend.c,v 1.27 2019/03/15 16:49:20 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -145,7 +145,7 @@ struct rad_conf	*frontend_conf;
 struct imsgev		*iev_main;
 struct imsgev		*iev_engine;
 struct event		 ev_route;
-int			 icmp6sock = -1, ioctlsock = -1;
+int			 icmp6sock = -1, ioctlsock = -1, routesock = -1;
 struct ipv6_mreq	 all_routers;
 struct sockaddr_in6	 all_nodes;
 struct msghdr		 sndmhdr;
@@ -362,6 +362,9 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			event_add(&iev_engine->ev, NULL);
 			break;
 		case IMSG_RECONF_CONF:
+			if (nconf != NULL)
+				fatalx("%s: IMSG_RECONF_CONF already in "
+				    "progress", __func__);
 			if (IMSG_DATA_SIZE(imsg) != sizeof(struct rad_conf))
 				fatalx("%s: IMSG_RECONF_CONF wrong length: %lu",
 				    __func__, IMSG_DATA_SIZE(imsg));
@@ -445,19 +448,29 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			    ra_dnssl_conf, entry);
 			break;
 		case IMSG_RECONF_END:
+			if (nconf == NULL)
+				fatalx("%s: IMSG_RECONF_END without "
+				    "IMSG_RECONF_CONF", __func__);
 			merge_config(frontend_conf, nconf);
 			merge_ra_interfaces();
 			nconf = NULL;
 			break;
 		case IMSG_ICMP6SOCK:
+			if (icmp6sock != -1)
+				fatalx("%s: received unexpected icmp6 fd",
+				    __func__);
 			if ((icmp6sock = imsg.fd) == -1)
 				fatalx("%s: expected to receive imsg "
 				    "ICMPv6 fd but didn't receive any",
 				    __func__);
 			event_set(&icmp6ev.ev, icmp6sock, EV_READ | EV_PERSIST,
 			    icmp6_receive, NULL);
+			break;
 		case IMSG_ROUTESOCK:
-			if ((fd = imsg.fd) == -1)
+			if (routesock != -1)
+				fatalx("%s: received unexpected routesock fd",
+				    __func__);
+			if ((routesock = imsg.fd) == -1)
 				fatalx("%s: expected to receive imsg "
 				    "routesocket fd but didn't receive any",
 				    __func__);
@@ -470,6 +483,9 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			frontend_startup();
 			break;
 		case IMSG_CONTROLFD:
+			if (control_state.fd != -1)
+				fatalx("%s: received unexpected controlsock",
+				    __func__);
 			if ((fd = imsg.fd) == -1)
 				fatalx("%s: expected to receive imsg "
 				    "control fd but didn't receive any",

@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.862 2019/03/12 23:21:45 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.869 2019/03/15 21:54:47 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -634,6 +634,11 @@ struct grid {
 	struct grid_line	*linedata;
 };
 
+/* Style option. */
+struct style {
+	struct grid_cell	 gc;
+};
+
 /* Hook data structures. */
 struct hook {
 	const char	*name;
@@ -778,8 +783,7 @@ struct window_pane {
 
 	struct input_ctx *ictx;
 
-	struct grid_cell colgc;
-
+	struct style	 style;
 	int		*palette;
 
 	int		 pipe_fd;
@@ -847,8 +851,8 @@ struct window {
 
 	struct options	*options;
 
-	struct grid_cell style;
-	struct grid_cell active_style;
+	struct style	 style;
+	struct style	 active_style;
 
 	u_int		 references;
 	TAILQ_HEAD(, winlink) winlinks;
@@ -1430,8 +1434,6 @@ struct client {
 	struct session	*session;
 	struct session	*last_session;
 
-	int		 wlmouse;
-
 	int		 references;
 
 	void		*pan_window;
@@ -1495,6 +1497,7 @@ struct options_table_entry {
 
 	const char		 *default_str;
 	long long		  default_num;
+	const char		**default_arr;
 
 	const char		 *separator;
 	const char		 *style;
@@ -1571,6 +1574,7 @@ char		*paste_make_sample(struct paste_buffer *);
 #define FORMAT_STATUS 0x1
 #define FORMAT_FORCE 0x2
 #define FORMAT_NOJOBS 0x4
+#define FORMAT_VERBOSE 0x8
 #define FORMAT_NONE 0
 #define FORMAT_PANE 0x80000000U
 #define FORMAT_WINDOW 0x40000000U
@@ -1581,7 +1585,7 @@ struct format_tree *format_create(struct client *, struct cmdq_item *, int,
 void		 format_free(struct format_tree *);
 void printflike(3, 4) format_add(struct format_tree *, const char *,
 		     const char *, ...);
-char		*format_expand_time(struct format_tree *, const char *, time_t);
+char		*format_expand_time(struct format_tree *, const char *);
 char		*format_expand(struct format_tree *, const char *);
 char		*format_single(struct cmdq_item *, const char *,
 		     struct client *, struct session *, struct winlink *,
@@ -1649,7 +1653,7 @@ struct options_entry *options_match_get(struct options *, const char *, int *,
 		     int, int *);
 const char	*options_get_string(struct options *, const char *);
 long long	 options_get_number(struct options *, const char *);
-const struct grid_cell *options_get_style(struct options *, const char *);
+struct style	*options_get_style(struct options *, const char *);
 struct options_entry * printflike(4, 5) options_set_string(struct options *,
 		     const char *, int, const char *, ...);
 struct options_entry *options_set_number(struct options *, const char *,
@@ -1707,7 +1711,7 @@ void	tty_update_window_offset(struct window *);
 void	tty_update_client_offset(struct client *);
 void	tty_raw(struct tty *, const char *);
 void	tty_attributes(struct tty *, const struct grid_cell *,
-	    const struct window_pane *);
+	    struct window_pane *);
 void	tty_reset(struct tty *);
 void	tty_region_off(struct tty *);
 void	tty_margin_off(struct tty *);
@@ -1729,7 +1733,7 @@ void	tty_start_tty(struct tty *);
 void	tty_stop_tty(struct tty *);
 void	tty_set_title(struct tty *, const char *);
 void	tty_update_mode(struct tty *, int, struct screen *);
-void	tty_draw_line(struct tty *, const struct window_pane *, struct screen *,
+void	tty_draw_line(struct tty *, struct window_pane *, struct screen *,
 	    u_int, u_int, u_int, u_int, u_int);
 int	tty_open(struct tty *, char **);
 void	tty_close(struct tty *);
@@ -1967,6 +1971,7 @@ void	 status_update_saved(struct session *);
 int	 status_at_line(struct client *);
 u_int	 status_line_size(struct client *);
 struct window *status_get_window_at(struct client *, u_int);
+void	 status_free(struct client *);
 int	 status_redraw(struct client *);
 void printflike(2, 3) status_message_set(struct client *, const char *, ...);
 void	 status_message_clear(struct client *);
@@ -2207,7 +2212,7 @@ void		 window_pane_alternate_off(struct window_pane *,
 void		 window_pane_set_palette(struct window_pane *, u_int, int);
 void		 window_pane_unset_palette(struct window_pane *, u_int);
 void		 window_pane_reset_palette(struct window_pane *);
-int		 window_pane_get_palette(const struct window_pane *, int);
+int		 window_pane_get_palette(struct window_pane *, int);
 int		 window_pane_set_mode(struct window_pane *,
 		     const struct window_mode *, struct cmd_find_state *,
 		     struct args *);
@@ -2420,14 +2425,16 @@ __dead void printflike(1, 2) fatal(const char *, ...);
 __dead void printflike(1, 2) fatalx(const char *, ...);
 
 /* style.c */
-int		 style_parse(const struct grid_cell *,
-		     struct grid_cell *, const char *);
-const char	*style_tostring(struct grid_cell *);
+int		 style_parse(struct style *,const struct grid_cell *,
+		     const char *);
+const char	*style_tostring(struct style *);
 void		 style_apply(struct grid_cell *, struct options *,
 		     const char *);
 void		 style_apply_update(struct grid_cell *, struct options *,
 		     const char *);
-int		 style_equal(const struct grid_cell *,
-		     const struct grid_cell *);
+int		 style_equal(struct style *, struct style *);
+void		 style_set(struct style *, const struct grid_cell *);
+void		 style_copy(struct style *, struct style *);
+int		 style_is_default(struct style *);
 
 #endif /* TMUX_H */

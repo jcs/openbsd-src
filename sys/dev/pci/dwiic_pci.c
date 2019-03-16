@@ -1,4 +1,4 @@
-/* $OpenBSD: dwiic_pci.c,v 1.3 2018/01/12 08:11:48 mlarkin Exp $ */
+/* $OpenBSD: dwiic_pci.c,v 1.4 2019/03/16 02:40:43 jcs Exp $ */
 /*
  * Synopsys DesignWare I2C controller
  * PCI attachment

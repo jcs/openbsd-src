@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.617 2019/03/13 14:19:54 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.622 2019/03/15 10:04:13 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: March 13 2019 $
+.Dd $Mdocdate: March 15 2019 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -3719,6 +3719,24 @@ will expand the format twice, for example
 is the result of expanding the content of the
 .Ic status-left
 option rather than the content itself.
+.Ql T:
+is like
+.Ql E:
+but also expands
+.Xr strftime 3
+specifiers.
+.Ql S: ,
+.Ql W:
+or
+.Ql P:
+will loop over each session, window or pane and insert the format once
+for each.
+For windows and panes, two comma-separated formats may be given:
+the second is used for the current window or active pane.
+For example, to get a list of windows formatted like the status line:
+.Bd -literal -offset indent
+#{W:#{E:window-status-format} ,#{E:window-status-current-format} }
+.Ed
 A prefix of the form
 .Ql s/foo/bar/:
 will substitute
@@ -3857,6 +3875,7 @@ The following variables are available, where appropriate:
 .It Li "window_activity_flag" Ta "" Ta "1 if window has activity"
 .It Li "window_active" Ta "" Ta "1 if window active"
 .It Li "window_bell_flag" Ta "" Ta "1 if window has bell"
+.It Li "window_end_flag" Ta "" Ta "1 if window has the highest index"
 .It Li "window_flags" Ta "#F" Ta "Window flags"
 .It Li "window_format" Ta "" Ta "1 if format is for a window (not assuming the current)"
 .It Li "window_height" Ta "" Ta "Height of window"
@@ -3869,6 +3888,7 @@ The following variables are available, where appropriate:
 .It Li "window_panes" Ta "" Ta "Number of panes in window"
 .It Li "window_silence_flag" Ta "" Ta "1 if window has silence alert"
 .It Li "window_stack_index" Ta "" Ta "Index in session most recent stack"
+.It Li "window_start_flag" Ta "" Ta "1 if window has the lowest index"
 .It Li "window_visible_layout" Ta "" Ta "Window layout description, respecting zoomed window panes"
 .It Li "window_width" Ta "" Ta "Width of window"
 .It Li "window_zoomed_flag" Ta "" Ta "1 if window is zoomed"
@@ -4154,7 +4174,7 @@ option.
 This command works only from inside
 .Nm .
 .It Xo Ic display-message
-.Op Fl p
+.Op Fl pv
 .Op Fl c Ar target-client
 .Op Fl t Ar target-pane
 .Op Ar message
@@ -4176,6 +4196,10 @@ if
 .Fl t
 is given, otherwise the active pane for the session attached to
 .Ar target-client .
+.Pp
+With
+.Fl v ,
+verbose logging is printed as the format is parsed.
 .El
 .Sh BUFFERS
 .Nm
