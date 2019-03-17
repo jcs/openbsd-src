@@ -65,6 +65,8 @@ int amd64_has_aesni;
 int has_rdrand;
 int has_rdseed;
 
+int cpu_allow_turbo = 0;
+
 #include "pvbus.h"
 #if NPVBUS > 0
 #include <dev/pv/pvvar.h>
@@ -730,6 +732,9 @@ identifycpu(struct cpu_info *ci)
 		sensor_attach(&ci->ci_sensordev, &ci->ci_sensor);
 		sensordev_install(&ci->ci_sensordev);
 	}
+
+	cpu_allow_turbo = 1;
+	cpu_update_turbo();
 #endif
 
 #ifdef CRYPTO
@@ -1038,3 +1043,27 @@ cpu_check_vmm_cap(struct cpu_info *ci)
 	}
 }
 #endif /* NVMM > 0 */
+
+#ifndef SMALL_KERNEL
+void
+cpu_update_turbo(void)
+{
+	uint64_t msr;
+	int turbo;
+
+	msr = rdmsr(MSR_MISC_ENABLE);
+	turbo = (msr & MISC_ENABLE_TURBO_DISABLE) ? 0 : 1;
+
+	if (turbo != cpu_allow_turbo) {
+		if (turbo)
+			msr &= ~MISC_ENABLE_TURBO_DISABLE;
+		else
+			msr |= MISC_ENABLE_TURBO_DISABLE;
+
+		wrmsr(MSR_MISC_ENABLE, msr);
+
+		msr = rdmsr(MSR_MISC_ENABLE);
+		cpu_allow_turbo = (msr & MISC_ENABLE_TURBO_DISABLE) ? 0 : 1;
+	}
+}
+#endif

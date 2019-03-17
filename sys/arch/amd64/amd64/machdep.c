@@ -199,6 +199,7 @@ int kbd_reset;
 int lid_action = 1;
 int pwr_action = 1;
 int forceukbd;
+extern int cpu_allow_turbo;
 
 /*
  * safepri is a safe priority for sleep to set for a spin-wait
@@ -571,6 +572,18 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return voltage_sysctl(name + 1, namelen - 1, oldp, oldlenp,
 		    newp, newlen, p);
 #endif
+	case CPU_ALLOWTURBO:
+		val = cpu_allow_turbo;
+		error = sysctl_int(oldp, oldlenp, newp, newlen, &val);
+		if (!error) {
+			if (val < 0 || val > 1)
+				error = EINVAL;
+			else {
+				cpu_allow_turbo = val;
+				cpu_update_turbo();
+			}
+		}
+		return (error);
 	default:
 		return (EOPNOTSUPP);
 	}
