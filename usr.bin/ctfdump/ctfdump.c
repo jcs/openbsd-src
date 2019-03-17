@@ -1,4 +1,4 @@
-/*	$OpenBSD: ctfdump.c,v 1.19 2017/11/06 14:59:27 mpi Exp $ */
+/*	$OpenBSD: ctfdump.c,v 1.22 2019/03/16 16:35:03 sunil Exp $ */
 
 /*
  * Copyright (c) 2016 Martin Pieuchot <mpi@openbsd.org>
@@ -476,6 +476,9 @@ ctf_dump_type(struct ctf_header *cth, const char *data, off_t dlen,
 		printf(" returns: %u args: (%u", ctt->ctt_type, *argp);
 		for (i = 1; i < vlen; i++) {
 			argp++;
+			if ((const char *)argp > data + dlen)
+				errx(1, "offset exceeds CTF section");
+
 			printf(", %u", *argp);
 		}
 		printf(")");
@@ -488,6 +491,9 @@ ctf_dump_type(struct ctf_header *cth, const char *data, off_t dlen,
 		if (size < CTF_LSTRUCT_THRESH) {
 			for (i = 0; i < vlen; i++) {
 				struct ctf_member	*ctm;
+
+				if (p + toff > data + dlen)
+					errx(1, "offset exceeds CTF section");
 
 				if (toff > (stroff - sizeof(*ctm)))
 					break;
@@ -503,6 +509,9 @@ ctf_dump_type(struct ctf_header *cth, const char *data, off_t dlen,
 		} else {
 			for (i = 0; i < vlen; i++) {
 				struct ctf_lmember	*ctlm;
+
+				if (p + toff > data + dlen)
+					errx(1, "offset exceeds CTF section");
 
 				if (toff > (stroff - sizeof(*ctlm)))
 					break;
@@ -521,6 +530,9 @@ ctf_dump_type(struct ctf_header *cth, const char *data, off_t dlen,
 		printf("\n");
 		for (i = 0; i < vlen; i++) {
 			struct ctf_enum	*cte;
+
+			if (p + toff > data + dlen)
+				errx(1, "offset exceeds CTF section");
 
 			if (toff > (stroff - sizeof(*cte)))
 				break;
