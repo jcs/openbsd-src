@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.871 2019/03/16 19:12:13 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.873 2019/03/18 14:10:25 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -50,6 +50,7 @@ struct mode_tree_data;
 struct mouse_event;
 struct options;
 struct options_entry;
+struct options_array_item;
 struct session;
 struct tmuxpeer;
 struct tmuxproc;
@@ -703,6 +704,7 @@ struct screen_write_ctx {
 struct window_mode_entry;
 struct window_mode {
 	const char	*name;
+	const char	*default_format;
 
 	struct screen	*(*init)(struct window_mode_entry *,
 			     struct cmd_find_state *, struct args *);
@@ -1586,6 +1588,8 @@ struct format_tree *format_create(struct client *, struct cmdq_item *, int,
 void		 format_free(struct format_tree *);
 void printflike(3, 4) format_add(struct format_tree *, const char *,
 		     const char *, ...);
+void		 format_each(struct format_tree *, void (*)(const char *,
+		     const char *, void *), void *);
 char		*format_expand_time(struct format_tree *, const char *);
 char		*format_expand(struct format_tree *, const char *);
 char		*format_single(struct cmdq_item *, const char *,
@@ -1642,8 +1646,12 @@ void		 options_array_clear(struct options_entry *);
 const char	*options_array_get(struct options_entry *, u_int);
 int		 options_array_set(struct options_entry *, u_int, const char *,
 		     int);
-int		 options_array_size(struct options_entry *, u_int *);
 void		 options_array_assign(struct options_entry *, const char *);
+struct options_array_item *options_array_first(struct options_entry *);
+struct options_array_item *options_array_next(struct options_array_item *);
+u_int		 options_array_item_index(struct options_array_item *);
+const char	*options_array_item_value(struct options_array_item *);
+int		 options_isarray(struct options_entry *);
 int		 options_isstring(struct options_entry *);
 const char	*options_tostring(struct options_entry *, int, int);
 char		*options_parse(const char *, int *);
@@ -2151,6 +2159,7 @@ void	 screen_select_cell(struct screen *, struct grid_cell *,
 /* window.c */
 extern struct windows windows;
 extern struct window_pane_tree all_window_panes;
+extern const struct window_mode *all_window_modes[];
 int		 window_cmp(struct window *, struct window *);
 RB_PROTOTYPE(windows, window, entry, window_cmp);
 int		 winlink_cmp(struct winlink *, struct winlink *);
