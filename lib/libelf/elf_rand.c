@@ -26,19 +26,29 @@
 
 #include <ar.h>
 #include <libelf.h>
+#include <stdint.h>
 
 #include "_libelf.h"
 
-ELFTC_VCSID("$Id: elf_rand.c,v 1.1 2019/02/01 05:27:37 jsg Exp $");
+ELFTC_VCSID("$Id: elf_rand.c,v 1.3 2019/03/19 02:37:46 jsg Exp $");
 
 off_t
 elf_rand(Elf *ar, off_t offset)
 {
 	struct ar_hdr *arh;
+	off_t offset_of_member;
 
 	if (ar == NULL || ar->e_kind != ELF_K_AR ||
 	    (offset & 1) || offset < SARMAG ||
-	    (size_t) offset + sizeof(struct ar_hdr) >= ar->e_rawsize) {
+	    offset >= ar->e_rawsize) {
+		LIBELF_SET_ERROR(ARGUMENT, 0);
+		return 0;
+	}
+
+	offset_of_member = offset + (off_t) sizeof(struct ar_hdr);
+
+	if (offset_of_member <= 0 || /* Numeric overflow. */
+	    offset_of_member >= ar->e_rawsize) {
 		LIBELF_SET_ERROR(ARGUMENT, 0);
 		return 0;
 	}
