@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.274 2019/03/18 22:26:56 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.276 2019/03/22 16:45:48 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -160,9 +160,13 @@ struct option_data	*unpack_options(struct dhcp_packet *);
 char			*pretty_print_option(unsigned int, struct option_data *,
     int);
 char			*pretty_print_string(unsigned char *, size_t, int);
+char			*pretty_print_domain_search(unsigned char *, size_t);
 char			*code_to_name(int);
 char			*code_to_format(int);
+int			 code_to_action(int, int);
 int			 name_to_code(char *);
+void			 merge_option_data(struct option_data *,
+    struct option_data *, struct option_data *);
 
 /* conflex.c */
 extern int	 lexline, lexchar;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: options.c,v 1.114 2019/03/18 22:26:56 krw Exp $	*/
+/*	$OpenBSD: options.c,v 1.117 2019/03/22 16:45:48 krw Exp $	*/
 
 /* DHCP options parsing and reassembly. */
 
@@ -64,8 +64,6 @@
 int	parse_option_buffer(struct option_data *, unsigned char *, int);
 void	pretty_print_classless_routes(unsigned char *, size_t, unsigned char *,
     size_t);
-void	pretty_print_domain_search(unsigned char *, size_t, unsigned char *,
-    size_t);
 int expand_search_domain_name(unsigned char *, size_t, int *, unsigned char *);
 
 /*
@@ -83,6 +81,7 @@ int expand_search_domain_name(unsigned char *, size_t, int *, unsigned char *);
  * f - flag (true or false)
  * A - array of whatever precedes (e.g., IA means array of IP addresses)
  * C - CIDR description
+ * X - hex octets
  */
 
 static const struct {
@@ -401,6 +400,41 @@ code_to_format(int code)
 }
 
 /*
+ * Some option data types cannot be appended or prepended to. For
+ * such options change ACTION_PREPEND to ACTION_SUPERSEDE and
+ * ACTION_APPEND to ACTION_DEFAULT.
+ */
+int
+code_to_action(int code, int action)
+{
+	char	*fmt;
+
+	fmt = code_to_format(code);
+	if (fmt == NULL || strpbrk(fmt, "At") != NULL)
+		return action;
+
+	if (fmt[0] == 'X' && code != DHO_DOMAIN_SEARCH)
+		return action;
+
+	/*
+	 * For our protection all formats which have been excluded shall be
+	 * deemed included.
+	 */
+	switch (action) {
+	case ACTION_APPEND:
+		action = ACTION_DEFAULT;
+		break;
+	case ACTION_PREPEND:
+		action = ACTION_SUPERSEDE;
+		break;
+	default:
+		break;
+	}
+
+	return action;
+}
+
+/*
  * Parse options out of the specified buffer, storing addresses of
  * option values in options. Return 0 if errors, 1 if not.
  */
@@ -703,11 +737,10 @@ expand_search_domain_name(unsigned char *src, size_t srclen, int *offset,
  * Must special case DHO_DOMAIN_SEARCH because it is encoded as described
  * in RFC 1035 section 4.1.4.
  */
-void
-pretty_print_domain_search(unsigned char *src, size_t srclen,
-    unsigned char *buf, size_t buflen)
+char *
+pretty_print_domain_search(unsigned char *src, size_t srclen)
 {
-	char		 domain_search[DHCP_DOMAIN_SEARCH_LEN];
+	static char	 domain_search[DHCP_DOMAIN_SEARCH_LEN];
 	unsigned char	*cursor;
 	unsigned int	 offset;
 	int		 len, expanded_len, domains;
@@ -727,15 +760,14 @@ pretty_print_domain_search(unsigned char *src, size_t srclen,
 		len = expand_search_domain_name(src, srclen, &offset,
 		    domain_search);
 		if (len == -1)
-			return;
+			return NULL;
 		domains++;
 		expanded_len += len;
 		if (domains > DHCP_DOMAIN_SEARCH_CNT)
-			return;
+			return NULL;
 	}
 
-	if (strlcpy(buf, domain_search, buflen) >= buflen)
-		memset(buf, 0, buflen);
+	return domain_search;
 }
 
 /*
@@ -779,9 +811,6 @@ pretty_print_option(unsigned int code, struct option_data *option,
 	case DHO_CLASSLESS_STATIC_ROUTES:
 	case DHO_CLASSLESS_MS_STATIC_ROUTES:
 		pretty_print_classless_routes(dp, len, optbuf, sizeof(optbuf));
-		goto done;
-	case DHO_DOMAIN_SEARCH:
-		pretty_print_domain_search(dp, len, optbuf, sizeof(optbuf));
 		goto done;
 	default:
 		break;
@@ -994,4 +1023,18 @@ unpack_options(struct dhcp_packet *packet)
 	}
 
 	return options;
+}
+
+void
+merge_option_data(struct option_data *first,
+    struct option_data *second, struct option_data *dest)
+{
+	free(dest->data);
+	dest->len = first->len + second->len;
+	dest->data = calloc(1, dest->len);
+	if (dest->data == NULL)
+		fatal("merged option data");
+
+	memcpy(dest->data, first->data, first->len);
+	memcpy(dest->data + first->len, second->data, second->len);
 }

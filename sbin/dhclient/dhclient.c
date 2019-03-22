@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.628 2019/03/19 00:50:11 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.630 2019/03/22 16:45:48 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -1921,8 +1921,8 @@ lease_as_proposal(struct client_lease *lease)
 
 	if (lease->options[DHO_DOMAIN_SEARCH].len != 0) {
 		opt = &lease->options[DHO_DOMAIN_SEARCH];
-		pretty = pretty_print_option(DHO_DOMAIN_SEARCH, opt, 0);
-		if (strlen(pretty) > 0 && strlen(pretty) <
+		pretty = pretty_print_domain_search(opt->data, opt->len);
+		if (pretty != NULL && strlen(pretty) > 0 && strlen(pretty) <
 		    sizeof(proposal->rtsearch)) {
 			proposal->rtsearch_len = strlen(pretty);
 			memcpy(proposal->rtsearch, pretty,
@@ -2244,6 +2244,7 @@ get_ifname(struct interface_info *ifi, int ioctlfd, char *arg)
 struct client_lease *
 apply_defaults(struct client_lease *lease)
 {
+	struct option_data	 emptyopt = {0, NULL};
 	struct client_lease	*newlease;
 	int			 i;
 
@@ -2273,59 +2274,24 @@ apply_defaults(struct client_lease *lease)
 			break;
 
 		case ACTION_SUPERSEDE:
-			free(newlease->options[i].data);
-			newlease->options[i].len = config->defaults[i].len;
-			newlease->options[i].data = calloc(1,
-			    config->defaults[i].len);
-			if (newlease->options[i].data == NULL)
-				goto cleanup;
-			memcpy(newlease->options[i].data,
-			    config->defaults[i].data, config->defaults[i].len);
+			merge_option_data(&config->defaults[i], &emptyopt,
+			    &newlease->options[i]);
 			break;
 
 		case ACTION_PREPEND:
-			free(newlease->options[i].data);
-			newlease->options[i].len = config->defaults[i].len +
-			    lease->options[i].len;
-			newlease->options[i].data = calloc(1,
-			    newlease->options[i].len);
-			if (newlease->options[i].data == NULL)
-				goto cleanup;
-			memcpy(newlease->options[i].data,
-			    config->defaults[i].data, config->defaults[i].len);
-			memcpy(newlease->options[i].data +
-			    config->defaults[i].len, lease->options[i].data,
-			    lease->options[i].len);
+			merge_option_data(&config->defaults[i],
+			    &lease->options[i], &newlease->options[i]);
 			break;
 
 		case ACTION_APPEND:
-			free(newlease->options[i].data);
-			newlease->options[i].len = config->defaults[i].len +
-			    lease->options[i].len;
-			newlease->options[i].data = calloc(1,
-			    newlease->options[i].len);
-			if (newlease->options[i].data == NULL)
-				goto cleanup;
-			memcpy(newlease->options[i].data,
-			    lease->options[i].data, lease->options[i].len);
-			memcpy(newlease->options[i].data +
-			    lease->options[i].len, config->defaults[i].data,
-			    config->defaults[i].len);
+			merge_option_data(&lease->options[i],
+			    &config->defaults[i], &newlease->options[i]);
 			break;
 
 		case ACTION_DEFAULT:
-			if ((newlease->options[i].len == 0) &&
-			    (config->defaults[i].len != 0)) {
-				newlease->options[i].len =
-				    config->defaults[i].len;
-				newlease->options[i].data = calloc(1,
-				    config->defaults[i].len);
-				if (newlease->options[i].data == NULL)
-					goto cleanup;
-				memcpy(newlease->options[i].data,
-				    config->defaults[i].data,
-				    config->defaults[i].len);
-			}
+			if (newlease->options[i].len == 0)
+				merge_option_data(&config->defaults[i],
+				    &emptyopt, &newlease->options[i]);
 			break;
 
 		default:
@@ -2353,15 +2319,6 @@ apply_defaults(struct client_lease *lease)
 	}
 
 	return newlease;
-
-cleanup:
-
-	free_client_lease(newlease);
-
-	fatalx("unable to apply defaults");
-	/* NOTREACHED */
-
-	return NULL;
 }
 
 struct client_lease *
