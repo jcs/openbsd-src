@@ -513,7 +513,7 @@
 #define AZ_QRK_WID_TPDOCK1	0x00010000
 #define AZ_QRK_WID_TPDOCK2	0x00020000
 #define AZ_QRK_WID_TPDOCK3	0x00040000
-#define AZ_QRK_WID_DOLBY_ATMOS	0x00100000
+#define AZ_QRK_DOLBY		0x00100000
 
 /* memory-mapped types */
 typedef struct {
@@ -732,4 +732,4 @@ int	azalia_mixer_set(codec_t *, nid_t, int, const mixer_ctrl_t *);
 
 int	azalia_codec_enable_unsol(codec_t *);
 
-void	azalia_codec_init_dolby_atmos(codec_t *);
+int	azalia_codec_init_dolby(codec_t *);
