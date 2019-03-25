@@ -1,4 +1,4 @@
-.\" $OpenBSD: unveil.2,v 1.15 2019/03/21 17:13:18 rob Exp $
+.\" $OpenBSD: unveil.2,v 1.17 2019/03/24 19:55:31 jmc Exp $
 .\"
 .\" Copyright (c) 2018 Bob Beck <beck@openbsd.org>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: March 21 2019 $
+.Dd $Mdocdate: March 24 2019 $
 .Dt UNVEIL 2
 .Os
 .Sh NAME
@@ -160,3 +160,10 @@ The
 .Fn unveil
 system call first appeared in
 .Ox 6.4 .
+.Sh BUGS
+.Xr readlink 2
+partially bypasses
+.Nm
+restrictions required by
+.Xr realpath 3 .
+Future changes intend to repair this problem.

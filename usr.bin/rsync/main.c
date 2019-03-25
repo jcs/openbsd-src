@@ -1,4 +1,4 @@
-/*	$Id: main.c,v 1.33 2019/03/18 08:11:11 jmc Exp $ */
+/*	$Id: main.c,v 1.35 2019/03/23 16:04:28 deraadt Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -111,8 +111,7 @@ fargs_parse(size_t argc, char *argv[], struct opts *opts)
 
 	if (fargs_is_remote(f->sources[0])) {
 		if (f->host != NULL)
-			errx(1, "both source and "
-				"destination cannot be remote files");
+			errx(1, "both source and destination cannot be remote files");
 		f->mode = FARGS_RECEIVER;
 		if ((f->host = strdup(f->sources[0])) == NULL)
 			err(1, "strdup");
@@ -125,8 +124,7 @@ fargs_parse(size_t argc, char *argv[], struct opts *opts)
 			len = strlen(f->host) - 8 + 1;
 			memmove(f->host, f->host + 8, len);
 			if ((cp = strchr(f->host, '/')) == NULL)
-				errx(1, "rsync protocol requires a module "
-				    "name");
+				errx(1, "rsync protocol requires a module name");
 			*cp++ = '\0';
 			f->module = cp;
 			if ((cp = strchr(f->module, '/')) != NULL)
@@ -163,9 +161,9 @@ fargs_parse(size_t argc, char *argv[], struct opts *opts)
 			for (i = 0; i < f->sourcesz; i++) {
 				if (!fargs_is_remote(f->sources[i]))
 					continue;
-				errx(1, "remote file in "
-					"list of local sources: %s",
-					f->sources[i]);
+				errx(1,
+				    "remote file in list of local sources: %s",
+				    f->sources[i]);
 			}
 		if (f->mode == FARGS_RECEIVER)
 			for (i = 0; i < f->sourcesz; i++) {
@@ -173,13 +171,11 @@ fargs_parse(size_t argc, char *argv[], struct opts *opts)
 				    !fargs_is_daemon(f->sources[i]))
 					continue;
 				if (fargs_is_daemon(f->sources[i]))
-					errx(1, "remote "
-						"daemon in list of "
-						"remote sources: %s",
-						f->sources[i]);
-				errx(1, "local file in "
-					"list of remote sources: %s",
-					f->sources[i]);
+					errx(1, "remote daemon in list of "
+					    "remote sources: %s",
+					    f->sources[i]);
+				errx(1, "local file in list of remote sources: %s",
+				    f->sources[i]);
 			}
 	} else {
 		if (f->mode != FARGS_RECEIVER)
@@ -234,8 +230,8 @@ fargs_parse(size_t argc, char *argv[], struct opts *opts)
 				*ccp = '\0';
 			if (strncmp(cp, f->host, len) ||
 			    (cp[len] != '/' && cp[len] != '\0'))
-				errx(1, "different remote "
-					"host: %s", f->sources[i]);
+				errx(1, "different remote host: %s",
+				    f->sources[i]);
 			memmove(f->sources[i],
 				f->sources[i] + len + 8 + 1,
 				j - len - 8);
@@ -247,8 +243,8 @@ fargs_parse(size_t argc, char *argv[], struct opts *opts)
 			/* host::path */
 			if (strncmp(cp, f->host, len) ||
 			    (cp[len] != ':' && cp[len] != '\0'))
-				errx(1, "different remote "
-					"host: %s", f->sources[i]);
+				errx(1, "different remote host: %s",
+				    f->sources[i]);
 			memmove(f->sources[i], f->sources[i] + len + 2,
 			    j - len - 1);
 		} else if (cp[0] == ':') {
@@ -258,8 +254,8 @@ fargs_parse(size_t argc, char *argv[], struct opts *opts)
 			/* host:path */
 			if (strncmp(cp, f->host, len) ||
 			    (cp[len] != ':' && cp[len] != '\0'))
-				errx(1, "different remote "
-					"host: %s", f->sources[i]);
+				errx(1, "different remote host: %s",
+				    f->sources[i]);
 			memmove(f->sources[i],
 				f->sources[i] + len + 1, j - len);
 		}
@@ -273,7 +269,7 @@ main(int argc, char *argv[])
 {
 	struct opts	 opts;
 	pid_t		 child;
-	int		 fds[2], rc = 0, c, st, i;
+	int		 fds[2], rc, c, st, i;
 	struct sess	  sess;
 	struct fargs	*fargs;
 	char		**args;
@@ -478,13 +474,23 @@ main(int argc, char *argv[])
 	 * So close the connection here so that they don't hang.
 	 */
 
-	if (!rc)
+	if (rc)
 		close(fds[0]);
 
 	if (waitpid(child, &st, 0) == -1)
 		err(1, "waitpid");
-	if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0))
-		rc = 0;
+
+	/*
+	 * If we don't already have an error (rc == 0), then inherit the
+	 * error code of rsync_server() if it has exited.
+	 * If it hasn't exited, it overrides our return value.
+	 */
+
+	if (WIFEXITED(st) && rc == 0)
+		rc = WEXITSTATUS(st);
+	else if (!WIFEXITED(st))
+		rc = 1;
+
 	exit(rc);
 usage:
 	fprintf(stderr, "usage: %s [-aDglnoprtv] [-e program] [--archive] [--delete] [--devices]\n"
