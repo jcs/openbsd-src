@@ -1,4 +1,4 @@
-/* $OpenBSD: ssl_cert.c,v 1.72 2018/11/19 14:42:01 jsing Exp $ */
+/* $OpenBSD: ssl_cert.c,v 1.74 2019/03/25 17:33:26 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -158,22 +158,6 @@ SSL_get_ex_data_X509_STORE_CTX_idx(void)
 	return ssl_x509_store_ctx_idx;
 }
 
-static void
-ssl_cert_set_default_sigalgs(CERT *cert)
-{
-	/* Set digest values to defaults */
-	cert->pkeys[SSL_PKEY_RSA_SIGN].sigalg =
-	    ssl_sigalg_lookup(SIGALG_RSA_PKCS1_SHA1);
-	cert->pkeys[SSL_PKEY_RSA_ENC].sigalg =
-	    ssl_sigalg_lookup(SIGALG_RSA_PKCS1_SHA1);
-	cert->pkeys[SSL_PKEY_ECC].sigalg =
-	    ssl_sigalg_lookup(SIGALG_ECDSA_SHA1);
-#ifndef OPENSSL_NO_GOST
-	cert->pkeys[SSL_PKEY_GOST01].sigalg =
-	    ssl_sigalg_lookup(SIGALG_GOSTR01_GOST94);
-#endif
-}
-
 CERT *
 ssl_cert_new(void)
 {
@@ -186,7 +170,6 @@ ssl_cert_new(void)
 	}
 	ret->key = &(ret->pkeys[SSL_PKEY_RSA_ENC]);
 	ret->references = 1;
-	ssl_cert_set_default_sigalgs(ret);
 	return (ret);
 }
 
@@ -275,6 +258,12 @@ ssl_cert_dup(CERT *cert)
 				SSLerrorx(SSL_R_LIBRARY_BUG);
 			}
 		}
+
+		if (cert->pkeys[i].chain != NULL) {
+			if ((ret->pkeys[i].chain =
+			    X509_chain_up_ref(cert->pkeys[i].chain)) == NULL)
+				goto err;
+		}
 	}
 
 	/*
@@ -283,20 +272,16 @@ ssl_cert_dup(CERT *cert)
 	 */
 
 	ret->references = 1;
-	/*
-	 * Set sigalgs to defaults. NB: we don't copy existing values
-	 * as they will be set during handshake.
-	 */
-	ssl_cert_set_default_sigalgs(ret);
 
 	return (ret);
 
-err:
+ err:
 	DH_free(ret->dh_tmp);
 
 	for (i = 0; i < SSL_PKEY_NUM; i++) {
 		X509_free(ret->pkeys[i].x509);
 		EVP_PKEY_free(ret->pkeys[i].privatekey);
+		sk_X509_pop_free(ret->pkeys[i].chain, X509_free);
 	}
 	free (ret);
 	return NULL;
@@ -320,9 +305,66 @@ ssl_cert_free(CERT *c)
 	for (i = 0; i < SSL_PKEY_NUM; i++) {
 		X509_free(c->pkeys[i].x509);
 		EVP_PKEY_free(c->pkeys[i].privatekey);
+		sk_X509_pop_free(c->pkeys[i].chain, X509_free);
 	}
 
 	free(c);
+}
+
+int
+ssl_cert_set0_chain(CERT *c, STACK_OF(X509) *chain)
+{
+	if (c->key == NULL)
+		return 0;
+
+	sk_X509_pop_free(c->key->chain, X509_free);
+	c->key->chain = chain;
+
+	return 1;
+}
+
+int
+ssl_cert_set1_chain(CERT *c, STACK_OF(X509) *chain)
+{
+	STACK_OF(X509) *new_chain = NULL;
+
+	if (chain != NULL) {
+		if ((new_chain = X509_chain_up_ref(chain)) == NULL)
+			return 0;
+	}
+	if (!ssl_cert_set0_chain(c, new_chain)) {
+		sk_X509_pop_free(new_chain, X509_free);
+		return 0;
+	}
+
+	return 1;
+}
+
+int
+ssl_cert_add0_chain_cert(CERT *c, X509 *cert)
+{
+	if (c->key == NULL)
+		return 0;
+
+	if (c->key->chain == NULL) {
+		if ((c->key->chain = sk_X509_new_null()) == NULL)
+			return 0;
+	}
+	if (!sk_X509_push(c->key->chain, cert))
+		return 0;
+
+	return 1;
+}
+
+int
+ssl_cert_add1_chain_cert(CERT *c, X509 *cert)
+{
+	if (!ssl_cert_add0_chain_cert(c, cert))
+		return 0;
+
+	X509_up_ref(cert);
+
+	return 1;
 }
 
 SESS_CERT *

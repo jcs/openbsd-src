@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.630 2019/03/22 10:45:17 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.632 2019/03/25 18:59:55 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: March 22 2019 $
+.Dd $Mdocdate: March 25 2019 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -3519,16 +3519,16 @@ option is on (the default is off),
 allows mouse events to be bound as keys.
 The name of each key is made up of a mouse event (such as
 .Ql MouseUp1 )
-and a location suffix (one of
-.Ql Pane
-for the contents of a pane,
-.Ql Border
-for a pane border or
-.Ql Status ,
-.Ql StatusLeft ,
-or
-.Ql StatusRight
-for the status line).
+and a location suffix, one of the following:
+.Bl -column "XXXXXXXXXXXXX" -offset indent
+.It Li "Pane" Ta "the contents of a pane"
+.It Li "Border" Ta "a pane border"
+.It Li "Status" Ta "the status line window list"
+.It Li "StatusLeft" Ta "the left part of the status line"
+.It Li "StatusRight" Ta "the right part of the status line"
+.It Li "StatusDefault" Ta "any other part of the status line"
+.El
+.Pp
 The following mouse events are available:
 .Bl -column "MouseDown1" "MouseDrag1" "WheelDown" -offset indent
 .It Li "WheelUp" Ta "WheelDown" Ta ""
@@ -3785,7 +3785,7 @@ The following variables are available, where appropriate:
 .It Li "command_list_alias" Ta "" Ta "Command alias if listing commands"
 .It Li "command_list_usage" Ta "" Ta "Command usage if listing commands"
 .It Li "cursor_flag" Ta "" Ta "Pane cursor flag"
-.It Li "cursor_character" Ta "Character at cursor in pane"
+.It Li "cursor_character" Ta "" Ta "Character at cursor in pane"
 .It Li "cursor_x" Ta "" Ta "Cursor X position in pane"
 .It Li "cursor_y" Ta "" Ta "Cursor Y position in pane"
 .It Li "history_bytes" Ta "" Ta "Number of bytes in window history"
