@@ -1,4 +1,4 @@
-/*	$OpenBSD: ar9287.c,v 1.26 2019/02/01 16:15:07 stsp Exp $	*/
+/*	$OpenBSD: ar9287.c,v 1.28 2019/03/31 11:00:11 kevlo Exp $	*/
 
 /*-
  * Copyright (c) 2009 Damien Bergamini <damien.bergamini@free.fr>
@@ -100,10 +100,11 @@ void	ar9280_spur_mitigate(struct athn_softc *, struct ieee80211_channel *,
 int
 ar9287_attach(struct athn_softc *sc)
 {
-	sc->eep_base = AR9287_EEP_START_LOC;
+	sc->eep_base = (sc->flags & ATHN_FLAG_USB) ?
+	    AR9287_HTC_EEP_START_LOC : AR9287_EEP_START_LOC;
 	sc->eep_size = sizeof(struct ar9287_eeprom);
 	sc->ngpiopins = (sc->flags & ATHN_FLAG_USB) ? 16 : 11;
-	sc->led_pin = 8;
+	sc->led_pin = (sc->flags & ATHN_FLAG_USB) ? 10 : 8;
 	sc->workaround = AR9285_WA_DEFAULT;
 	sc->ops.setup = ar9287_setup;
 	sc->ops.swap_rom = ar9287_swap_rom;

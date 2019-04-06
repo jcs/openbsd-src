@@ -1,4 +1,4 @@
-/*	$OpenBSD: printconf.c,v 1.6 2019/02/17 14:49:15 florian Exp $	*/
+/*	$OpenBSD: printconf.c,v 1.8 2019/04/02 07:47:22 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -38,27 +38,47 @@ yesno(int flag)
 void
 print_forwarder(char *name)
 {
-	char	*pos;
+	char	*port_pos, *name_pos;
 
-	pos = strchr(name, '@');
+	port_pos = strchr(name, '@');
+	name_pos = strchr(name, '#');
 
-	if (pos != NULL) {
-		*pos = '\0';
-		printf("%s port %s", name, pos + 1);
-		*pos = '@';
+	if (port_pos != NULL) {
+		*port_pos = '\0';
+		if (name_pos != NULL) {
+			*name_pos = '\0';
+			printf("%s port %s authentication name %s", name,
+			    port_pos + 1, name_pos + 1);
+			*name_pos = '#';
+		} else {
+			printf("%s port %s", name, port_pos + 1);
+		}
+		*port_pos = '@';
+	} else if (name_pos != NULL) {
+		*name_pos = '\0';
+		printf("%s authentication name %s", name, name_pos + 1);
+		*name_pos = '#';
 	} else
 		printf("%s", name);
-
 }
 
 void
 print_config(struct uw_conf *conf)
 {
 	struct uw_forwarder	*uw_forwarder;
+	int			 i;
 
 #if notyet
 	printf("strict %s\n", yesno(conf->uw_options));
 #endif
+
+	if (conf->res_pref_len > 0) {
+		printf("preference {");
+		for (i = 0; i < conf->res_pref_len; i++) {
+			printf(" %s", uw_resolver_type_str[conf->res_pref[i]]);
+		}
+		printf(" }\n");
+	}
 
 	if (!SIMPLEQ_EMPTY(&conf->uw_forwarder_list) ||
 	    !SIMPLEQ_EMPTY(&conf->uw_dot_forwarder_list)) {

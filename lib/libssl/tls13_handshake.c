@@ -1,4 +1,4 @@
-/*	$OpenBSD: tls13_handshake.c,v 1.32 2019/03/17 15:48:02 jsing Exp $	*/
+/*	$OpenBSD: tls13_handshake.c,v 1.35 2019/04/05 20:23:38 tb Exp $	*/
 /*
  * Copyright (c) 2018-2019 Theo Buehler <tb@openbsd.org>
  * Copyright (c) 2019 Joel Sing <jsing@openbsd.org>
@@ -23,10 +23,6 @@
 #include "tls13_internal.h"
 
 /* Based on RFC 8446 and inspired by s2n's TLS 1.2 state machine. */
-
-/* Record types */
-#define TLS13_HANDSHAKE		1
-#define TLS13_APPLICATION_DATA	2
 
 struct tls13_handshake_action {
 	uint8_t			handshake_type;
@@ -102,6 +98,12 @@ struct tls13_handshake_action state_machine[] = {
 		.send = tls13_server_hello_send,
 		.recv = tls13_server_hello_recv,
 	},
+	[SERVER_HELLO_RETRY] = {
+		.handshake_type = TLS13_MT_SERVER_HELLO,
+		.sender = TLS13_HS_SERVER,
+		.send = tls13_server_hello_retry_send,
+		.recv = tls13_server_hello_retry_recv,
+	},
 	[SERVER_ENCRYPTED_EXTENSIONS] = {
 		.handshake_type = TLS13_MT_ENCRYPTED_EXTENSIONS,
 		.sender = TLS13_HS_SERVER,
@@ -160,6 +162,7 @@ enum tls13_message_type handshakes[][TLS13_NUM_MESSAGE_TYPES] = {
 		CLIENT_HELLO,
 		SERVER_HELLO,
 		CLIENT_HELLO_RETRY,
+		SERVER_HELLO_RETRY,
 		SERVER_ENCRYPTED_EXTENSIONS,
 		SERVER_CERTIFICATE_REQUEST,
 		SERVER_CERTIFICATE,
@@ -183,6 +186,7 @@ enum tls13_message_type handshakes[][TLS13_NUM_MESSAGE_TYPES] = {
 		CLIENT_HELLO,
 		SERVER_HELLO,
 		CLIENT_HELLO_RETRY,
+		SERVER_HELLO_RETRY,
 		SERVER_ENCRYPTED_EXTENSIONS,
 		SERVER_CERTIFICATE,
 		SERVER_CERTIFICATE_VERIFY,
@@ -202,6 +206,7 @@ enum tls13_message_type handshakes[][TLS13_NUM_MESSAGE_TYPES] = {
 		CLIENT_HELLO,
 		SERVER_HELLO,
 		CLIENT_HELLO_RETRY,
+		SERVER_HELLO_RETRY,
 		SERVER_ENCRYPTED_EXTENSIONS,
 		SERVER_FINISHED,
 		CLIENT_FINISHED,
@@ -224,6 +229,7 @@ enum tls13_message_type handshakes[][TLS13_NUM_MESSAGE_TYPES] = {
 		CLIENT_HELLO,
 		SERVER_HELLO,
 		CLIENT_HELLO_RETRY,
+		SERVER_HELLO_RETRY,
 		SERVER_ENCRYPTED_EXTENSIONS,
 		SERVER_CERTIFICATE_REQUEST,
 		SERVER_CERTIFICATE,
@@ -389,6 +395,9 @@ tls13_handshake_recv_action(struct tls13_ctx *ctx,
 	tls13_handshake_msg_free(ctx->hs_msg);
 	ctx->hs_msg = NULL;
 
+	if (ctx->ssl->method->internal->version < TLS1_3_VERSION)
+		return TLS13_IO_USE_LEGACY;
+
 	return ret;
 }
 
@@ -402,6 +411,12 @@ int
 tls13_client_hello_retry_send(struct tls13_ctx *ctx)
 {
 	return 0;
+}
+
+int
+tls13_server_hello_retry_recv(struct tls13_ctx *ctx)
+{
+        return 0;
 }
 
 int
@@ -470,6 +485,12 @@ tls13_server_hello_send(struct tls13_ctx *ctx)
 {
 	ctx->handshake_stage.hs_type |= NEGOTIATED;
 
+	return 0;
+}
+
+int
+tls13_server_hello_retry_send(struct tls13_ctx *ctx)
+{
 	return 0;
 }
 

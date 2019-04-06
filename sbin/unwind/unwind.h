@@ -1,4 +1,4 @@
-/*	$OpenBSD: unwind.h,v 1.12 2019/03/24 17:55:59 florian Exp $	*/
+/*	$OpenBSD: unwind.h,v 1.14 2019/04/02 07:47:23 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -54,6 +54,21 @@ static const char * const log_procnames[] = {
 	"captive portal",
 };
 
+enum uw_resolver_type {
+	UW_RES_RECURSOR,
+	UW_RES_DHCP,
+	UW_RES_FORWARDER,
+	UW_RES_DOT,
+	UW_RES_NONE
+};
+
+static const char * const	uw_resolver_type_str[] = {
+	"recursor",
+	"dhcp",
+	"forwarder",
+	"DoT"
+};
+
 struct imsgev {
 	struct imsgbuf	 ibuf;
 	void		(*handler)(int, short, void *);
@@ -97,7 +112,6 @@ enum imsg_type {
 	IMSG_CTL_RESOLVER_HISTOGRAM,
 	IMSG_CTL_END,
 	IMSG_CTL_RECHECK_CAPTIVEPORTAL,
-	IMSG_OPEN_HTTP_PORT,
 	IMSG_HTTPSOCK,
 	IMSG_CAPTIVEPORTAL_STATE,
 	IMSG_TAFD,
@@ -105,6 +119,7 @@ enum imsg_type {
 	IMSG_NEW_TAS_ABORT,
 	IMSG_NEW_TAS_DONE,
 	IMSG_RECHECK_RESOLVERS,
+	IMSG_RESOLVE_CAPTIVE_PORTAL,
 };
 
 struct uw_forwarder {
@@ -117,6 +132,8 @@ struct uw_conf {
 	struct uw_forwarder_head	 uw_forwarder_list;
 	struct uw_forwarder_head	 uw_dot_forwarder_list;
 	int				 uw_options;
+	enum uw_resolver_type		 res_pref[UW_RES_NONE];
+	int				 res_pref_len;
 	char				*captive_portal_host;
 	char				*captive_portal_path;
 	char				*captive_portal_expected_response;

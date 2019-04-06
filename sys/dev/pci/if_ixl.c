@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ixl.c,v 1.31 2019/03/22 02:23:06 dlg Exp $ */
+/*	$OpenBSD: if_ixl.c,v 1.34 2019/04/01 03:01:14 jmatthew Exp $ */
 
 /*
  * Copyright (c) 2013-2015, Intel Corporation
@@ -1129,9 +1129,7 @@ struct ixl_softc {
 
 #define delaymsec(_ms)	delay(1000 * (_ms))
 
-#ifdef notyet
 static void	ixl_clear_hw(struct ixl_softc *);
-#endif
 static int	ixl_pf_reset(struct ixl_softc *);
 
 static int	ixl_dmamem_alloc(struct ixl_softc *, struct ixl_dmamem *,
@@ -1397,7 +1395,7 @@ ixl_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_rx_ring_ndescs = 1024;
 
 	memtype = pci_mapreg_type(sc->sc_pc, sc->sc_tag, IXL_PCIREG);
-	if (pci_mapreg_map(pa, IXL_PCIREG, memtype, BUS_SPACE_MAP_PREFETCHABLE,
+	if (pci_mapreg_map(pa, IXL_PCIREG, memtype, 0,
 	    &sc->sc_memt, &sc->sc_memh, NULL, &sc->sc_mems, 0)) {
 		printf(": unable to map registers\n");
 		return;
@@ -1407,10 +1405,7 @@ ixl_attach(struct device *parent, struct device *self, void *aux)
 	    I40E_PFLAN_QALLOC_FIRSTQ_MASK) >>
 	    I40E_PFLAN_QALLOC_FIRSTQ_SHIFT;
 
-#ifdef notyet
 	ixl_clear_hw(sc);
-#endif
-
 	if (ixl_pf_reset(sc) == -1) {
 		/* error printed by ixl_pf_reset */
 		goto unmap;
@@ -2011,7 +2006,6 @@ ixl_down(struct ixl_softc *sc)
 
 		ixl_txr_qdis(sc, txr, 0);
 
-		ifiq_barrier(ifp->if_iqs[i]);
 		ifq_barrier(ifp->if_ifqs[i]);
 
 		if (!timeout_del(&rxr->rxr_refill))
@@ -3994,7 +3988,6 @@ ixl_arq_unfill(struct ixl_softc *sc)
 	}
 }
 
-#ifdef notyet
 static void
 ixl_clear_hw(struct ixl_softc *sc)
 {
@@ -4080,7 +4073,6 @@ ixl_clear_hw(struct ixl_softc *sc)
 	/* short wait for all queue disables to settle */
 	delaymsec(50);
 }
-#endif
 
 static int
 ixl_pf_reset(struct ixl_softc *sc)

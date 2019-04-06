@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.877 2019/03/25 18:59:55 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.879 2019/04/02 09:03:39 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1611,7 +1611,7 @@ struct paste_buffer *paste_walk(struct paste_buffer *);
 struct paste_buffer *paste_get_top(const char **);
 struct paste_buffer *paste_get_name(const char *);
 void		 paste_free(struct paste_buffer *);
-void		 paste_add(char *, size_t);
+void		 paste_add(const char *, char *, size_t);
 int		 paste_rename(const char *, const char *, char **);
 int		 paste_set(char *, size_t, const char *, char **);
 char		*paste_make_sample(struct paste_buffer *);
@@ -2101,8 +2101,8 @@ char	*grid_string_cells(struct grid *, u_int, u_int, u_int,
 void	 grid_duplicate_lines(struct grid *, u_int, struct grid *, u_int,
 	     u_int);
 void	 grid_reflow(struct grid *, u_int);
-u_int	 grid_to_offset(struct grid *, u_int, u_int);
-void	 grid_from_offset(struct grid *, u_int, u_int *, u_int *);
+void	 grid_wrap_position(struct grid *, u_int, u_int, u_int *, u_int *);
+void	 grid_unwrap_position(struct grid *, u_int *, u_int *, u_int, u_int);
 
 /* grid-view.c */
 void	 grid_view_get_cell(struct grid *, u_int, u_int, struct grid_cell *);

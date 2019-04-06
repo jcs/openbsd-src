@@ -1,4 +1,4 @@
-/*	$Id: flist.c,v 1.22 2019/03/23 23:22:57 deraadt Exp $ */
+/*	$Id: flist.c,v 1.24 2019/04/04 04:19:54 bket Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2019 Florian Obser <florian@openbsd.org>
@@ -272,6 +272,7 @@ flist_send(struct sess *sess, int fdin, int fdout, const struct flist *fl,
 		fn = f->wpath;
 		sz = strlen(f->wpath);
 		assert(sz > 0);
+		assert(sz < INT32_MAX);
 
 		/*
 		 * If applicable, unclog the read buffer.
@@ -318,19 +319,19 @@ flist_send(struct sess *sess, int fdin, int fdout, const struct flist *fl,
 		} else if (!io_write_long(sess, fdout, f->st.size)) {
 			ERRX1(sess, "io_write_long");
 			goto out;
-		} else if (!io_write_int(sess, fdout, f->st.mtime)) {
-			ERRX1(sess, "io_write_int");
+		} else if (!io_write_uint(sess, fdout, (uint32_t)f->st.mtime)) {
+			ERRX1(sess, "io_write_uint");
 			goto out;
-		} else if (!io_write_int(sess, fdout, f->st.mode)) {
-			ERRX1(sess, "io_write_int");
+		} else if (!io_write_uint(sess, fdout, f->st.mode)) {
+			ERRX1(sess, "io_write_uint");
 			goto out;
 		}
 
 		/* Conditional part: uid. */
 
 		if (sess->opts->preserve_uids) {
-			if (!io_write_int(sess, fdout, f->st.uid)) {
-				ERRX1(sess, "io_write_int");
+			if (!io_write_uint(sess, fdout, f->st.uid)) {
+				ERRX1(sess, "io_write_uint");
 				goto out;
 			}
 			if (!idents_add(sess, 0, &uids, &uidsz, f->st.uid)) {
@@ -342,8 +343,8 @@ flist_send(struct sess *sess, int fdin, int fdout, const struct flist *fl,
 		/* Conditional part: gid. */
 
 		if (sess->opts->preserve_gids) {
-			if (!io_write_int(sess, fdout, f->st.gid)) {
-				ERRX1(sess, "io_write_int");
+			if (!io_write_uint(sess, fdout, f->st.gid)) {
+				ERRX1(sess, "io_write_uint");
 				goto out;
 			}
 			if (!idents_add(sess, 1, &gids, &gidsz, f->st.gid)) {
@@ -370,12 +371,13 @@ flist_send(struct sess *sess, int fdin, int fdout, const struct flist *fl,
 		    sess->opts->preserve_links) {
 			fn = f->link;
 			sz = strlen(f->link);
+			assert(sz < INT32_MAX);
 			if (!io_write_int(sess, fdout, sz)) {
 				ERRX1(sess, "io_write_int");
 				goto out;
 			}
 			if (!io_write_buf(sess, fdout, fn, sz)) {
-				ERRX1(sess, "io_write_int");
+				ERRX1(sess, "io_write_buf");
 				goto out;
 			}
 		}
@@ -593,7 +595,7 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 	size_t		 flsz = 0, flmax = 0, lsz, gidsz = 0, uidsz = 0;
 	uint8_t		 flag;
 	char		 last[MAXPATHLEN];
-	uint64_t	 lval; /* temporary values... */
+	int64_t		 lval; /* temporary values... */
 	int32_t		 ival;
 	uint32_t	 uival;
 	struct ident	*gids = NULL, *uids = NULL;
@@ -624,8 +626,8 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 
 		/* Read the file size. */
 
-		if (!io_read_ulong(sess, fd, &lval)) {
-			ERRX1(sess, "io_read_ulong");
+		if (!io_read_long(sess, fd, &lval)) {
+			ERRX1(sess, "io_read_long");
 			goto out;
 		}
 		ff->st.size = lval;
@@ -633,7 +635,7 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 		/* Read the modification time. */
 
 		if (!(FLIST_TIME_SAME & flag)) {
-			if (!io_read_int(sess, fd, &uival)) {
+			if (!io_read_uint(sess, fd, &uival)) {
 				ERRX1(sess, "io_read_int");
 				goto out;
 			}
@@ -647,11 +649,11 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 		/* Read the file mode. */
 
 		if (!(FLIST_MODE_SAME & flag)) {
-			if (!io_read_int(sess, fd, &ival)) {
+			if (!io_read_uint(sess, fd, &uival)) {
 				ERRX1(sess, "io_read_int");
 				goto out;
 			}
-			ff->st.mode = ival;
+			ff->st.mode = uival;
 		} else if (fflast == NULL) {
 			ERRX(sess, "same mode without last entry");
 			goto out;
@@ -662,11 +664,11 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 
 		if (sess->opts->preserve_uids) {
 			if (!(FLIST_UID_SAME & flag)) {
-				if (!io_read_int(sess, fd, &ival)) {
+				if (!io_read_uint(sess, fd, &uival)) {
 					ERRX1(sess, "io_read_int");
 					goto out;
 				}
-				ff->st.uid = ival;
+				ff->st.uid = uival;
 			} else if (fflast == NULL) {
 				ERRX(sess, "same uid without last entry");
 				goto out;
@@ -678,11 +680,11 @@ flist_recv(struct sess *sess, int fd, struct flist **flp, size_t *sz)
 
 		if (sess->opts->preserve_gids) {
 			if (!(FLIST_GID_SAME & flag)) {
-				if (!io_read_int(sess, fd, &ival)) {
+				if (!io_read_uint(sess, fd, &uival)) {
 					ERRX1(sess, "io_read_int");
 					goto out;
 				}
-				ff->st.gid = ival;
+				ff->st.gid = uival;
 			} else if (fflast == NULL) {
 				ERRX(sess, "same gid without last entry");
 				goto out;
@@ -802,11 +804,12 @@ flist_gen_dirent(struct sess *sess, char *root, struct flist **fl, size_t *sz,
     size_t *max)
 {
 	char		*cargv[2], *cp;
-	int		 rc = 0;
+	int		 rc = 0, nxdev = 0, flag, i;
 	FTS		*fts;
 	FTSENT		*ent;
 	struct flist	*f;
 	size_t		 flsz = 0, stripdir;
+	dev_t		*xdev;
 	struct stat	 st;
 
 	cargv[0] = root;
@@ -911,6 +914,48 @@ flist_gen_dirent(struct sess *sess, char *root, struct flist **fl, size_t *sz,
 			continue;
 		}
 
+		/*
+		 * If rsync is told to avoid crossing a filesystem
+		 * boundary when recursing, then replace all mount point
+		 * directories with empty directories.  The latter is
+		 * prevented by telling rsync multiple times to avoid
+		 * crossing a filesystem boundary when recursing.
+		 * Replacing mount point directories is tricky. We need
+		 * to sort out which directories to include.  As such,
+		 * keep track of unique device inodes, and use these for
+		 * comparison.
+		 */
+
+		if (sess->opts->one_file_system &&
+		    ent->fts_statp->st_dev != st.st_dev) {
+			if (sess->opts->one_file_system > 1 ||
+			    !S_ISDIR(ent->fts_statp->st_mode))
+				continue;
+
+			if ((xdev = malloc(sizeof(dev_t))) == NULL) {
+				ERRX1(sess, "malloc");
+				goto out;
+			}
+
+			flag = 0;
+			for (i = 0; i < nxdev; i++)
+				if (xdev[i] == ent->fts_statp->st_dev) {
+					flag = 1;
+					break;
+				}
+			if (flag)
+				continue;
+
+			if (nxdev)
+				if ((xdev = realloc(xdev, sizeof(dev_t))) ==
+				    NULL) {
+					ERRX1(sess, "realloc");
+					goto out;
+				}
+			xdev[nxdev] = ent->fts_statp->st_dev;
+			nxdev++;
+		}
+
 		/* Allocate a new file entry. */
 
 		if (!flist_realloc(sess, fl, sz, max)) {
@@ -964,6 +1009,8 @@ flist_gen_dirent(struct sess *sess, char *root, struct flist **fl, size_t *sz,
 	rc = 1;
 out:
 	fts_close(fts);
+	if (sess->opts->one_file_system)
+		free(xdev);
 	return rc;
 }
 
@@ -1127,10 +1174,11 @@ flist_gen_dels(struct sess *sess, const char *root, struct flist **fl,
     size_t *sz,	const struct flist *wfl, size_t wflsz)
 {
 	char		**cargv = NULL;
-	int		  rc = 0, c;
+	int		  rc = 0, c, flag;
 	FTS		 *fts = NULL;
 	FTSENT		 *ent;
 	struct flist	 *f;
+	struct stat	  st;
 	size_t		  cargvs = 0, i, j, max = 0, stripdir;
 	ENTRY		  hent;
 	ENTRY		 *hentp;
@@ -1251,6 +1299,31 @@ flist_gen_dels(struct sess *sess, const char *root, struct flist **fl,
 		} else if (stripdir >= ent->fts_pathlen)
 			continue;
 
+		assert(ent->fts_statp != NULL);
+
+		/*
+		 * If rsync is told to avoid crossing a filesystem
+		 * boundary when recursing, then exclude all entries
+		 * from the list with a device inode, which does not
+		 * match that of one of the top-level directories.
+		 */
+
+		if (sess->opts->one_file_system) {
+			flag = 0;
+			for (i = 0; i < wflsz; i++) {
+				if (stat(wfl[i].path, &st) == -1) {
+					ERR(sess, "%s: stat", wfl[i].path);
+					goto out;
+				}
+				if (ent->fts_statp->st_dev == st.st_dev) {
+					flag = 1;
+					break;
+				}
+			}
+			if (!flag)
+				continue;
+		}
+
 		/* Look up in hashtable. */
 
 		memset(&hent, 0, sizeof(ENTRY));
@@ -1271,7 +1344,6 @@ flist_gen_dels(struct sess *sess, const char *root, struct flist **fl,
 			goto out;
 		}
 		f->wpath = f->path + stripdir;
-		assert(ent->fts_statp != NULL);
 		flist_copy_stat(f, ent->fts_statp);
 		errno = 0;
 	}

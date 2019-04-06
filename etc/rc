@@ -1,4 +1,4 @@
-#	$OpenBSD: rc,v 1.534 2019/02/24 12:57:14 kn Exp $
+#	$OpenBSD: rc,v 1.536 2019/04/01 11:39:46 tedu Exp $
 
 # System startup script run by init on autoboot or after single-user.
 # Output and error are redirected to console by init, and the console is the

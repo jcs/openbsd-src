@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.8 2019/02/13 22:57:08 deraadt Exp $	*/
+/*	$OpenBSD: parse.y,v 1.12 2019/04/01 11:05:41 yasuoka Exp $	*/
 
 /*
  * Copyright (c) 2002, 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -58,7 +58,9 @@ struct file	*pushfile(const char *);
 int		 popfile(void);
 int		 yyparse(void);
 int		 yylex(void);
-int		 yyerror(const char *, ...);
+int		 yyerror(const char *, ...)
+    __attribute__((__format__ (printf, 1, 2)))
+    __attribute__((__nonnull__ (1)));
 int		 kw_cmp(const void *, const void *);
 int		 lookup(char *);
 int		 lgetc(int);
@@ -168,6 +170,11 @@ optport		: { $$ = 0; }
 client		: CLIENT prefix optnl clientopts_b {
 			struct radiusd_client *client0;
 
+			if (client.secret[0] == '\0') {
+				yyerror("secret is required for client");
+				YYERROR;
+			}
+
 			client0 = calloc(1, sizeof(struct radiusd_client));
 			if (client0 == NULL)
 				goto outofmemory;
@@ -223,8 +230,8 @@ prefix		: STRING '/' NUMBER {
 			switch (res->ai_family) {
 			case AF_INET:
 				if ($3 < 0 || 32 < $3) {
-					yyerror("mask len %d is out of range",
-					    $3);
+					yyerror("mask len %lld is out of range",
+					    (long long)$3);
 					YYERROR;
 				}
 				$$.addr.addr.ipv4 = ((struct sockaddr_in *)
@@ -234,8 +241,8 @@ prefix		: STRING '/' NUMBER {
 				break;
 			case AF_INET6:
 				if ($3 < 0 || 128 < $3) {
-					yyerror("mask len %d is out of range",
-					    $3);
+					yyerror("mask len %lld is out of range",
+					    (long long)$3);
 					YYERROR;
 				}
 				$$.addr.addr.ipv6 = ((struct sockaddr_in6 *)
@@ -271,17 +278,19 @@ module		: MODULE LOAD STRING STRING {
 			module = find_module($3);
 			if (module == NULL) {
 				yyerror("module `%s' is not found", $3);
+setstrerr:
 				free($3);
 				free($4);
 				free_str_l(&$5);
 				YYERROR;
 			}
+			if ($4[0] == '_') {
+				yyerror("setting `%s' is not allowed", $4);
+				goto setstrerr;
+			}
 			if (radiusd_module_set(module, $4, $5.c, $5.v)) {
 				yyerror("syntax error by module `%s'", $3);
-				free($3);
-				free($4);
-				free_str_l(&$5);
-				YYERROR;
+				goto setstrerr;
 			}
 			free($3);
 			free($4);
@@ -441,9 +450,9 @@ lookup(char *s)
 
 #define MAXPUSHBACK	128
 
-char	*parsebuf;
+u_char	*parsebuf;
 int	 parseindex;
-char	 pushback_buffer[MAXPUSHBACK];
+u_char	 pushback_buffer[MAXPUSHBACK];
 int	 pushback_index = 0;
 
 int
@@ -536,8 +545,8 @@ findeol(void)
 int
 yylex(void)
 {
-	char	 buf[8096];
-	char	*p;
+	u_char	 buf[8096];
+	u_char	*p;
 	int	 quotec, next, c;
 	int	 token;
 
@@ -582,7 +591,7 @@ yylex(void)
 				yyerror("string too long");
 				return (findeol());
 			}
-			*p++ = (char)c;
+			*p++ = c;
 		}
 		yylval.v.string = strdup(buf);
 		if (yylval.v.string == NULL)

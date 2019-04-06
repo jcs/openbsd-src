@@ -1156,6 +1156,7 @@
 ./usr/share/man/man4/acpihve.4
 ./usr/share/man/man4/acpimadt.4
 ./usr/share/man/man4/acpimcfg.4
+./usr/share/man/man4/acpipci.4
 ./usr/share/man/man4/acpiprt.4
 ./usr/share/man/man4/acpipwrres.4
 ./usr/share/man/man4/acpisbs.4
@@ -1238,7 +1239,6 @@
 ./usr/share/man/man4/arc.4
 ./usr/share/man/man4/arcofi.4
 ./usr/share/man/man4/arm64
-./usr/share/man/man4/arm64/acpipci.4
 ./usr/share/man/man4/arm64/agtimer.4
 ./usr/share/man/man4/arm64/ampintc.4
 ./usr/share/man/man4/arm64/apm.4
@@ -1638,6 +1638,7 @@
 ./usr/share/man/man4/mue.4
 ./usr/share/man/man4/multicast.4
 ./usr/share/man/man4/mvclock.4
+./usr/share/man/man4/mvgicp.4
 ./usr/share/man/man4/mvgpio.4
 ./usr/share/man/man4/mvicu.4
 ./usr/share/man/man4/mvneta.4
@@ -2008,6 +2009,7 @@
 ./usr/share/man/man4/uvisor.4
 ./usr/share/man/man4/uvscom.4
 ./usr/share/man/man4/uwacom.4
+./usr/share/man/man4/uxrcom.4
 ./usr/share/man/man4/vether.4
 ./usr/share/man/man4/vga.4
 ./usr/share/man/man4/vgafb.4
@@ -2453,6 +2455,7 @@
 ./usr/share/man/man8/rc.subr.8
 ./usr/share/man/man8/rcctl.8
 ./usr/share/man/man8/rdate.8
+./usr/share/man/man8/rdsetroot.8
 ./usr/share/man/man8/reboot.8
 ./usr/share/man/man8/rebound.8
 ./usr/share/man/man8/relayctl.8

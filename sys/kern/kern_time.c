@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_time.c,v 1.112 2019/03/25 23:32:00 cheloha Exp $	*/
+/*	$OpenBSD: kern_time.c,v 1.114 2019/03/26 16:43:56 cheloha Exp $	*/
 /*	$NetBSD: kern_time.c,v 1.20 1996/02/18 11:57:06 fvdl Exp $	*/
 
 /*
@@ -41,6 +41,7 @@
 #include <sys/ktrace.h>
 #include <sys/vnode.h>
 #include <sys/signalvar.h>
+#include <sys/stdint.h>
 #include <sys/pledge.h>
 #include <sys/task.h>
 #include <sys/timeout.h>
@@ -436,8 +437,18 @@ sys_adjtime(struct proc *p, void *v, register_t *retval)
 		if (!timerisvalid(&atv))
 			return (EINVAL);
 
-		/* XXX Check for overflow? */
-		adjustment = (int64_t)atv.tv_sec * 1000000 + atv.tv_usec;
+		if (atv.tv_sec >= 0) {
+			if (atv.tv_sec > INT64_MAX / 1000000)
+				return EINVAL;
+			adjustment = atv.tv_sec * 1000000;
+			if (atv.tv_usec > INT64_MAX - adjustment)
+				return EINVAL;
+			adjustment += atv.tv_usec;
+		} else {
+			if (atv.tv_sec < INT64_MIN / 1000000)
+				return EINVAL;
+			adjustment = atv.tv_sec * 1000000 + atv.tv_usec;
+		}
 
 		rw_enter_write(&tc_lock);
 	}

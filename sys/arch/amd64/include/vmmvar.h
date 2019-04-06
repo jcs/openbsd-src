@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmmvar.h,v 1.61 2019/03/02 08:53:07 ajacoutot Exp $	*/
+/*	$OpenBSD: vmmvar.h,v 1.63 2019/04/01 12:02:43 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -564,6 +564,7 @@ struct vm_rwregs_params {
  *  speedstep (CPUIDECX_EST)
  *  thermal (CPUIDECX_TM2, CPUID_ACPI, CPUID_TM)
  *  context id (CPUIDECX_CNXTID)
+ *  machine check (CPUID_MCE, CPUID_MCA)
  *  silicon debug (CPUIDECX_SDBG)
  *  xTPR (CPUIDECX_XTPR)
  *  perf/debug (CPUIDECX_PDCM)
@@ -577,6 +578,7 @@ struct vm_rwregs_params {
  *  hyperthreading (CPUID_HTT)
  *  pending break enabled (CPUID_PBE)
  *  MTRR (CPUID_MTRR)
+ *  Speculative execution control features (AMD)
  */
 #define VMM_CPUIDECX_MASK ~(CPUIDECX_EST | CPUIDECX_TM2 | CPUIDECX_MWAIT | \
     CPUIDECX_PDCM | CPUIDECX_VMX | CPUIDECX_DTES64 | \
@@ -587,7 +589,11 @@ struct vm_rwregs_params {
 #define VMM_CPUIDEDX_MASK ~(CPUID_ACPI | CPUID_TM | \
     CPUID_HTT | CPUID_DS | CPUID_APIC | \
     CPUID_PSN | CPUID_SS | CPUID_PBE | \
-    CPUID_MTRR)
+    CPUID_MTRR | CPUID_MCE | CPUID_MCA)
+#define VMM_AMDSPEC_EBX_MASK ~(CPUIDEBX_IBPB | CPUIDEBX_IBRS | \
+    CPUIDEBX_STIBP | CPUIDEBX_IBRS_ALWAYSON | CPUIDEBX_STIBP_ALWAYSON | \
+    CPUIDEBX_IBRS_PREF | CPUIDEBX_SSBD | CPUIDEBX_VIRT_SSBD | \
+    CPUIDEBX_SSBD_NOTREQ)
 
 /*
  * SEFF flags - copy from host minus:

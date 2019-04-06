@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.S,v 1.114 2019/02/18 08:26:19 yasuoka Exp $	*/
+/*	$OpenBSD: locore.S,v 1.116 2019/04/02 03:35:08 mortimer Exp $	*/
 /*	$NetBSD: locore.S,v 1.13 2004/03/25 18:33:17 drochner Exp $	*/
 
 /*
@@ -271,6 +271,7 @@ NENTRY(lgdt)
 	lretq
 
 ENTRY(setjmp)
+	RETGUARD_SETUP(setjmp, r11)
 	/*
 	 * Only save registers that must be preserved across function
 	 * calls according to the ABI (%rbx, %rsp, %rbp, %r12-%r15)
@@ -287,21 +288,24 @@ ENTRY(setjmp)
 	movq	(%rsp),%rdx
 	movq	%rdx,56(%rax)
 	xorl	%eax,%eax
+	RETGUARD_CHECK(setjmp, r11)
 	ret
 
 ENTRY(longjmp)
 	movq	%rdi,%rax
-	movq	(%rax),%rbx
 	movq	8(%rax),%rsp
+	movq	56(%rax),%rdx
+	movq	%rdx,(%rsp)
+	RETGUARD_SETUP(longjmp, r11)
+	movq	(%rax),%rbx
 	movq	16(%rax),%rbp
 	movq	24(%rax),%r12
 	movq	32(%rax),%r13
 	movq	40(%rax),%r14
 	movq	48(%rax),%r15
-	movq	56(%rax),%rdx
-	movq	%rdx,(%rsp)
 	xorl	%eax,%eax
 	incl	%eax
+	RETGUARD_CHECK(longjmp, r11)
 	ret
 
 /*****************************************************************************/
@@ -1123,7 +1127,7 @@ ENTRY(pagezero)
 
 /* int rdmsr_safe(u_int msr, uint64_t *data) */
 ENTRY(rdmsr_safe)
-	RETGUARD_SETUP(rdmsr_safe_return, r10)
+	RETGUARD_SETUP(rdmsr_safe, r10)
 
 	movl	%edi,	%ecx	/* u_int msr */
 	.globl	rdmsr_safe_fault
@@ -1135,12 +1139,12 @@ rdmsr_safe_fault:
 	movq	%rax, (%rsi)	/* *data */
 	xorq	%rax, %rax
 
-	RETGUARD_CHECK(rdmsr_safe_return, r10)
+	RETGUARD_CHECK(rdmsr_safe, r10)
 	ret
 
 NENTRY(rdmsr_resume)
 	movl	$0x1, %eax
-	RETGUARD_CHECK(rdmsr_safe_return, r10)
+	RETGUARD_CHECK(rdmsr_safe, r10)
 	ret
 
 #if NXEN > 0

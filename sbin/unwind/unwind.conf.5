@@ -1,4 +1,4 @@
-.\"	$OpenBSD: unwind.conf.5,v 1.7 2019/02/05 19:39:19 jmc Exp $
+.\"	$OpenBSD: unwind.conf.5,v 1.13 2019/04/03 03:48:45 florian Exp $
 .\"
 .\" Copyright (c) 2018 Florian Obser <florian@openbsd.org>
 .\" Copyright (c) 2005 Esben Norby <norby@openbsd.org>
@@ -18,7 +18,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: February 5 2019 $
+.Dd $Mdocdate: April 3 2019 $
 .Dt UNWIND.CONF 5
 .Os
 .Sh NAME
@@ -52,7 +52,7 @@ Macro names may not be reserved words (for example,
 .Ic forwarder ,
 .Ic port ,
 or
-.Ic Dot ) .
+.Ic DoT ) .
 Macros are not expanded inside quotes.
 .Pp
 For example:
@@ -63,14 +63,7 @@ forwarder { $fwd1 $fwd2 }
 .Ed
 .Sh GLOBAL CONFIGURATION
 .Bl -tag -width Ds
-.It Ic forwarder Brq Ar address Oo Ic port Ar number Oc Oo Ic DoT Oc ...
-A list of addresses of DNS name servers to forward queries to.
-If
-.Ic DoT
-is specified, use DNS over TLS when sending queries to the server at
-.Ar address .
-.El
-.Pp
+.It Ic captive portal Brq ...
 .Nm unwind
 can detect when it is running behind a
 .Dq captive portal
@@ -84,22 +77,6 @@ If the response does not match,
 uses the DHCP provided nameservers and periodically re-checks if the user
 passed the captive portal.
 .Bl -tag -width Ds
-.It Ic captive portal Brq ...
-Captive portal
-detection is configured inside the
-.Ic captive portal
-block.
-.Bl -tag -width "url URL"
-.It Ic url Ar URL
-URL to send HTTP queries to.
-This parameter is required.
-.It Ic expected response Ar response
-The body of the HTTP response is compared to
-.Ar response .
-The default is the empty string.
-.It Ic expected status Ar status
-The expected HTTP status code.
-The default is 200.
 .It Ic auto Op Cm yes | no
 When
 .Ic auto
@@ -114,10 +91,57 @@ a captive portal check can be triggered by
 .Xr unwindctl 8 .
 The default is
 .Cm yes .
+.It Ic expected response Ar response
+The body of the HTTP response is compared to
+.Ar response .
+The default is the empty string.
+.It Ic expected status Ar status
+The expected HTTP status code.
+The default is 200.
+.It Ic url Ar URL
+URL to send HTTP queries to.
+This parameter is required.
 .El
+.It Ic forwarder Brq Ar address Oo Ic port Ar number Oc Oo Oo Ic authentication name Ar name Oc Ic DoT Oc ...
+A list of addresses of DNS name servers to forward queries to.
+.Ic port
+defaults to 53.
+If
+.Ic DoT
+is specified, use DNS over TLS when sending queries to the server at
+.Ar address .
+The default
+.Ic port
+is 853.
+.Ar name
+validates the certificate of the DNS over TLS server.
+.It Ic preference Brq Ar type ...
+A list of DNS name server types to specify the preference in which
+name servers are picked.
+Validating name servers are always picked over non-validating name servers.
+DNS name server types are:
+.Pp
+.Bl -tag -width "forwarder" -compact
+.It Ic dhcp
+Name servers learned via DHCP.
+.It Ic DoT
+DNS over TLS name servers configured in
+.Nm .
+.It Ic forwarder
+Name servers configured in
+.Nm .
+.It Ic recursor
+.Nm unwind
+itself recursively resolves names.
+.El
+.Pp
+The default preference is
+.Ic DoT forwarder recursor dhcp .
 .El
 .Sh FILES
-.Bl -tag -width "/etc/unwind.conf" -compact
+.Bl -tag -width "/etc/examples/unwind.conf" -compact
+.It Pa /etc/examples/unwind.conf
+Example configuration file.
 .It Pa /etc/unwind.conf
 The default
 .Xr unwind 8

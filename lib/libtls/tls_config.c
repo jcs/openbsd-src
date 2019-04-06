@@ -1,4 +1,4 @@
-/* $OpenBSD: tls_config.c,v 1.53 2018/11/29 14:24:23 tedu Exp $ */
+/* $OpenBSD: tls_config.c,v 1.56 2019/04/04 15:09:09 jsing Exp $ */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
  *
@@ -20,6 +20,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -93,11 +94,14 @@ tls_config_new_internal(void)
 	if ((config = calloc(1, sizeof(*config))) == NULL)
 		return (NULL);
 
-	if ((config->keypair = tls_keypair_new()) == NULL)
+	if (pthread_mutex_init(&config->mutex, NULL) != 0)
 		goto err;
 
 	config->refcount = 1;
 	config->session_fd = -1;
+
+	if ((config->keypair = tls_keypair_new()) == NULL)
+		goto err;
 
 	/*
 	 * Default configuration.
@@ -149,11 +153,16 @@ void
 tls_config_free(struct tls_config *config)
 {
 	struct tls_keypair *kp, *nkp;
+	int refcount;
 
 	if (config == NULL)
 		return;
 
-	if (--config->refcount > 0)
+	pthread_mutex_lock(&config->mutex);
+	refcount = --config->refcount;
+	pthread_mutex_unlock(&config->mutex);
+
+	if (refcount > 0)
 		return;
 
 	for (kp = config->keypair; kp != NULL; kp = nkp) {
@@ -616,8 +625,6 @@ tls_config_set_keypair_file_internal(struct tls_config *config,
     const char *cert_file, const char *key_file, const char *ocsp_file)
 {
 	if (tls_config_set_cert_file(config, cert_file) != 0)
-		return (-1);
-	if (tls_config_set_key_file(config, key_file) != 0)
 		return (-1);
 	if (tls_config_set_key_file(config, key_file) != 0)
 		return (-1);

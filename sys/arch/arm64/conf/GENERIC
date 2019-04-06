@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.96 2019/02/03 14:03:36 patrick Exp $
+# $OpenBSD: GENERIC,v 1.98 2019/04/01 08:46:16 patrick Exp $
 #
 # GENERIC machine description file
 #
@@ -119,8 +119,6 @@ iic*		at imxiic?
 imxesdhc*	at fdt?
 sdmmc*		at imxesdhc?
 imxsrc*		at fdt?
-imxpd*		at fdt?
-imxdwusb*	at fdt?
 imxspi*		at fdt?
 ssdfb*		at iic?
 ssdfb*		at spi?
@@ -245,6 +243,8 @@ uchcom*		at uhub?		# WinChipHead CH341/340 serial
 ucom*		at uchcom?
 uticom*		at uhub?		# TI serial
 ucom*		at uticom?
+uxrcom*		at uhub?		# Exar XR21V1410 serial
+ucom*		at uxrcom?
 uaudio*		at uhub?		# USB Audio
 audio*		at uaudio?
 umidi*		at uhub?		# USB MIDI

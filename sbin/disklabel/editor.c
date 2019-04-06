@@ -1,4 +1,4 @@
-/*	$OpenBSD: editor.c,v 1.355 2019/03/07 15:12:59 jmc Exp $	*/
+/*	$OpenBSD: editor.c,v 1.359 2019/04/03 01:10:30 krw Exp $	*/
 
 /*
  * Copyright (c) 1997-2000 Todd C. Miller <millert@openbsd.org>
@@ -80,13 +80,19 @@ struct space_allocation {
 	char	       *mp;
 };
 
+/*
+ * NOTE! Changing partition sizes in the space_allocation tables
+ *       requires corresponding updates to the *.ok files in
+ *	 /usr/src/regress/sbin/disklabel.
+ */
+
 /* entries for swap and var are changed by editor_allocspace() */
 struct space_allocation alloc_big[] = {
 	{  MEG(150),         GIG(1),   5, "/"		},
 	{   MEG(80),       MEG(256),  10, "swap"	},
 	{  MEG(120),         GIG(4),   8, "/tmp"	},
 	{   MEG(80),         GIG(4),  13, "/var"	},
-	{  MEG(900),         GIG(2),   5, "/usr"	},
+	{ MEG(1300),         GIG(2),   5, "/usr"	},
 	{  MEG(384),         GIG(1),   3, "/usr/X11R6"	},
 	{    GIG(1),        GIG(20),  15, "/usr/local"	},
 	{ MEG(1300),         GIG(2),   2, "/usr/src"	},
@@ -98,7 +104,7 @@ struct space_allocation alloc_big[] = {
 struct space_allocation alloc_medium[] = {
 	{  MEG(800),         GIG(2),   5, "/"		},
 	{   MEG(80),       MEG(256),  10, "swap"	},
-	{  MEG(900),         GIG(3),  78, "/usr"	},
+	{ MEG(1300),         GIG(3),  78, "/usr"	},
 	{  MEG(256),         GIG(2),   7, "/home"	}
 };
 
@@ -247,7 +253,7 @@ editor(int f)
 
 	puts("Label editor (enter '?' for help at any prompt)");
 	for (;;) {
-		fputs("> ", stdout);
+		fprintf(stdout, "%s%s", dkname, (expert == 0) ? "> " : "# ");
 		if (fgets(buf, sizeof(buf), stdin) == NULL) {
 			putchar('\n');
 			buf[0] = 'q';
@@ -275,15 +281,17 @@ editor(int f)
 			break;
 
 		case 'A':
-			if (ioctl(f, DIOCGPDINFO, &newlab) == 0) {
+			if (ioctl(f, DIOCGPDINFO, &newlab) == -1) {
+				warn("DIOCGPDINFO");
+				newlab = lastlabel;
+			} else {
 				int oquiet = quiet, oexpert = expert;
 				aflag = 1;
 				quiet = expert = 0;
 				editor_allocspace(&newlab);
 				quiet = oquiet;
 				expert = oexpert;
-			} else
-				newlab = lastlabel;
+			}
 			break;
 		case 'a':
 			editor_add(&newlab, arg);
@@ -298,14 +306,15 @@ editor(int f)
 			break;
 
 		case 'D':
-			if (ioctl(f, DIOCGPDINFO, &newlab) == 0) {
+			if (ioctl(f, DIOCGPDINFO, &newlab) == -1)
+				warn("DIOCGPDINFO");
+			else {
 				dflag = 1;
-				for (i=0; i<MAXPARTITIONS; i++) {
+				for (i = 0; i < MAXPARTITIONS; i++) {
 					free(mountpoints[i]);
 					mountpoints[i] = NULL;
 				}
-			} else
-				warn("unable to get default partition table");
+			}
 			break;
 
 		case 'd':
@@ -2187,8 +2196,8 @@ get_geometry(int f, struct disklabel **dgpp)
 	/* Get disk geometry */
 	if ((disk_geop = calloc(1, sizeof(struct disklabel))) == NULL)
 		errx(4, "out of memory");
-	if (ioctl(f, DIOCGPDINFO, disk_geop) < 0)
-		err(4, "ioctl DIOCGPDINFO");
+	if (ioctl(f, DIOCGPDINFO, disk_geop) == -1)
+		err(4, "DIOCGPDINFO");
 	*dgpp = disk_geop;
 }
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.232 2019/03/10 08:27:28 mlarkin Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.237 2019/04/02 05:06:39 mlarkin Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -2045,6 +2045,8 @@ vcpu_reset_regs_svm(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 	/* xcr0 power on default sets bit 0 (x87 state) */
 	vcpu->vc_gueststate.vg_xcr0 = XCR0_X87 & xsave_mask;
 
+	vcpu->vc_parent->vm_map->pmap->eptp = 0;
+
 exit:
 	return ret;
 }
@@ -2577,6 +2579,8 @@ vcpu_reset_regs_vmx(struct vcpu *vcpu, struct vcpu_reg_state *vrs)
 			ret = EINVAL;
 			goto exit;
 		}
+
+		vcpu->vc_parent->vm_map->pmap->eptp = eptp;
 	}
 
 	if (vcpu_vmx_check_cap(vcpu, IA32_VMX_PROCBASED_CTLS,
@@ -3968,8 +3972,9 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 	struct schedstate_percpu *spc;
 	struct vmx_invvpid_descriptor vid;
 	uint64_t eii, procbased, int_st;
-	uint16_t irq;
+	uint16_t irq, ldt_sel;
 	u_long s;
+	struct region_descriptor gdtr, idtr;
 
 	resume = 0;
 	irq = vrp->vrp_irq;
@@ -4170,10 +4175,18 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 			break;
 		}
 
+		sgdt(&gdtr);
+		sidt(&idtr);
+		sldt(&ldt_sel);
+
 		KERNEL_UNLOCK();
 		ret = vmx_enter_guest(&vcpu->vc_control_pa,
 		    &vcpu->vc_gueststate, resume,
 		    curcpu()->ci_vmm_cap.vcc_vmx.vmx_has_l1_flush_msr);
+
+		bare_lgdt(&gdtr);
+		lidt(&idtr);
+		lldt(ldt_sel);
 
 		/*
 		 * On exit, interrupts are disabled, and we are running with
@@ -5917,7 +5930,7 @@ svm_handle_msr(struct vcpu *vcpu)
 	uint64_t insn_length, msr;
 	uint64_t *rax, *rcx, *rdx;
 	struct vmcb *vmcb = (struct vmcb *)vcpu->vc_control_va;
-	int i;
+	int i, ret;
 
 	/* XXX: Validate RDMSR / WRMSR insn_length */
 	insn_length = 2;
@@ -5938,6 +5951,14 @@ svm_handle_msr(struct vcpu *vcpu)
 #endif /* VMM_DEBUG */
 		}
 	} else {
+                switch (*rcx) {
+			case MSR_LS_CFG:
+			DPRINTF("%s: guest read LS_CFG msr, injecting "
+			    "#GP\n", __func__);
+			ret = vmm_inject_gp(vcpu);
+			return (ret);
+                }
+
 		i = rdmsr_safe(*rcx, &msr);
 		if (i == 0) {
 			*rax = msr & 0xFFFFFFFFULL;
@@ -6265,6 +6286,7 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		break;
 	case 0x80000008:	/* Phys bits info and topology (AMD) */
 		CPUID(0x80000008, *rax, *rbx, *rcx, *rdx);
+		*rbx &= VMM_AMDSPEC_EBX_MASK;
 		/* Reset %rcx (topology) */
 		*rcx = 0;
 		break;
@@ -6378,7 +6400,8 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 		if (vcpu->vc_event != 0) {
 			DPRINTF("%s: inject event %d\n", __func__,
 			    vcpu->vc_event);
-			/* Set the "Send error code" flag for certain vectors */
+			vmcb->v_eventinj = 0;
+			/* Set the "Event Valid" flag for certain vectors */
 			switch (vcpu->vc_event & 0xFF) {
 				case VMM_EX_DF:
 				case VMM_EX_TS:
@@ -6387,10 +6410,10 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 				case VMM_EX_GP:
 				case VMM_EX_PF:
 				case VMM_EX_AC:
-					vmcb->v_eventinj |= (1ULL << 1);
+					vmcb->v_eventinj |= (1ULL << 11);
 			}
-			vmcb->v_eventinj = (vcpu->vc_event) | (1 << 31);
-			vmcb->v_eventinj |= (3ULL << 8); /* Hardware Exception */
+			vmcb->v_eventinj |= (vcpu->vc_event) | (1 << 31);
+			vmcb->v_eventinj |= (3ULL << 8); /* Exception */
 			vcpu->vc_event = 0;
 		}
 

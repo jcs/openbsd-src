@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_iwm.c,v 1.237 2019/02/27 07:47:57 stsp Exp $	*/
+/*	$OpenBSD: if_iwm.c,v 1.239 2019/04/01 10:47:13 kn Exp $	*/
 
 /*
  * Copyright (c) 2014, 2016 genua gmbh <info@genua.de>
@@ -7339,11 +7339,10 @@ iwm_intr(void *arg)
 
 	if (r1 & IWM_CSR_INT_BIT_RF_KILL) {
 		handled |= IWM_CSR_INT_BIT_RF_KILL;
-		if (iwm_check_rfkill(sc)) {
-			task_add(systq, &sc->init_task);
-			rv = 1;
-			goto out;
-		}
+		iwm_check_rfkill(sc);
+		task_add(systq, &sc->init_task);
+		rv = 1;
+		goto out_ena;
 	}
 
 	if (r1 & IWM_CSR_INT_BIT_SW_ERR) {
@@ -7892,6 +7891,9 @@ iwm_resume(struct iwm_softc *sc)
 	/* Clear device-specific "PCI retry timeout" register (41h). */
 	reg = pci_conf_read(sc->sc_pct, sc->sc_pcitag, 0x40);
 	pci_conf_write(sc->sc_pct, sc->sc_pcitag, 0x40, reg & ~0xff00);
+
+	iwm_enable_rfkill_int(sc);
+	iwm_check_rfkill(sc);
 
 	return iwm_prepare_card_hw(sc);
 }
