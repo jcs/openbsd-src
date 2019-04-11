@@ -1,4 +1,4 @@
-/*	$OpenBSD: boot.c,v 1.45 2018/04/08 13:24:36 kettenis Exp $	*/
+/*	$OpenBSD: boot.c,v 1.48 2019/04/10 19:41:03 florian Exp $	*/
 
 /*
  * Copyright (c) 2003 Dale Rahn
@@ -62,7 +62,7 @@ boot(dev_t bootdev)
 {
 	int fd;
 	int i, try = 0, st;
-	u_long marks[MARK_MAX];
+	uint64_t marks[MARK_MAX];
 
 	machdep();
 
@@ -91,6 +91,11 @@ boot(dev_t bootdev)
 	cmd.conf = "/etc/boot.conf";
 	cmd.addr = (void *)DEFAULT_KERNEL_ADDRESS;
 	cmd.timeout = boottimeout;
+
+	if (upgrade()) {
+		strlcpy(cmd.image, "/bsd.upgrade", sizeof(cmd.image));
+		printf("upgrade detected: switching to %s\n", cmd.image);
+	}
 
 	st = read_conf();
 
