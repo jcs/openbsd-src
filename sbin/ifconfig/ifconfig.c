@@ -1,4 +1,4 @@
-/*	$OpenBSD: ifconfig.c,v 1.399 2019/04/11 11:32:24 sthen Exp $	*/
+/*	$OpenBSD: ifconfig.c,v 1.401 2019/04/19 04:24:25 dlg Exp $	*/
 /*	$NetBSD: ifconfig.c,v 1.40 1997/10/01 02:19:43 enami Exp $	*/
 
 /*
@@ -139,6 +139,8 @@ struct ifencap {
 
 #define IFE_TXHPRIO_SET		0x1000
 	int		ife_txhprio;
+#define IFE_RXHPRIO_SET		0x2000
+	int		ife_rxhprio;
 };
 
 struct	ifreq		ifr, ridreq;
@@ -250,9 +252,6 @@ void	setpwe3fat(const char *, int);
 void	unsetpwe3fat(const char *, int);
 void	setpwe3neighbor(const char *, const char *);
 void	unsetpwe3neighbor(const char *, int);
-void	setvlantag(const char *, int);
-void	setvlandev(const char *, int);
-void	unsetvlandev(const char *, int);
 void	mpls_status(void);
 void	setrdomain(const char *, int);
 void	unsetrdomain(const char *, int);
@@ -295,6 +294,8 @@ void	delvnetflowid(const char *, int);
 void	getvnetflowid(struct ifencap *);
 void	gettxprio(struct ifencap *);
 void	settxprio(const char *, int);
+void	getrxprio(struct ifencap *);
+void	setrxprio(const char *, int);
 void	settunneldf(const char *, int);
 void	settunnelnodf(const char *, int);
 void	settunnelecn(const char *, int);
@@ -424,9 +425,10 @@ const struct	cmd {
 	{ "-vnetid",	0,		0,		delvnetid },
 	{ "parent",	NEXTARG,	0,		setifparent },
 	{ "-parent",	1,		0,		delifparent },
-	{ "vlan",	NEXTARG,	0,		setvlantag },
-	{ "vlandev",	NEXTARG,	0,		setvlandev },
-	{ "-vlandev",	1,		0,		unsetvlandev },
+	{ "vlan",	NEXTARG,	0,		setvnetid },
+	{ "-vlan",	0,		0,		delvnetid },
+	{ "vlandev",	NEXTARG,	0,		setifparent },
+	{ "-vlandev",	1,		0,		delifparent },
 	{ "group",	NEXTARG,	0,		setifgroup },
 	{ "-group",	NEXTARG,	0,		unsetifgroup },
 	{ "autoconf",	1,		0,		setautoconf },
@@ -503,6 +505,7 @@ const struct	cmd {
 	{ "vnetflowid",	0,		0,		setvnetflowid },
 	{ "-vnetflowid", 0,		0,		delvnetflowid },
 	{ "txprio",	NEXTARG,	0,		settxprio },
+	{ "rxprio",	NEXTARG,	0,		setrxprio },
 	{ "pppoedev",	NEXTARG,	0,		setpppoe_dev },
 	{ "pppoesvc",	NEXTARG,	0,		setpppoe_svc },
 	{ "-pppoesvc",	1,		0,		setpppoe_svc },
@@ -4214,6 +4217,46 @@ settxprio(const char *val, int d)
 	if (ioctl(s, SIOCSTXHPRIO, (caddr_t)&ifr) < 0)
 		warn("SIOCSTXHPRIO");
 }
+
+void
+getrxprio(struct ifencap *ife)
+{
+	if (strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name)) >=
+	    sizeof(ifr.ifr_name))
+		errx(1, "hdr prio: name is too long");
+
+	if (ioctl(s, SIOCGRXHPRIO, (caddr_t)&ifr) == -1)
+		return;
+
+	ife->ife_flags |= IFE_RXHPRIO_SET;
+	ife->ife_rxhprio = ifr.ifr_hdrprio;
+}
+
+void
+setrxprio(const char *val, int d)
+{
+	const char *errmsg = NULL;
+
+	if (strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name)) >=
+	    sizeof(ifr.ifr_name))
+		errx(1, "rx prio: name is too long");
+
+	if (strcmp(val, "packet") == 0)
+		ifr.ifr_hdrprio = IF_HDRPRIO_PACKET;
+	else if (strcmp(val, "payload") == 0)
+		ifr.ifr_hdrprio = IF_HDRPRIO_PAYLOAD;
+	else if (strcmp(val, "outer") == 0)
+		ifr.ifr_hdrprio = IF_HDRPRIO_OUTER;
+	else {
+		ifr.ifr_hdrprio = strtonum(val,
+		    IF_HDRPRIO_MIN, IF_HDRPRIO_MAX, &errmsg);
+		if (errmsg)
+			errx(1, "rx prio %s: %s", val, errmsg);
+	}
+
+	if (ioctl(s, SIOCSRXHPRIO, (caddr_t)&ifr) < 0)
+		warn("SIOCSRXHPRIO");
+}
 #endif
 
 void
@@ -4226,6 +4269,7 @@ getencap(void)
 	getifparent(&ife);
 #ifndef SMALL
 	gettxprio(&ife);
+	getrxprio(&ife);
 #endif
 
 	if (ife.ife_flags == 0)
@@ -4258,104 +4302,40 @@ getencap(void)
 
 #ifndef SMALL
 	if (ife.ife_flags & IFE_TXHPRIO_SET) {
+		printf(" txprio ");
 		switch (ife.ife_txhprio) {
 		case IF_HDRPRIO_PACKET:
-			printf(" txprio packet");
+			printf("packet");
 			break;
 		case IF_HDRPRIO_PAYLOAD:
-			printf(" txprio payload");
+			printf("payload");
 			break;
 		default:
-			printf(" txprio %d", ife.ife_txhprio);
+			printf("%d", ife.ife_txhprio);
+			break;
+		}
+	}
+
+	if (ife.ife_flags & IFE_RXHPRIO_SET) {
+		printf(" rxprio ");
+		switch (ife.ife_rxhprio) {
+		case IF_HDRPRIO_PACKET:
+			printf("packet");
+			break;
+		case IF_HDRPRIO_PAYLOAD:
+			printf("payload");
+			break;
+		case IF_HDRPRIO_OUTER:
+			printf("outer");
+			break;
+		default:
+			printf("%d", ife.ife_rxhprio);
 			break;
 		}
 	}
 #endif
 
 	printf("\n");
-}
-
-static int __tag = 0;
-static int __have_tag = 0;
-
-/* ARGSUSED */
-void
-setvlantag(const char *val, int d)
-{
-	u_int16_t tag;
-	struct vlanreq vreq;
-	const char *errmsg = NULL;
-
-	warnx("The 'vlan' option is deprecated, use 'vnetid'");
-
-	__tag = tag = strtonum(val, EVL_VLID_MIN, EVL_VLID_MAX, &errmsg);
-	if (errmsg)
-		errx(1, "vlan tag %s: %s", val, errmsg);
-	__have_tag = 1;
-
-	bzero((char *)&vreq, sizeof(struct vlanreq));
-	ifr.ifr_data = (caddr_t)&vreq;
-
-	if (ioctl(s, SIOCGETVLAN, (caddr_t)&ifr) == -1)
-		err(1, "SIOCGETVLAN");
-
-	vreq.vlr_tag = tag;
-
-	if (ioctl(s, SIOCSETVLAN, (caddr_t)&ifr) == -1)
-		err(1, "SIOCSETVLAN");
-}
-
-/* ARGSUSED */
-void
-setvlandev(const char *val, int d)
-{
-	struct vlanreq	 vreq;
-	int		 tag;
-	size_t		 skip;
-	const char	*estr;
-
-	warnx("The 'vlandev' option is deprecated, use 'parent'");
-
-	bzero((char *)&vreq, sizeof(struct vlanreq));
-	ifr.ifr_data = (caddr_t)&vreq;
-
-	if (ioctl(s, SIOCGETVLAN, (caddr_t)&ifr) == -1)
-		err(1, "SIOCGETVLAN");
-
-	(void) strlcpy(vreq.vlr_parent, val, sizeof(vreq.vlr_parent));
-
-	if (!__have_tag && vreq.vlr_tag == 0) {
-		skip = strcspn(ifr.ifr_name, "0123456789");
-		tag = strtonum(ifr.ifr_name + skip, 0, 4095, &estr);
-		if (estr != NULL)
-			errx(1, "invalid vlan tag and device specification");
-		vreq.vlr_tag = tag;
-	} else if (__have_tag)
-		vreq.vlr_tag = __tag;
-
-	if (ioctl(s, SIOCSETVLAN, (caddr_t)&ifr) == -1)
-		err(1, "SIOCSETVLAN");
-}
-
-/* ARGSUSED */
-void
-unsetvlandev(const char *val, int d)
-{
-	struct vlanreq vreq;
-
-	warnx("The '-vlandev' option is deprecated, use '-parent'");
-
-	bzero((char *)&vreq, sizeof(struct vlanreq));
-	ifr.ifr_data = (caddr_t)&vreq;
-
-	if (ioctl(s, SIOCGETVLAN, (caddr_t)&ifr) == -1)
-		err(1, "SIOCGETVLAN");
-
-	bzero((char *)&vreq.vlr_parent, sizeof(vreq.vlr_parent));
-	vreq.vlr_tag = 0;
-
-	if (ioctl(s, SIOCSETVLAN, (caddr_t)&ifr) == -1)
-		err(1, "SIOCSETVLAN");
 }
 
 void

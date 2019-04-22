@@ -1,4 +1,4 @@
-/*	$OpenBSD: sff.c,v 1.6 2019/04/11 11:32:24 sthen Exp $ */
+/*	$OpenBSD: sff.c,v 1.11 2019/04/16 09:32:06 dlg Exp $ */
 
 /*
  * Copyright (c) 2019 David Gwynne <dlg@openbsd.org>
@@ -164,6 +164,12 @@ static const char *sff8024_con_names[] = {
 #define SFF8472_EXT_ID_MOD_DEF_6		0x06
 #define SFF8472_EXT_ID_MOD_DEF_7		0x07
 #define SFF8472_CON			2 /* SFF8027 for connector values */
+#define SFF8472_DIST_SMF_KM		14
+#define SFF8472_DIST_SMF_M		15
+#define SFF8472_DIST_OM2		16
+#define SFF8472_DIST_OM1		17
+#define SFF8472_DIST_CU			18
+#define SFF8472_DIST_OM3		19
 #define SFF8472_VENDOR_START		20
 #define SFF8472_VENDOR_END		35
 #define SFF8472_PRODUCT_START		40
@@ -217,8 +223,35 @@ static const char *sff8024_con_names[] = {
 #define SFF_BIAS_FACTOR		500.0
 #define SFF_POWER_FACTOR	10000.0
 
+/*
+ * QSFP is defined by SFF-8436, but the management interface is
+ * updated and maintained by SFF-8636.
+ */
+
+/*
+ * XFP stuff is defined by INF-8077.
+ *
+ * The "Serial ID Memory Map" on page 1 contains the interesting strings
+ */
+
+/* SFF-8636 and INF-8077 share a layout for various strings */
+
+#define UPPER_VENDOR_START		148
+#define UPPER_VENDOR_END		163
+#define UPPER_PRODUCT_START		168
+#define UPPER_PRODUCT_END		183
+#define UPPER_REVISION_START		184
+#define UPPER_REVISION_END		185
+#define UPPER_SERIAL_START		196
+#define UPPER_SERIAL_END		211
+#define UPPER_DATECODE			212
+#define UPPER_LOT_START			218
+#define UPPER_LOT_END			219
+
 static void	hexdump(const void *, size_t);
 static int	if_sff8472(int, const char *, int, const struct if_sffpage *);
+static int	if_sff8636(int, const char *, int, const struct if_sffpage *);
+static int	if_inf8077(int, const char *, int, const struct if_sffpage *);
 
 static const char *
 sff_id_name(uint8_t id)
@@ -286,9 +319,15 @@ if_sff_info(int s, const char *ifname, int dump)
 	uint8_t id, ext_id;
 
 	if_sffpage_init(&pg0, ifname, IFSFF_ADDR_EEPROM, 0);
-
-	if (ioctl(s, SIOCGIFSFFPAGE, (caddr_t)&pg0) == -1)
-		return (-1);
+	if (ioctl(s, SIOCGIFSFFPAGE, (caddr_t)&pg0) == -1) {
+		if (errno == ENXIO) {
+			/* try 1 for XFP cos myx which can't switch pages... */
+			if_sffpage_init(&pg0, ifname, IFSFF_ADDR_EEPROM, 1);
+			if (ioctl(s, SIOCGIFSFFPAGE, (caddr_t)&pg0) == -1)
+				return (-1);
+		} else
+			return (-1);
+	}
 
 	if (dump)
 		if_sffpage_dump(ifname, &pg0);
@@ -306,6 +345,21 @@ if_sff_info(int s, const char *ifname, int dump)
 		/* FALLTHROUGH */
 	case SFF8024_ID_GBIC:
 		error = if_sff8472(s, ifname, dump, &pg0);
+		break;
+	case SFF8024_ID_XFP:
+		if (pg0.sff_page != 1) {
+			if_sffpage_init(&pg0, ifname, IFSFF_ADDR_EEPROM, 1);
+			if (ioctl(s, SIOCGIFSFFPAGE, (caddr_t)&pg0) == -1)
+				return (-1);
+			if (dump)
+				if_sffpage_dump(ifname, &pg0);
+		}
+		error = if_inf8077(s, ifname, dump, &pg0);
+		break;
+	case SFF8024_ID_QSFP:
+	case SFF8024_ID_QSFP_PLUS:
+	case SFF8024_ID_QSFP28:
+		error = if_sff8636(s, ifname, dump, &pg0);
 		break;
 	}
 
@@ -393,7 +447,6 @@ if_sff_power2dbm(const struct if_sffpage *sff, size_t start)
 	return (10.0 * log10f((float)power / 10000.0));
 }
 
-
 static void
 if_sff_printalarm(const char *unit, int range, float actual,
     float alrm_high, float alrm_low, float warn_high, float warn_log)
@@ -409,26 +462,53 @@ if_sff_printalarm(const char *unit, int range, float actual,
 		printf(" [WARNING]");
 }
 
+static void
+if_sff_printdist(const char *type, int value, int scale)
+{
+	int distance = value * scale;
+
+	if (value == 0)
+		return;
+
+	if (distance < 10000)
+		printf (", %s%u%s", value > 254 ? ">" : "", distance, type);
+	else
+		printf (", %s%0.1fk%s", value > 254 ? ">" : "",
+		    distance / 1000.0, type);
+}
+
 static int
 if_sff8472(int s, const char *ifname, int dump, const struct if_sffpage *pg0)
 {
 	struct if_sffpage ddm;
 	uint8_t con, ddm_types;
-	uint16_t wavelength;
+	int i;
 
 	con = pg0->sff_data[SFF8472_CON];
 	printf("%s", sff_con_name(con));
 
-	wavelength = if_sff_int(pg0, SFF8472_WAVELENGTH);
-	switch (wavelength) {
+	i = if_sff_int(pg0, SFF8472_WAVELENGTH);
+	switch (i) {
 	/* Copper Cable */
 	case 0x0100: /* SFF-8431 Appendix E */
 	case 0x0400: /* SFF-8431 limiting */
 	case 0x0c00: /* SFF-8431 limiting and FC-PI-4 limiting */
 		break;
 	default:
-		printf(", %.02u nm", wavelength);
+		printf(", %.02u nm", i);
 	}
+
+	if (pg0->sff_data[SFF8472_DIST_SMF_M] > 0 &&
+	    pg0->sff_data[SFF8472_DIST_SMF_M] < 255)
+		if_sff_printdist("m SMF",
+		    pg0->sff_data[SFF8472_DIST_SMF_M], 100);
+	else
+		if_sff_printdist("km SMF",
+		    pg0->sff_data[SFF8472_DIST_SMF_KM], 1);
+	if_sff_printdist("m OM2", pg0->sff_data[SFF8472_DIST_OM2], 10);
+	if_sff_printdist("m OM1", pg0->sff_data[SFF8472_DIST_OM1], 10);
+	if_sff_printdist("m OM3", pg0->sff_data[SFF8472_DIST_OM3], 10);
+	if_sff_printdist("m", pg0->sff_data[SFF8472_DIST_CU], 1);
 
 	printf("\n\tmodel: ");
 	if_sff_ascii_print(pg0, "",
@@ -500,6 +580,42 @@ if_sff8472(int s, const char *ifname, int dump, const struct if_sffpage *pg0)
 	    if_sff_power2dbm(&ddm, SFF8472_AW_RX_POWER + WARN_LOW));
 
 	putchar('\n');
+	return (0);
+}
+
+static void
+if_upper_strings(const struct if_sffpage *pg)
+{
+	printf("\n\tmodel: ");
+	if_sff_ascii_print(pg, "",
+	    UPPER_VENDOR_START, UPPER_VENDOR_END, " ");
+	if_sff_ascii_print(pg, "",
+	    UPPER_PRODUCT_START, UPPER_PRODUCT_END, "");
+	if_sff_ascii_print(pg, " rev ",
+	    UPPER_REVISION_START, UPPER_REVISION_END, "");
+
+	if_sff_ascii_print(pg, "\n\tserial: ",
+	    UPPER_SERIAL_START, UPPER_SERIAL_END, " ");
+	if_sff_date_print(pg, "date: ", UPPER_DATECODE, " ");
+	if_sff_ascii_print(pg, "lot: ",
+	    UPPER_LOT_START, UPPER_LOT_END, "");
+
+	putchar('\n');
+}
+
+static int
+if_inf8077(int s, const char *ifname, int dump, const struct if_sffpage *pg1)
+{
+	if_upper_strings(pg1);
+
+	return (0);
+}
+
+static int
+if_sff8636(int s, const char *ifname, int dump, const struct if_sffpage *pg0)
+{
+	if_upper_strings(pg0);
+
 	return (0);
 }
 

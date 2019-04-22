@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.634 2019/04/08 17:55:51 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.637 2019/04/18 12:22:07 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: April 8 2019 $
+.Dd $Mdocdate: April 18 2019 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -1053,6 +1053,14 @@ Switch the current session for client
 .Ar target-client
 to
 .Ar target-session .
+As a special case,
+.Fl t
+may refer to a pane (a target that contains
+.Ql \&: ,
+.Ql \&.
+or
+.Ql % ) ,
+in which case the session, window and pane are all changed.
 If
 .Fl l ,
 .Fl n
@@ -2480,9 +2488,17 @@ command),
 a server option with
 .Fl s ,
 otherwise a session option.
+If the option is not a user option,
+.Fl w
+and
+.Fl s
+are unnecessary -
+.Nm
+will infer the type from the option name.
 If
 .Fl g
 is given, the global session or window option is set.
+.Pp
 .Fl F
 expands formats in the option value.
 The
@@ -3376,6 +3392,15 @@ the server options with
 .Fl s ,
 otherwise the session options for
 .Ar target session .
+If
+.Ar option
+is given and is not a user option,
+.Fl w
+and
+.Fl s
+are unnecessary -
+.Nm
+will infer the type from the option name.
 Global session or window options are listed if
 .Fl g
 is used.

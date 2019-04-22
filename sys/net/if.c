@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.574 2019/04/10 09:51:35 dlg Exp $	*/
+/*	$OpenBSD: if.c,v 1.578 2019/04/19 07:38:02 dlg Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -615,6 +615,8 @@ if_attach_common(struct ifnet *ifp)
 	ifp->if_snd.ifq_ifqs[0] = &ifp->if_snd;
 	ifp->if_ifqs = ifp->if_snd.ifq_ifqs;
 	ifp->if_nifqs = 1;
+	if (ifp->if_txmit == 0)
+		ifp->if_txmit = IF_TXMIT_DEFAULT;
 
 	ifiq_init(&ifp->if_rcv, ifp, 0);
 
@@ -902,7 +904,6 @@ if_input_process(struct ifnet *ifp, struct mbuf_list *ml)
 	struct mbuf *m;
 	struct ifih *ifih;
 	struct srp_ref sr;
-	int s;
 
 	if (ml_empty(ml))
 		return;
@@ -923,7 +924,6 @@ if_input_process(struct ifnet *ifp, struct mbuf_list *ml)
 	 * lists.
 	 */
 	NET_RLOCK();
-	s = splnet();
 	while ((m = ml_dequeue(ml)) != NULL) {
 		/*
 		 * Pass this mbuf to all input handlers of its
@@ -938,7 +938,6 @@ if_input_process(struct ifnet *ifp, struct mbuf_list *ml)
 		if (ifih == NULL)
 			m_freem(m);
 	}
-	splx(s);
 	NET_RUNLOCK();
 }
 
@@ -2171,6 +2170,7 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	case SIOCSVNETID:
 	case SIOCSVNETFLOWID:
 	case SIOCSTXHPRIO:
+	case SIOCSRXHPRIO:
 	case SIOCSIFPAIR:
 	case SIOCSIFPARENT:
 	case SIOCDIFPARENT:
@@ -2333,6 +2333,70 @@ if_sffpage_check(const caddr_t data)
 	}
 
 	return (0);
+}
+
+int
+if_txhprio_l2_check(int hdrprio)
+{
+	switch (hdrprio) {
+	case IF_HDRPRIO_PACKET:
+		return (0);
+	default:
+		if (hdrprio >= IF_HDRPRIO_MIN && hdrprio <= IF_HDRPRIO_MAX)
+			return (0);
+		break;
+	}
+
+	return (EINVAL);
+}
+
+int
+if_txhprio_l3_check(int hdrprio)
+{
+	switch (hdrprio) {
+	case IF_HDRPRIO_PACKET:
+	case IF_HDRPRIO_PAYLOAD:
+		return (0);
+	default:
+		if (hdrprio >= IF_HDRPRIO_MIN && hdrprio <= IF_HDRPRIO_MAX)
+			return (0);
+		break;
+	}
+
+	return (EINVAL);
+}
+
+int
+if_rxhprio_l2_check(int hdrprio)
+{
+	switch (hdrprio) {
+	case IF_HDRPRIO_PACKET:
+	case IF_HDRPRIO_OUTER:
+		return (0);
+	default:
+		if (hdrprio >= IF_HDRPRIO_MIN && hdrprio <= IF_HDRPRIO_MAX)
+			return (0);
+		break;
+	}
+
+	return (EINVAL);
+}
+
+int
+if_rxhprio_l3_check(int hdrprio)
+{
+	switch (hdrprio) {
+	case IF_HDRPRIO_PACKET:
+	case IF_HDRPRIO_PAYLOAD:
+	case IF_HDRPRIO_OUTER:
+		return (0);
+	default:
+		if (hdrprio >= IF_HDRPRIO_MIN && hdrprio <= IF_HDRPRIO_MAX)
+			return (0);
+		break;
+	}
+
+	return (EINVAL);
 }
 
 /*
