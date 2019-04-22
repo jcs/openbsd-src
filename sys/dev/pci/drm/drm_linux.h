@@ -2723,24 +2723,7 @@ request_firmware(const struct firmware **fw, const char *name,
 		return 0;
 }
 
-static inline int
-request_firmware_nowait(struct module *module, bool uevent,
-    const char *name, void *device, gfp_t gfp, void *context,
-    void (*cont)(const struct firmware *fw, void *context))
-{
-	int r;
-	struct firmware *f = malloc(sizeof(struct firmware), M_DRM, M_NOWAIT);
-	if (f == NULL)
-		return -1;
-
-	r = loadfirmware(name, __DECONST(u_char **, &f->data), &f->size);
-	if (r != 0)
-		return -r;
-
-	cont(f, context);
-
-	return 0;
-}
+#define request_firmware_nowait(a, b, c, d, e, f, g) -EINVAL
 
 static inline void
 release_firmware(const struct firmware *fw)

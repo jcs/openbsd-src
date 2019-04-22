@@ -1386,11 +1386,7 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 	intel_uncore_init(dev);
 
 	/* Load CSR Firmware for SKL */
-#ifdef __OpenBSD__
-	config_mountroot((struct device *)dev, intel_csr_ucode_init_mountroot);
-#else
 	intel_csr_ucode_init(dev);
-#endif
 
 	ret = i915_gem_gtt_init(dev);
 	if (ret)
