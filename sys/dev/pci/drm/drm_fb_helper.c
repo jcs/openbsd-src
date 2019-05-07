@@ -575,6 +575,9 @@ static bool drm_fb_helper_is_bound(struct drm_fb_helper *fb_helper)
 #ifdef notyet
 	if (READ_ONCE(dev->master))
 		return false;
+#else
+	if (!SPLAY_EMPTY(&dev->files))
+		return false;
 #endif
 
 	drm_for_each_crtc(crtc, dev) {
@@ -2004,7 +2007,7 @@ static int drm_fb_helper_single_fb_probe(struct drm_fb_helper *fb_helper,
 		/* First time: disable all crtc's.. */
 #ifdef notyet
 		/* XXX calling this hangs boot with no connected outputs */
-		if (!fb_helper->deferred_setup /* && !READ_ONCE(fb_helper->dev->master) */)
+		if (!fb_helper->deferred_setup /* && SPLAY_EMPTY(fb_helper->dev->files) */)
 			restore_fbdev_mode(fb_helper);
 #endif
 		return -EAGAIN;

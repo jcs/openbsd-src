@@ -1599,7 +1599,6 @@
 ./usr/share/man/man4/macppc/mpcpcibr.4
 ./usr/share/man/man4/macppc/onyx.4
 ./usr/share/man/man4/macppc/openpic.4
-./usr/share/man/man4/macppc/openprom.4
 ./usr/share/man/man4/macppc/pgs.4
 ./usr/share/man/man4/macppc/piic.4
 ./usr/share/man/man4/macppc/smu.4
@@ -1615,6 +1614,7 @@
 ./usr/share/man/man4/maxrtc.4
 ./usr/share/man/man4/maxtmp.4
 ./usr/share/man/man4/mbg.4
+./usr/share/man/man4/mcx.4
 ./usr/share/man/man4/mfi.4
 ./usr/share/man/man4/mfii.4
 ./usr/share/man/man4/midi.4
@@ -1665,11 +1665,13 @@
 ./usr/share/man/man4/oce.4
 ./usr/share/man/man4/octeon/amdcf.4
 ./usr/share/man/man4/octeon/cnmac.4
+./usr/share/man/man4/octeon/octcf.4
 ./usr/share/man/man4/octeon/octcib.4
 ./usr/share/man/man4/octeon/octcit.4
 ./usr/share/man/man4/octeon/octciu.4
 ./usr/share/man/man4/octeon/octcrypto.4
 ./usr/share/man/man4/octeon/octgpio.4
+./usr/share/man/man4/octeon/octiic.4
 ./usr/share/man/man4/octeon/octmmc.4
 ./usr/share/man/man4/octeon/octrng.4
 ./usr/share/man/man4/octeon/octrtc.4
@@ -1679,6 +1681,7 @@
 ./usr/share/man/man4/ohci.4
 ./usr/share/man/man4/onewire.4
 ./usr/share/man/man4/oosiop.4
+./usr/share/man/man4/openprom.4
 ./usr/share/man/man4/options.4
 ./usr/share/man/man4/osiop.4
 ./usr/share/man/man4/otus.4
@@ -1858,7 +1861,6 @@
 ./usr/share/man/man4/sparc64/magma.4
 ./usr/share/man/man4/sparc64/mem.4
 ./usr/share/man/man4/sparc64/mgx.4
-./usr/share/man/man4/sparc64/openprom.4
 ./usr/share/man/man4/sparc64/pcons.4
 ./usr/share/man/man4/sparc64/pmc.4
 ./usr/share/man/man4/sparc64/power.4
@@ -2149,6 +2151,7 @@
 ./usr/share/man/man5/rad.conf.5
 ./usr/share/man/man5/radiusd.conf.5
 ./usr/share/man/man5/ranlib.5
+./usr/share/man/man5/rcsfile.5
 ./usr/share/man/man5/relayd.conf.5
 ./usr/share/man/man5/remote.5
 ./usr/share/man/man5/resolv.conf.5
@@ -2530,6 +2533,7 @@
 ./usr/share/man/man8/syslogd.8
 ./usr/share/man/man8/sysmerge.8
 ./usr/share/man/man8/syspatch.8
+./usr/share/man/man8/sysupgrade.8
 ./usr/share/man/man8/talkd.8
 ./usr/share/man/man8/tcpdrop.8
 ./usr/share/man/man8/tcpdump.8
@@ -2553,6 +2557,7 @@
 ./usr/share/man/man8/vmctl.8
 ./usr/share/man/man8/vmd.8
 ./usr/share/man/man8/vmstat.8
+./usr/share/man/man8/vnconfig.8
 ./usr/share/man/man8/watchdogd.8
 ./usr/share/man/man8/wsconscfg.8
 ./usr/share/man/man8/wsconsctl.8

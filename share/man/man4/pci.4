@@ -1,4 +1,4 @@
-.\"	$OpenBSD: pci.4,v 1.368 2019/03/22 10:37:08 jmc Exp $
+.\"	$OpenBSD: pci.4,v 1.371 2019/05/04 15:57:20 jmc Exp $
 .\"	$NetBSD: pci.4,v 1.29 2000/04/01 00:32:23 tsarna Exp $
 .\"
 .\" Copyright (c) 2000 Theo de Raadt.  All rights reserved.
@@ -31,7 +31,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd $Mdocdate: March 22 2019 $
+.Dd $Mdocdate: May 4 2019 $
 .Dt PCI 4
 .Os
 .Sh NAME
@@ -219,13 +219,15 @@ Intel 82598/82599/X540/X550 PCI Express 10Gb Ethernet device
 .It Xr ixgb 4
 Intel PRO/10GbE 10Gb Ethernet device
 .It Xr ixl 4
-Intel Ethernet 700 series controller device
+Intel Ethernet 700 series Ethernet device
 .It Xr jme 4
 JMicron JMC25x/JMC26x 10/100/Gigabit Ethernet device
 .It Xr lge 4
 Level 1 LXT1001 NetCellerator PCI Gigabit Ethernet device
 .It Xr lii 4
 Attansic L2 10/100 Ethernet device
+.It Xr mcx 4
+Mellanox 5th generation Ethernet device
 .It Xr msk 4
 Marvell Yukon-2 10/100/Gigabit Ethernet device
 .It Xr mtd 4
@@ -330,7 +332,7 @@ Intel PRO/Wireless 3945ABG IEEE 802.11a/b/g wireless network device
 .Ss Cryptography accelerators
 .Bl -tag -width 10n -offset ind -compact
 .It Xr ccp 4
-AMD Cryptographic Co-processor
+AMD cryptographic co-processor
 .It Xr glxsb 4
 Geode LX Security Block crypto accelerator
 .It Xr hifn 4

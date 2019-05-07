@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.224 2019/03/04 18:14:27 schwarze Exp $ */
+/*	$OpenBSD: main.c,v 1.229 2019/05/03 18:38:44 schwarze Exp $ */
 /*
  * Copyright (c) 2008-2012 Kristaps Dzonsons <kristaps@bsd.lv>
  * Copyright (c) 2010-2012, 2014-2019 Ingo Schwarze <schwarze@openbsd.org>
@@ -20,6 +20,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>	/* MACHINE */
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <assert.h>
@@ -119,7 +120,7 @@ main(int argc, char *argv[])
 	char		*conf_file, *defpaths, *auxpaths;
 	char		*oarg, *tagarg;
 	unsigned char	*uc;
-	size_t		 i, sz;
+	size_t		 i, sz, ssz;
 	int		 prio, best_prio;
 	enum outmode	 outmode;
 	int		 fd, startdir;
@@ -275,12 +276,9 @@ main(int argc, char *argv[])
 			search.outkey = oarg;
 		else {
 			while (oarg != NULL) {
-				thisarg = oarg;
 				if (manconf_output(&conf.output,
-				    strsep(&oarg, ","), 0) == 0)
-					continue;
-				warnx("-O %s: Bad argument", thisarg);
-				return (int)MANDOCLEVEL_BADARG;
+				    strsep(&oarg, ","), 0) == -1)
+					return (int)MANDOCLEVEL_BADARG;
 			}
 		}
 	}
@@ -329,7 +327,7 @@ main(int argc, char *argv[])
 		} else if (argc > 1 &&
 		    ((uc = (unsigned char *)argv[0]) != NULL) &&
 		    ((isdigit(uc[0]) && (uc[1] == '\0' ||
-		      (isalpha(uc[1]) && uc[2] == '\0'))) ||
+		      isalpha(uc[1]))) ||
 		     (uc[0] == 'n' && uc[1] == '\0'))) {
 			search.sec = (char *)uc;
 			argv++;
@@ -383,6 +381,7 @@ main(int argc, char *argv[])
 				res[sz].file = mandoc_strdup(argv[c]);
 				res[sz].names = NULL;
 				res[sz].output = NULL;
+				res[sz].bits = 0;
 				res[sz].ipath = SIZE_MAX;
 				res[sz].sec = 10;
 				res[sz].form = FORM_SRC;
@@ -405,7 +404,7 @@ main(int argc, char *argv[])
 
 		if (outmode == OUTMODE_ONE) {
 			argc = 1;
-			best_prio = 20;
+			best_prio = 40;
 		} else if (outmode == OUTMODE_ALL)
 			argc = (int)sz;
 
@@ -424,10 +423,21 @@ main(int argc, char *argv[])
 				sec = res[i].file;
 				sec += strcspn(sec, "123456789");
 				if (sec[0] == '\0')
-					continue;
+					continue; /* No section at all. */
 				prio = sec_prios[sec[0] - '1'];
-				if (sec[1] != '/')
-					prio += 10;
+				if (search.sec != NULL) {
+					ssz = strlen(search.sec);
+					if (strncmp(sec, search.sec, ssz) == 0)
+						sec += ssz;
+				} else
+					sec++; /* Prefer without suffix. */
+				if (*sec != '/')
+					prio += 10; /* Wrong dir name. */
+				if (search.sec != NULL &&
+				    (strlen(sec) <= ssz  + 3 ||
+				     strcmp(sec + strlen(sec) - ssz,
+				      search.sec) != 0))
+					prio += 20; /* Wrong file ext. */
 				if (prio >= best_prio)
 					continue;
 				best_prio = prio;
@@ -671,6 +681,7 @@ fs_lookup(const struct manpaths *paths, size_t ipath,
 	const char *sec, const char *arch, const char *name,
 	struct manpage **res, size_t *ressz)
 {
+	struct stat	 sb;
 	glob_t		 globinfo;
 	struct manpage	*page;
 	char		*file;
@@ -680,13 +691,13 @@ fs_lookup(const struct manpaths *paths, size_t ipath,
 	form = FORM_SRC;
 	mandoc_asprintf(&file, "%s/man%s/%s.%s",
 	    paths->paths[ipath], sec, name, sec);
-	if (access(file, R_OK) != -1)
+	if (stat(file, &sb) != -1)
 		goto found;
 	free(file);
 
 	mandoc_asprintf(&file, "%s/cat%s/%s.0",
 	    paths->paths[ipath], sec, name);
-	if (access(file, R_OK) != -1) {
+	if (stat(file, &sb) != -1) {
 		form = FORM_CAT;
 		goto found;
 	}
@@ -695,7 +706,7 @@ fs_lookup(const struct manpaths *paths, size_t ipath,
 	if (arch != NULL) {
 		mandoc_asprintf(&file, "%s/man%s/%s/%s.%s",
 		    paths->paths[ipath], sec, arch, name, sec);
-		if (access(file, R_OK) != -1)
+		if (stat(file, &sb) != -1)
 			goto found;
 		free(file);
 	}
@@ -709,13 +720,16 @@ fs_lookup(const struct manpaths *paths, size_t ipath,
 	if (globres == 0)
 		file = mandoc_strdup(*globinfo.gl_pathv);
 	globfree(&globinfo);
-	if (globres == 0)
-		goto found;
+	if (globres == 0) {
+		if (stat(file, &sb) != -1)
+			goto found;
+		free(file);
+	}
 	if (res != NULL || ipath + 1 != paths->sz)
 		return 0;
 
 	mandoc_asprintf(&file, "%s.%s", name, sec);
-	globres = access(file, R_OK);
+	globres = stat(file, &sb);
 	free(file);
 	return globres != -1;
 
@@ -731,6 +745,7 @@ found:
 	page->file = file;
 	page->names = NULL;
 	page->output = NULL;
+	page->bits = NAME_FILE & NAME_MASK;
 	page->ipath = ipath;
 	page->sec = (*sec >= '1' && *sec <= '9') ? *sec - '1' + 1 : 10;
 	page->form = form;

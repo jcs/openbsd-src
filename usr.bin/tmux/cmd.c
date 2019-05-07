@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd.c,v 1.142 2019/03/18 11:58:40 nicm Exp $ */
+/* $OpenBSD: cmd.c,v 1.146 2019/05/03 18:42:40 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -321,10 +321,11 @@ cmd_try_alias(int *argc, char ***argv)
 {
 	struct options_entry		 *o;
 	struct options_array_item	 *a;
+	union options_value		 *ov;
 	int				  old_argc = *argc, new_argc, i;
 	char				**old_argv = *argv, **new_argv;
 	size_t				  wanted;
-	const char			 *s, *cp = NULL;
+	const char			 *cp = NULL;
 
 	o = options_get_only(global_options, "command-alias");
 	if (o == NULL)
@@ -333,14 +334,12 @@ cmd_try_alias(int *argc, char ***argv)
 
 	a = options_array_first(o);
 	while (a != NULL) {
-		s = options_array_item_value(a);
-		if (s != NULL) {
-			cp = strchr(s, '=');
-			if (cp != NULL &&
-			    (size_t)(cp - s) == wanted &&
-			    strncmp(old_argv[0], s, wanted) == 0)
-				break;
-		}
+		ov = options_array_item_value(a);
+		cp = strchr(ov->string, '=');
+		if (cp != NULL &&
+		    (size_t)(cp - ov->string) == wanted &&
+		    strncmp(old_argv[0], ov->string, wanted) == 0)
+			break;
 		a = options_array_next(a);
 	}
 	if (a == NULL)
@@ -482,17 +481,16 @@ cmd_mouse_at(struct window_pane *wp, struct mouse_event *m, u_int *xp,
 	u_int	x, y;
 
 	if (last) {
-		x = m->lx;
-		y = m->ly;
+		x = m->lx + m->ox;
+		y = m->ly + m->oy;
 	} else {
-		x = m->x;
-		y = m->y;
+		x = m->x + m->ox;
+		y = m->y + m->oy;
 	}
+	log_debug("%s: x=%u, y=%u%s", __func__, x, y, last ? " (last)" : "");
 
 	if (m->statusat == 0 && y > 0)
 		y--;
-	else if (m->statusat > 0 && y >= (u_int)m->statusat)
-		y = m->statusat - 1;
 
 	if (x < wp->xoff || x >= wp->xoff + wp->sx)
 		return (-1);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: unwind.c,v 1.23 2019/04/02 07:47:23 florian Exp $	*/
+/*	$OpenBSD: unwind.c,v 1.25 2019/05/03 13:02:00 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>

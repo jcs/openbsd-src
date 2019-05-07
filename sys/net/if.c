@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.578 2019/04/19 07:38:02 dlg Exp $	*/
+/*	$OpenBSD: if.c,v 1.581 2019/04/28 22:15:57 mpi Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -695,12 +695,10 @@ if_enqueue(struct ifnet *ifp, struct mbuf *m)
 #endif
 
 #if NBRIDGE > 0
-	if (ifp->if_bridgeport && (m->m_flags & M_PROTO1) == 0) {
+	if (ifp->if_bridgeidx && (m->m_flags & M_PROTO1) == 0) {
 		int error;
 
-		KERNEL_LOCK();
-		error = bridge_output(ifp, m, NULL, NULL);
-		KERNEL_UNLOCK();
+		error = bridge_enqueue(ifp, m);
 		return (error);
 	}
 #endif
@@ -898,12 +896,30 @@ if_ih_remove(struct ifnet *ifp, int (*input)(struct ifnet *, struct mbuf *,
 	}
 }
 
+static void
+if_ih_input(struct ifnet *ifp, struct mbuf *m)
+{
+	struct ifih *ifih;
+	struct srp_ref sr;
+
+	/*
+	 * Pass this mbuf to all input handlers of its
+	 * interface until it is consumed.
+	 */
+	SRPL_FOREACH(ifih, &sr, &ifp->if_inputs, ifih_next) {
+		if ((*ifih->ifih_input)(ifp, m, ifih->ifih_cookie))
+			break;
+	}
+	SRPL_LEAVE(&sr);
+
+	if (ifih == NULL)
+		m_freem(m);
+}
+
 void
 if_input_process(struct ifnet *ifp, struct mbuf_list *ml)
 {
 	struct mbuf *m;
-	struct ifih *ifih;
-	struct srp_ref sr;
 
 	if (ml_empty(ml))
 		return;
@@ -924,21 +940,35 @@ if_input_process(struct ifnet *ifp, struct mbuf_list *ml)
 	 * lists.
 	 */
 	NET_RLOCK();
-	while ((m = ml_dequeue(ml)) != NULL) {
-		/*
-		 * Pass this mbuf to all input handlers of its
-		 * interface until it is consumed.
-		 */
-		SRPL_FOREACH(ifih, &sr, &ifp->if_inputs, ifih_next) {
-			if ((*ifih->ifih_input)(ifp, m, ifih->ifih_cookie))
-				break;
-		}
-		SRPL_LEAVE(&sr);
-
-		if (ifih == NULL)
-			m_freem(m);
-	}
+	while ((m = ml_dequeue(ml)) != NULL)
+		if_ih_input(ifp, m);
 	NET_RUNLOCK();
+}
+
+void
+if_vinput(struct ifnet *ifp, struct mbuf *m)
+{
+#if NBPFILTER > 0
+	caddr_t if_bpf;
+#endif
+
+	m->m_pkthdr.ph_ifidx = ifp->if_index;
+	m->m_pkthdr.ph_rtableid = ifp->if_rdomain;
+
+	counters_pkt(ifp->if_counters,
+	    ifc_ipackets, ifc_ibytes, m->m_pkthdr.len);
+
+#if NBPFILTER > 0
+	if_bpf = ifp->if_bpf;
+	if (if_bpf) {
+		if (bpf_mtap_ether(if_bpf, m, BPF_DIRECTION_OUT)) {
+			m_freem(m);
+			return;
+		}
+	}
+#endif
+
+	if_ih_input(ifp, m);
 }
 
 void
@@ -1162,7 +1192,7 @@ if_isconnected(const struct ifnet *ifp0, unsigned int ifidx)
 		connected = 1;
 
 #if NBRIDGE > 0
-	if (SAME_BRIDGE(ifp0->if_bridgeport, ifp->if_bridgeport))
+	if (ifp0->if_bridgeidx == ifp->if_bridgeidx)
 		connected = 1;
 #endif
 #if NCARP > 0

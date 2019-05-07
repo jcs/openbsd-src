@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_output.c,v 1.241 2018/12/03 17:25:22 claudio Exp $	*/
+/*	$OpenBSD: ip6_output.c,v 1.243 2019/04/28 22:15:58 mpi Exp $	*/
 /*	$KAME: ip6_output.c,v 1.172 2001/03/25 09:55:56 itojun Exp $	*/
 
 /*
@@ -1620,8 +1620,12 @@ ip6_raw_ctloutput(int op, struct socket *so, int level, int optname,
 				break;
 			}
 			optval = *mtod(m, int *);
-			if ((optval % 2) != 0) {
-				/* the API assumes even offset values */
+			if (optval < -1 ||
+			    (optval > 0 && (optval % 2) != 0)) {
+				/*
+				 * The API assumes non-negative even offset
+				 * values or -1 as a special value.
+				 */
 				error = EINVAL;
 			} else if (so->so_proto->pr_protocol == IPPROTO_ICMPV6) {
 				if (optval != icmp6off)
@@ -2704,7 +2708,7 @@ in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 	if (m->m_pkthdr.csum_flags & M_TCP_CSUM_OUT) {
 		if (!ifp || !(ifp->if_capabilities & IFCAP_CSUM_TCPv6) ||
 		    ip6->ip6_nxt != IPPROTO_TCP ||
-		    ifp->if_bridgeport != NULL) {
+		    ifp->if_bridgeidx != 0) {
 			tcpstat_inc(tcps_outswcsum);
 			in6_delayed_cksum(m, IPPROTO_TCP);
 			m->m_pkthdr.csum_flags &= ~M_TCP_CSUM_OUT; /* Clear */
@@ -2712,7 +2716,7 @@ in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 	} else if (m->m_pkthdr.csum_flags & M_UDP_CSUM_OUT) {
 		if (!ifp || !(ifp->if_capabilities & IFCAP_CSUM_UDPv6) ||
 		    ip6->ip6_nxt != IPPROTO_UDP ||
-		    ifp->if_bridgeport != NULL) {
+		    ifp->if_bridgeidx != 0) {
 			udpstat_inc(udps_outswcsum);
 			in6_delayed_cksum(m, IPPROTO_UDP);
 			m->m_pkthdr.csum_flags &= ~M_UDP_CSUM_OUT; /* Clear */

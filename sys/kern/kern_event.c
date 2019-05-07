@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_event.c,v 1.101 2018/11/27 15:52:50 cheloha Exp $	*/
+/*	$OpenBSD: kern_event.c,v 1.104 2019/05/04 14:52:45 mpi Exp $	*/
 
 /*-
  * Copyright (c) 1999,2000,2001 Jonathan Lemon <jlemon@FreeBSD.org>

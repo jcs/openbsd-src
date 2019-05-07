@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.637 2019/04/18 12:22:07 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.643 2019/05/03 20:44:24 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: April 18 2019 $
+.Dd $Mdocdate: May 3 2019 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -206,7 +206,6 @@ and
 files in the current directory, where
 .Em PID
 is the PID of the server or client process.
-.Pp
 If
 .Fl v
 is specified twice, an additional
@@ -847,13 +846,22 @@ and
 are the name of and shell command to execute in the initial window.
 With
 .Fl d ,
-the initial size is 80 x 24;
+the initial size comes from the global
+.Ic default-size
+option;
 .Fl x
 and
 .Fl y
 can be used to specify a different size.
 .Ql -
 uses the size of the current client if any.
+If
+.Fl x
+or
+.Fl y
+is given, the
+.Ic default-size
+option is set for the session.
 .Pp
 If run from a terminal, any
 .Xr termios 4
@@ -930,6 +938,36 @@ with
 If
 .Fl S
 is specified, only update the client's status line.
+.Pp
+The
+.Fl U ,
+.Fl D ,
+.Fl L
+.Fl R ,
+and
+.Fl c
+flags allow the visible portion of a window which is larger than the client
+to be changed.
+.Fl U
+moves the visible part up by
+.Ar adjustment
+rows and
+.Fl D
+down,
+.Fl L
+left by
+.Ar adjustment
+columns and
+.Fl R
+right.
+.Fl c
+returns to tracking the cursor automatically.
+If
+.Ar adjustment
+is omitted, 1 is used.
+Note that the visible position is a property of the client not of the
+window, changing the current window in the attached session will reset
+it.
 .Pp
 .Fl C
 sets the width and height of a control client.
@@ -1143,8 +1181,10 @@ The following commands are supported in copy mode:
 .It Li "copy-end-of-line [<prefix>]" Ta "D" Ta "C-k"
 .It Li "copy-line [<prefix>]" Ta "" Ta ""
 .It Li "copy-pipe <command> [<prefix>]" Ta "" Ta ""
+.It Li "copy-pipe-no-clear <command> [<prefix>]" Ta "" Ta ""
 .It Li "copy-pipe-and-cancel <command> [<prefix>]" Ta "" Ta ""
 .It Li "copy-selection [<prefix>]" Ta "" Ta ""
+.It Li "copy-selection-no-clear [<prefix>]" Ta "" Ta ""
 .It Li "copy-selection-and-cancel [<prefix>]" Ta "Enter" Ta "M-w"
 .It Li "cursor-down" Ta "j" Ta "Down"
 .It Li "cursor-left" Ta "h" Ta "Left"
@@ -1206,6 +1246,8 @@ The
 .Ql -and-cancel
 variants of some commands exit copy mode after they have completed (for copy
 commands) or when the cursor reaches the bottom (for scrolling commands).
+.Ql -no-clear
+variants do not clear the selection.
 .Pp
 The next and previous word keys use space and the
 .Ql - ,
@@ -1780,6 +1822,7 @@ option.
 .It Xo Ic new-window
 .Op Fl adkP
 .Op Fl c Ar start-directory
+.Op Fl e Ar environment
 .Op Fl F Ar format
 .Op Fl n Ar window-name
 .Op Fl t Ar target-window
@@ -1819,6 +1862,12 @@ See the
 .Ic remain-on-exit
 option to change this behaviour.
 .Pp
+.Fl e
+takes the form
+.Ql VARIABLE=value
+and sets an environment variable for the newly created window; it may be
+specified multiple times.
+.Pp
 The
 .Ev TERM
 environment variable must be set to
@@ -1831,7 +1880,9 @@ for all programs running
 New windows will automatically have
 .Ql TERM=screen
 added to their environment, but care must be taken not to reset this in shell
-start-up files.
+start-up files or by the
+.Fl e
+option.
 .Pp
 The
 .Fl P
@@ -1990,8 +2041,9 @@ This command will automatically set
 .Ic window-size
 to manual in the window options.
 .It Xo Ic respawn-pane
-.Op Fl c Ar start-directory
 .Op Fl k
+.Op Fl c Ar start-directory
+.Op Fl e Ar environment
 .Op Fl t Ar target-pane
 .Op Ar shell-command
 .Xc
@@ -2007,9 +2059,15 @@ The pane must be already inactive, unless
 is given, in which case any existing command is killed.
 .Fl c
 specifies a new working directory for the pane.
+The
+.Fl e
+option has the same meaning as for the
+.Ic new-window
+command.
 .It Xo Ic respawn-window
-.Op Fl c Ar start-directory
 .Op Fl k
+.Op Fl c Ar start-directory
+.Op Fl e Ar environment
 .Op Fl t Ar target-window
 .Op Ar shell-command
 .Xc
@@ -2025,6 +2083,11 @@ The window must be already inactive, unless
 is given, in which case any existing command is killed.
 .Fl c
 specifies a new working directory for the window.
+The
+.Fl e
+option has the same meaning as for the
+.Ic new-window
+command.
 .It Xo Ic rotate-window
 .Op Fl DU
 .Op Fl t Ar target-window
@@ -2141,8 +2204,9 @@ is given and the selected window is already the current window,
 the command behaves like
 .Ic last-window .
 .It Xo Ic split-window
-.Op Fl bdfhvP
+.Op Fl bdfhIvP
 .Op Fl c Ar start-directory
+.Op Fl e Ar environment
 .Oo Fl l
 .Ar size |
 .Fl p Ar percentage Oc
@@ -2176,6 +2240,24 @@ option creates a new pane spanning the full window height (with
 or full window width (with
 .Fl v ) ,
 instead of splitting the active pane.
+.Pp
+An empty
+.Ar shell-command
+('') will create a pane with no command running in it.
+Output can be sent to such a pane with the
+.Ic display-message
+command.
+The
+.Fl I
+flag (if
+.Ar shell-command
+is not specified or empty)
+will create an empty pane and forward any output from stdin to it.
+For example:
+.Bd -literal -offset indent
+$ make 2>&1|tmux splitw -dI &
+.Ed
+.Pp
 All other options have the same meaning as for the
 .Ic new-window
 command.
@@ -2757,9 +2839,15 @@ This option should be configured when
 .Nm
 is used as a login shell.
 .It Ic default-size Ar XxY
-Set the default size of windows when the size is not set or the
+Set the default size of new windows when the
 .Ic window-size
-option is manual.
+option is set to manual or when a session is created with
+.Ic new-session
+.Fl d .
+The value is the width and height separated by an
+.Ql x
+character.
+The default is 80x24.
 .It Xo Ic destroy-unattached
 .Op Ic on | off
 .Xc
@@ -3094,10 +3182,13 @@ Supported window options are:
 Aggressively resize the chosen window.
 This means that
 .Nm
-will resize the window to the size of the smallest session for which it is the
-current window, rather than the smallest session to which it is attached.
-The window may resize when the current window is changed on another sessions;
-this option is good for full-screen programs which support
+will resize the window to the size of the smallest or largest session
+(see the
+.Ic window-size
+option) for which it is the current window, rather than the session to
+which it is attached.
+The window may resize when the current window is changed on another
+session; this option is good for full-screen programs which support
 .Dv SIGWINCH
 and poor for interactive programs such as shells.
 .Pp
@@ -3339,6 +3430,28 @@ see the
 .Sx STYLES
 section.
 .Pp
+.It Xo Ic window-size
+.Ar largest | Ar smallest | Ar manual
+.Xc
+Configure how
+.Nm
+determines the window size.
+If set to
+.Ar largest ,
+the size of the largest attached session is used; if
+.Ar smallest ,
+the size of the smallest.
+If
+.Ar manual ,
+the size of a new window is set from the
+.Ic default-size
+option and windows are resized automatically.
+See also the
+.Ic resize-window
+command and the
+.Ic aggressive-resize
+option.
+.Pp
 .It Ic window-style Ar style
 Set the default window style.
 For how to specify
@@ -3346,21 +3459,6 @@ For how to specify
 see the
 .Sx STYLES
 section.
-.Pp
-.It Xo Ic window-size
-.Op Ic smallest | largest | manual
-.Xc
-Tell
-.Nm
-how to automatically size windows either the size of the smallest session
-containing the window, the size of the largest, or manual size.
-See also the
-.Ic resize-window
-command and the
-.Ic default-size
-and
-.Ic aggressive-resize
-options.
 .Pp
 .It Xo Ic wrap-search
 .Op Ic on | off
@@ -3379,7 +3477,7 @@ function key sequences; these have a number included to indicate modifiers such
 as Shift, Alt or Ctrl.
 .El
 .It Xo Ic show-options
-.Op Fl gqsvw
+.Op Fl gHqsvw
 .Op Fl t Ar target-session | Ar target-window
 .Op Ar option
 .Xc
@@ -3411,6 +3509,8 @@ If
 is set, no error will be returned if
 .Ar option
 is unset.
+.Fl H
+includes hooks (omitted by default).
 .It Xo Ic show-window-options
 .Op Fl gv
 .Op Fl t Ar target-window
@@ -3435,6 +3535,26 @@ commands have an
 .Em after
 hook and there are a number of hooks not associated with commands.
 .Pp
+Hooks are stored as array options, members of the array are executed in
+order when the hook is triggered.
+Hooks may be configured with the
+.Ic set-hook
+or
+.Ic set-option
+commands and displayed with
+.Ic show-hooks
+or
+.Ic show-options
+.Fl H .
+The following two commands are equivalent:
+.Bd -literal -offset indent.
+set-hook -g pane-mode-changed[42] 'set -g status-left-style bg=red'
+set-option -g pane-mode-changed[42] 'set -g status-left-style bg=red'
+.Ed
+.Pp
+Setting a hook without specifying an array index clears the hook and sets the
+first member of the array.
+.Pp
 A command's after
 hook is run after it completes, except when the command is run as part of a hook
 itself.
@@ -3445,7 +3565,7 @@ For example, the following command adds a hook to select the even-vertical
 layout after every
 .Ic split-window :
 .Bd -literal -offset indent
-set-hook after-split-window "selectl even-vertical"
+set-hook -g after-split-window "selectl even-vertical"
 .Ed
 .Pp
 All the notifications listed in the
@@ -3509,7 +3629,7 @@ Run when a window is unlinked from a session.
 Hooks are managed with these commands:
 .Bl -tag -width Ds
 .It Xo Ic set-hook
-.Op Fl gRu
+.Op Fl agRu
 .Op Fl t Ar target-session
 .Ar hook-name
 .Ar command
@@ -3531,6 +3651,8 @@ hooks (for
 .Ar target-session
 with
 .Fl t ) .
+.Fl a
+appends to a hook.
 Like options, session hooks inherit from the global ones.
 .Pp
 With
@@ -3886,12 +4008,10 @@ The following variables are available, where appropriate:
 .It Li "session_group_size" Ta "" Ta "Size of session group"
 .It Li "session_group_list" Ta "" Ta "List of sessions in group"
 .It Li "session_grouped" Ta "" Ta "1 if session in a group"
-.It Li "session_height" Ta "" Ta "Height of session"
 .It Li "session_id" Ta "" Ta "Unique session ID"
 .It Li "session_many_attached" Ta "" Ta "1 if multiple clients attached"
 .It Li "session_name" Ta "#S" Ta "Name of session"
 .It Li "session_stack" Ta "" Ta "Window indexes in most recent order"
-.It Li "session_width" Ta "" Ta "Width of session"
 .It Li "session_windows" Ta "" Ta "Number of windows in session"
 .It Li "socket_path" Ta "" Ta "Server socket path"
 .It Li "start_time" Ta "" Ta "Server start time"
@@ -3899,6 +4019,7 @@ The following variables are available, where appropriate:
 .It Li "window_activity_flag" Ta "" Ta "1 if window has activity"
 .It Li "window_active" Ta "" Ta "1 if window active"
 .It Li "window_bell_flag" Ta "" Ta "1 if window has bell"
+.It Li "window_bigger" Ta "" Ta "1 if window is larger than client"
 .It Li "window_end_flag" Ta "" Ta "1 if window has the highest index"
 .It Li "window_flags" Ta "#F" Ta "Window flags"
 .It Li "window_format" Ta "" Ta "1 if format is for a window (not assuming the current)"
@@ -3909,6 +4030,8 @@ The following variables are available, where appropriate:
 .It Li "window_layout" Ta "" Ta "Window layout description, ignoring zoomed window panes"
 .It Li "window_linked" Ta "" Ta "1 if window is linked across sessions"
 .It Li "window_name" Ta "#W" Ta "Name of window"
+.It Li "window_offset_x" Ta "" Ta "X offset into window if larger than client"
+.It Li "window_offset_y" Ta "" Ta "Y offset into window if larger than client"
 .It Li "window_panes" Ta "" Ta "Number of panes in window"
 .It Li "window_silence_flag" Ta "" Ta "1 if window has silence alert"
 .It Li "window_stack_index" Ta "" Ta "Index in session most recent stack"
@@ -3929,7 +4052,7 @@ In addition, embedded styles may be specified in format options, such as
 by enclosing them in
 .Ql #[
 and
-.Ql ] .
+.Ql \&] .
 .Pp
 A style may be the single term
 .Ql default
@@ -4323,7 +4446,7 @@ option.
 This command works only from inside
 .Nm .
 .It Xo Ic display-message
-.Op Fl apv
+.Op Fl aIpv
 .Op Fl c Ar target-client
 .Op Fl t Ar target-pane
 .Op Ar message
@@ -4350,6 +4473,10 @@ is given, otherwise the active pane for the session attached to
 prints verbose logging as the format is parsed and
 .Fl a
 lists the format variables and their values.
+.Pp
+.Fl I
+forwards any input read from stdin to the empty pane given by
+.Ar target-pane .
 .El
 .Sh BUFFERS
 .Nm

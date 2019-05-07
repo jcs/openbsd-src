@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.98 2019/04/01 08:46:16 patrick Exp $
+# $OpenBSD: GENERIC,v 1.101 2019/04/30 20:22:54 patrick Exp $
 #
 # GENERIC machine description file
 #
@@ -45,6 +45,7 @@ acpimcfg*	at acpi?
 acpipci*	at acpi?
 pci*		at acpipci?
 ahci*		at acpi?
+ccp*		at acpi?		# AMD Cryptographic Co-processor
 com*		at acpi?
 pluart*		at acpi?
 xhci*		at acpi?
@@ -145,9 +146,12 @@ mvgicp*		at fdt? early 1
 mvicu*		at fdt? early 1
 mvpinctrl*	at fdt? early 1
 mvgpio*		at fdt?
+mvmdio*		at fdt?
+mvneta*		at fdt?
 mvrng*		at fdt?
 mvrtc*		at fdt?
 mvtemp*		at fdt?
+mvuart*		at fdt?
 
 # Rockchip SoCs
 rkclock*	at fdt? early 1

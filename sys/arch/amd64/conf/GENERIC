@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.468 2019/03/28 09:41:35 kettenis Exp $
+#	$OpenBSD: GENERIC,v 1.470 2019/05/04 17:59:40 deraadt Exp $
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -360,14 +360,14 @@ wsmouse*	at pms? mux 0
 inteldrm*	at pci? 	# Intel i915, i945 DRM driver
 intagp*		at inteldrm?
 agp*		at intagp?
-drm0		at inteldrm? console 1
+drm0		at inteldrm? primary 1
 drm*		at inteldrm?
-wsdisplay0	at inteldrm? console 1
+wsdisplay0	at inteldrm? primary 1
 wsdisplay*	at inteldrm? mux -1
 radeondrm*	at pci? 	# ATI Radeon DRM driver
-drm0		at radeondrm? console 1
+drm0		at radeondrm? primary 1
 drm*		at radeondrm?
-wsdisplay0	at radeondrm? console 1
+wsdisplay0	at radeondrm? primary 1
 wsdisplay*	at radeondrm? mux -1
 
 pcppi0		at isa?
@@ -390,7 +390,7 @@ lpt0	at isa? port 0x378 irq 7	# standard PC parallel ports
 lpt*	at puc?
 
 efifb0		at mainbus?		# EFI Framebuffer
-wsdisplay0	at efifb? console ?
+wsdisplay0	at efifb?
 
 ahc*	at pci?				# Adaptec 2940 SCSI controllers
 jmb*	at pci?				# JMicron JMB36x controllers
@@ -523,6 +523,7 @@ lii*	at pci?				# Attansic L2 Ethernet
 jme*	at pci?				# JMicron JMC250/JMC260 Ethernet
 bnxt*	at pci?				# Broadcom BCM573xx, BCM574xx
 ixl*	at pci?				# Intel Ethernet 700 Series
+mcx*	at pci?				# Mellanox ConnectX-4
 
 # Wireless network cards
 acx*	at pci?				# TI ACX100/ACX111 (802.11b/g)

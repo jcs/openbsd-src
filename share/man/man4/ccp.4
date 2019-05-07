@@ -1,4 +1,4 @@
-.\"     $OpenBSD: ccp.4,v 1.2 2018/04/20 04:41:51 dlg Exp $
+.\"     $OpenBSD: ccp.4,v 1.4 2019/04/23 20:23:36 jmc Exp $
 .\"
 .\" Copyright (c) 2018 David Gwynne <dlg@openbsd.org>
 .\"
@@ -14,17 +14,18 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: April 20 2018 $
+.Dd $Mdocdate: April 23 2019 $
 .Dt CCP 4
 .Os
 .Sh NAME
 .Nm ccp
-.Nd AMD Cryptographic Co-processor
+.Nd AMD cryptographic co-processor
 .Sh SYNOPSIS
+.Cd "ccp* at acpi?"
 .Cd "ccp* at fdt?"
 .Cd "ccp* at pci?"
 .Sh DESCRIPTION
-AMD Cryptographic Co-processor devices provide offload for various
+AMD cryptographic co-processor devices provide offload for various
 cryptographic algorithms, offload of zlib compression and decompression,
 and a random number generator.
 .Pp

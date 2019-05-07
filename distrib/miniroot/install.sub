@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1113 2019/04/02 08:51:49 deraadt Exp $
+#	$OpenBSD: install.sub,v 1.1120 2019/05/03 20:38:15 krw Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -331,6 +331,18 @@ get_dkdevs_uninitialized() {
 		_disks=$(rmel "$_d" $_disks)
 	done
 	bsort $_disks
+}
+
+# Return list of valid root disks
+get_dkdevs_root() {
+	local _disks=$(get_dkdevs) _d
+
+	if [[ $MODE == upgrade ]]; then
+		for _d in $_disks; do
+			is_rootdisk "$_d" || _disks=$(rmel "$_d" $_disks)
+		done
+	fi
+	echo -n $_disks
 }
 
 # Return list of all network devices, optionally limited by parameters to
@@ -891,14 +903,11 @@ __EOT
 }
 
 # Obtain and output the inet information related to interface $1.
-# Outputs one of:
-# DOWN
-# UP
-# UP\n<addr> <netmask> <rest of inet line>[\n<more inet lines>]
+# Outputs:
+# <flags>\n<addr> <netmask> <rest of inet line>[\n<more inet lines>]
 v4_info() {
 	ifconfig $1 inet | sed -n '
-		1s/.*<UP,.*/UP/p
-		1s/.*<.*/DOWN/p
+		1s/.*flags=.*<\(.*\)>.*/\1/p
 		/inet/s/netmask //
 		/.inet /s///p'
 }
@@ -1057,14 +1066,10 @@ v4_config() {
 }
 
 # Obtain and output the inet6 information related to interface $1.
-# Outputs one of:
-# DOWN
-# UP
-# UP\n<addr> <prefixlen> <rest of inet6 line>[\n<more inet6 lines>]
+# <flags>\n<addr> <prefixlen> <rest of inet6 line>[\n<more inet6 lines>]
 v6_info() {
 	ifconfig $1 inet6 | sed -n '
-		1s/.*<UP,.*/UP/p
-		1s/.*<.*/DOWN/p
+		1s/.*flags=.*<\(.*\)>.*/\1/p
 		/scopeid/d
 		/inet6/s/prefixlen //
 		/.inet6 /s///p'
@@ -1112,53 +1117,47 @@ v6_config() {
 	# Preset the default answers by preserving possibly existing
 	# configuration from previous runs.
 	set -- $(v6_info $_if)
-	[[ -n $2 ]] && { _addr=$2; _prefixlen=$3; }
+	if [[ $1 == *AUTOCONF6* ]]; then
+		_addr=autoconf
+	elif [[ -n $2 ]]; then
+		_addr=$2
+		_prefixlen=$3
+	fi
 
-	ifconfig $_if inet6 >/dev/null 2>&1 && _prompt="or 'autoconf' "
-	_prompt="IPv6 address for $_if? (${_prompt}or 'none')"
+	_prompt="IPv6 address for $_if? (or 'autoconf' or 'none')"
 
 	while :; do
 		ask_until "$_prompt" "${_addr:-none}"
 		case $resp in
-		none)	return
+		none)	ifconfig $_if -inet6
+			return
 			;;
 		autoconf)
-			if ! ifconfig $_if inet6 >/dev/null 2>&1; then
-				echo "No INET6 support."
-				$AI && exit 1 || return
-			fi
-			if ifconfig $_if inet6 autoconf; then
-				echo "inet6 autoconf" >>$_hn
-				return
-			else
-				echo "inet6 autoconf failed."
-				$AI && exit 1 || return
-			fi
+			# Nuke any existing address before enabling autoconf.
+			ifconfig $_if -inet6
+			ifconfig $_if inet6 autoconf up
+			echo "inet6 autoconf" >>$_hn
+			return
 			;;
-		*)	_addr=$resp
+		*)	ifconfig $_if inet6 -autoconf
+			_addr=${resp%%/*}
+			if [[ $resp == */* ]]; then
+				_prefixlen=${resp##$_addr/}
+			else
+				ask_until "IPv6 prefix length for $_if?" "64"
+				_prefixlen=$resp
+			fi
+			if ifconfig $_if inet6 $_addr/$_prefixlen up; then
+				echo "inet6 $_addr $_prefixlen" >>$_hn
+				add_hostent "$_addr" "$_name"
+				v6_defroute $_if
+				return
+			fi
 			;;
 		esac
 
-		# Ask for prefix length if the user did not use CIDR notation.
-		if [[ $_addr == */* ]]; then
-			_prefixlen=
-		else
-			ask_until "IPv6 prefix length for $_if?" "${_prefixlen:=64}"
-			_prefixlen=$resp
-		fi
-
-		if ifconfig $_if inet6 $_addr ${_prefixlen:+prefixlen $_prefixlen} up; then
-			echo "inet6 $_addr $_prefixlen" >>$_hn
-			add_hostent "${_addr%%/*}" "$_name"
-			break
-		else
-			_addr=
-			_prefixlen=
-			$AI && exit 1
-		fi
+		$AI && exit 1
 	done
-
-	v6_defroute $_if
 }
 
 # Perform an 802.11 network scan on interface $1 and cache the result a file.
@@ -2241,11 +2240,11 @@ is_rootdisk() {
 
 # Get global root information. ie. ROOTDISK, ROOTDEV and SWAPDEV.
 get_rootinfo() {
-	local _default=$(get_dkdevs) _dkdev
+	local _default=$(get_dkdevs_root) _dkdev
 	local _q="Which disk is the root disk? ('?' for details)"
 
 	while :; do
-		echo "Available disks are: $(get_dkdevs | sed 's/^$/none/')."
+		echo "Available disks are: $(get_dkdevs_root | sed 's/^$/none/')."
 		_ask "$_q" $_default || continue
 		case $resp in
 		"?")	diskinfo $(get_dkdevs);;
@@ -2770,6 +2769,11 @@ finish_up() {
 	# ensure it references the kernel as /bsd.
 	sha256 /mnt/bsd | (umask 077; sed 's,/mnt,,' >/mnt/var/db/kernel.SHA256)
 
+	# Keep SHA256.sig from installed sets for sysupgrade(8).
+	if [[ -f /tmp/SHA256.sig ]]; then
+		cp /tmp/SHA256.sig /mnt/var/db/installed.SHA256.sig
+	fi
+
 	if [[ -f $_kernel_dir.tgz ]]; then
 		echo -n "Relinking to create unique kernel..."
 		(
@@ -2859,7 +2863,8 @@ do_autoinstall() {
 	/$AI_MODE -af /tmp/ai/ai.$AI_MODE.conf 2>&1 </dev/null |
 		sed "s/^.*$(echo '\r')//;w/tmp/ai/ai.log"
 
-	[[ -f /tmp/ai/ai.done ]] || err_exit "failed; check /tmp/ai/ai.log"
+	$UU || [[ -f /tmp/ai/ai.done ]] || 
+		err_exit "failed; check /tmp/ai/ai.log"
 
 	# Email autoinstall protocol to root on next boot.
 	prep_root_mail /tmp/ai/ai.log "$(hostname) $AI_MODE log"
@@ -3178,6 +3183,8 @@ do_upgrade() {
 	umount /mnt || { echo "Can't umount $ROOTDEV!"; exit; }
 	mount_fs
 
+	rm -f /mnt/bsd.upgrade
+
 	# Feed the random pool some entropy before we read from it.
 	feed_random
 
@@ -3195,6 +3202,24 @@ do_upgrade() {
 	finish_up
 }
 
+check_unattendedupgrade() {
+	local _d=$(get_dkdevs_root) _rc=1
+
+	_d=${_d%% *}
+	(
+		if [[ -n $_d ]]; then
+			make_dev $_d
+			if mount -t ffs -r /dev/${_d}a /mnt; then
+				ls /mnt/bsd.upgrade 
+				_rc=$?
+				umount -f /mnt
+			fi
+			rm -f /dev/{r,}$_d?
+		fi
+		return $_rc
+	) > /dev/null 2>&1
+}
+
 # ------------------------------------------------------------------------------
 # Initial actions common to both installs and upgrades.
 #
@@ -3204,14 +3229,16 @@ do_upgrade() {
 
 # Parse parameters.
 AI=false
+UU=false
 MODE=
 PROGNAME=${0##*/}
 AI_RESPFILE=
-while getopts "af:m:" opt; do
+while getopts "af:m:x" opt; do
 	case $opt in
 	a)	AI=true;;
 	f)	AI_RESPFILE=$OPTARG;;
 	m)	MODE=$OPTARG;;
+	x)	UU=true;;
 	*)	usage;;
 	esac
 done
@@ -3240,7 +3267,7 @@ umount -af >/dev/null 2>&1
 # Make sure only successful dhcp requests retain their state.
 for _if in $(get_ifs dhcp); do
 	set -- $(v4_info $_if)
-	[[ $1 == UP && -n $2 ]] && continue
+	[[ $1 == @(UP,*) && -n $2 ]] && continue
 	ifconfig $_if delete down -group dhcp 2>/dev/null
 done
 
@@ -3344,6 +3371,20 @@ pressing RETURN.  You can exit this program at any time by pressing
 Control-C, but this can leave your system in an inconsistent state.
 
 __EOT
+elif $UU; then
+	MODE=upgrade
+	check_unattendedupgrade || exit 1
+
+	# trigger watchdog
+	(sleep 1800 && reboot) &
+
+	cat <<__EOT > /auto_upgrade.conf
+Location of sets = disk
+Pathname to the sets = /home/_sysupgrade/
+Set name(s) = done
+__EOT
+	get_responsefile
+	do_autoinstall
 elif [[ -z $AI_RESPFILE ]]; then
 	get_responsefile ||
 		err_exit "No response file found; non-interactive mode aborted."

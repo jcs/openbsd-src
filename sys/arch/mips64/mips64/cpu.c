@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.70 2018/12/04 16:24:13 visa Exp $ */
+/*	$OpenBSD: cpu.c,v 1.73 2019/05/06 12:57:56 visa Exp $ */
 
 /*
  * Copyright (c) 1997-2004 Opsycon AB (www.opsycon.se)
@@ -470,6 +470,23 @@ save_fpu(void)
 		MipsSaveCurFPState(p);
 	else
 		MipsSaveCurFPState16(p);
+}
+
+void
+need_resched(struct cpu_info *ci)
+{
+	ci->ci_want_resched = 1;
+
+	if (ci->ci_curproc != NULL) {
+		/*
+		 * Ensure that preceding stores are visible to other CPUs
+		 * before setting the AST flag.
+		 */
+		membar_producer();
+
+		aston(ci->ci_curproc);
+		cpu_unidle(ci);
+	}
 }
 
 #ifdef MULTIPROCESSOR
