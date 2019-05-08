@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mcx.c,v 1.1 2019/05/04 06:40:33 jmatthew Exp $ */
+/*	$OpenBSD: if_mcx.c,v 1.5 2019/05/07 23:21:49 jmatthew Exp $ */
 
 /*
  * Copyright (c) 2017 David Gwynne <dlg@openbsd.org>
@@ -3187,7 +3187,8 @@ mcx_create_eq(struct mcx_softc *sc)
 
 	sc->sc_eq_cons = 0;
 
-	npages = howmany((1 << MCX_LOG_EQ_SIZE) * sizeof(struct mcx_eq_entry), PAGE_SIZE);
+	npages = howmany((1 << MCX_LOG_EQ_SIZE) * sizeof(struct mcx_eq_entry),
+	    MCX_PAGE_SIZE);
 	paslen = npages * sizeof(*pas);
 	insize = sizeof(struct mcx_cmd_create_eq_mb_in) + paslen;
 
@@ -3442,7 +3443,8 @@ mcx_create_cq(struct mcx_softc *sc, int eqn)
 	}
 	cq = &sc->sc_cq[sc->sc_num_cq];
 
-	npages = howmany((1 << MCX_LOG_CQ_SIZE) * sizeof(struct mcx_cq_entry), PAGE_SIZE);
+	npages = howmany((1 << MCX_LOG_CQ_SIZE) * sizeof(struct mcx_cq_entry),
+	    MCX_PAGE_SIZE);
 	paslen = npages * sizeof(*pas);
 	insize = sizeof(struct mcx_cmd_create_cq_mb_in) + paslen;
 
@@ -3528,7 +3530,8 @@ mcx_create_rq(struct mcx_softc *sc, int cqn)
 	uint8_t *doorbell;
 	int insize, npages, paslen, i, token;
 
-	npages = howmany((1 << MCX_LOG_RQ_SIZE) * sizeof(struct mcx_rq_entry), PAGE_SIZE);
+	npages = howmany((1 << MCX_LOG_RQ_SIZE) * sizeof(struct mcx_rq_entry),
+	    MCX_PAGE_SIZE);
 	paslen = npages * sizeof(*pas);
 	insize = 0x10 + sizeof(struct mcx_rq_ctx) + paslen;
 
@@ -3712,7 +3715,8 @@ mcx_create_sq(struct mcx_softc *sc, int cqn)
 	uint8_t *doorbell;
 	int insize, npages, paslen, i, token;
 
-	npages = howmany((1 << MCX_LOG_SQ_SIZE) * sizeof(struct mcx_sq_entry), PAGE_SIZE);
+	npages = howmany((1 << MCX_LOG_SQ_SIZE) * sizeof(struct mcx_sq_entry),
+	    MCX_PAGE_SIZE);
 	paslen = npages * sizeof(*pas);
 	insize = sizeof(struct mcx_sq_ctx) + paslen;
 
@@ -4654,10 +4658,11 @@ mcx_rx_fill_slots(struct mcx_softc *sc, void *ring, struct mcx_slot *slots, uint
 	rqe = ring;
 	for (fills = 0; fills < nslots; fills++) {
 		ms = &slots[slot];
-		m = MCLGETI(NULL, M_DONTWAIT, NULL, bufsize);
+		m = MCLGETI(NULL, M_DONTWAIT, NULL, bufsize + ETHER_ALIGN);
 		if (m == NULL)
 			break;
 
+		m->m_data += ETHER_ALIGN;
 		m->m_len = m->m_pkthdr.len = bufsize;
 		if (bus_dmamap_load_mbuf(sc->sc_dmat, ms->ms_map, m,
 		    BUS_DMA_NOWAIT) != 0) {
@@ -4798,7 +4803,6 @@ mcx_process_cq(struct mcx_softc *sc, struct mcx_cq *cq)
 	struct ifnet *ifp = &sc->sc_ac.ac_if;
 	struct mcx_cq_entry *cqe;
 	uint8_t *cqp;
-	int count = 0;
 	struct mbuf_list ml = MBUF_LIST_INITIALIZER();
 	int rxfree, txfree;
 
@@ -4825,14 +4829,11 @@ mcx_process_cq(struct mcx_softc *sc, struct mcx_cq *cq)
 			break;
 		}
 
-		count++;
 		cq->cq_cons++;
 	}
 
-	if (count > 0) {
-		cq->cq_count++;
-		mcx_arm_cq(sc, cq);
-	}
+	cq->cq_count++;
+	mcx_arm_cq(sc, cq);
 
 	if (rxfree > 0) {
 		if_rxr_put(&sc->sc_rxr, rxfree);
@@ -4987,7 +4988,7 @@ mcx_up(struct mcx_softc *sc)
 		goto destroy_rq;
 
 	/* receive queue */
-	if (mcx_create_rq(sc, sc->sc_cq[1].cq_n) != 0)
+	if (mcx_create_rq(sc, sc->sc_cq[0].cq_n) != 0)
 		goto destroy_cq;
 
 	if (mcx_create_tir(sc) != 0)
