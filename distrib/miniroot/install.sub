@@ -1,5 +1,5 @@
 #!/bin/ksh
-#	$OpenBSD: install.sub,v 1.1121 2019/05/08 15:53:31 florian Exp $
+#	$OpenBSD: install.sub,v 1.1130 2019/05/10 15:38:19 krw Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015, Robert Peichaer <rpe@openbsd.org>
@@ -891,12 +891,16 @@ dhcp_request() {
 
 	ifconfig $_if group dhcp >/dev/null 2>&1
 
-	dhclient -c /dev/stdin $_if <<__EOT
+	if [[ -x /sbin/dhclient ]]; then
+		/sbin/dhclient -c /dev/stdin $_if <<__EOT
 initial-interval 1;
 backoff-cutoff 2;
 reboot 5;
 timeout 10;
 __EOT
+	else
+		echo "DHCP leases not available during install - no /sbin/dhclient."
+	fi
 
 	# Move resolv.conf to where it will be copied to the installed system.
 	mv /etc/resolv.conf.tail /tmp/i/resolv.conf.tail
@@ -1001,67 +1005,51 @@ vlan_config() {
 	ifconfig $_if $_vi parent $_vd
 }
 
-# Configure IPv4 interface $1, add hostname $2 to the hosts file and create the
-# hostname.if file $3. Ask the user for the IPv4 address and network mask if the
-# address was not in specified in CIDR notation, unless he chooses 'dhcp'.
+# Configure IPv4 on interface $1.
 v4_config() {
-	local _if=$1 _name=$2 _hn=$3 _prompt _addr _mask
+	local _if=$1 _name=$2 _hn=$3 _addr _mask _newaddr
 
-	# Preset the default answers by preserving possibly existing
-	# configuration from previous runs.
-	if ifconfig $_if | grep -q 'groups:.* dhcp'; then
-		_addr=dhcp
-	else
-		set -- $(v4_info $_if)
-		if [[ -n $2 ]]; then
-			_addr=$2; _mask=$(hextodec $3)
-			ifconfig $_if inet $_addr delete
-		fi
+	# Set default answers based on any existing configuration.
+	set -- $(v4_info $_if)
+	if [[ -n $2 ]] && ! isin $_if $(get_ifs dhcp); then
+		_addr=$2;
+		_mask=$(hextodec $3)
 	fi
 
-	if [[ -x /sbin/dhclient ]]; then
-		_prompt="or 'dhcp' "
-		# Don't make 'dhcp' the default if dhcp was already used.
-		ifconfig dhcp >/dev/null 2>&1 || _addr=dhcp
-	fi
-	_prompt="IPv4 address for $_if? (${_prompt}or 'none')"
+	# Nuke existing inet configuration.
+	ifconfig $_if -inet
+	ifconfig $_if -group dhcp >/dev/null 2>&1
 
 	while :; do
-		ask_until "$_prompt" "$_addr"
+		ask_until "IPv4 address for $_if? (or 'dhcp' or 'none')" \
+			  "${_addr:-dhcp}"
 		case $resp in
 		none)	return
 			;;
-		dhcp)	if [[ ! -x /sbin/dhclient ]]; then
-				echo "DHCP not possible - no /sbin/dhclient."
-				$AI && exit 1 || continue
-			else
-				dhcp_request $_if
-				echo "dhcp" >>$_hn
-				return
-			fi
-			;;
-		*)	_addr=$resp
-			ifconfig $_if -group dhcp >/dev/null 2>&1
+		dhcp)	dhcp_request $_if
+			echo "dhcp" >>$_hn
+			return
 			;;
 		esac
 
+		_newaddr=$resp
+
 		# Ask for the netmask if the user did not use CIDR notation.
-		if [[ $_addr == */* ]]; then
-			_mask=
+		if [[ $_newaddr == */* ]]; then
+			ifconfig $_if $_newaddr up
 		else
-			ask_until "Netmask for $_if?" "${_mask:=255.255.255.0}"
-			_mask=$resp
+			ask_until "Netmask for $_if?" "${_mask:-255.255.255.0}"
+			ifconfig $_if $_newaddr netmask $resp
 		fi
 
-		if ifconfig $_if inet $_addr ${_mask:+netmask $_mask} up; then
-			echo "inet $_addr $_mask" >>$_hn
-			add_hostent "${_addr%%/*}" "$_name"
-			break
-		else
-			_addr=
-			_mask=
-			$AI && exit 1
+		set -- $(v4_info $_if)
+		if [[ -n $2 ]]; then
+			echo "inet $2 $3" >>$_hn
+			add_hostent "$2" "$_name"
+			return
 		fi
+
+		$AI && exit 1
 	done
 }
 
@@ -1079,15 +1067,18 @@ v6_info() {
 # in the /etc/mygate file. Ask the user to either select from a list of default
 # router candidates or to enter a router IPv6 address.
 v6_defroute() {
-	local _if=$1 _prompt _resp _routers PS3
-
-	# Only continue if there is not yet any IPv6 default route set.
-	route -n show -inet6 | egrep -q '^default[[:space:]]' && return
+	local _if _prompt _resp _routers PS3
 
 	# Get a sorted, unique list of default router canditates by issuing a
-	# ping6 to the All-Routers multicast address.
-	_routers=$(bsort $(ping6 -n -c 2 ff02::2%$_if 2>/dev/null |
-		sed -En '/^[0-9]+ bytes from /{s///;s/: .*$//p;}'))
+	# ping6 to the All-Routers multicast address on each interface that
+	# is not AUTOCONF6.
+	for _if in $(get_ifs); do
+		set -- $(v6_info $_if)
+		[[ -n $2 && $1 != *AUTOCONF6* ]] || continue
+		_resp=$(ping6 -n -c 2 ff02::2%$_if 2>/dev/null |
+			sed -En '/^[0-9]+ bytes from /{s///;s/: .*$//p;}')
+		_routers=$(bsort $_routers $_resp)
+	done
 
 	_prompt="IPv6 default router?"
 
@@ -1105,12 +1096,12 @@ v6_defroute() {
 		echo "$_resp" >>/tmp/i/mygate
 }
 
-# Configure IPv6 interface $1, add hostname $2 to the hosts file, create the
-# hostname.if file $3 and finish by executing v6_defroute(). Ask the user for
-# the IPv6 address and prefix length if the address was not specified in CIDR
-# notation, unless he chooses 'autoconf'.
+# Configure IPv6 interface $1, add hostname $2 to the hosts file,
+# create the hostname.if file $3. Ask the user for the IPv6 address
+# and prefix length if the address was not specified in CIDR notation,
+# unless he chooses 'autoconf'.
 v6_config() {
-	local _if=$1 _name=$2 _hn=$3 _addr _prefixlen _prompt
+	local _if=$1 _name=$2 _hn=$3 _addr _newaddr _prefixlen
 
 	ifconfig lo0 inet6 >/dev/null 2>&1 || return
 
@@ -1124,37 +1115,37 @@ v6_config() {
 		_prefixlen=$3
 	fi
 
-	_prompt="IPv6 address for $_if? (or 'autoconf' or 'none')"
+	# Nuke existing inet6 configuration.
+	ifconfig $_if -inet6
 
 	while :; do
-		ask_until "$_prompt" "${_addr:-none}"
+		ask_until "IPv6 address for $_if? (or 'autoconf' or 'none')" \
+			  "${_addr:-none}"
 		case $resp in
-		none)	ifconfig $_if -inet6
-			return
+		none)	return
 			;;
 		autoconf)
-			# Nuke any existing address before enabling autoconf.
-			ifconfig $_if -inet6
 			ifconfig $_if inet6 autoconf up
 			echo "inet6 autoconf" >>$_hn
 			return
 			;;
-		*)	ifconfig $_if inet6 -autoconf
-			_addr=${resp%%/*}
-			if [[ $resp == */* ]]; then
-				_prefixlen=${resp##$_addr/}
-			else
-				ask_until "IPv6 prefix length for $_if?" "64"
-				_prefixlen=$resp
-			fi
-			if ifconfig $_if inet6 $_addr/$_prefixlen up; then
-				echo "inet6 $_addr $_prefixlen" >>$_hn
-				add_hostent "$_addr" "$_name"
-				v6_defroute $_if
-				return
-			fi
-			;;
 		esac
+
+		_newaddr=$resp
+		if [[ $_newaddr == */* ]]; then
+			ifconfig $_if inet6 $_newaddr up
+		else
+			ask_until "IPv6 prefix length for $_if?" \
+				  "${_prefixlen:-64}"
+			ifconfig $_if inet6 $_newaddr/$resp up
+		fi
+
+		set -- $(v6_info $_if)
+		if [[ -n $2 ]]; then
+			echo "inet6 $2 $3" >>$_hn
+			add_hostent "$2" "$_name"
+			return
+		fi
 
 		$AI && exit 1
 	done
@@ -1685,6 +1676,13 @@ install_files() {
 		[[ -d $_tmpsrc ]] && rm -f "$_tmpsrc/$_f"
 	done
 	[[ -d $_tmpsrc ]] && rm -rf "$_tmpsrc" || true
+
+	# Keep SHA256 from installed sets for sysupgrade(8).
+	if [[ -f $_cfile ]]; then
+		cp $_cfile /mnt/var/db/installed.SHA256
+	elif $_srclocal && [[ -f ${_src#file://}/SHA256 ]]; then
+		cp ${_src#file://}/SHA256 /mnt/var/db/installed.SHA256
+	fi
 }
 
 # Fetch install sets from an HTTP server possibly using a proxy.
@@ -1997,6 +1995,7 @@ donetconfig() {
 
 	configure_ifs
 	v4_defroute
+	v6_defroute
 
 	# As dhclient will populate /etc/resolv.conf, a symbolic link to
 	# /tmp/i/resolv.conf.shadow, mv any such file to /tmp/i/resolv.conf
@@ -2769,11 +2768,6 @@ finish_up() {
 	# ensure it references the kernel as /bsd.
 	sha256 /mnt/bsd | (umask 077; sed 's,/mnt,,' >/mnt/var/db/kernel.SHA256)
 
-	# Keep SHA256.sig from installed sets for sysupgrade(8).
-	if [[ -f /tmp/SHA256.sig ]]; then
-		cp /tmp/SHA256.sig /mnt/var/db/installed.SHA256.sig
-	fi
-
 	if [[ -f $_kernel_dir.tgz ]]; then
 		echo -n "Relinking to create unique kernel..."
 		(
@@ -3270,13 +3264,6 @@ done
 cd /
 umount -af >/dev/null 2>&1
 
-# Make sure only successful dhcp requests retain their state.
-for _if in $(get_ifs dhcp); do
-	set -- $(v4_info $_if)
-	[[ $1 == @(UP,*) && -n $2 ]] && continue
-	ifconfig $_if delete down -group dhcp 2>/dev/null
-done
-
 # Include machine-dependent functions and definitions.
 #
 # The following functions must be provided:
@@ -3388,6 +3375,7 @@ elif $UU; then
 Location of sets = disk
 Pathname to the sets = /home/_sysupgrade/
 Set name(s) = done
+Directory does not contain SHA256.sig. Continue without verification = yes
 __EOT
 	get_responsefile
 	do_autoinstall

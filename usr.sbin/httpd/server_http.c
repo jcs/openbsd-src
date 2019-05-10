@@ -1,4 +1,4 @@
-/*	$OpenBSD: server_http.c,v 1.131 2019/05/08 19:57:45 reyk Exp $	*/
+/*	$OpenBSD: server_http.c,v 1.133 2019/05/08 21:46:56 tb Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2018 Reyk Floeter <reyk@openbsd.org>
@@ -104,6 +104,8 @@ server_httpdesc_free(struct http_descriptor *desc)
 	desc->http_path_alias = NULL;
 	free(desc->http_query);
 	desc->http_query = NULL;
+	free(desc->http_query_alias);
+	desc->http_query_alias = NULL;
 	free(desc->http_version);
 	desc->http_version = NULL;
 	free(desc->http_host);
@@ -1032,7 +1034,7 @@ server_expand_http(struct client *clt, const char *val, char *buf,
 {
 	struct http_descriptor	*desc = clt->clt_descreq;
 	struct server_config	*srv_conf = clt->clt_srv_conf;
-	char			 ibuf[128], *str, *path;
+	char			 ibuf[128], *str, *path, *query;
 	const char		*errstr = NULL, *p;
 	size_t			 size;
 	int			 n, ret;
@@ -1069,6 +1071,18 @@ server_expand_http(struct client *clt, const char *val, char *buf,
 			return (NULL);
 		ret = expand_string(buf, len, "$DOCUMENT_URI", path);
 		free(path);
+		if (ret != 0)
+			return (NULL);
+	}
+	if (strstr(val, "$QUERY_STRING_ENC") != NULL) {
+		if (desc->http_query == NULL) {
+			ret = expand_string(buf, len, "$QUERY_STRING_ENC", "");
+		} else {
+			if ((query = url_encode(desc->http_query)) == NULL)
+				return (NULL);
+			ret = expand_string(buf, len, "$QUERY_STRING_ENC", query);
+			free(query);
+		}
 		if (ret != 0)
 			return (NULL);
 	}
@@ -1304,11 +1318,11 @@ server_response(struct httpd *httpd, struct client *clt)
 		 * be URL encoded - either specified by the user or by using the
 		 * original $QUERY_STRING.
 		 */
-		free(desc->http_query);
-		desc->http_query = NULL;
+		free(desc->http_query_alias);
+		desc->http_query_alias = NULL;
 		if ((query = strchr(path, '?')) != NULL) {
 			*query++ = '\0';
-			if ((desc->http_query = strdup(query)) == NULL)
+			if ((desc->http_query_alias = strdup(query)) == NULL)
 				goto fail;
 		}
 
@@ -1317,15 +1331,15 @@ server_response(struct httpd *httpd, struct client *clt)
 		    path, sizeof(path)) == NULL)
 			goto fail;
 
-		log_debug("%s: rewrote %s -> %s?%s", __func__,
-		    desc->http_path, path, desc->http_query);
+		log_debug("%s: rewrote %s?%s -> %s?%s", __func__,
+		    desc->http_path, desc->http_query, path, query);
 
-		free(desc->http_path);
-		if ((desc->http_path = strdup(path)) == NULL)
+		free(desc->http_path_alias);
+		if ((desc->http_path_alias = strdup(path)) == NULL)
 			goto fail;
 
 		/* Now search for the updated location */
-		srv_conf = server_getlocation(clt, desc->http_path);
+		srv_conf = server_getlocation(clt, desc->http_path_alias);
 	}
 
 	if (clt->clt_toread > 0 && (size_t)clt->clt_toread >

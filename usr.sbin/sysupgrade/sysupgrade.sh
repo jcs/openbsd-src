@@ -1,6 +1,6 @@
 #!/bin/ksh
 #
-# $OpenBSD: sysupgrade.sh,v 1.16 2019/05/08 15:06:20 naddy Exp $
+# $OpenBSD: sysupgrade.sh,v 1.19 2019/05/10 01:29:14 naddy Exp $
 #
 # Copyright (c) 1997-2015 Todd Miller, Theo de Raadt, Ken Westerback
 # Copyright (c) 2015 Robert Peichaer <rpe@openbsd.org>
@@ -33,7 +33,7 @@ ug_err()
 
 usage()
 {
-	ug_err "usage: ${0##*/} [-fn] [-r | -s] [installurl]"
+	ug_err "usage: ${0##*/} [-fkn] [-r | -s] [installurl]"
 }
 
 unpriv()
@@ -72,11 +72,13 @@ rmel() {
 RELEASE=false
 SNAP=false
 FORCE=false
+KEEP=false
 REBOOT=true
 
-while getopts fnrs arg; do
+while getopts fknrs arg; do
 	case ${arg} in
 	f)	FORCE=true;;
+	k)	KEEP=true;;
 	n)	REBOOT=false;;
 	r)	RELEASE=true;;
 	s)	SNAP=true;;
@@ -132,11 +134,6 @@ cd ${SETSDIR}
 
 unpriv -f SHA256.sig ftp -Vmo SHA256.sig ${URL}SHA256.sig
 
-if cmp -s /var/db/installed.SHA256.sig SHA256.sig && ! $FORCE; then
-	echo "Already on latest snapshot."
-	exit 0
-fi
-
 _KEY=openbsd-${_KERNV[0]%.*}${_KERNV[0]#*.}-base.pub
 _NEXTKEY=openbsd-${NEXT_VERSION%.*}${NEXT_VERSION#*.}-base.pub
 
@@ -150,6 +147,12 @@ esac
 [[ -f ${SIGNIFY_KEY} ]] || ug_err "cannot find ${SIGNIFY_KEY}"
 
 unpriv -f SHA256 signify -Ve -p "${SIGNIFY_KEY}" -x SHA256.sig -m SHA256
+rm SHA256.sig
+
+if cmp -s /var/db/installed.SHA256 SHA256 && ! $FORCE; then
+	echo "Already on latest snapshot."
+	exit 0
+fi
 
 # INSTALL.*, bsd*, *.tgz
 SETS=$(sed -n -e 's/^SHA256 (\(.*\)) .*/\1/' \
@@ -157,10 +160,10 @@ SETS=$(sed -n -e 's/^SHA256 (\(.*\)) .*/\1/' \
 
 OLD_FILES=$(ls)
 OLD_FILES=$(rmel SHA256 $OLD_FILES)
-OLD_FILES=$(rmel SHA256.sig $OLD_FILES)
 DL=$SETS
 
-for f in $SETS; do
+[[ -n ${OLD_FILES} ]] && echo Verifying old sets.
+for f in ${OLD_FILES}; do
 	if cksum -C SHA256 $f >/dev/null 2>&1; then
 		DL=$(rmel $f ${DL})
 		OLD_FILES=$(rmel $f ${OLD_FILES})
@@ -172,8 +175,12 @@ for f in ${DL}; do
 	unpriv -f $f ftp -Vmo ${f} ${URL}${f}
 done
 
-echo Verifying sets.
-[[ -n ${DL} ]] && unpriv cksum -qC SHA256 ${DL}
+if [[ -n ${DL} ]]; then
+	echo Verifying sets.
+	unpriv cksum -qC SHA256 ${DL}
+fi
+
+${KEEP} && > keep
 
 cp bsd.rd /nbsd.upgrade
 ln -f /nbsd.upgrade /bsd.upgrade

@@ -1,4 +1,4 @@
-/*	$OpenBSD: midi.c,v 1.17 2019/03/28 11:18:56 ratchov Exp $	*/
+/*	$OpenBSD: midi.c,v 1.19 2019/05/10 04:45:47 ratchov Exp $	*/
 /*
  * Copyright (c) 2008-2012 Alexandre Ratchov <alex@caoua.org>
  *

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ufs_lookup.c,v 1.55 2019/05/04 17:57:46 deraadt Exp $	*/
+/*	$OpenBSD: ufs_lookup.c,v 1.57 2019/05/09 15:35:19 deraadt Exp $	*/
 /*	$NetBSD: ufs_lookup.c,v 1.7 1996/02/09 22:36:06 christos Exp $	*/
 
 /*
