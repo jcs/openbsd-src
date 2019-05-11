@@ -70,7 +70,7 @@
 #define	NMBCLUSTERS	(256 * 1024)		/* max cluster allocation */
 
 #ifndef	MSGBUFSIZE
-#define	MSGBUFSIZE	(128 * PAGE_SIZE)	/* default message buffer size */
+#define	MSGBUFSIZE	(24 * PAGE_SIZE)	/* default message buffer size */
 #endif
 
 /*
