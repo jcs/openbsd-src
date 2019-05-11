@@ -116,7 +116,6 @@
 #define THINKPAD_SENSOR_FANRPM		THINKPAD_NTEMPSENSORS
 #define THINKPAD_SENSOR_PORTREPL	THINKPAD_NTEMPSENSORS + 1
 
-#define THINKPAD_ECOFFSET_FANMODE	0x2f
 #define THINKPAD_ECOFFSET_VOLUME	0x30
 #define THINKPAD_ECOFFSET_VOLUME_MUTE_MASK 0x40
 #define THINKPAD_ECOFFSET_FANLO		0x84
@@ -129,9 +128,6 @@
 #define THINKPAD_MASK_BRIGHTNESS_UP	(1 << 15)
 #define THINKPAD_MASK_BRIGHTNESS_DOWN	(1 << 16)
 #define THINKPAD_MASK_KBD_BACKLIGHT	(1 << 17)
-
-#define THINKPAD_FAN_SPEED_AUTO		0x80
-#define THINKPAD_FAN_SPEED_MAX		0x6
 
 struct acpithinkpad_softc {
 	struct device		 sc_dev;
@@ -166,7 +162,6 @@ int	thinkpad_volume_up(struct acpithinkpad_softc *);
 int	thinkpad_volume_mute(struct acpithinkpad_softc *);
 int	thinkpad_brightness_up(struct acpithinkpad_softc *);
 int	thinkpad_brightness_down(struct acpithinkpad_softc *);
-void	thinkpad_update_fan(struct acpithinkpad_softc *);
 int	thinkpad_adaptive_change(struct acpithinkpad_softc *);
 int	thinkpad_activate(struct device *, int);
 
@@ -193,8 +188,6 @@ int thinkpad_get_volume_mute(struct acpithinkpad_softc *);
 extern int wskbd_set_mixermute(long, long);
 extern int wskbd_set_mixervolume(long, long);
 #endif
-
-extern int cpu_fanspeed;
 
 struct cfattach acpithinkpad_ca = {
 	sizeof(struct acpithinkpad_softc), thinkpad_match, thinkpad_attach,
@@ -285,9 +278,6 @@ thinkpad_sensor_refresh(void *arg)
 	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLO, 1, &lo);
 	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANHI, 1, &hi);
 	sc->sc_sens[THINKPAD_SENSOR_FANRPM].value = ((hi << 8L) + lo);
-
-	/* Update fan speed according to sysctl */
-	thinkpad_update_fan(sc);
 }
 
 void
@@ -595,42 +585,6 @@ thinkpad_brightness_down(struct acpithinkpad_softc *sc)
 		return (0);
 	} else
 		return (thinkpad_cmos(sc, THINKPAD_CMOS_BRIGHTNESS_DOWN));
-}
-
-void
-thinkpad_update_fan(struct acpithinkpad_softc *sc)
-{
-	uint8_t buffer[2], ectarget;
-
-	acpiec_read(sc->sc_acpi->sc_ec, THINKPAD_ECOFFSET_FANMODE, 1, buffer);
-
-	/*
-	 * Map cpu_fanspeed sysctl (from 0-100) to 0-THINKPAD_FAN_SPEED_MAX,
-	 * using -1 for THINKPAD_FAN_SPEED_AUTO.
-	 */
-	if (cpu_fanspeed > 100 || cpu_fanspeed < -1)
-		cpu_fanspeed = -1;
-
-	if (cpu_fanspeed == -1)
-		ectarget = THINKPAD_FAN_SPEED_AUTO;
-	else {
-		ectarget = cpu_fanspeed / (100 / THINKPAD_FAN_SPEED_MAX);
-
-		/*
-		 * But if the user set any non-zero cpu_fanspeed, assume they
-		 * wanted the fan on and don't wait until it reaches the first
-		 * threshold.
-		 */
-		if (ectarget == 0 && cpu_fanspeed > 0)
-			ectarget = 1;
-	}
-
-	if (ectarget != buffer[0]) {
-		DPRINTF(("%s: setting fan speed to 0x%x (currently 0x%x)\n",
-		    DEVNAME(sc), ectarget, buffer[0]));
-		acpiec_write(sc->sc_acpi->sc_ec, THINKPAD_ECOFFSET_FANMODE, 1,
-		    &ectarget);
-	}
 }
 
 int

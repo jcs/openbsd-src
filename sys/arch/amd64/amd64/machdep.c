@@ -200,7 +200,6 @@ int lid_action = 1;
 int pwr_action = 1;
 int forceukbd;
 extern int cpu_allow_turbo;
-int cpu_fanspeed = -1;
 
 /*
  * safepri is a safe priority for sleep to set for a spin-wait
@@ -583,16 +582,6 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 				cpu_allow_turbo = val;
 				cpu_update_turbo();
 			}
-		}
-		return (error);
-	case CPU_FANSPEED:
-		val = cpu_fanspeed;
-		error = sysctl_int(oldp, oldlenp, newp, newlen, &val);
-		if (!error) {
-			if (val < -1 || val > 100)
-				error = EINVAL;
-			else
-				cpu_fanspeed = val;
 		}
 		return (error);
 	default:
