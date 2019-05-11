@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.7 2018/07/11 14:48:40 mlarkin Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.8 2019/05/10 21:20:43 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 2004 Tom Cosgrove
@@ -33,10 +33,6 @@
 #include <machine/biosvar.h>
 #include <machine/specialreg.h>
 #include <machine/vmmvar.h>
-
-#ifdef EFIBOOT
-#include "efiboot.h"
-#endif
 
 volatile struct BIOS_regs	BIOS_regs;
 
@@ -93,9 +89,5 @@ int
 check_skip_conf(void)
 {
 	/* Return non-zero (skip boot.conf) if Control "shift" key down */
-#ifndef EFIBOOT
 	return (pc_getshifts(0) & 0x04);
-#else
-	return (efi_cons_getshifts(0) & 0x04);
-#endif
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: cmd_i386.c,v 1.13 2019/03/15 06:53:37 jsg Exp $	*/
+/*	$OpenBSD: cmd_i386.c,v 1.14 2019/05/10 21:20:43 mlarkin Exp $	*/
 
 /*
  * Copyright (c) 1997-1999 Michael Shalayeff
@@ -37,11 +37,6 @@
 #include "libsa.h"
 #include <cmd.h>
 
-#ifdef EFIBOOT
-#include "efiboot.h"
-#include "efidev.h"
-#endif
-
 extern const char version[];
 
 int Xboot(void);
@@ -54,18 +49,10 @@ int Xregs(void);
 int bootbuf(void *, int);
 
 const struct cmd_table cmd_machine[] = {
-#ifndef EFIBOOT
 	{ "boot",	CMDT_CMD, Xboot },
-#endif
 	{ "comaddr",	CMDT_CMD, Xcomaddr },
 	{ "diskinfo",	CMDT_CMD, Xdiskinfo },
 	{ "memory",	CMDT_CMD, Xmemory },
-#ifdef EFIBOOT
-	{ "video",	CMDT_CMD, Xvideo_efi },
-	{ "gop",	CMDT_CMD, Xgop_efi },
-	{ "exit",	CMDT_CMD, Xexit_efi },
-	{ "poweroff",	CMDT_CMD, Xpoweroff_efi },
-#endif
 #ifdef DEBUG
 	{ "regs",	CMDT_CMD, Xregs },
 #endif
@@ -75,11 +62,7 @@ const struct cmd_table cmd_machine[] = {
 int
 Xdiskinfo(void)
 {
-#ifndef EFIBOOT
 	dump_diskinfo();
-#else
-	efi_dump_diskinfo();
-#endif
 	return 0;
 }
 
@@ -92,7 +75,6 @@ Xregs(void)
 }
 #endif
 
-#ifndef EFIBOOT
 int
 Xboot(void)
 {
@@ -155,7 +137,6 @@ bad:
 	printf("Invalid device!\n");
 	return 0;
 }
-#endif
 
 int
 Xmemory(void)
