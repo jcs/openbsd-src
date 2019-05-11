@@ -413,7 +413,6 @@
  * Limit CPUID maxval: 1 to limit CPUID leaf nodes to 0x2 and lower (R/W)
  * Enable xTPR message disable: 1 to disable xTPR messages
  * XD bit disable: 1 to disable NX capability (bit 34, or bit 2 of %edx/%rdx)
- * Turbo disable: 1 to disable Turbo frequencies
  */
 #define MISC_ENABLE_FAST_STRINGS		(1 << 0)
 #define MISC_ENABLE_TCC				(1 << 3)
@@ -425,7 +424,6 @@
 #define MISC_ENABLE_LIMIT_CPUID_MAXVAL		(1 << 22)
 #define MISC_ENABLE_xTPR_MESSAGE_DISABLE	(1 << 23)
 #define MISC_ENABLE_XD_BIT_DISABLE		(1 << 2)
-#define MISC_ENABLE_TURBO_DISABLE		(1ULL << 38)
 
 /*
  * for Core i Series and newer Xeons, see

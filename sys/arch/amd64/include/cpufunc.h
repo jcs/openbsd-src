@@ -379,8 +379,6 @@ void cpu_enter_pages(struct cpu_info_full *);
 
 int rdmsr_safe(u_int msr, uint64_t *);
 
-void cpu_update_turbo(void);
-
 #endif /* _KERNEL */
 
 #endif /* !_MACHINE_CPUFUNC_H_ */
