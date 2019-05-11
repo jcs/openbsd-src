@@ -86,10 +86,14 @@ iexp2(int exp)
 void
 voltageattach(int num)
 {
+	uint64_t msr;
 	int i, pr = 0;
 
 	if (strcmp(cpu_vendor, "GenuineIntel") != 0 || voltage_initialized ||
 	    num > 1)
+		return;
+
+	if (rdmsr_safe(MSR_ADDR_VOLTAGE, &msr) != 0)
 		return;
 
 	voltage_initialized = 1;
