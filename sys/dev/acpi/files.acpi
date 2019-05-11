@@ -197,8 +197,3 @@ file	dev/acpi/ipmi_acpi.c		ipmi_acpi
 # AMD Cryptographic Co-processor
 attach	ccp at acpi with ccp_acpi
 file	dev/acpi/ccp_acpi.c		ccp_acpi
-
-# Intel HID event and 5-button array
-device	acpihid
-attach	acpihid at acpi
-file	dev/acpi/acpihid.c		acpihid

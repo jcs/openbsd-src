@@ -275,9 +275,8 @@ sleep:
 			case 0:
 				break;
 			case 1:
-				if (!acpi_hashidpower)
-					acpi_addtask(sc->sc_acpi,
-					    acpi_powerdown_task, sc->sc_acpi, 0);
+				acpi_addtask(sc->sc_acpi, acpi_powerdown_task,
+				    sc->sc_acpi, 0);
 				break;
 #ifndef SMALL_KERNEL
 			case 2:

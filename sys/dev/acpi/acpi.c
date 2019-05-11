@@ -71,7 +71,6 @@ int	acpi_debug = 16;
 
 int	acpi_poll_enabled;
 int	acpi_hasprocfvs;
-int	acpi_hashidpower = 0;
 
 #define ACPIEN_RETRIES 15
 
@@ -1975,8 +1974,7 @@ acpi_pbtn_task(void *arg0, int dummy)
 	case 0:
 		break;
 	case 1:
-		if (!acpi_hashidpower)
-			acpi_addtask(sc, acpi_powerdown_task, sc, 0);
+		acpi_addtask(sc, acpi_powerdown_task, sc, 0);
 		break;
 #ifndef SMALL_KERNEL
 	case 2:
