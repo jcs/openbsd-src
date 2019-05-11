@@ -1,6 +1,6 @@
-.\"	$OpenBSD: mvpinctrl.4,v 1.2 2019/05/11 15:44:23 patrick Exp $
+.\"	$OpenBSD: mvuart.4,v 1.1 2019/05/11 15:47:58 patrick Exp $
 .\"
-.\" Copyright (c) 2018 Mark Kettenis <kettenis@openbsd.org>
+.\" Copyright (c) 2019 Patrick Wildt <patrick@blueri.se>
 .\"
 .\" Permission to use, copy, modify, and distribute this software for any
 .\" purpose with or without fee is hereby granted, provided that the above
@@ -15,30 +15,28 @@
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
 .Dd $Mdocdate: May 11 2019 $
-.Dt MVPINCTRL 4
+.Dt MVUART 4
 .Os
 .Sh NAME
-.Nm mvpinctrl
-.Nd Marvell Armada pin multiplexing
+.Nm mvuart
+.Nd Marvell Armada Universal Asynchronous Receiver/Transmitter
 .Sh SYNOPSIS
-.Cd "mvpinctrl* at fdt?"
+.Cd "mvuart* at fdt?"
 .Sh DESCRIPTION
 The
 .Nm
-driver uses pin control data from the device tree to configure the
-MPP pins on Marvell Armada SoCs.
+driver provides support for the Marvell Armada Universal Asynchronous
+Receiver/Transmitter (UART).
 .Sh SEE ALSO
-.Xr intro 4
+.Xr tty 4
 .Sh HISTORY
 The
 .Nm
-device driver first appeared in
-.Ox 6.3 .
+driver first appeared in
+.Ox 6.6 .
 .Sh AUTHORS
 .An -nosplit
 The
 .Nm
 driver was written by
-.An Patrick Wildt Aq Mt patrick@blueri.se
-and
-.An Mark Kettenis Aq Mt kettenis@openbsd.org .
+.An Patrick Wildt Aq Mt patrick@blueri.se .

@@ -1,6 +1,6 @@
-.\"	$OpenBSD: mvpinctrl.4,v 1.2 2019/05/11 15:44:23 patrick Exp $
+.\"	$OpenBSD: fusbtc.4,v 1.1 2019/05/11 16:00:12 patrick Exp $
 .\"
-.\" Copyright (c) 2018 Mark Kettenis <kettenis@openbsd.org>
+.\" Copyright (c) 2019 Patrick Wildt <patrick@blueri.se>
 .\"
 .\" Permission to use, copy, modify, and distribute this software for any
 .\" purpose with or without fee is hereby granted, provided that the above
@@ -15,30 +15,31 @@
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
 .Dd $Mdocdate: May 11 2019 $
-.Dt MVPINCTRL 4
+.Dt FUSBTC 4
 .Os
 .Sh NAME
-.Nm mvpinctrl
-.Nd Marvell Armada pin multiplexing
+.Nm fusbtc
+.Nd Fairchild FUSB302 USB Type-C Port controller
 .Sh SYNOPSIS
-.Cd "mvpinctrl* at fdt?"
+.Cd "fusbtc* at iic?"
 .Sh DESCRIPTION
 The
 .Nm
-driver uses pin control data from the device tree to configure the
-MPP pins on Marvell Armada SoCs.
+driver provides support for the Fairchild FUSB302 USB Type-C port controller.
+It takes care of plug and unplug events on the USB Type-C port and discovers
+the orientation of the plug so that the USB SuperSpeed pins can be routed
+correctly.  Additionally it enables power on the USB Type-C port when a sink
+is connected to power attached devices.
 .Sh SEE ALSO
-.Xr intro 4
+.Xr iic 4
 .Sh HISTORY
 The
 .Nm
-device driver first appeared in
-.Ox 6.3 .
+driver first appeared in
+.Ox 6.6 .
 .Sh AUTHORS
 .An -nosplit
 The
 .Nm
 driver was written by
-.An Patrick Wildt Aq Mt patrick@blueri.se
-and
-.An Mark Kettenis Aq Mt kettenis@openbsd.org .
+.An Patrick Wildt Aq Mt patrick@blueri.se .
