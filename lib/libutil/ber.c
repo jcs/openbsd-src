@@ -1,4 +1,4 @@
-/*	$OpenBSD: ber.c,v 1.1 2019/05/11 17:46:02 rob Exp $ */
+/*	$OpenBSD: ber.c,v 1.6 2019/05/12 20:25:10 rob Exp $ */
 
 /*
  * Copyright (c) 2007, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -1008,7 +1008,6 @@ ber_dump_element(struct ber *ber, struct ber_element *root)
 		}
 		break;
 	case BER_TYPE_BITSTRING:
-		return -1;
 	case BER_TYPE_OCTETSTRING:
 	case BER_TYPE_OBJECT:
 		ber_write(ber, root->be_val, root->be_len);
@@ -1116,6 +1115,13 @@ get_id(struct ber *b, unsigned int *tag, int *class, int *cstruct)
 	do {
 		if (ber_getc(b, &u) == -1)
 			return -1;
+
+		/* enforce minimal number of octets for tag > 30 */
+		if (i == 0 && (u & ~BER_TAG_MORE) == 0) {
+			errno = EINVAL;
+			return -1;
+		}
+
 		t = (t << 7) | (u & ~BER_TAG_MORE);
 		i++;
 		if (i > sizeof(unsigned int)) {
@@ -1151,6 +1157,12 @@ get_len(struct ber *b, ssize_t *len)
 		return -1;
 	}
 
+	if (u == 0xff) {
+		/* Reserved for future use. */
+		errno = EINVAL;
+		return -1;
+	}
+
 	n = u & ~BER_TAG_MORE;
 	if (sizeof(ssize_t) < n) {
 		errno = ERANGE;
@@ -1182,7 +1194,7 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 	unsigned int type;
 	int i, class, cstruct, elements = 0;
 	ssize_t len, r, totlen = 0;
-	u_char c;
+	u_char c, last = 0;
 
 	if ((r = get_id(ber, &type, &class, &cstruct)) == -1)
 		return -1;
@@ -1193,6 +1205,18 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 		return -1;
 	DPRINTF("ber read element size %zd\n", len);
 	totlen += r + len;
+
+	/* The encoding of boolean, integer, enumerated, and null values
+	 * must be primitive. */
+	if (class == BER_CLASS_UNIVERSAL)
+		if (type == BER_TYPE_BOOLEAN ||
+		    type == BER_TYPE_INTEGER ||
+		    type == BER_TYPE_ENUMERATED ||
+		    type == BER_TYPE_NULL)
+			if (cstruct) {
+				errno = EINVAL;
+				return -1;
+			}
 
 	/* If the total size of the element is larger than the buffer
 	 * don't bother to continue. */
@@ -1228,6 +1252,10 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 	case BER_TYPE_EOC:	/* End-Of-Content */
 		break;
 	case BER_TYPE_BOOLEAN:
+		if (len != 1) {
+			errno = EINVAL;
+			return -1;
+		}
 	case BER_TYPE_INTEGER:
 	case BER_TYPE_ENUMERATED:
 		if (len > (ssize_t)sizeof(long long))
@@ -1235,8 +1263,15 @@ ber_read_element(struct ber *ber, struct ber_element *elm)
 		for (i = 0; i < len; i++) {
 			if (ber_getc(ber, &c) != 1)
 				return -1;
+
+			/* smallest number of contents octets only */
+			if ((i == 1 && last == 0 && (c & 0x80) == 0) || 
+			    (i == 1 && last == 0xff && (c & 0x80) != 0))
+				return -1;
+
 			val <<= 8;
 			val |= c;
+			last = c;
 		}
 
 		/* sign extend if MSB is set */

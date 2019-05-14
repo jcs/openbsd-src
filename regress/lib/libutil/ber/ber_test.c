@@ -1,4 +1,4 @@
-/* $OpenBSD: ber_test.c,v 1.11 2019/05/10 13:28:40 rob Exp $
+/* $OpenBSD: ber_test.c,v 1.15 2019/05/12 22:17:25 rob Exp $
 */
 /*
  * Copyright (c) Rob Pierce <rob@openbsd.org>
@@ -65,10 +65,46 @@ struct test_vector test_vectors[] = {
 	{
 		SUCCEED,
 		1,
+		"enum",
+		3,
+		{
+			0x0a, 0x01, 0x00
+		},
+	},
+	{
+		FAIL,
+		0,
+		"enum (constructed - expected failure)",
+		3,
+		{
+			0x2a, 0x01, 0x00
+		},
+	},
+	{
+		FAIL,
+		0,
+		"enum minimal contents octets (expected failure)",
+		4,
+		{
+			0x0a, 0x02, 0x00, 0x01
+		},
+	},
+	{
+		SUCCEED,
+		1,
 		"integer (zero)",
 		3,
 		{
 			0x02, 0x01, 0x00
+		},
+	},
+	{
+		FAIL,
+		0,
+		"integer (constructed - expected failure)",
+		3,
+		{
+			0x22, 0x01, 0x01
 		},
 	},
 	{
@@ -99,6 +135,15 @@ struct test_vector test_vectors[] = {
 		},
 	},
 	{
+		FAIL,
+		0,
+		"integer minimal contents octets (expected failure)",
+		4,
+		{
+			0x02, 0x02, 0x00, 0x01
+		},
+	},
+	{
 		SUCCEED,
 		1,
 		"bit string",
@@ -124,6 +169,15 @@ struct test_vector test_vectors[] = {
 		2,
 		{
 			0x05, 0x00
+		},
+	},
+	{
+		FAIL,
+		0,
+		"null (constructed - expected failure)",
+		2,
+		{
+			0x25, 0x00
 		},
 	},
 	{
@@ -342,11 +396,16 @@ test(int i)
 			return 1;
 		}
 		break;
-	/*
-	 * the current ber.c does not support bit strings
-	 * however, simply processing a bit string as an octet string seems
-	 * to work fine (as suspected by claudio)
-	 */
+	case BER_TYPE_ENUMERATED:
+		if (ber_get_enumerated(elm, &val) == -1) {
+			printf("failed (enum) encoding check\n");
+			return 1;
+		}
+		if (ber_scanf_elements(elm, "E", &val) == -1) {
+			printf("failed (enum) ber_scanf_elements (E)\n");
+			return 1;
+		}
+		break;
 	case BER_TYPE_BITSTRING:
 		if (ber_get_bitstring(elm, &bstring, &len) == -1) {
 			printf("failed (bit string) encoding check\n");

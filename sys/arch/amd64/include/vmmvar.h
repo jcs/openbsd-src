@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmmvar.h,v 1.63 2019/04/01 12:02:43 mlarkin Exp $	*/
+/*	$OpenBSD: vmmvar.h,v 1.65 2019/05/13 15:40:34 pd Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -451,6 +451,7 @@ struct vm_exit {
 	};
 
 	struct vcpu_reg_state		vrs;
+	int				cpl;
 };
 
 struct vm_create_params {
@@ -888,6 +889,10 @@ struct vcpu {
 	struct vcpu_gueststate vc_gueststate;
 
 	uint8_t vc_event;
+
+	uint32_t vc_pvclock_version;
+	paddr_t vc_pvclock_system_gpa;
+	uint32_t vc_pvclock_system_tsc_mul;
 
 	/* VMX only */
 	uint64_t vc_vmx_basic;

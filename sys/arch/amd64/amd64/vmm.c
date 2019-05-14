@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm.c,v 1.242 2019/05/10 20:17:41 pd Exp $	*/
+/*	$OpenBSD: vmm.c,v 1.244 2019/05/13 15:40:34 pd Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -28,6 +28,7 @@
 #include <sys/rwlock.h>
 #include <sys/pledge.h>
 #include <sys/memrange.h>
+#include <sys/timetc.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -39,6 +40,7 @@
 #include <machine/vmmvar.h>
 
 #include <dev/isa/isareg.h>
+#include <dev/pv/pvreg.h>
 
 /* #define VMM_DEBUG */
 
@@ -198,6 +200,9 @@ void vmx_setmsrbw(struct vcpu *, uint32_t);
 void vmx_setmsrbrw(struct vcpu *, uint32_t);
 void svm_set_clean(struct vcpu *, uint32_t);
 void svm_set_dirty(struct vcpu *, uint32_t);
+
+void vmm_init_pvclock(struct vcpu *, paddr_t);
+int vmm_update_pvclock(struct vcpu *);
 
 #ifdef VMM_DEBUG
 void dump_vcpu(struct vcpu *);
@@ -3234,6 +3239,7 @@ vcpu_init(struct vcpu *vcpu)
 	vcpu->vc_virt_mode = vmm_softc->mode;
 	vcpu->vc_state = VCPU_STATE_STOPPED;
 	vcpu->vc_vpid = 0;
+	vcpu->vc_pvclock_system_gpa = 0;
 	if (vmm_softc->mode == VMM_MODE_VMX ||
 	    vmm_softc->mode == VMM_MODE_EPT)
 		ret = vcpu_init_vmx(vcpu);
@@ -3950,6 +3956,160 @@ vmm_fpusave(struct vcpu *vcpu)
 }
 
 /*
+ * vmm_translate_gva
+ *
+ * Translates a guest virtual address to a guest physical address by walking
+ * the currently active page table (if needed).
+ *
+ * Note - this function can possibly alter the supplied VCPU state.
+ *  Specifically, it may inject exceptions depending on the current VCPU
+ *  configuration, and may alter %cr2 on #PF. Consequently, this function
+ *  should only be used as part of instruction emulation.
+ *
+ * Parameters:
+ *  vcpu: The VCPU this translation should be performed for (guest MMU settings
+ *   are gathered from this VCPU)
+ *  va: virtual address to translate
+ *  pa: pointer to paddr_t variable that will receive the translated physical
+ *   address. 'pa' is unchanged on error.
+ *  mode: one of PROT_READ, PROT_WRITE, PROT_EXEC indicating the mode in which
+ *   the address should be translated
+ *
+ * Return values:
+ *  0: the address was successfully translated - 'pa' contains the physical
+ *     address currently mapped by 'va'.
+ *  EFAULT: the PTE for 'VA' is unmapped. A #PF will be injected in this case
+ *     and %cr2 set in the vcpu structure.
+ *  EINVAL: an error occurred reading paging table structures
+ */
+int
+vmm_translate_gva(struct vcpu *vcpu, uint64_t va, uint64_t *pa, int mode)
+{
+	int level, shift, pdidx;
+	uint64_t pte, pt_paddr, pte_paddr, mask, low_mask, high_mask;
+	uint64_t shift_width, pte_size, *hva;
+	paddr_t hpa;
+	struct vcpu_reg_state vrs;
+
+	level = 0;
+
+	if (vmm_softc->mode == VMM_MODE_EPT ||
+	    vmm_softc->mode == VMM_MODE_VMX) {
+		if (vcpu_readregs_vmx(vcpu, VM_RWREGS_ALL, &vrs))
+			return (EINVAL);
+	} else if (vmm_softc->mode == VMM_MODE_RVI ||
+	    vmm_softc->mode == VMM_MODE_SVM) {
+		if (vcpu_readregs_svm(vcpu, VM_RWREGS_ALL, &vrs))
+			return (EINVAL);
+	}
+
+	DPRINTF("%s: guest %%cr0=0x%llx, %%cr3=0x%llx\n", __func__,
+	    vrs.vrs_crs[VCPU_REGS_CR0], vrs.vrs_crs[VCPU_REGS_CR3]);
+
+	if (!(vrs.vrs_crs[VCPU_REGS_CR0] & CR0_PG)) {
+		DPRINTF("%s: unpaged, va=pa=0x%llx\n", __func__,
+		    va);
+		*pa = va;
+		return (0);
+	}
+
+	pt_paddr = vrs.vrs_crs[VCPU_REGS_CR3];
+
+	if (vrs.vrs_crs[VCPU_REGS_CR0] & CR0_PE) {
+		if (vrs.vrs_crs[VCPU_REGS_CR4] & CR4_PAE) {
+			pte_size = sizeof(uint64_t);
+			shift_width = 9;
+
+			if (vrs.vrs_msrs[VCPU_REGS_EFER] & EFER_LMA) {
+				level = 4;
+				mask = L4_MASK;
+				shift = L4_SHIFT;
+			} else {
+				level = 3;
+				mask = L3_MASK;
+				shift = L3_SHIFT;
+			}
+		} else {
+			level = 2;
+			shift_width = 10;
+			mask = 0xFFC00000;
+			shift = 22;
+			pte_size = sizeof(uint32_t);
+		}
+	} else {
+		return (EINVAL);
+	}
+
+	DPRINTF("%s: pte size=%lld level=%d mask=0x%llx, shift=%d, "
+	    "shift_width=%lld\n", __func__, pte_size, level, mask, shift,
+	    shift_width);
+
+	/* XXX: Check for R bit in segment selector and set A bit */
+
+	for (;level > 0; level--) {
+		pdidx = (va & mask) >> shift;
+		pte_paddr = (pt_paddr) + (pdidx * pte_size);
+
+		DPRINTF("%s: read pte level %d @ GPA 0x%llx\n", __func__,
+		    level, pte_paddr);
+		if (!pmap_extract(vcpu->vc_parent->vm_map->pmap, pte_paddr,
+		    &hpa)) {
+			DPRINTF("%s: cannot extract HPA for GPA 0x%llx\n",
+			    __func__, pte_paddr);
+			return (EINVAL);
+		}
+
+		hpa = hpa | (pte_paddr & 0xFFF);
+		hva = (uint64_t *)PMAP_DIRECT_MAP(hpa);
+		DPRINTF("%s: GPA 0x%llx -> HPA 0x%llx -> HVA 0x%llx\n",
+		    __func__, pte_paddr, (uint64_t)hpa, (uint64_t)hva);
+		if (pte_size == 8)
+			pte = *hva;
+		else
+			pte = *(uint32_t *)hva;
+
+		DPRINTF("%s: PTE @ 0x%llx = 0x%llx\n", __func__, pte_paddr,
+		    pte);
+
+		/* XXX: Set CR2  */
+		if (!(pte & PG_V))
+			return (EFAULT);
+
+		/* XXX: Check for SMAP */
+		if ((mode == PROT_WRITE) && !(pte & PG_RW))
+			return (EPERM);
+
+		if ((vcpu->vc_exit.cpl > 0) && !(pte & PG_u))
+			return (EPERM);
+
+		pte = pte | PG_U;
+		if (mode == PROT_WRITE)
+			pte = pte | PG_M;
+		*hva = pte;
+
+		/* XXX: EINVAL if in 32bit and  PG_PS is 1 but CR4.PSE is 0 */
+		if (pte & PG_PS)
+			break;
+
+		if (level > 1) {
+			pt_paddr = pte & PG_FRAME;
+			shift -= shift_width;
+			mask = mask >> shift_width;
+		}
+	}
+
+	low_mask = (1 << shift) - 1;
+	high_mask = (((uint64_t)1ULL << ((pte_size * 8) - 1)) - 1) ^ low_mask;
+	*pa = (pte & high_mask) | (va & low_mask);
+
+	DPRINTF("%s: final GPA for GVA 0x%llx = 0x%llx\n", __func__,
+	    va, *pa);
+
+	return (0);
+}
+
+
+/*
  * vcpu_run_vmx
  *
  * VMX main loop used to run a VCPU.
@@ -4036,6 +4196,7 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 	}
 
 	while (ret == 0) {
+		vmm_update_pvclock(vcpu);
 		if (!resume) {
 			/*
 			 * We are launching for the first time, or we are
@@ -4355,6 +4516,7 @@ vcpu_run_vmx(struct vcpu *vcpu, struct vm_run_params *vrp)
 	/* Copy the VCPU register state to the exit structure */
 	if (vcpu_readregs_vmx(vcpu, VM_RWREGS_ALL, &vcpu->vc_exit.vrs))
 		ret = EINVAL;
+	vcpu->vc_exit.cpl = vmm_get_guest_cpu_cpl(vcpu);
 	/*
 	 * We are heading back to userspace (vmd), either because we need help
 	 * handling an exit, a guest interrupt is pending, or we failed in some
@@ -5910,26 +6072,30 @@ vmx_handle_wrmsr(struct vcpu *vcpu)
 	rdx = &vcpu->vc_gueststate.vg_rdx;
 
 	switch (*rcx) {
-		case MSR_MISC_ENABLE:
-			vmx_handle_misc_enable_msr(vcpu);
-			break;
-		case MSR_SMM_MONITOR_CTL:
-			/*
-			 * 34.15.5 - Enabling dual monitor treatment
-			 *
-			 * Unsupported, so inject #GP and return without
-			 * advancing %rip.
-			 */
-			ret = vmm_inject_gp(vcpu);
-			return (ret);
+	case MSR_MISC_ENABLE:
+		vmx_handle_misc_enable_msr(vcpu);
+		break;
+	case MSR_SMM_MONITOR_CTL:
+		/*
+		 * 34.15.5 - Enabling dual monitor treatment
+		 *
+		 * Unsupported, so inject #GP and return without
+		 * advancing %rip.
+		 */
+		ret = vmm_inject_gp(vcpu);
+		return (ret);
+	case KVM_MSR_SYSTEM_TIME:
+		vmm_init_pvclock(vcpu,
+		    (*rax & 0xFFFFFFFFULL) | (*rdx  << 32));
+		break;
 #ifdef VMM_DEBUG
-		default:
-			/*
-			 * Log the access, to be able to identify unknown MSRs
-			 */
-			DPRINTF("%s: wrmsr exit, msr=0x%llx, discarding data "
-			    "written from guest=0x%llx:0x%llx\n", __func__,
-			    *rcx, *rdx, *rax);
+	default:
+		/*
+		 * Log the access, to be able to identify unknown MSRs
+		 */
+		DPRINTF("%s: wrmsr exit, msr=0x%llx, discarding data "
+		    "written from guest=0x%llx:0x%llx\n", __func__,
+		    *rcx, *rdx, *rax);
 #endif /* VMM_DEBUG */
 	}
 
@@ -5967,6 +6133,9 @@ svm_handle_msr(struct vcpu *vcpu)
 	if (vmcb->v_exitinfo1 == 1) {
 		if (*rcx == MSR_EFER) {
 			vmcb->v_efer = *rax | EFER_SVME;
+		} else if (*rcx == KVM_MSR_SYSTEM_TIME) {
+			vmm_init_pvclock(vcpu,
+			    (*rax & 0xFFFFFFFFULL) | (*rdx  << 32));
 		} else {
 #ifdef VMM_DEBUG
 			/* Log the access, to be able to identify unknown MSRs */
@@ -6264,6 +6433,13 @@ vmm_handle_cpuid(struct vcpu *vcpu)
 		*rcx = *((uint32_t *)&vmm_hv_signature[4]);
 		*rdx = *((uint32_t *)&vmm_hv_signature[8]);
 		break;
+	case 0x40000001:	/* KVM hypervisor features */
+		*rax = (1 << KVM_FEATURE_CLOCKSOURCE2) |
+		    (1 << KVM_FEATURE_CLOCKSOURCE_STABLE_BIT);
+		*rbx = 0;
+		*rcx = 0;
+		*rdx = 0;
+		break;
 	case 0x80000000:	/* Extended function level */
 		*rax = 0x80000008; /* curcpu()->ci_pnfeatset */
 		*rbx = 0;
@@ -6382,6 +6558,7 @@ vcpu_run_svm(struct vcpu *vcpu, struct vm_run_params *vrp)
 	}
 
 	while (ret == 0) {
+		vmm_update_pvclock(vcpu);
 		if (!resume) {
 			/*
 			 * We are launching for the first time, or we are
@@ -6616,6 +6793,48 @@ vmm_free_vpid(uint16_t vpid)
 
 	DPRINTF("%s: freed VPID/ASID %d\n", __func__, vpid);
 	rw_exit_write(&vmm_softc->vpid_lock);
+}
+
+void
+vmm_init_pvclock(struct vcpu *vcpu, paddr_t gpa)
+{
+	vcpu->vc_pvclock_system_gpa = gpa;
+	vcpu->vc_pvclock_system_tsc_mul =
+	    (int) ((1000000000L << 20) / tc_getfrequency());
+	vmm_update_pvclock(vcpu);
+}
+
+int
+vmm_update_pvclock(struct vcpu *vcpu)
+{
+	struct pvclock_time_info *pvclock_ti;
+	struct timespec tv;
+	struct vm *vm = vcpu->vc_parent;
+	paddr_t pvclock_hpa, pvclock_gpa;
+
+	if (vcpu->vc_pvclock_system_gpa & PVCLOCK_SYSTEM_TIME_ENABLE) {
+		pvclock_gpa = vcpu->vc_pvclock_system_gpa & 0xFFFFFFFFFFFFFFF0;
+		if (!pmap_extract(vm->vm_map->pmap, pvclock_gpa, &pvclock_hpa))
+			return (EINVAL);
+		pvclock_ti = (void*) PMAP_DIRECT_MAP(pvclock_hpa);
+
+		/* START next cycle (must be odd) */
+		pvclock_ti->ti_version =
+		    (++vcpu->vc_pvclock_version << 1) | 0x1;
+
+		pvclock_ti->ti_tsc_timestamp = rdtsc();
+		nanotime(&tv);
+		pvclock_ti->ti_system_time =
+		    tv.tv_sec * 1000000000L + tv.tv_nsec;
+		pvclock_ti->ti_tsc_shift = -20;
+		pvclock_ti->ti_tsc_to_system_mul =
+		    vcpu->vc_pvclock_system_tsc_mul;
+		pvclock_ti->ti_flags = PVCLOCK_FLAG_TSC_STABLE;
+
+		/* END (must be even) */
+		pvclock_ti->ti_version &= ~0x1;
+	}
+	return (0);
 }
 
 /*

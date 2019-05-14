@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.895 2019/05/10 18:04:06 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.898 2019/05/13 20:10:23 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -431,6 +431,7 @@ enum tty_code_code {
 	TTYC_SITM,
 	TTYC_SMACS,
 	TTYC_SMCUP,
+	TTYC_SMOL,
 	TTYC_SMKX,
 	TTYC_SMSO,
 	TTYC_SMULX,
@@ -568,6 +569,7 @@ enum utf8_state {
 #define GRID_ATTR_UNDERSCORE_3 0x400
 #define GRID_ATTR_UNDERSCORE_4 0x800
 #define GRID_ATTR_UNDERSCORE_5 0x1000
+#define GRID_ATTR_OVERLINE 0x2000
 
 /* All underscore attributes. */
 #define GRID_ATTR_ALL_UNDERSCORE \
@@ -2408,8 +2410,9 @@ u_int		 layout_set_previous(struct window *);
 /* mode-tree.c */
 typedef void (*mode_tree_build_cb)(void *, u_int, uint64_t *, const char *);
 typedef void (*mode_tree_draw_cb)(void *, void *, struct screen_write_ctx *,
-    u_int, u_int);
+	     u_int, u_int);
 typedef int (*mode_tree_search_cb)(void *, void *, const char *);
+typedef void (*mode_tree_menu_cb)(void *, struct client *, key_code);
 typedef void (*mode_tree_each_cb)(void *, void *, struct client *, key_code);
 u_int	 mode_tree_count_tagged(struct mode_tree_data *);
 void	*mode_tree_get_current(struct mode_tree_data *);
@@ -2420,7 +2423,8 @@ void	 mode_tree_each_tagged(struct mode_tree_data *, mode_tree_each_cb,
 void	 mode_tree_down(struct mode_tree_data *, int);
 struct mode_tree_data *mode_tree_start(struct window_pane *, struct args *,
 	     mode_tree_build_cb, mode_tree_draw_cb, mode_tree_search_cb,
-	     void *, const char **, u_int, struct screen **);
+	     mode_tree_menu_cb, void *, const char *, const char **, u_int,
+	     struct screen **);
 void	 mode_tree_zoom(struct mode_tree_data *, struct args *);
 void	 mode_tree_build(struct mode_tree_data *);
 void	 mode_tree_free(struct mode_tree_data *);
@@ -2551,9 +2555,7 @@ __dead void printflike(1, 2) fatal(const char *, ...);
 __dead void printflike(1, 2) fatalx(const char *, ...);
 
 /* menu.c */
-struct menu	*menu_create_from_items(struct menu_item *, u_int,
-		    struct client *, struct cmd_find_state *, const char *);
-struct menu	*menu_create_from_string(const char *, struct client *,
+struct menu	*menu_create(const char *, struct client *,
 		    struct cmd_find_state *, const char *);
 void		 menu_free(struct menu *);
 int		 menu_display(struct menu *, int, struct cmdq_item *, u_int,

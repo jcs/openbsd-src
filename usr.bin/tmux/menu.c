@@ -1,4 +1,4 @@
-/* $OpenBSD: menu.c,v 1.1 2019/05/10 18:04:06 nicm Exp $ */
+/* $OpenBSD: menu.c,v 1.3 2019/05/12 08:58:09 nicm Exp $ */
 
 /*
  * Copyright (c) 2019 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -56,7 +56,11 @@ menu_add_item(struct menu *menu, struct menu_item *item, struct client *c,
 
 	if (item == NULL || *item->name == '\0') /* horizontal line */
 		return;
-	name = format_single(NULL, item->name, c, fs->s, fs->wl, fs->wp);
+	if (fs != NULL) {
+		name = format_single(NULL, item->name, c, fs->s, fs->wl,
+		    fs->wp);
+	} else
+		name = xstrdup(item->name);
 	if (*name == '\0') { /* no item if empty after format expanded */
 		menu->count--;
 		return;
@@ -103,24 +107,8 @@ menu_parse_item(struct menu *menu, const char *s, struct client *c,
 }
 
 struct menu *
-menu_create_from_items(struct menu_item *items, u_int count, struct client *c,
-    struct cmd_find_state *fs, const char *title)
-{
-	struct menu	*menu;
-	u_int		 i;
-
-	menu = xcalloc(1, sizeof *menu);
-	menu->title = xstrdup(title);
-
-	for (i = 0; i < count; i++)
-		menu_add_item(menu, &items[i], c, fs);
-
-	return (menu);
-}
-
-struct menu *
-menu_create_from_string(const char *s, struct client *c,
-    struct cmd_find_state *fs, const char *title)
+menu_create(const char *s, struct client *c, struct cmd_find_state *fs,
+    const char *title)
 {
 	struct menu	*menu;
 	char		*copy, *string, *next;
@@ -134,7 +122,6 @@ menu_create_from_string(const char *s, struct client *c,
 	copy = string = xstrdup(s);
 	do {
 		next = (char *)format_skip(string, "|");
-		log_debug("XXX %s -- %s", next, string);
 		if (next != NULL)
 			*next++ = '\0';
 		if (*string == '\0')
@@ -195,6 +182,9 @@ menu_free_cb(struct client *c)
 
 	if (md->item != NULL)
 		md->item->flags &= ~CMDQ_WAITING;
+
+	if (md->cb != NULL)
+		md->cb(md->menu, UINT_MAX, KEYC_NONE, md->data);
 
 	screen_free(&md->s);
 	menu_free(md->menu);
@@ -290,6 +280,7 @@ chosen:
 		return (1);
 	if (md->cb != NULL) {
 	    md->cb(md->menu, md->choice, item->key, md->data);
+	    md->cb = NULL;
 	    return (1);
 	}
 	cmdlist = cmd_string_parse(item->command, NULL, 0, &cause);
@@ -324,7 +315,8 @@ menu_display(struct menu *menu, int flags, struct cmdq_item *item, u_int px,
 	md->item = item;
 	md->flags = flags;
 
-	cmd_find_copy_state(&md->fs, fs);
+	if (fs != NULL)
+		cmd_find_copy_state(&md->fs, fs);
 	screen_init(&md->s, menu->width + 4, menu->count + 2, 0);
 
 	md->px = px;
