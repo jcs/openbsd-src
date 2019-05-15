@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.126 2019/05/14 18:25:31 florian Exp $ */
+/*	$OpenBSD: main.c,v 1.128 2019/05/15 13:42:40 florian Exp $ */
 
 /*
  * Copyright (c) 2015 Sunil Nimmagadda <sunil@openbsd.org>
@@ -336,14 +336,16 @@ child(int sock, int argc, char **argv)
 		} else if ((dst_fp = fdopen(fd, "w")) == NULL)
 			err(1, "%s: fdopen", __func__);
 
+		init_stats(sz, &offset);
 		if (progressmeter) {
 			p = basename(url->path);
-			start_progress_meter(p, title, sz, &offset);
+			start_progress_meter(p, title);
 		}
 
 		url_save(url, dst_fp, &offset);
 		if (progressmeter)
 			stop_progress_meter();
+		finish_stats();
 
 		if (!tostdout)
 			fclose(dst_fp);
@@ -412,9 +414,10 @@ proxy_parse(const char *name)
 static __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: %s [-46ACVM] [-D title] [-o output] "
-	    "[-S tls_options] [-U useragent] "
-	    "[-w seconds] url ...\n", getprogname());
+	fprintf(stderr, "usage:\t%s [-46AVv] [-D title] [host [port]]\n"
+	    "\t%s [-46ACMmVv] [-D title] [-o output] [-S tls_options]\n"
+	    "\t\t[-U useragent] [-w seconds] url ...\n", getprogname(),
+	     getprogname());
 
 	exit(1);
 }
