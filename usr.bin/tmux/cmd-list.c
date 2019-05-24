@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-list.c,v 1.17 2019/05/20 11:34:37 nicm Exp $ */
+/* $OpenBSD: cmd-list.c,v 1.19 2019/05/23 14:03:44 nicm Exp $ */
 
 /*
  * Copyright (c) 2009 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -23,15 +23,37 @@
 
 #include "tmux.h"
 
-static struct cmd_list *
+static u_int cmd_list_next_group = 1;
+
+struct cmd_list *
 cmd_list_new(void)
 {
 	struct cmd_list	*cmdlist;
 
 	cmdlist = xcalloc(1, sizeof *cmdlist);
 	cmdlist->references = 1;
+	cmdlist->group = cmd_list_next_group++;
 	TAILQ_INIT(&cmdlist->list);
 	return (cmdlist);
+}
+
+void
+cmd_list_append(struct cmd_list *cmdlist, struct cmd *cmd)
+{
+	cmd->group = cmdlist->group;
+	TAILQ_INSERT_TAIL(&cmdlist->list, cmd, qentry);
+}
+
+void
+cmd_list_move(struct cmd_list *cmdlist, struct cmd_list *from)
+{
+	struct cmd	*cmd, *cmd1;
+
+	TAILQ_FOREACH_SAFE(cmd, &from->list, qentry, cmd1) {
+		TAILQ_REMOVE(&from->list, cmd, qentry);
+		TAILQ_INSERT_TAIL(&cmdlist->list, cmd, qentry);
+	}
+	cmdlist->group = cmd_list_next_group++;
 }
 
 struct cmd_list *
@@ -100,16 +122,14 @@ cmd_list_free(struct cmd_list *cmdlist)
 
 	TAILQ_FOREACH_SAFE(cmd, &cmdlist->list, qentry, cmd1) {
 		TAILQ_REMOVE(&cmdlist->list, cmd, qentry);
-		args_free(cmd->args);
-		free(cmd->file);
-		free(cmd);
+		cmd_free(cmd);
 	}
 
 	free(cmdlist);
 }
 
 char *
-cmd_list_print(struct cmd_list *cmdlist)
+cmd_list_print(struct cmd_list *cmdlist, int escaped)
 {
 	struct cmd	*cmd;
 	char		*buf, *this;
@@ -121,12 +141,16 @@ cmd_list_print(struct cmd_list *cmdlist)
 	TAILQ_FOREACH(cmd, &cmdlist->list, qentry) {
 		this = cmd_print(cmd);
 
-		len += strlen(this) + 3;
+		len += strlen(this) + 4;
 		buf = xrealloc(buf, len);
 
 		strlcat(buf, this, len);
-		if (TAILQ_NEXT(cmd, qentry) != NULL)
-			strlcat(buf, " ; ", len);
+		if (TAILQ_NEXT(cmd, qentry) != NULL) {
+			if (escaped)
+				strlcat(buf, " \\; ", len);
+			else
+				strlcat(buf, " ; ", len);
+		}
 
 		free(this);
 	}

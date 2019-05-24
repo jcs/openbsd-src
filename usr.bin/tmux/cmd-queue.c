@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-queue.c,v 1.67 2019/05/20 11:46:06 nicm Exp $ */
+/* $OpenBSD: cmd-queue.c,v 1.69 2019/05/23 13:08:43 nicm Exp $ */
 
 /*
  * Copyright (c) 2013 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -175,21 +175,14 @@ cmdq_remove(struct cmdq_item *item)
 	free(item);
 }
 
-/* Set command group. */
-static u_int
-cmdq_next_group(void)
-{
-	static u_int	group;
-
-	return (++group);
-}
-
 /* Remove all subsequent items that match this item's group. */
 static void
 cmdq_remove_group(struct cmdq_item *item)
 {
 	struct cmdq_item	*this, *next;
 
+	if (item->group == 0)
+		return;
 	this = TAILQ_NEXT(item, entry);
 	while (this != NULL) {
 		next = TAILQ_NEXT(this, entry);
@@ -206,7 +199,6 @@ cmdq_get_command(struct cmd_list *cmdlist, struct cmd_find_state *current,
 {
 	struct cmdq_item	*item, *first = NULL, *last = NULL;
 	struct cmd		*cmd;
-	u_int			 group = cmdq_next_group();
 	struct cmdq_shared	*shared;
 
 	shared = xcalloc(1, sizeof *shared);
@@ -222,12 +214,14 @@ cmdq_get_command(struct cmd_list *cmdlist, struct cmd_find_state *current,
 		xasprintf(&item->name, "[%s/%p]", cmd->entry->name, item);
 		item->type = CMDQ_COMMAND;
 
-		item->group = group;
+		item->group = cmd->group;
 		item->flags = flags;
 
 		item->shared = shared;
 		item->cmdlist = cmdlist;
 		item->cmd = cmd;
+
+		log_debug("%s: %s group %u", __func__, item->name, item->group);
 
 		shared->references++;
 		cmdlist->references++;
