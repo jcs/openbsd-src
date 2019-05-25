@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_kubsan.c,v 1.2 2019/03/19 20:13:54 anton Exp $	*/
+/*	$OpenBSD: subr_kubsan.c,v 1.6 2019/05/24 18:51:05 anton Exp $	*/
 
 /*
  * Copyright (c) 2019 Anton Lindqvist <anton@openbsd.org>
@@ -45,6 +45,12 @@ struct invalid_value_data {
 	struct type_descriptor *d_type;
 };
 
+struct nonnull_arg_data {
+	struct source_location d_src;
+	struct source_location d_attr_src;	/* __attribute__ location */
+	int d_idx;
+};
+
 struct out_of_bounds_data {
 	struct source_location d_src;
 	struct type_descriptor *d_atype;	/* array type */
@@ -70,7 +76,7 @@ struct unreachable_data {
 	struct source_location d_src;
 };
 
-struct type_mismatch {
+struct type_mismatch_data {
 	struct source_location d_src;
 	struct type_descriptor *d_type;
 	uint8_t d_align;	/* log2 alignment */
@@ -80,12 +86,14 @@ struct type_mismatch {
 void	kubsan_handle_load_invalid_value(struct invalid_value_data *,
 	    unsigned long);
 void	kubsan_handle_negate_overflow(struct overflow_data *, unsigned long);
+void	kubsan_handle_nonnull_arg(struct nonnull_arg_data *);
 void	kubsan_handle_out_of_bounds(struct out_of_bounds_data *, unsigned long);
 void	kubsan_handle_overflow(struct overflow_data *, unsigned long,
 	    unsigned long, char);
 void	kubsan_handle_pointer_overflow(struct pointer_overflow_data *,
 	    unsigned long, unsigned long);
-void	kubsan_handle_type_mismatch(struct type_mismatch *, unsigned long);
+void	kubsan_handle_type_mismatch(struct type_mismatch_data *,
+	    unsigned long);
 void    kubsan_handle_shift_out_of_bounds(struct shift_out_of_bounds_data *,
 	    unsigned long, unsigned long);
 void	kubsan_handle_ureachable(struct unreachable_data *);
@@ -96,7 +104,7 @@ uint64_t	 kubsan_deserialize_uint(struct type_descriptor *,
 		    unsigned long);
 void		 kubsan_format_int(struct type_descriptor *, unsigned long,
 		    char *, size_t);
-void		 kubsan_format_location(struct source_location *, char *,
+int		 kubsan_format_location(struct source_location *, char *,
 		    size_t);
 int		 kubsan_is_reported(struct source_location *);
 const char	*kubsan_kind(uint8_t);
@@ -106,6 +114,8 @@ void		 kubsan_report(const char *, ...)
 static int	is_negative(struct type_descriptor *, unsigned long);
 static int	is_shift_exponent_too_large(struct type_descriptor *,
 		    unsigned long);
+
+static const char	*pathstrip(const char *);
 
 #ifdef KUBSAN_WATCH
 int kubsan_watch = 2;
@@ -152,6 +162,12 @@ __ubsan_handle_load_invalid_value(struct invalid_value_data *data,
 }
 
 void
+__ubsan_handle_nonnull_arg(struct nonnull_arg_data *data)
+{
+	kubsan_handle_nonnull_arg(data);
+}
+
+void
 __ubsan_handle_mul_overflow(struct overflow_data *data,
     unsigned long lhs, unsigned long rhs)
 {
@@ -193,7 +209,7 @@ __ubsan_handle_sub_overflow(struct overflow_data *data,
 }
 
 void
-__ubsan_handle_type_mismatch_v1(struct type_mismatch *data,
+__ubsan_handle_type_mismatch_v1(struct type_mismatch_data *data,
     unsigned long ptr)
 {
 	kubsan_handle_type_mismatch(data, ptr);
@@ -233,6 +249,37 @@ kubsan_handle_negate_overflow(struct overflow_data *data, unsigned long val)
 }
 
 void
+kubsan_handle_nonnull_arg(struct nonnull_arg_data *data)
+{
+	char bloc[LOCATION_BUFSIZ];
+	char *attr = NULL;
+	int n;
+
+	if (kubsan_is_reported(&data->d_src))
+		return;
+
+	/*
+	 * Using a dedicated buffer for the attribute location would cause a too
+	 * large stack frame. Try to use the tail of the existing location
+	 * buffer.
+	 */
+	n = kubsan_format_location(&data->d_src, bloc, sizeof(bloc));
+	if (n + 1 < sizeof(bloc) && data->d_attr_src.sl_filename) {
+		int nn;
+
+		nn = kubsan_format_location(&data->d_attr_src, bloc + n + 1,
+		    sizeof(bloc) - n - 1);
+		if (nn < sizeof(bloc) - n - 1)
+			attr = bloc + n + 1;
+	}
+
+	kubsan_report("kubsan: %s: null pointer passed as argument %d, which "
+	    "is declared to never be null%s%s\n",
+	    bloc, data->d_idx,
+	    attr ? " in " : "", attr ? attr : "");
+}
+
+void
 kubsan_handle_out_of_bounds(struct out_of_bounds_data *data,
     unsigned long idx)
 {
@@ -250,8 +297,8 @@ kubsan_handle_out_of_bounds(struct out_of_bounds_data *data,
 }
 
 void
-kubsan_handle_overflow(struct overflow_data *data, unsigned long rhs,
-    unsigned long lhs, char op)
+kubsan_handle_overflow(struct overflow_data *data, unsigned long lhs,
+    unsigned long rhs, char op)
 {
 	char bloc[LOCATION_BUFSIZ];
 	char blhs[NUMBER_BUFSIZ];
@@ -285,7 +332,8 @@ kubsan_handle_pointer_overflow(struct pointer_overflow_data *data,
 }
 
 void
-kubsan_handle_type_mismatch(struct type_mismatch *data, unsigned long ptr)
+kubsan_handle_type_mismatch(struct type_mismatch_data *data,
+    unsigned long ptr)
 {
 	char bloc[LOCATION_BUFSIZ];
 	unsigned long align = 1UL << data->d_align;
@@ -407,13 +455,16 @@ kubsan_format_int(struct type_descriptor *typ, unsigned long val,
 	}
 }
 
-void
+int
 kubsan_format_location(struct source_location *src, char *buf,
     size_t bufsiz)
 {
-	snprintf(buf, bufsiz, "%s:%u:%u",
-	    src->sl_filename, src->sl_line & ~LOCATION_REPORTED,
-	    src->sl_column);
+	const char *path;
+
+	path = pathstrip(src->sl_filename);
+
+	return snprintf(buf, bufsiz, "%s:%u:%u",
+	    path, src->sl_line & ~LOCATION_REPORTED, src->sl_column);
 }
 
 int
@@ -488,4 +539,27 @@ static int
 is_shift_exponent_too_large(struct type_descriptor *typ, unsigned long val)
 {
 	return (kubsan_deserialize_int(typ, val) >= NBITS(typ));
+}
+
+/*
+ * A source location is an absolute path making reports quite long.
+ * Instead, use everything after the first /sys/ segment as the path.
+ */
+static const char *
+pathstrip(const char *path)
+{
+	const char *needle = "/sys/";
+	size_t i, j;
+
+	for (i = j = 0; path[i] != '\0'; i++) {
+		if (path[i] != needle[j]) {
+			j = 0;
+			continue;
+		}
+
+		if (needle[++j] == '\0')
+			return path + i + 1;
+	}
+
+	return path;
 }
