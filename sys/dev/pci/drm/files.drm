@@ -2,7 +2,7 @@
 # $OpenBSD: files.drm,v 1.45 2019/05/21 22:40:06 jsg Exp $
 
 # direct rendering modules
-define drmbase {[primary = -1]}
+define drmbase {[console = -1]}
 device drm: drmbase
 attach drm at drmbase
 file	dev/pci/drm/drm_agpsupport.c		drm & agp
