@@ -43,7 +43,7 @@
 #include <dev/pci/pcidevs.h>
 #include <dev/pci/agpvar.h>
 #include <dev/pci/agpreg.h>
-#include <dev/pci/drm/i915/i915_drv.h>
+#include <dev/pci/olddrm/i915/i915_drv.h>
 
 #include <machine/bus.h>
 
@@ -273,7 +273,7 @@ agp_i810_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
-	isc->map = psc->vga_regs;
+	isc->map = psc->regs;
 
 	if (isc->chiptype == CHIP_I915 || isc->chiptype == CHIP_G33 ||
 	    isc->chiptype == CHIP_PINEVIEW) {
