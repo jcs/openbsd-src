@@ -1,4 +1,4 @@
-/*	$OpenBSD: bfd.c,v 1.75 2019/05/09 14:29:30 phessler Exp $	*/
+/*	$OpenBSD: bfd.c,v 1.77 2019/06/02 13:22:36 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2016-2018 Peter Hessler <phessler@openbsd.org>
@@ -90,8 +90,8 @@ struct bfd_auth_header {
 #define BFD_VERSION		1	/* RFC 5880 Page 6 */
 #define BFD_VER(x)		(((x) & 0xe0) >> 5)
 #define BFD_DIAG(x)		((x) & 0x1f)
-#define BFD_STATE(x)		(((x) & 0xf0) >> 6)
-#define BFD_FLAGS(x)		((x) & 0x0f)
+#define BFD_STATE(x)		(((x) & 0xc0) >> 6)
+#define BFD_FLAGS(x)		((x) & 0x3f)
 #define BFD_HDRLEN		24	/* RFC 5880 Page 37 */
 #define BFD_AUTH_SIMPLE_LEN	16 + 3	/* RFC 5880 Page 10 */
 #define BFD_AUTH_MD5_LEN	24	/* RFC 5880 Page 11 */
@@ -927,7 +927,7 @@ bfd_set_state(struct bfd_config *bfd, unsigned int state)
 		bfd->bc_laststate = bfd->bc_state;
 	/* FALLTHROUGH */
 	case BFD_STATE_DOWN:
-		if (bfd->bc_laststate == BFD_STATE_UP) {
+		if (bfd->bc_state == BFD_STATE_UP) {
 			bfd->bc_laststate = bfd->bc_state;
 			bfd_set_uptime(bfd);
 		}

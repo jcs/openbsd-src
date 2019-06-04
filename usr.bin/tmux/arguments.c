@@ -1,4 +1,4 @@
-/* $OpenBSD: arguments.c,v 1.22 2019/05/23 14:03:44 nicm Exp $ */
+/* $OpenBSD: arguments.c,v 1.25 2019/05/29 20:05:14 nicm Exp $ */
 
 /*
  * Copyright (c) 2010 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -207,16 +207,18 @@ args_print(struct args *args)
 char *
 args_escape(const char *s)
 {
-	static const char	 quoted[] = " #\"';$";
+	static const char	 quoted[] = " #\"';${}";
 	char			*escaped, *result;
 	int			 flags;
 
+	if (*s == '\0')
+		return (xstrdup(s));
 	if ((strchr(quoted, s[0]) != NULL || s[0] == '~') && s[1] == '\0') {
 		xasprintf(&escaped, "\\%c", s[0]);
 		return (escaped);
 	}
 
-	flags = VIS_OCTAL|VIS_TAB|VIS_NL;
+	flags = VIS_OCTAL|VIS_CSTYLE|VIS_TAB|VIS_NL;
 	if (s[strcspn(s, quoted)] != '\0')
 		flags |= VIS_DQ;
 	utf8_stravis(&escaped, s, flags);

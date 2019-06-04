@@ -1,4 +1,4 @@
-/* $OpenBSD: menu.c,v 1.5 2019/05/23 11:13:30 nicm Exp $ */
+/* $OpenBSD: menu.c,v 1.9 2019/05/28 09:50:54 nicm Exp $ */
 
 /*
  * Copyright (c) 2019 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -40,42 +40,63 @@ struct menu_data {
 	void			*data;
 };
 
-static void
-menu_add_item(struct menu *menu, struct menu_item *item, struct client *c,
-    struct cmd_find_state *fs)
+void
+menu_add_items(struct menu *menu, const struct menu_item *items,
+    struct cmdq_item *qitem, struct client *c, struct cmd_find_state *fs)
+{
+	const struct menu_item	*loop;
+
+	for (loop = items; loop->name != NULL; loop++)
+		menu_add_item(menu, loop, qitem, c, fs);
+}
+
+void
+menu_add_item(struct menu *menu, const struct menu_item *item,
+    struct cmdq_item *qitem, struct client *c, struct cmd_find_state *fs)
 {
 	struct menu_item	*new_item;
-	const char		*key;
-	char			*name;
+	const char		*key, *cmd;
+	char			*s, *name;
 	u_int			 width;
+	int			 line;
+
+	line = (item == NULL || item->name == NULL || *item->name == '\0');
+	if (line && menu->count == 0)
+		return;
 
 	menu->items = xreallocarray(menu->items, menu->count + 1,
 	    sizeof *menu->items);
 	new_item = &menu->items[menu->count++];
 	memset(new_item, 0, sizeof *new_item);
 
-	if (item == NULL || *item->name == '\0') /* horizontal line */
+	if (line)
 		return;
-	if (fs != NULL) {
-		name = format_single(NULL, item->name, c, fs->s, fs->wl,
-		    fs->wp);
-	} else
-		name = xstrdup(item->name);
-	if (*name == '\0') { /* no item if empty after format expanded */
+
+	if (fs != NULL)
+		s = format_single(qitem, item->name, c, fs->s, fs->wl, fs->wp);
+	else
+		s = format_single(qitem, item->name, c, NULL, NULL, NULL);
+	if (*s == '\0') { /* no item if empty after format expanded */
 		menu->count--;
 		return;
 	}
-	if (item->key != KEYC_UNKNOWN) {
+	if (*s != '-' && item->key != KEYC_UNKNOWN && item->key != KEYC_NONE) {
 		key = key_string_lookup_key(item->key);
-		xasprintf(&new_item->name, "%s #[align=right](%s)", name, key);
+		xasprintf(&name, "%s#[default] #[align=right](%s)", s, key);
 	} else
-		xasprintf(&new_item->name, "%s", name);
-	free(name);
+		xasprintf(&name, "%s", s);
+	new_item->name = name;
+	free(s);
 
-	if (item->command != NULL)
-		new_item->command = xstrdup(item->command);
-	else
-		new_item->command = NULL;
+	cmd = item->command;
+	if (cmd != NULL) {
+		if (fs != NULL)
+			s = format_single(qitem, cmd, c, fs->s, fs->wl, fs->wp);
+		else
+			s = format_single(qitem, cmd, c, NULL, NULL, NULL);
+	} else
+		s = NULL;
+	new_item->command = s;
 	new_item->key = item->key;
 
 	width = format_width(new_item->name);
@@ -83,54 +104,13 @@ menu_add_item(struct menu *menu, struct menu_item *item, struct client *c,
 		menu->width = width;
 }
 
-static void
-menu_parse_item(struct menu *menu, const char *s, struct client *c,
-    struct cmd_find_state *fs)
-{
-	char			*copy, *first;
-	const char		*second, *third;
-	struct menu_item	 item;
-
-	first = copy = xstrdup(s);
-	if ((second = format_skip(first, ",")) != NULL) {
-		*(char *)second++ = '\0';
-		if ((third = format_skip(second, ",")) != NULL) {
-			*(char *)third++ = '\0';
-
-			item.name = first;
-			item.command = (char *)third;
-			item.key = key_string_lookup_string(second);
-			menu_add_item(menu, &item, c, fs);
-		}
-	}
-	free(copy);
-}
-
 struct menu *
-menu_create(const char *s, struct client *c, struct cmd_find_state *fs,
-    const char *title)
+menu_create(const char *title)
 {
 	struct menu	*menu;
-	char		*copy, *string, *next;
-
-	if (*s == '\0')
-		return (NULL);
 
 	menu = xcalloc(1, sizeof *menu);
 	menu->title = xstrdup(title);
-
-	copy = string = xstrdup(s);
-	do {
-		next = (char *)format_skip(string, "|");
-		if (next != NULL)
-			*next++ = '\0';
-		if (*string == '\0')
-			menu_add_item(menu, NULL, c, fs);
-		else
-			menu_parse_item(menu, string, c, fs);
-		string = next;
-	} while (next != NULL);
-	free(copy);
 
 	return (menu);
 }
@@ -141,12 +121,12 @@ menu_free(struct menu *menu)
 	u_int	i;
 
 	for (i = 0; i < menu->count; i++) {
-		free(menu->items[i].name);
-		free(menu->items[i].command);
+		free((void *)menu->items[i].name);
+		free((void *)menu->items[i].command);
 	}
 	free(menu->items);
 
-	free(menu->title);
+	free((void *)menu->title);
 	free(menu);
 }
 
@@ -202,6 +182,7 @@ menu_key_cb(struct client *c, struct key_event *event)
 	const struct menu_item		*item;
 	struct cmdq_item		*new_item;
 	struct cmd_parse_result		*pr;
+	const char			*name;
 
 	if (KEYC_IS_MOUSE(event->key)) {
 		if (md->flags & MENU_NOMOUSE)
@@ -218,30 +199,36 @@ menu_key_cb(struct client *c, struct key_event *event)
 			}
 			return (0);
 		}
-		md->choice = m->y - (md->py + 1);
 		if (MOUSE_RELEASE(m->b))
 			goto chosen;
+		md->choice = m->y - (md->py + 1);
 		if (md->choice != old)
 			c->flags |= CLIENT_REDRAWOVERLAY;
 		return (0);
 	}
 	switch (event->key) {
 	case KEYC_UP:
+		if (old == -1)
+			old = 0;
 		do {
 			if (md->choice == -1 || md->choice == 0)
 				md->choice = count - 1;
 			else
 				md->choice--;
-		} while (menu->items[md->choice].name == NULL);
+			name = menu->items[md->choice].name;
+		} while ((name == NULL || *name == '-') && md->choice != old);
 		c->flags |= CLIENT_REDRAWOVERLAY;
 		return (0);
 	case KEYC_DOWN:
+		if (old == -1)
+			old = 0;
 		do {
 			if (md->choice == -1 || md->choice == count - 1)
 				md->choice = 0;
-		else
-			md->choice++;
-		} while (menu->items[md->choice].name == NULL);
+			else
+				md->choice++;
+			name = menu->items[md->choice].name;
+		} while ((name == NULL || *name == '-') && md->choice != old);
 		c->flags |= CLIENT_REDRAWOVERLAY;
 		return (0);
 	case '\r':
@@ -253,6 +240,9 @@ menu_key_cb(struct client *c, struct key_event *event)
 		return (1);
 	}
 	for (i = 0; i < (u_int)count; i++) {
+		name = menu->items[i].name;
+		if (name == NULL || *name == '-')
+			continue;
 		if (event->key == menu->items[i].key) {
 			md->choice = i;
 			goto chosen;
@@ -264,7 +254,7 @@ chosen:
 	if (md->choice == -1)
 		return (1);
 	item = &menu->items[md->choice];
-	if (item->name == NULL)
+	if (item->name == NULL || *item->name == '-')
 		return (1);
 	if (md->cb != NULL) {
 	    md->cb(md->menu, md->choice, item->key, md->data);
@@ -283,7 +273,11 @@ chosen:
 		cmdq_append(c, new_item);
 		break;
 	case CMD_PARSE_SUCCESS:
-		new_item = cmdq_get_command(pr->cmdlist, NULL, NULL, 0);
+		if (md->item != NULL)
+			m = &md->item->shared->mouse;
+		else
+			m = NULL;
+		new_item = cmdq_get_command(pr->cmdlist, &md->fs, m, 0);
 		cmd_list_free(pr->cmdlist);
 		cmdq_append(c, new_item);
 		break;

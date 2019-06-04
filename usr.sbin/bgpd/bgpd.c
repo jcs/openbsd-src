@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.c,v 1.217 2019/05/08 18:48:34 claudio Exp $ */
+/*	$OpenBSD: bgpd.c,v 1.219 2019/05/29 08:48:00 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -367,7 +367,7 @@ BROKEN	if (pledge("stdio rpath wpath cpath fattr unix route recvfd sendfd",
 	kr_shutdown(conf->fib_priority, conf->default_tableid);
 	pftable_clear_all();
 
-	TAILQ_FOREACH(p, &conf->peers, entry)
+	RB_FOREACH(p, peer_head, &conf->peers)
 		pfkey_remove(p);
 
 	while ((rr = SIMPLEQ_FIRST(&ribnames)) != NULL) {
@@ -532,7 +532,7 @@ reconfigure(char *conffile, struct bgpd_config *conf)
 	}
 
 	/* send peer list to the SE */
-	TAILQ_FOREACH(p, &conf->peers, entry) {
+	RB_FOREACH(p, peer_head, &conf->peers) {
 		if (imsg_compose(ibuf_se, IMSG_RECONF_PEER, p->conf.id, 0, -1,
 		    &p->conf, sizeof(p->conf)) == -1)
 			return (-1);
@@ -799,11 +799,9 @@ dispatch_imsg(struct imsgbuf *ibuf, int idx, struct bgpd_config *conf)
 				log_warnx("pfkey reload: no such peer: id=%u",
 				    imsg.hdr.peerid);
 			else {
-				pfkey_remove(p);
-				if (pfkey_establish(p) == -1) {
+				if (pfkey_establish(p) == -1)
 					log_peer_warnx(&p->conf,
 					    "pfkey setup failed");
-				}
 			}
 			break;
 		case IMSG_CTL_RELOAD:

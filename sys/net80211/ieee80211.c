@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211.c,v 1.73 2019/05/21 09:23:40 stsp Exp $	*/
+/*	$OpenBSD: ieee80211.c,v 1.75 2019/05/31 11:50:07 stsp Exp $	*/
 /*	$NetBSD: ieee80211.c,v 1.19 2004/06/06 05:45:29 dyoung Exp $	*/
 
 /*-

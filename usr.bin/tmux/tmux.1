@@ -1,4 +1,4 @@
-.\" $OpenBSD: tmux.1,v 1.651 2019/05/23 11:13:30 nicm Exp $
+.\" $OpenBSD: tmux.1,v 1.661 2019/05/30 07:42:41 nicm Exp $
 .\"
 .\" Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
 .\"
@@ -14,7 +14,7 @@
 .\" IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
 .\" OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: May 23 2019 $
+.Dd $Mdocdate: May 30 2019 $
 .Dt TMUX 1
 .Os
 .Sh NAME
@@ -488,13 +488,15 @@ comment is ignored until the end of the line.
 If the last character of a line is \e, the line is joined with the following
 line (the \e and the newline are completely removed).
 This is called line continuation and applies both inside and outside quoted
-strings and in comments.
+strings and in comments, but not inside braces.
 .Pp
-Command arguments may be specified as strings surrounded by either single (')
-or double quotes (").
+Command arguments may be specified as strings surrounded by single (') quotes,
+double quotes (") or braces ({}).
 .\" "
 This is required when the argument contains any special character.
-Strings cannot span multiple lines except with line continuation.
+Single and double quoted strings cannot span multiple lines except with line
+continuation.
+Braces can span multiple lines.
 .Pp
 Outside of quotes and inside double quotes, these replacements are performed:
 .Bl -dash -offset indent
@@ -513,12 +515,46 @@ the given four or eight digit hexadecimal number.
 When preceded (escaped) by a \e, the following characters are replaced: \ee by
 the escape character; \er by a carriage return; \en by a newline; and \et by a
 tab.
-.Pp
+.It
+\eooo is replaced by a character of the octal value ooo.
+Three octal digits are required, for example \e001.
+The largest valid character is \e377.
+.It
 Any other characters preceded by \e are replaced by themselves (that is, the \e
 is removed) and are not treated as having any special meaning - so for example
 \e; will not mark a command sequence and \e$ will not expand an environment
 variable.
 .El
+.Pp
+Braces are similar to single quotes in that the text inside is taken literally
+without any replacements but this also includes line continuation.
+Braces can span multiple lines in which case a literal newline is included in the
+string.
+They are designed to avoid the need for additional escaping when passing a group
+of
+.Nm
+or shell commands as an argument (for example to
+.Ic if-shell
+or
+.Ic pipe-pane ) .
+These two examples produce an identical command - note that no escaping is
+needed when using {}:
+.Bd -literal -offset indent
+if-shell true {
+    display -p 'brace-dollar-foo: }$foo'
+}
+
+if-shell true "\en    display -p 'brace-dollar-foo: }\e$foo'\en"
+.Ed
+.Pp
+Braces may be enclosed inside braces, for example:
+.Bd -literal -offset indent
+bind x if-shell "true" {
+    if-shell "true" {
+         display "true!"
+    }
+}
+.Ed
 .Pp
 Environment variables may be set by using the syntax
 .Ql name=value ,
@@ -820,15 +856,16 @@ directly without invoking the shell.
 .Op Ar arguments
 refers to a
 .Nm
-command, passed with the command and arguments separately, for example:
+command, either passed with the command and arguments separately, for example:
 .Bd -literal -offset indent
 bind-key F1 set-option status off
 .Ed
 .Pp
-Or if using
-.Xr sh 1 :
+Or passed as a single string argument in
+.Pa .tmux.conf ,
+for example:
 .Bd -literal -offset indent
-$ tmux bind-key F1 set-option status off
+bind-key F1 { set-option status off }
 .Ed
 .Pp
 Example
@@ -1206,13 +1243,14 @@ show debugging information about jobs and terminals.
 .It Xo Ic source-file
 .Op Fl nq
 .Ar path
+.Ar ...
 .Xc
 .D1 (alias: Ic source )
-Execute commands from
+Execute commands from one or more files specified by
 .Ar path
-(which may be a
+(which may be
 .Xr glob 7
-pattern).
+patterns).
 If
 .Fl q
 is given, no error will be returned if
@@ -3946,9 +3984,13 @@ For example:
 .Pp
 Comparisons may be expressed by prefixing two comma-separated
 alternatives by
-.Ql ==
+.Ql == ,
+.Ql != ,
+.Ql < ,
+.Ql > ,
+.Ql <=
 or
-.Ql !=
+.Ql >=
 and a colon.
 For example
 .Ql #{==:#{host},myhost}
@@ -3985,9 +4027,16 @@ a number and a colon.
 Positive numbers count from the start of the string and negative from the end,
 so
 .Ql #{=5:pane_title}
-will include at most the first 5 characters of the pane title, or
+will include at most the first five characters of the pane title, or
 .Ql #{=-5:pane_title}
-the last 5 characters.
+the last five characters.
+A suffix or prefix may be given as a second argument - if provided then it is
+appended or prepended to the string if the length has been trimmed, for example
+.Ql #{=/5/...:pane_title}
+will append
+.Ql ...
+if the pane title is more than five characters.
+.Pp
 Prefixing a time variable with
 .Ql t:
 will convert it to a string, so if
@@ -4079,7 +4128,6 @@ The following variables are available, where appropriate:
 .It Li "client_height" Ta "" Ta "Height of client"
 .It Li "client_key_table" Ta "" Ta "Current key table"
 .It Li "client_last_session" Ta "" Ta "Name of the client's last session"
-.It Li "client_menu" Ta "" Ta "The default client menu"
 .It Li "client_name" Ta "" Ta "Name of client"
 .It Li "client_pid" Ta "" Ta "PID of client process"
 .It Li "client_prefix" Ta "" Ta "1 if prefix key has been pressed"
@@ -4118,6 +4166,10 @@ The following variables are available, where appropriate:
 .It Li "mouse_any_flag" Ta "" Ta "Pane mouse any flag"
 .It Li "mouse_button_flag" Ta "" Ta "Pane mouse button flag"
 .It Li "mouse_standard_flag" Ta "" Ta "Pane mouse standard flag"
+.It Li "mouse_x" Ta "" Ta "Mouse X position, if any"
+.It Li "mouse_y" Ta "" Ta "Mouse Y position, if any"
+.It Li "mouse_word" Ta "" Ta "Word under mouse, if any"
+.It Li "mouse_line" Ta "" Ta "Line under mouse, if any"
 .It Li "pane_active" Ta "" Ta "1 if active pane"
 .It Li "pane_at_bottom" Ta "" Ta "1 if pane is at the bottom of window"
 .It Li "pane_at_left" Ta "" Ta "1 if pane is at the left of window"
@@ -4136,7 +4188,6 @@ The following variables are available, where appropriate:
 .It Li "pane_left" Ta "" Ta "Left of pane"
 .It Li "pane_marked" Ta "" Ta "1 if this is the marked pane"
 .It Li "pane_marked_set" Ta "" Ta "1 if a marked pane is set"
-.It Li "pane_menu" Ta "" Ta "The default pane menu"
 .It Li "pane_mode" Ta "" Ta "Name of pane mode, if any."
 .It Li "pane_pid" Ta "" Ta "PID of first process in pane"
 .It Li "pane_pipe" Ta "" Ta "1 if pane is being piped"
@@ -4167,7 +4218,6 @@ The following variables are available, where appropriate:
 .It Li "session_id" Ta "" Ta "Unique session ID"
 .It Li "session_last_attached" Ta "" Ta "Time session last attached"
 .It Li "session_many_attached" Ta "" Ta "1 if multiple clients attached"
-.It Li "session_menu" Ta "" Ta "The default session menu"
 .It Li "session_name" Ta "#S" Ta "Name of session"
 .It Li "session_stack" Ta "" Ta "Window indexes in most recent order"
 .It Li "session_windows" Ta "" Ta "Number of windows in session"
@@ -4187,7 +4237,6 @@ The following variables are available, where appropriate:
 .It Li "window_last_flag" Ta "" Ta "1 if window is the last used"
 .It Li "window_layout" Ta "" Ta "Window layout description, ignoring zoomed window panes"
 .It Li "window_linked" Ta "" Ta "1 if window is linked across sessions"
-.It Li "window_menu" Ta "" Ta "The default window menu"
 .It Li "window_name" Ta "#W" Ta "Name of window"
 .It Li "window_offset_x" Ta "" Ta "X offset into window if larger than client"
 .It Li "window_offset_y" Ta "" Ta "Y offset into window if larger than client"
@@ -4276,7 +4325,7 @@ Align text to the left, centre or right of the available space if appropriate.
 .It Xo Ic list=on ,
 .Ic list=focus ,
 .Ic list=left-marker ,
-.Ic list=right=marker ,
+.Ic list=right-marker ,
 .Ic nolist
 .Xc
 Mark the position of the various window list components in the
@@ -4606,13 +4655,15 @@ option.
 This command works only from inside
 .Nm .
 .It Xo Ic display-menu
-.Op Fl F
 .Op Fl c Ar target-client
-.Op Fl M Ar menu
 .Op Fl t Ar target-pane
 .Op Fl T Ar title
 .Op Fl x Ar position
 .Op Fl y Ar position
+.Ar name
+.Ar key
+.Ar command
+.Ar ...
 .Xc
 .D1 (alias: Ic menu )
 Display a menu on
@@ -4620,27 +4671,18 @@ Display a menu on
 .Ar target-pane
 gives the target for any commands run from the menu.
 .Pp
-A menu is passed to
-.Fl M
-as a list of menu items separated by
-.Ql | .
-Each menu item consists of three comma-separated parts:
-.Bl -enum -width Ds
-.It
-The menu item name.
-This is a format and may include embedded styles, see the
+A menu is passed as a series of arguments: first the menu item name,
+second the key shortcut (or empty for none) and third the command
+to run when the menu item is chosen.
+The name and command are formats, see the
 .Sx FORMATS
 and
 .Sx STYLES
 sections.
-.It
-The menu item shortcut key.
-If this is empty the menu item has no key shortcut.
-.It
-The command run when the menu item is chosen.
-.El
-.Pp
-An empty menu item is a separator line.
+If the name begins with a hyphen (-), then the item is disabled (shown dim) and
+may not be chosen.
+The name may be empty for a separator line, in which case both the key and
+command should be omitted.
 .Pp
 .Fl T
 is a format for the menu title (see

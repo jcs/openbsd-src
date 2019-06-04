@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-parse.y,v 1.4 2019/05/25 07:18:20 nicm Exp $ */
+/* $OpenBSD: cmd-parse.y,v 1.13 2019/06/02 07:10:15 nicm Exp $ */
 
 /*
  * Copyright (c) 2019 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -23,6 +23,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <pwd.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -53,12 +54,18 @@ TAILQ_HEAD(cmd_parse_commands, cmd_parse_command);
 
 struct cmd_parse_state {
 	FILE				*f;
+
+	const char			*buf;
+	size_t				 len;
+	size_t				 off;
+
+	int				 eol;
 	int				 eof;
 	struct cmd_parse_input		*input;
 	u_int				 escapes;
 
 	char				*error;
-	struct cmd_parse_commands	 commands;
+	struct cmd_parse_commands	*commands;
 
 	struct cmd_parse_scope		*scope;
 	TAILQ_HEAD(, cmd_parse_scope)	 stack;
@@ -66,8 +73,8 @@ struct cmd_parse_state {
 static struct cmd_parse_state parse_state;
 
 static char	*cmd_parse_get_error(const char *, u_int, const char *);
-static char	*cmd_parse_get_strerror(const char *, u_int);
 static void	 cmd_parse_free_command(struct cmd_parse_command *);
+static struct cmd_parse_commands *cmd_parse_new_commands(void);
 static void	 cmd_parse_free_commands(struct cmd_parse_commands *);
 
 %}
@@ -82,9 +89,9 @@ static void	 cmd_parse_free_commands(struct cmd_parse_commands *);
 	int					  flag;
 	struct {
 		int				  flag;
-		struct cmd_parse_commands	  commands;
+		struct cmd_parse_commands	 *commands;
 	} elif;
-	struct cmd_parse_commands		  commands;
+	struct cmd_parse_commands		 *commands;
 	struct cmd_parse_command		 *command;
 }
 
@@ -109,45 +116,46 @@ lines		: /* empty */
 		{
 			struct cmd_parse_state	*ps = &parse_state;
 
-			TAILQ_CONCAT(&ps->commands, &$1, entry);
+			ps->commands = $1;
 		}
 
 statements	: statement '\n'
 		{
-			TAILQ_INIT(&$$);
-			TAILQ_CONCAT(&$$, &$1, entry);
+			$$ = $1;
 		}
 		| statements statement '\n'
 		{
-			TAILQ_INIT(&$$);
-			TAILQ_CONCAT(&$$, &$1, entry);
-			TAILQ_CONCAT(&$$, &$2, entry);
+			$$ = $1;
+			TAILQ_CONCAT($$, $2, entry);
+			free($2);
 		}
-
 
 statement	: condition
 		{
 			struct cmd_parse_state	*ps = &parse_state;
 
-			TAILQ_INIT(&$$);
 			if (ps->scope == NULL || ps->scope->flag)
-				TAILQ_CONCAT(&$$, &$1, entry);
-			else
-				cmd_parse_free_commands(&$1);
+				$$ = $1;
+			else {
+				$$ = cmd_parse_new_commands();
+				cmd_parse_free_commands($1);
+			}
 		}
 		| assignment
 		{
-			TAILQ_INIT(&$$);
+			$$ = xmalloc (sizeof *$$);
+			TAILQ_INIT($$);
 		}
 		| commands
 		{
 			struct cmd_parse_state	*ps = &parse_state;
 
-			TAILQ_INIT(&$$);
 			if (ps->scope == NULL || ps->scope->flag)
-				TAILQ_CONCAT(&$$, &$1, entry);
-			else
-				cmd_parse_free_commands(&$1);
+				$$ = $1;
+			else {
+				$$ = cmd_parse_new_commands();
+				cmd_parse_free_commands($1);
+			}
 		}
 
 expanded	: FORMAT
@@ -237,117 +245,119 @@ if_close	: ENDIF
 
 condition	: if_open '\n' statements if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1)
-				TAILQ_CONCAT(&$$, &$3, entry);
-			else
-				cmd_parse_free_commands(&$3);
+				$$ = $3;
+			else {
+				$$ = cmd_parse_new_commands();
+				cmd_parse_free_commands($3);
+			}
 		}
 		| if_open '\n' statements if_else '\n' statements if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1) {
-				TAILQ_CONCAT(&$$, &$3, entry);
-				cmd_parse_free_commands(&$6);
+				$$ = $3;
+				cmd_parse_free_commands($6);
 			} else {
-				TAILQ_CONCAT(&$$, &$6, entry);
-				cmd_parse_free_commands(&$3);
+				$$ = $6;
+				cmd_parse_free_commands($3);
 			}
 		}
 		| if_open '\n' statements elif if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1) {
-				TAILQ_CONCAT(&$$, &$3, entry);
-				cmd_parse_free_commands(&$4.commands);
+				$$ = $3;
+				cmd_parse_free_commands($4.commands);
 			} else if ($4.flag) {
-				TAILQ_CONCAT(&$$, &$4.commands, entry);
-				cmd_parse_free_commands(&$3);
+				$$ = $4.commands;
+				cmd_parse_free_commands($3);
 			} else {
-				cmd_parse_free_commands(&$3);
-				cmd_parse_free_commands(&$4.commands);
+				$$ = cmd_parse_new_commands();
+				cmd_parse_free_commands($3);
+				cmd_parse_free_commands($4.commands);
 			}
 		}
 		| if_open '\n' statements elif if_else '\n' statements if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1) {
-				TAILQ_CONCAT(&$$, &$3, entry);
-				cmd_parse_free_commands(&$4.commands);
-				cmd_parse_free_commands(&$7);
+				$$ = $3;
+				cmd_parse_free_commands($4.commands);
+				cmd_parse_free_commands($7);
 			} else if ($4.flag) {
-				TAILQ_CONCAT(&$$, &$4.commands, entry);
-				cmd_parse_free_commands(&$3);
-				cmd_parse_free_commands(&$7);
+				$$ = $4.commands;
+				cmd_parse_free_commands($3);
+				cmd_parse_free_commands($7);
 			} else {
-				TAILQ_CONCAT(&$$, &$7, entry);
-				cmd_parse_free_commands(&$3);
-				cmd_parse_free_commands(&$4.commands);
+				$$ = $7;
+				cmd_parse_free_commands($3);
+				cmd_parse_free_commands($4.commands);
 			}
 		}
 
 elif		: if_elif '\n' statements
 		{
-			TAILQ_INIT(&$$.commands);
-			if ($1)
-				TAILQ_CONCAT(&$$.commands, &$3, entry);
-			else
-				cmd_parse_free_commands(&$3);
-			$$.flag = $1;
+			if ($1) {
+				$$.flag = 1;
+				$$.commands = $3;
+			} else {
+				$$.flag = 0;
+				$$.commands = cmd_parse_new_commands();
+				cmd_parse_free_commands($3);
+			}
 		}
 		| if_elif '\n' statements elif
 		{
-			TAILQ_INIT(&$$.commands);
 			if ($1) {
 				$$.flag = 1;
-				TAILQ_CONCAT(&$$.commands, &$3, entry);
-				cmd_parse_free_commands(&$4.commands);
+				$$.commands = $3;
+				cmd_parse_free_commands($4.commands);
+			} else if ($4.flag) {
+				$$.flag = 1;
+				$$.commands = $4.commands;
+				cmd_parse_free_commands($3);
 			} else {
-				$$.flag = $4.flag;
-				TAILQ_CONCAT(&$$.commands, &$4.commands, entry);
-				cmd_parse_free_commands(&$3);
+				$$.flag = 0;
+				$$.commands = cmd_parse_new_commands();
+				cmd_parse_free_commands($3);
+				cmd_parse_free_commands($4.commands);
 			}
 		}
-
 
 commands	: command
 		{
 			struct cmd_parse_state	*ps = &parse_state;
 
-			TAILQ_INIT(&$$);
+			$$ = cmd_parse_new_commands();
 			if (ps->scope == NULL || ps->scope->flag)
-				TAILQ_INSERT_TAIL(&$$, $1, entry);
+				TAILQ_INSERT_TAIL($$, $1, entry);
 			else
 				cmd_parse_free_command($1);
 		}
 		| commands ';'
 		{
-			TAILQ_INIT(&$$);
-			TAILQ_CONCAT(&$$, &$1, entry);
+			$$ = $1;
 		}
 		| commands ';' condition1
 		{
-			TAILQ_INIT(&$$);
-			TAILQ_CONCAT(&$$, &$1, entry);
-			TAILQ_CONCAT(&$$, &$3, entry);
+			$$ = $1;
+			TAILQ_CONCAT($$, $3, entry);
+			free($3);
 		}
 		| commands ';' command
 		{
 			struct cmd_parse_state	*ps = &parse_state;
 
-			TAILQ_INIT(&$$);
 			if (ps->scope == NULL || ps->scope->flag) {
-				TAILQ_CONCAT(&$$, &$1, entry);
-				TAILQ_INSERT_TAIL(&$$, $3, entry);
+				$$ = $1;
+				TAILQ_INSERT_TAIL($$, $3, entry);
 			} else {
-				cmd_parse_free_commands(&$1);
+				$$ = cmd_parse_new_commands();
+				cmd_parse_free_commands($1);
 				cmd_parse_free_command($3);
 			}
 		}
 		| condition1
 		{
-			TAILQ_INIT(&$$);
-			TAILQ_CONCAT(&$$, &$1, entry);
+			$$ = $1;
 		}
 
 command		: assignment TOKEN
@@ -356,7 +366,7 @@ command		: assignment TOKEN
 
 			$$ = xcalloc(1, sizeof *$$);
 			$$->name = $2;
-			$$->line = ps->input->line - 1;
+			$$->line = ps->input->line;
 
 		}
 		| assignment TOKEN arguments
@@ -365,7 +375,7 @@ command		: assignment TOKEN
 
 			$$ = xcalloc(1, sizeof *$$);
 			$$->name = $2;
-			$$->line = ps->input->line - 1;
+			$$->line = ps->input->line;
 
 			$$->argc = $3.argc;
 			$$->argv = $3.argv;
@@ -373,76 +383,80 @@ command		: assignment TOKEN
 
 condition1	: if_open commands if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1)
-				TAILQ_CONCAT(&$$, &$2, entry);
-			else
-				cmd_parse_free_commands(&$2);
+				$$ = $2;
+			else {
+				$$ = cmd_parse_new_commands();
+				cmd_parse_free_commands($2);
+			}
 		}
 		| if_open commands if_else commands if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1) {
-				TAILQ_CONCAT(&$$, &$2, entry);
-				cmd_parse_free_commands(&$4);
+				$$ = $2;
+				cmd_parse_free_commands($4);
 			} else {
-				TAILQ_CONCAT(&$$, &$4, entry);
-				cmd_parse_free_commands(&$2);
+				$$ = $4;
+				cmd_parse_free_commands($2);
 			}
 		}
 		| if_open commands elif1 if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1) {
-				TAILQ_CONCAT(&$$, &$2, entry);
-				cmd_parse_free_commands(&$3.commands);
+				$$ = $2;
+				cmd_parse_free_commands($3.commands);
 			} else if ($3.flag) {
-				TAILQ_CONCAT(&$$, &$3.commands, entry);
-				cmd_parse_free_commands(&$2);
+				$$ = $3.commands;
+				cmd_parse_free_commands($2);
 			} else {
-				cmd_parse_free_commands(&$2);
-				cmd_parse_free_commands(&$3.commands);
+				$$ = cmd_parse_new_commands();
+				cmd_parse_free_commands($2);
+				cmd_parse_free_commands($3.commands);
 			}
 		}
 		| if_open commands elif1 if_else commands if_close
 		{
-			TAILQ_INIT(&$$);
 			if ($1) {
-				TAILQ_CONCAT(&$$, &$2, entry);
-				cmd_parse_free_commands(&$3.commands);
-				cmd_parse_free_commands(&$5);
+				$$ = $2;
+				cmd_parse_free_commands($3.commands);
+				cmd_parse_free_commands($5);
 			} else if ($3.flag) {
-				TAILQ_CONCAT(&$$, &$3.commands, entry);
-				cmd_parse_free_commands(&$2);
-				cmd_parse_free_commands(&$5);
+				$$ = $3.commands;
+				cmd_parse_free_commands($2);
+				cmd_parse_free_commands($5);
 			} else {
-				TAILQ_CONCAT(&$$, &$5, entry);
-				cmd_parse_free_commands(&$2);
-				cmd_parse_free_commands(&$3.commands);
+				$$ = $5;
+				cmd_parse_free_commands($2);
+				cmd_parse_free_commands($3.commands);
 			}
-
 		}
 
 elif1		: if_elif commands
 		{
-			TAILQ_INIT(&$$.commands);
-			if ($1)
-				TAILQ_CONCAT(&$$.commands, &$2, entry);
-			else
-				cmd_parse_free_commands(&$2);
-			$$.flag = $1;
+			if ($1) {
+				$$.flag = 1;
+				$$.commands = $2;
+			} else {
+				$$.flag = 0;
+				$$.commands = cmd_parse_new_commands();
+				cmd_parse_free_commands($2);
+			}
 		}
 		| if_elif commands elif1
 		{
-			TAILQ_INIT(&$$.commands);
 			if ($1) {
 				$$.flag = 1;
-				TAILQ_CONCAT(&$$.commands, &$2, entry);
-				cmd_parse_free_commands(&$3.commands);
+				$$.commands = $2;
+				cmd_parse_free_commands($3.commands);
+			} else if ($3.flag) {
+				$$.flag = 1;
+				$$.commands = $3.commands;
+				cmd_parse_free_commands($2);
 			} else {
-				$$.flag = $3.flag;
-				TAILQ_CONCAT(&$$.commands, &$3.commands, entry);
-				cmd_parse_free_commands(&$2);
+				$$.flag = 0;
+				$$.commands = cmd_parse_new_commands();
+				cmd_parse_free_commands($2);
+				cmd_parse_free_commands($3.commands);
 			}
 		}
 
@@ -483,18 +497,22 @@ cmd_parse_get_error(const char *file, u_int line, const char *error)
 	return (s);
 }
 
-static char *
-cmd_parse_get_strerror(const char *file, u_int line)
-{
-	return (cmd_parse_get_error(file, line, strerror(errno)));
-}
-
 static void
 cmd_parse_free_command(struct cmd_parse_command *cmd)
 {
 	free(cmd->name);
 	cmd_free_argv(cmd->argc, cmd->argv);
 	free(cmd);
+}
+
+static struct cmd_parse_commands *
+cmd_parse_new_commands(void)
+{
+	struct cmd_parse_commands	*cmds;
+
+	cmds = xmalloc(sizeof *cmds);
+	TAILQ_INIT (cmds);
+	return (cmds);
 }
 
 static void
@@ -506,23 +524,17 @@ cmd_parse_free_commands(struct cmd_parse_commands *cmds)
 		TAILQ_REMOVE(cmds, cmd, entry);
 		cmd_parse_free_command(cmd);
 	}
+	free(cmds);
 }
 
 static struct cmd_parse_commands *
-cmd_parse_run_parser(FILE *f, struct cmd_parse_input *pi, char **cause)
+cmd_parse_run_parser(char **cause)
 {
-	struct cmd_parse_state		*ps = &parse_state;
-	struct cmd_parse_commands	*cmds;
-	struct cmd_parse_scope		*scope, *scope1;
-	int				 retval;
+	struct cmd_parse_state	*ps = &parse_state;
+	struct cmd_parse_scope	*scope, *scope1;
+	int			 retval;
 
-	memset(ps, 0, sizeof *ps);
-
-	ps->f = f;
-	ps->eof = 0;
-	ps->input = pi;
-
-	TAILQ_INIT(&ps->commands);
+	ps->commands = NULL;
 	TAILQ_INIT(&ps->stack);
 
 	retval = yyparse();
@@ -535,10 +547,33 @@ cmd_parse_run_parser(FILE *f, struct cmd_parse_input *pi, char **cause)
 		return (NULL);
 	}
 
-	cmds = xmalloc(sizeof *cmds);
-	TAILQ_INIT(cmds);
-	TAILQ_CONCAT(cmds, &ps->commands, entry);
-	return (cmds);
+	if (ps->commands == NULL)
+		return (cmd_parse_new_commands());
+	return (ps->commands);
+}
+
+static struct cmd_parse_commands *
+cmd_parse_do_file(FILE *f, struct cmd_parse_input *pi, char **cause)
+{
+	struct cmd_parse_state	*ps = &parse_state;
+
+	memset(ps, 0, sizeof *ps);
+	ps->input = pi;
+	ps->f = f;
+	return (cmd_parse_run_parser(cause));
+}
+
+static struct cmd_parse_commands *
+cmd_parse_do_buffer(const char *buf, size_t len, struct cmd_parse_input *pi,
+    char **cause)
+{
+	struct cmd_parse_state	*ps = &parse_state;
+
+	memset(ps, 0, sizeof *ps);
+	ps->input = pi;
+	ps->buf = buf;
+	ps->len = len;
+	return (cmd_parse_run_parser(cause));
 }
 
 static struct cmd_parse_result *
@@ -548,7 +583,6 @@ cmd_parse_build_commands(struct cmd_parse_commands *cmds,
 	static struct cmd_parse_result	 pr;
 	struct cmd_parse_commands	*cmds2;
 	struct cmd_parse_command	*cmd, *cmd2, *next, *next2, *after;
-	FILE				*f;
 	u_int				 line = UINT_MAX;
 	int				 i;
 	struct cmd_list			*cmdlist = NULL, *result;
@@ -557,7 +591,7 @@ cmd_parse_build_commands(struct cmd_parse_commands *cmds,
 
 	/* Check for an empty list. */
 	if (TAILQ_EMPTY(cmds)) {
-		free(cmds);
+		cmd_parse_free_commands(cmds);
 		pr.status = CMD_PARSE_EMPTY;
 		return (&pr);
 	}
@@ -576,16 +610,8 @@ cmd_parse_build_commands(struct cmd_parse_commands *cmds,
 		line = cmd->line;
 		log_debug("%s: %u %s = %s", __func__, line, cmd->name, alias);
 
-		f = fmemopen(alias, strlen(alias), "r");
-		if (f == NULL) {
-			free(alias);
-			pr.status = CMD_PARSE_ERROR;
-			pr.error = cmd_parse_get_strerror(pi->file, line);
-			goto out;
-		}
 		pi->line = line;
-		cmds2 = cmd_parse_run_parser(f, pi, &cause);
-		fclose(f);
+		cmds2 = cmd_parse_do_buffer(alias, strlen(alias), pi, &cause);
 		free(alias);
 		if (cmds2 == NULL) {
 			pr.status = CMD_PARSE_ERROR;
@@ -659,7 +685,6 @@ cmd_parse_build_commands(struct cmd_parse_commands *cmds,
 
 out:
 	cmd_parse_free_commands(cmds);
-	free(cmds);
 
 	return (&pr);
 }
@@ -678,10 +703,7 @@ cmd_parse_from_file(FILE *f, struct cmd_parse_input *pi)
 	}
 	memset(&pr, 0, sizeof pr);
 
-	/*
-	 * Parse the file into a list of commands.
-	 */
-	cmds = cmd_parse_run_parser(f, pi, &cause);
+	cmds = cmd_parse_do_file(f, pi, &cause);
 	if (cmds == NULL) {
 		pr.status = CMD_PARSE_ERROR;
 		pr.error = cause;
@@ -694,9 +716,9 @@ struct cmd_parse_result *
 cmd_parse_from_string(const char *s, struct cmd_parse_input *pi)
 {
 	static struct cmd_parse_result	 pr;
-	struct cmd_parse_result		*prp;
 	struct cmd_parse_input		 input;
-	FILE				*f;
+	struct cmd_parse_commands	*cmds;
+	char				*cause;
 
 	if (pi == NULL) {
 		memset(&input, 0, sizeof input);
@@ -711,16 +733,13 @@ cmd_parse_from_string(const char *s, struct cmd_parse_input *pi)
 		return (&pr);
 	}
 
-	f = fmemopen((void *)s, strlen(s), "r");
-	if (f == NULL) {
+	cmds = cmd_parse_do_buffer(s, strlen(s), pi, &cause);
+	if (cmds == NULL) {
 		pr.status = CMD_PARSE_ERROR;
-		pr.cmdlist = NULL;
-		pr.error = cmd_parse_get_strerror(pi->file, pi->line);
-		return (NULL);
+		pr.error = cause;
+		return (&pr);
 	}
-	prp = cmd_parse_from_file(f, pi);
-	fclose(f);
-	return (prp);
+	return (cmd_parse_build_commands(cmds, pi));
 }
 
 struct cmd_parse_result *
@@ -744,8 +763,7 @@ cmd_parse_from_arguments(int argc, char **argv, struct cmd_parse_input *pi)
 	}
 	cmd_log_argv(argc, argv, "%s", __func__);
 
-	cmds = xmalloc(sizeof *cmds);
-	TAILQ_INIT(cmds);
+	cmds = cmd_parse_new_commands();
 	copy = cmd_copy_argv(argc, argv);
 
 	last = 0;
@@ -798,6 +816,8 @@ cmd_parse_from_arguments(int argc, char **argv, struct cmd_parse_input *pi)
 			TAILQ_INSERT_TAIL(cmds, cmd, entry);
 		}
 	}
+
+	cmd_free_argv(argc, copy);
 	return (cmd_parse_build_commands(cmds, pi));
 }
 
@@ -848,6 +868,34 @@ yylex_append1(char **buf, size_t *len, char add)
 }
 
 static int
+yylex_getc1(void)
+{
+	struct cmd_parse_state	*ps = &parse_state;
+	int			 ch;
+
+	if (ps->f != NULL)
+		ch = getc(ps->f);
+	else {
+		if (ps->off == ps->len)
+			ch = EOF;
+		else
+			ch = ps->buf[ps->off++];
+	}
+	return (ch);
+}
+
+static void
+yylex_ungetc(int ch)
+{
+	struct cmd_parse_state	*ps = &parse_state;
+
+	if (ps->f != NULL)
+		ungetc(ch, ps->f);
+	else if (ps->off > 0 && ch != EOF)
+		ps->off--;
+}
+
+static int
 yylex_getc(void)
 {
 	struct cmd_parse_state	*ps = &parse_state;
@@ -858,7 +906,7 @@ yylex_getc(void)
 		return ('\\');
 	}
 	for (;;) {
-		ch = getc(ps->f);
+		ch = yylex_getc1();
 		if (ch == '\\') {
 			ps->escapes++;
 			continue;
@@ -870,7 +918,7 @@ yylex_getc(void)
 		}
 
 		if (ps->escapes != 0) {
-			ungetc(ch, ps->f);
+			yylex_ungetc(ch);
 			ps->escapes--;
 			return ('\\');
 		}
@@ -881,9 +929,8 @@ yylex_getc(void)
 static char *
 yylex_get_word(int ch)
 {
-	struct cmd_parse_state	*ps = &parse_state;
-	char			*buf;
-	size_t			 len;
+	char	*buf;
+	size_t	 len;
 
 	len = 0;
 	buf = xmalloc(1);
@@ -891,7 +938,7 @@ yylex_get_word(int ch)
 	do
 		yylex_append1(&buf, &len, ch);
 	while ((ch = yylex_getc()) != EOF && strchr(" \t\n", ch) == NULL);
-	ungetc(ch, ps->f);
+	yylex_ungetc(ch);
 
 	buf[len] = '\0';
 	log_debug("%s: %s", __func__, buf);
@@ -904,6 +951,10 @@ yylex(void)
 	struct cmd_parse_state	*ps = &parse_state;
 	char			*token, *cp;
 	int			 ch, next;
+
+	if (ps->eol)
+		ps->input->line++;
+	ps->eol = 0;
 
 	for (;;) {
 		ch = yylex_getc();
@@ -931,7 +982,7 @@ yylex(void)
 			/*
 			 * End of line. Update the line number.
 			 */
-			ps->input->line++;
+			ps->eol = 1;
 			return ('\n');
 		}
 
@@ -965,11 +1016,15 @@ yylex(void)
 
 		if (ch == '%') {
 			/*
-			 * % is a condition unless it is alone, then it is a
-			 * token.
+			 * % is a condition unless it is all % or all numbers,
+			 * then it is a token.
 			 */
 			yylval.token = yylex_get_word('%');
-			if (strcmp(yylval.token, "%") == 0)
+			for (cp = yylval.token; *cp != '\0'; cp++) {
+				if (*cp != '%' && !isdigit((u_char)*cp))
+					break;
+			}
+			if (*cp == '\0')
 				return (TOKEN);
 			if (strcmp(yylval.token, "%if") == 0) {
 				free(yylval.token);
@@ -1055,16 +1110,53 @@ error:
 static int
 yylex_token_escape(char **buf, size_t *len)
 {
-	int			 ch, type;
+	int			 ch, type, o2, o3;
 	u_int			 size, i, tmp;
 	char			 s[9];
 	struct utf8_data	 ud;
 
-	switch (ch = yylex_getc()) {
+	ch = yylex_getc();
+
+	if (ch >= '4' && ch <= '7') {
+		yyerror("invalid octal escape");
+		return (0);
+	}
+	if (ch >= '0' && ch <= '3') {
+		o2 = yylex_getc();
+		if (o2 >= '0' && o2 <= '7') {
+			o3 = yylex_getc();
+			if (o3 >= '0' && o3 <= '7') {
+				ch = 64 * (ch - '0') +
+				      8 * (o2 - '0') +
+				          (o3 - '0');
+				yylex_append1(buf, len, ch);
+				return (1);
+			}
+		}
+		yyerror("invalid octal escape");
+		return (0);
+	}
+
+	switch (ch) {
 	case EOF:
 		return (0);
+	case 'a':
+		ch = '\a';
+		break;
+	case 'b':
+		ch = '\b';
+		break;
 	case 'e':
 		ch = '\033';
+		break;
+	case 'f':
+		ch = '\f';
+		break;
+	case 's':
+		ch = ' ';
+		break;
+	case 'v':
+		ch = '\v';
 		break;
 	case 'r':
 		ch = '\r';
@@ -1117,7 +1209,6 @@ unicode:
 static int
 yylex_token_variable(char **buf, size_t *len)
 {
-	struct cmd_parse_state	*ps = &parse_state;
 	struct environ_entry	*envent;
 	int			 ch, brackets = 0;
 	char			 name[BUFSIZ];
@@ -1132,7 +1223,7 @@ yylex_token_variable(char **buf, size_t *len)
 	else {
 		if (!yylex_is_var(ch, 1)) {
 			yylex_append1(buf, len, '$');
-			ungetc(ch, ps->f);
+			yylex_ungetc(ch);
 			return (1);
 		}
 		name[namelen++] = ch;
@@ -1144,7 +1235,7 @@ yylex_token_variable(char **buf, size_t *len)
 			break;
 		if (ch == EOF || !yylex_is_var(ch, 0)) {
 			if (!brackets) {
-				ungetc(ch, ps->f);
+				yylex_ungetc(ch);
 				break;
 			}
 			yyerror("invalid environment variable");
@@ -1170,7 +1261,6 @@ yylex_token_variable(char **buf, size_t *len)
 static int
 yylex_token_tilde(char **buf, size_t *len)
 {
-	struct cmd_parse_state	*ps = &parse_state;
 	struct environ_entry	*envent;
 	int			 ch;
 	char			 name[BUFSIZ];
@@ -1181,7 +1271,7 @@ yylex_token_tilde(char **buf, size_t *len)
 	for (;;) {
 		ch = yylex_getc();
 		if (ch == EOF || strchr("/ \t\n\"'", ch) != NULL) {
-			ungetc(ch, ps->f);
+			yylex_ungetc(ch);
 			break;
 		}
 		if (namelen == (sizeof name) - 2) {
@@ -1210,10 +1300,102 @@ yylex_token_tilde(char **buf, size_t *len)
 	return (1);
 }
 
+static int
+yylex_token_brace(char **buf, size_t *len)
+{
+	struct cmd_parse_state	*ps = &parse_state;
+	int 			 ch, nesting = 1, escape = 0, quote = '\0';
+	int			 lines = 0;
+
+	/*
+	 * Extract a string up to the matching unquoted '}', including newlines
+	 * and handling nested braces.
+	 *
+	 * To detect the final and intermediate braces which affect the nesting
+	 * depth, we scan the input as if it was a tmux config file, and ignore
+	 * braces which would be considered quoted, escaped, or in a comment.
+	 *
+	 * The result is verbatim copy of the input excluding the final brace.
+	 */
+
+	for (ch = yylex_getc1(); ch != EOF; ch = yylex_getc1()) {
+		yylex_append1(buf, len, ch);
+		if (ch == '\n')
+			lines++;
+
+		/*
+		 * If the previous character was a backslash (escape is set),
+		 * escape anything if unquoted or in double quotes, otherwise
+		 * escape only '\n' and '\\'.
+		 */
+		if (escape &&
+		    (quote == '\0' ||
+		    quote == '"' ||
+		    ch == '\n' ||
+		    ch == '\\')) {
+			escape = 0;
+			continue;
+		}
+
+		/*
+		 * The character is not escaped. If it is a backslash, set the
+		 * escape flag.
+		 */
+		if (ch == '\\') {
+			escape = 1;
+			continue;
+		}
+		escape = 0;
+
+		/* A newline always resets to unquoted. */
+		if (ch == '\n') {
+			quote = 0;
+			continue;
+		}
+
+		if (quote) {
+			/*
+			 * Inside quotes or comment. Check if this is the
+			 * closing quote.
+			 */
+			if (ch == quote && quote != '#')
+				quote = 0;
+		} else  {
+			/* Not inside quotes or comment. */
+			switch (ch) {
+			case '"':
+			case '\'':
+			case '#':
+				/* Beginning of quote or comment. */
+				quote = ch;
+				break;
+			case '{':
+				nesting++;
+				break;
+			case '}':
+				nesting--;
+				if (nesting == 0) {
+					(*len)--; /* remove closing } */
+					ps->input->line += lines;
+					return (1);
+				}
+				break;
+			}
+		}
+	}
+
+	/*
+	 * Update line count after error as reporting the opening line
+	 * is more useful than EOF.
+	 */
+	yyerror("unterminated brace string");
+	ps->input->line += lines;
+	return (0);
+}
+
 static char *
 yylex_token(int ch)
 {
-	struct cmd_parse_state	*ps = &parse_state;
 	char			*buf;
 	size_t			 len;
 	enum { START,
@@ -1257,6 +1439,13 @@ yylex_token(int ch)
 				goto error;
 			goto skip;
 		}
+		if (ch == '{' && state == NONE) {
+			if (!yylex_token_brace(&buf, &len))
+				goto error;
+			goto skip;
+		}
+		if (ch == '}' && state == NONE)
+			goto error;  /* unmatched (matched ones were handled) */
 
 		/*
 		 * ' and " starts or end quotes (and is consumed).
@@ -1293,7 +1482,7 @@ yylex_token(int ch)
 	next:
 		ch = yylex_getc();
 	}
-	ungetc(ch, ps->f);
+	yylex_ungetc(ch);
 
 	buf[len] = '\0';
 	log_debug("%s: %s", __func__, buf);

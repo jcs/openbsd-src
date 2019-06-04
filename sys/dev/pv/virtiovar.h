@@ -1,4 +1,4 @@
-/*	$OpenBSD: virtiovar.h,v 1.12 2019/03/24 18:21:12 sf Exp $	*/
+/*	$OpenBSD: virtiovar.h,v 1.14 2019/05/26 15:22:31 sf Exp $	*/
 /*	$NetBSD: virtiovar.h,v 1.1 2011/10/30 12:12:21 hannken Exp $	*/
 
 /*
@@ -82,6 +82,8 @@
 /* flags for config(8) */
 #define VIRTIO_CF_NO_INDIRECT		1
 #define VIRTIO_CF_NO_EVENT_IDX		2
+#define VIRTIO_CF_PREFER_VERSION_1	4
+#define VIRTIO_CF_NO_VERSION_1		8
 
 struct vq_entry {
 	SLIST_ENTRY(vq_entry)	 qe_list;	/* free list */
@@ -131,6 +133,8 @@ struct virtqueue {
 
 	/* interrupt handler */
 	int			(*vq_done)(struct virtqueue*);
+	/* 1.x only: offset for notify address calculation */
+	uint32_t		vq_notify_off;
 };
 
 struct virtio_feature_name {
@@ -151,7 +155,7 @@ struct virtio_ops {
 	uint16_t	(*read_queue_size)(struct virtio_softc *, uint16_t);
 	void		(*setup_queue)(struct virtio_softc *, struct virtqueue *, uint64_t);
 	void		(*set_status)(struct virtio_softc *, int);
-	uint64_t	(*neg_features)(struct virtio_softc *, uint64_t, const struct virtio_feature_name *);
+	int		(*neg_features)(struct virtio_softc *, const struct virtio_feature_name *);
 	int		(*poll_intr)(void *);
 };
 
@@ -164,8 +168,10 @@ struct virtio_softc {
 
 	int			 sc_ipl;		/* set by child */
 
-	uint64_t		 sc_features;
+	uint64_t		 sc_driver_features;
+	uint64_t		 sc_active_features;
 	int			 sc_indirect;
+	int			 sc_version_1;
 
 	int			 sc_nvqs;	/* set by child */
 	struct virtqueue	*sc_vqs;	/* set by child */
@@ -189,12 +195,20 @@ struct virtio_softc {
 #define	virtio_write_device_config_8(sc, o, v)	(sc)->sc_ops->write_dev_cfg_8(sc, o, v)
 #define	virtio_read_queue_size(sc, i)		(sc)->sc_ops->read_queue_size(sc, i)
 #define	virtio_setup_queue(sc, i, v)		(sc)->sc_ops->setup_queue(sc, i, v)
-#define	virtio_negotiate_features(sc, f, n)	(sc)->sc_ops->neg_features(sc, f, n)
+#define	virtio_negotiate_features(sc, n)	(sc)->sc_ops->neg_features(sc, n)
 #define	virtio_poll_intr(sc)			(sc)->sc_ops->poll_intr(sc)
 
 /* only for transport drivers */
 #define	virtio_set_status(sc, i)		(sc)->sc_ops->set_status(sc, i)
 #define	virtio_device_reset(sc)			virtio_set_status((sc), 0)
+
+static inline int
+virtio_has_feature(struct virtio_softc *sc, unsigned int fbit)
+{
+	if (sc->sc_active_features & fbit)
+		return 1;
+	return 0;
+}
 
 int virtio_alloc_vq(struct virtio_softc*, struct virtqueue*, int, int, int,
 		    const char*);

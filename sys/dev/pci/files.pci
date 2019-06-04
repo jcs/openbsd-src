@@ -835,4 +835,4 @@ attach  mcx at pci
 file    dev/pci/if_mcx.c                mcx
 
 include "dev/pci/files.agp"
-include "dev/pci/drm/files.drm"
+include "dev/pci/olddrm/files.drm"

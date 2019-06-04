@@ -1,4 +1,4 @@
-/*	$OpenBSD: relay.c,v 1.245 2019/05/13 09:54:07 reyk Exp $	*/
+/*	$OpenBSD: relay.c,v 1.247 2019/05/31 15:15:37 reyk Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2014 Reyk Floeter <reyk@openbsd.org>
@@ -19,7 +19,6 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/time.h>
-#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/tree.h>
 
@@ -2128,8 +2127,9 @@ relay_tls_ctx_create(struct relay *rlay)
 {
 	struct tls_config	*tls_cfg, *tls_client_cfg;
 	struct tls		*tls = NULL;
+	struct relay_cert	*cert;
 	const char		*fake_key;
-	int			 fake_keylen;
+	int			 fake_keylen, keyfound = 0;
 	char			*buf = NULL, *cabuf = NULL;
 	off_t			 len = 0, calen = 0;
 
@@ -2161,6 +2161,7 @@ relay_tls_ctx_create(struct relay *rlay)
 				log_warn("failed to read root certificates");
 				goto err;
 			}
+			rlay->rl_tls_ca_fd = -1;
 
 			if (tls_config_set_ca_mem(tls_client_cfg, buf, len) !=
 			    0) {
@@ -2189,24 +2190,47 @@ relay_tls_ctx_create(struct relay *rlay)
 		 */
 		tls_config_skip_private_key_check(tls_cfg);
 
-		if ((buf = relay_load_fd(rlay->rl_tls_cert_fd, &len)) == NULL) {
-			log_warn("failed to load tls certificate");
-			goto err;
-		}
+		TAILQ_FOREACH(cert, env->sc_certs, cert_entry) {
+			if (cert->cert_relayid != rlay->rl_conf.id ||
+			    cert->cert_fd == -1)
+				continue;
+			keyfound++;
 
-		if ((fake_keylen = ssl_ctx_fake_private_key(buf, len,
-		    &fake_key)) == -1) {
-			/* error already printed */
-			goto err;
-		}
+			if ((buf = relay_load_fd(cert->cert_fd,
+			    &len)) == NULL) {
+				log_warn("failed to load tls certificate");
+				goto err;
+			}
+			cert->cert_fd = -1;
 
-		if (tls_config_set_keypair_ocsp_mem(tls_cfg, buf, len,
-		    fake_key, fake_keylen, NULL, 0) != 0) {
-			log_warnx("failed to set tls certificate: %s",
-			    tls_config_error(tls_cfg));
-			goto err;
-		}
+			if ((fake_keylen = ssl_ctx_fake_private_key(buf, len,
+			    &fake_key)) == -1) {
+				/* error already printed */
+				goto err;
+			}
 
+			if (keyfound == 1 &&
+			    tls_config_set_keypair_ocsp_mem(tls_cfg, buf, len,
+			    fake_key, fake_keylen, NULL, 0) != 0) {
+				log_warnx("failed to set tls certificate: %s",
+				    tls_config_error(tls_cfg));
+				goto err;
+			}
+
+			/* loading certificate public key */
+			if (keyfound == 1 &&
+			    !ssl_load_pkey(buf, len, NULL, &rlay->rl_tls_pkey))
+				goto err;
+
+			if (tls_config_add_keypair_ocsp_mem(tls_cfg, buf, len,
+			    fake_key, fake_keylen, NULL, 0) != 0) {
+				log_warnx("failed to add tls certificate: %s",
+				    tls_config_error(tls_cfg));
+				goto err;
+			}
+
+			purge_key(&buf, len);
+		}
 
 		if (rlay->rl_tls_cacert_fd != -1) {
 			if ((cabuf = relay_load_fd(rlay->rl_tls_cacert_fd,
@@ -2218,11 +2242,8 @@ relay_tls_ctx_create(struct relay *rlay)
 			if (!ssl_load_pkey(cabuf, calen,
 			    &rlay->rl_tls_cacertx509, &rlay->rl_tls_capkey))
 				goto err;
-			/* loading certificate public key */
-			log_debug("%s: loading certificate", __func__);
-			if (!ssl_load_pkey(buf, len, NULL, &rlay->rl_tls_pkey))
-				goto err;
 		}
+		rlay->rl_tls_cacert_fd = -1;
 
 		tls = tls_server();
 		if (tls == NULL) {
@@ -2239,13 +2260,7 @@ relay_tls_ctx_create(struct relay *rlay)
 		rlay->rl_tls_ctx = tls;
 
 		purge_key(&cabuf, calen);
-		purge_key(&buf, len);
 	}
-
-	/* The fd for the keys/certs are not needed anymore */
-	close(rlay->rl_tls_cert_fd);
-	close(rlay->rl_tls_cacert_fd);
-	close(rlay->rl_tls_ca_fd);
 
 	if (rlay->rl_tls_client_cfg == NULL)
 		tls_config_free(tls_client_cfg);
@@ -2663,105 +2678,6 @@ relay_cmp_af(struct sockaddr_storage *a, struct sockaddr_storage *b)
 	}
 
 	return (ret);
-}
-
-char *
-relay_load_fd(int fd, off_t *len)
-{
-	char		*buf = NULL;
-	struct stat	 st;
-	off_t		 size;
-	ssize_t		 rv;
-	int		 err;
-
-	if (fstat(fd, &st) != 0)
-		goto fail;
-	size = st.st_size;
-	if ((buf = calloc(1, size + 1)) == NULL)
-		goto fail;
-	if ((rv = pread(fd, buf, size, 0)) != size)
-		goto fail;
-
-	close(fd);
-
-	*len = size;
-	return (buf);
-
- fail:
-	err = errno;
-	free(buf);
-	close(fd);
-	errno = err;
-	return (NULL);
-}
-
-int
-relay_load_certfiles(struct relay *rlay)
-{
-	char	 certfile[PATH_MAX];
-	char	 hbuf[sizeof("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255")];
-	struct protocol *proto = rlay->rl_proto;
-	int	 useport = htons(rlay->rl_conf.port);
-
-	if (rlay->rl_conf.flags & F_TLSCLIENT) {
-		if (strlen(proto->tlsca)) {
-			if ((rlay->rl_tls_ca_fd =
-			    open(proto->tlsca, O_RDONLY)) == -1)
-				return (-1);
-			log_debug("%s: using ca %s", __func__, proto->tlsca);
-		}
-		if (strlen(proto->tlscacert)) {
-			if ((rlay->rl_tls_cacert_fd =
-			    open(proto->tlscacert, O_RDONLY)) == -1)
-				return (-1);
-			log_debug("%s: using ca certificate %s", __func__,
-			    proto->tlscacert);
-		}
-		if (strlen(proto->tlscakey) && proto->tlscapass != NULL) {
-			if ((rlay->rl_tls_cakey =
-			    ssl_load_key(env, proto->tlscakey,
-			    &rlay->rl_conf.tls_cakey_len,
-			    proto->tlscapass)) == NULL)
-				return (-1);
-			log_debug("%s: using ca key %s", __func__,
-			    proto->tlscakey);
-		}
-	}
-
-	if ((rlay->rl_conf.flags & F_TLS) == 0)
-		return (0);
-
-	if (print_host(&rlay->rl_conf.ss, hbuf, sizeof(hbuf)) == NULL)
-		return (-1);
-
-	if (snprintf(certfile, sizeof(certfile),
-	    "/etc/ssl/%s:%u.crt", hbuf, useport) == -1)
-		return (-1);
-	if ((rlay->rl_tls_cert_fd = open(certfile, O_RDONLY)) == -1) {
-		if (snprintf(certfile, sizeof(certfile),
-		    "/etc/ssl/%s.crt", hbuf) == -1)
-			return (-1);
-		if ((rlay->rl_tls_cert_fd = open(certfile, O_RDONLY)) == -1)
-			return (-1);
-		useport = 0;
-	}
-	log_debug("%s: using certificate %s", __func__, certfile);
-
-	if (useport) {
-		if (snprintf(certfile, sizeof(certfile),
-		    "/etc/ssl/private/%s:%u.key", hbuf, useport) == -1)
-			return -1;
-	} else {
-		if (snprintf(certfile, sizeof(certfile),
-		    "/etc/ssl/private/%s.key", hbuf) == -1)
-			return -1;
-	}
-	if ((rlay->rl_tls_key = ssl_load_key(env, certfile,
-	    &rlay->rl_conf.tls_key_len, NULL)) == NULL)
-		return (-1);
-	log_debug("%s: using private key %s", __func__, certfile);
-
-	return (0);
 }
 
 int

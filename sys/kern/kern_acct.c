@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_acct.c,v 1.36 2018/04/28 03:13:04 visa Exp $	*/
+/*	$OpenBSD: kern_acct.c,v 1.38 2019/06/01 14:11:17 mpi Exp $	*/
 /*	$NetBSD: kern_acct.c,v 1.42 1996/02/04 02:15:12 christos Exp $	*/
 
 /*-

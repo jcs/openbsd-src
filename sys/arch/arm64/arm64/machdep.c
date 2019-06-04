@@ -1,4 +1,4 @@
-/* $OpenBSD: machdep.c,v 1.39 2019/04/30 20:04:31 patrick Exp $ */
+/* $OpenBSD: machdep.c,v 1.41 2019/06/01 11:45:01 kettenis Exp $ */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>
  *
@@ -812,8 +812,10 @@ initarm(struct arm64_bootparams *abp)
 	// NOTE that 1GB of ram is mapped in by default in
 	// the bootstrap memory config, so nothing is necessary
 	// until pmap_bootstrap_finalize is called??
+	pmap_map_early((paddr_t)config, PAGE_SIZE);
 	if (!fdt_init(config) || fdt_get_size(config) == 0)
 		panic("initarm: no FDT");
+	pmap_map_early((paddr_t)config, round_page(fdt_get_size(config)));
 
 	struct fdt_reg reg;
 	void *node;
@@ -1063,6 +1065,14 @@ initarm(struct arm64_bootparams *abp)
 			}
 		}
 	}
+
+	/*
+	 * Make sure that we have enough KVA to initialize UVM.  In
+	 * particular, we need enough KVA to be able to allocate the
+	 * vm_page structures.
+	 */
+	pmap_growkernel(VM_MIN_KERNEL_ADDRESS + 1024 * 1024 * 1024 +
+	    physmem * sizeof(struct vm_page));
 
 #ifdef DDB
 	db_machine_init();

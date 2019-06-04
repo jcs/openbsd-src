@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_time.c,v 1.116 2019/05/21 08:30:35 stsp Exp $	*/
+/*	$OpenBSD: kern_time.c,v 1.118 2019/06/01 14:11:17 mpi Exp $	*/
 /*	$NetBSD: kern_time.c,v 1.20 1996/02/18 11:57:06 fvdl Exp $	*/
 
 /*

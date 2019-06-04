@@ -1,4 +1,4 @@
-/*	$OpenBSD: ntpd.h,v 1.138 2019/01/14 16:30:21 florian Exp $ */
+/*	$OpenBSD: ntpd.h,v 1.140 2019/05/29 18:48:33 otto Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -108,6 +108,7 @@ struct listen_addr {
 struct ntp_addr {
 	struct ntp_addr		*next;
 	struct sockaddr_storage	 ss;
+	int			 notauth;
 };
 
 struct ntp_addr_wrap {
@@ -312,6 +313,7 @@ enum ctl_actions {
 
 /* ntp.c */
 void	 ntp_main(struct ntpd_conf *, struct passwd *, int, char **);
+void	 peer_addr_head_clear(struct ntp_peer *);
 int	 priv_adjtime(void);
 void	 priv_settime(double);
 void	 priv_dns(int, char *, u_int32_t);

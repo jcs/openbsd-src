@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.29 2019/04/22 18:52:56 kettenis Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.31 2019/06/01 04:30:52 jsg Exp $	*/
 
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
@@ -49,13 +49,14 @@
 #define CPU_PART_CORTEX_A53	0xd03
 #define CPU_PART_CORTEX_A35	0xd04
 #define CPU_PART_CORTEX_A55	0xd05
+#define CPU_PART_CORTEX_A65	0xd06
 #define CPU_PART_CORTEX_A57	0xd07
 #define CPU_PART_CORTEX_A72	0xd08
 #define CPU_PART_CORTEX_A73	0xd09
 #define CPU_PART_CORTEX_A75	0xd0a
 #define CPU_PART_CORTEX_A76	0xd0b
 #define CPU_PART_NEOVERSE_N1	0xd0c
-#define CPU_PART_CORTEX_DEIMOS	0xd0d
+#define CPU_PART_CORTEX_A77	0xd0d
 #define CPU_PART_CORTEX_A76AE	0xd0e
 #define CPU_PART_NEOVERSE_E1	0xd4a
 
@@ -83,12 +84,13 @@ struct cpu_cores cpu_cores_arm[] = {
 	{ CPU_PART_CORTEX_A53, "Cortex-A53" },
 	{ CPU_PART_CORTEX_A55, "Cortex-A55" },
 	{ CPU_PART_CORTEX_A57, "Cortex-A57" },
+	{ CPU_PART_CORTEX_A65, "Cortex-A65" },
 	{ CPU_PART_CORTEX_A72, "Cortex-A72" },
 	{ CPU_PART_CORTEX_A73, "Cortex-A73" },
 	{ CPU_PART_CORTEX_A75, "Cortex-A75" },
 	{ CPU_PART_CORTEX_A76, "Cortex-A76" },
 	{ CPU_PART_CORTEX_A76AE, "Cortex-A76AE" },
-	{ CPU_PART_CORTEX_DEIMOS, "Cortex-Deimos" },
+	{ CPU_PART_CORTEX_A77, "Cortex-A77" },
 	{ CPU_PART_NEOVERSE_E1, "Neoverse E1" },
 	{ CPU_PART_NEOVERSE_N1, "Neoverse N1" },
 	{ 0 },
@@ -247,9 +249,10 @@ cpu_identify(struct cpu_info *ci)
 		case CPU_PART_CORTEX_A35:
 		case CPU_PART_CORTEX_A53:
 		case CPU_PART_CORTEX_A55:
+		case CPU_PART_CORTEX_A65:
 		case CPU_PART_CORTEX_A76:
 		case CPU_PART_CORTEX_A76AE:
-		case CPU_PART_CORTEX_DEIMOS:
+		case CPU_PART_CORTEX_A77:
 		case CPU_PART_NEOVERSE_E1:
 		case CPU_PART_NEOVERSE_N1:
 			/* Not vulnerable. */
