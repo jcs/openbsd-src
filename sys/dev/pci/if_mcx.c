@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mcx.c,v 1.17 2019/06/05 04:45:42 jmatthew Exp $ */
+/*	$OpenBSD: if_mcx.c,v 1.21 2019/06/07 06:53:15 dlg Exp $ */
 
 /*
  * Copyright (c) 2017 David Gwynne <dlg@openbsd.org>
@@ -1239,20 +1239,21 @@ struct mcx_cmd_destroy_cq_out {
 } __packed __aligned(4);
 
 struct mcx_cq_entry {
-	uint32_t		cq_reserved1;
+	uint32_t		__reserved__;
 	uint32_t		cq_lro;
 	uint32_t		cq_lro_ack_seq_num;
 	uint32_t		cq_rx_hash;
-	uint32_t		cq_rx_hash_type;
+	uint8_t			cq_rx_hash_type;
+	uint8_t			cq_ml_path;
+	uint16_t		__reserved__;
 	uint32_t		cq_checksum;
-	uint32_t		cq_reserved2;
+	uint32_t		__reserved__;
 	uint32_t		cq_flags;
 	uint32_t		cq_lro_srqn;
-	uint32_t		cq_reserved3[2];
+	uint32_t		__reserved__[2];
 	uint32_t		cq_byte_cnt;
-	uint32_t		cq_lro_ts_value;
-	uint32_t		cq_lro_ts_echo;
-	uint32_t		cq_flow_tag;
+	uint64_t		cq_timestamp;
+	uint32_t		cq_rx_drops;
 	uint16_t		cq_wqe_count;
 	uint8_t			cq_signature;
 	uint8_t			cq_opcode_owner;
@@ -2035,8 +2036,8 @@ static void	mcx_cmdq_dump(const struct mcx_cmdq_entry *);
 static void	mcx_cmdq_mbox_dump(struct mcx_dmamem *, int);
 */
 static void	mcx_refill(void *);
-static void	mcx_process_rx(struct mcx_softc *, struct mcx_cq_entry *,
-		    struct mbuf_list *, int *);
+static int	mcx_process_rx(struct mcx_softc *, struct mcx_cq_entry *,
+		    struct mbuf_list *);
 static void	mcx_process_txeof(struct mcx_softc *, struct mcx_cq_entry *,
 		    int *);
 static void	mcx_process_cq(struct mcx_softc *, struct mcx_cq *);
@@ -2087,6 +2088,8 @@ struct cfattach mcx_ca = {
 static const struct pci_matchid mcx_devices[] = {
 	{ PCI_VENDOR_MELLANOX,	PCI_PRODUCT_MELLANOX_MT27700 },
 	{ PCI_VENDOR_MELLANOX,	PCI_PRODUCT_MELLANOX_MT27710 },
+	{ PCI_VENDOR_MELLANOX,	PCI_PRODUCT_MELLANOX_MT27800 },
+	{ PCI_VENDOR_MELLANOX,	PCI_PRODUCT_MELLANOX_MT28800 },
 };
 
 static const uint64_t mcx_eth_cap_map[] = {
@@ -2271,6 +2274,26 @@ mcx_attach(struct device *parent, struct device *self, void *aux)
 		goto teardown;
 	}
 
+	/*
+	 * PRM makes no mention of msi interrupts, just legacy and msi-x.
+	 * mellanox support tells me legacy interrupts are not supported,
+	 * so we're stuck with just msi-x.
+	 */
+	if (pci_intr_map_msix(pa, 0, &sc->sc_ih) != 0) {
+		printf(": unable to map interrupt\n");
+		goto teardown;
+	}
+	intrstr = pci_intr_string(sc->sc_pc, sc->sc_ih);
+	sc->sc_ihc = pci_intr_establish(sc->sc_pc, sc->sc_ih,
+	    IPL_NET | IPL_MPSAFE, mcx_intr, sc, DEVNAME(sc));
+	if (sc->sc_ihc == NULL) {
+		printf(": unable to establish interrupt");
+		if (intrstr != NULL)
+			printf(" at %s", intrstr);
+		printf("\n");
+		goto teardown;
+	}
+
 	if (mcx_create_eq(sc) != 0) {
 		/* error printed by mcx_create_eq */
 		goto teardown;
@@ -2291,25 +2314,6 @@ mcx_attach(struct device *parent, struct device *self, void *aux)
 		goto teardown;
 	}
 
-	/*
-	 * PRM makes no mention of msi interrupts, just legacy and msi-x.
-	 * mellanox support tells me legacy interrupts are not supported,
-	 * so we're stuck with just msi-x.
-	 */
-	if (pci_intr_map_msix(pa, 0, &sc->sc_ih) != 0) {
-		printf(": unable to map interrupt\n");
-		goto teardown;
-	}
-	intrstr = pci_intr_string(sc->sc_pc, sc->sc_ih);
-	sc->sc_ihc = pci_intr_establish(sc->sc_pc, sc->sc_ih,
-	    IPL_NET | IPL_MPSAFE, mcx_intr, sc, DEVNAME(sc));
-	if (sc->sc_ihc == NULL) {
-		printf(": unable to establish interrupt");
-		if (intrstr != NULL)
-			printf(" at %s", intrstr);
-		printf("\n");
-		goto teardown;
-	}
 	printf(", %s, address %s\n", intrstr,
 	    ether_sprintf(sc->sc_ac.ac_enaddr));
 
@@ -5551,9 +5555,9 @@ mcx_process_txeof(struct mcx_softc *sc, struct mcx_cq_entry *cqe, int *txfree)
 	ms->ms_m = NULL;
 }
 
-void
+static int
 mcx_process_rx(struct mcx_softc *sc, struct mcx_cq_entry *cqe,
-    struct mbuf_list *ml, int *slots)
+    struct mbuf_list *ml)
 {
 	struct mcx_slot *ms;
 	struct mbuf *m;
@@ -5568,10 +5572,12 @@ mcx_process_rx(struct mcx_softc *sc, struct mcx_cq_entry *cqe,
 
 	m = ms->ms_m;
 	ms->ms_m = NULL;
-	m->m_pkthdr.len = m->m_len = betoh32(cqe->cq_byte_cnt);
-	(*slots)++;
+
+	m->m_pkthdr.len = m->m_len = bemtoh32(&cqe->cq_byte_cnt);
 
 	ml_enqueue(ml, m);
+
+	return (1);
 }
 
 static struct mcx_cq_entry *
@@ -5633,7 +5639,7 @@ mcx_process_cq(struct mcx_softc *sc, struct mcx_cq *cq)
 			mcx_process_txeof(sc, cqe, &txfree);
 			break;
 		case MCX_CQ_ENTRY_OPCODE_SEND:
-			mcx_process_rx(sc, cqe, &ml, &rxfree);
+			rxfree += mcx_process_rx(sc, cqe, &ml);
 			break;
 		case MCX_CQ_ENTRY_OPCODE_REQ_ERR:
 		case MCX_CQ_ENTRY_OPCODE_SEND_ERR:

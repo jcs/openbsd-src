@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpivar.h,v 1.99 2018/08/25 09:39:20 kettenis Exp $	*/
+/*	$OpenBSD: acpivar.h,v 1.101 2019/06/10 14:38:06 kettenis Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  *
@@ -264,7 +264,8 @@ struct acpi_softc {
 
 	struct timeout		sc_dev_timeout;
 
-	int			sc_revision;
+	int			sc_major;
+	int			sc_minor;
 
 	int			sc_pse;		/* passive cooling enabled */
 
@@ -368,6 +369,7 @@ void	acpi_sleep(int, char *);
 int	acpi_matchcls(struct acpi_attach_args *, int, int, int);
 int	acpi_matchhids(struct acpi_attach_args *, const char *[], const char *);
 int	acpi_parsehid(struct aml_node *, void *, char *, char *, size_t);
+int64_t	acpi_getsta(struct acpi_softc *sc, struct aml_node *);
 
 uint32_t acpi_getpropint(struct aml_node *, const char *, uint32_t);
 

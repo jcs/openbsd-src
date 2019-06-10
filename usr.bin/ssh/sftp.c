@@ -1,4 +1,4 @@
-/* $OpenBSD: sftp.c,v 1.190 2019/01/21 22:50:42 tb Exp $ */
+/* $OpenBSD: sftp.c,v 1.192 2019/06/07 03:47:12 dtucker Exp $ */
 /*
  * Copyright (c) 2001-2004 Damien Miller <djm@openbsd.org>
  *
@@ -2341,7 +2341,6 @@ main(int argc, char **argv)
 	size_t num_requests = DEFAULT_NUM_REQUESTS;
 	long long limit_kbps = 0;
 
-	ssh_malloc_init();	/* must be called before any mallocs */
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
 	setlocale(LC_CTYPE, "");
@@ -2478,12 +2477,17 @@ main(int argc, char **argv)
 				port = tmp;
 			break;
 		default:
+			/* Try with user, host and path. */
 			if (parse_user_host_path(*argv, &user, &host,
-			    &file1) == -1) {
-				/* Treat as a plain hostname. */
-				host = xstrdup(*argv);
-				host = cleanhostname(host);
-			}
+			    &file1) == 0)
+				break;
+			/* Try with user and host. */
+			if (parse_user_host_port(*argv, &user, &host, NULL)
+			    == 0)
+				break;
+			/* Treat as a plain hostname. */
+			host = xstrdup(*argv);
+			host = cleanhostname(host);
 			break;
 		}
 		file2 = *(argv + 1);
