@@ -25,7 +25,7 @@ void fdpass_close(struct fdpass *f);
 extern struct fileops worker_fileops, helper_fileops;
 extern struct fdpass *fdpass_peer;
 
-struct sio_hdl *fdpass_sio_open(int, unsigned int);
-struct mio_hdl *fdpass_mio_open(int, unsigned int);
+struct sio_hdl *fdpass_sio_open(char *, unsigned int);
+struct mio_hdl *fdpass_mio_open(char *, unsigned int);
 
 #endif /* !defined(FDPASS_H) */

@@ -57,7 +57,10 @@ int dev_getpos(struct dev *);
 struct dev *dev_new(char *, struct aparams *, unsigned int, unsigned int,
     unsigned int, unsigned int, unsigned int, unsigned int);
 void dev_adjpar(struct dev *, int, int, int);
+int dev_open_do(struct dev *);
 int dev_open(struct dev *);
+void dev_exitall(struct dev *);
+void dev_close_do(struct dev *);
 void dev_close(struct dev *);
 int dev_ref(struct dev *);
 void dev_unref(struct dev *);
@@ -958,6 +961,9 @@ dev_new(char *path, struct aparams *par,
     unsigned int rate, unsigned int hold, unsigned int autovol)
 {
 	struct dev *d;
+	struct devpath *p, **tail;
+	char *start;
+	size_t len;
 	unsigned int i;
 
 	if (dev_sndnum == DEV_NMAX) {
@@ -966,9 +972,29 @@ dev_new(char *path, struct aparams *par,
 		return NULL;
 	}
 	d = xmalloc(sizeof(struct dev));
-	d->path = xstrdup(path);
 	d->num = dev_sndnum++;
 	d->opt_list = NULL;
+
+	/*
+	 * parse list of sndio(7) devices separated by '!'
+	 */
+	start = path;
+	len = 0;
+	tail = &d->path_list;
+	while (1) {
+		p = xmalloc(sizeof(struct devpath));
+		p->next = NULL;
+		while (start[len] != '\0' && start[len] != '!')
+			len++;
+		p->str = xmalloc(len + 1);
+		memcpy(p->str, start, len);
+		p->str[len] = 0;
+		*tail = p;
+		tail = &p->next;
+		if (start[len] == 0)
+			break;
+		start += len + 1;
+	}
 
 	/*
 	 * XXX: below, we allocate a midi input buffer, since we don't
@@ -1029,24 +1055,11 @@ dev_adjpar(struct dev *d, int mode,
  * monitor, midi control, and any necessary conversions.
  */
 int
-dev_open(struct dev *d)
+dev_open_do(struct dev *d)
 {
-	d->mode = d->reqmode;
-	d->round = d->reqround;
-	d->bufsz = d->reqbufsz;
-	d->rate = d->reqrate;
-	d->pchan = d->reqpchan;
-	d->rchan = d->reqrchan;
-	d->par = d->reqpar;
-	if (d->pchan == 0)
-		d->pchan = 2;
-	if (d->rchan == 0)
-		d->rchan = 2;
 	if (!dev_sio_open(d)) {
 		if (log_level >= 1) {
 			dev_log(d);
-			log_puts(": ");
-			log_puts(d->path);
 			log_puts(": failed to open audio device\n");
 		}
 		return 0;
@@ -1109,15 +1122,51 @@ dev_open(struct dev *d)
 }
 
 /*
- * force the device to go in DEV_CFG state, the caller is supposed to
- * ensure buffers are drained
+ * Reset parameters and open the device.
+ */
+int
+dev_open(struct dev *d)
+{
+	d->mode = d->reqmode;
+	d->round = d->reqround;
+	d->bufsz = d->reqbufsz;
+	d->rate = d->reqrate;
+	d->pchan = d->reqpchan;
+	d->rchan = d->reqrchan;
+	d->par = d->reqpar;
+	if (d->pchan == 0)
+		d->pchan = 2;
+	if (d->rchan == 0)
+		d->rchan = 2;
+	if (!dev_open_do(d))
+		return 0;
+	return 1;
+}
+
+/*
+ * Force all slots to exit
  */
 void
-dev_close(struct dev *d)
+dev_exitall(struct dev *d)
 {
 	int i;
 	struct slot *s;
 
+	for (s = d->slot, i = DEV_NSLOT; i > 0; i--, s++) {
+		if (s->ops)
+			s->ops->exit(s->arg);
+		s->ops = NULL;
+	}
+	d->slot_list = NULL;
+}
+
+/*
+ * Force the device to go in DEV_CFG state, the caller is supposed to
+ * ensure buffers are drained
+ */
+void
+dev_close_do(struct dev *d)
+{
 #ifdef DEBUG
 	if (log_level >= 3) {
 		dev_log(d);
@@ -1125,12 +1174,6 @@ dev_close(struct dev *d)
 	}
 #endif
 	d->pstate = DEV_CFG;
-	for (s = d->slot, i = DEV_NSLOT; i > 0; i--, s++) {
-		if (s->ops)
-			s->ops->exit(s->arg);
-		s->ops = NULL;
-	}
-	d->slot_list = NULL;
 	dev_sio_close(d);
 	if (d->mode & MODE_PLAY) {
 		if (d->encbuf != NULL)
@@ -1142,6 +1185,104 @@ dev_close(struct dev *d)
 			xfree(d->decbuf);
 		xfree(d->rbuf);
 	}
+}
+
+/*
+ * Close the device and exit all slots
+ */
+void
+dev_close(struct dev *d)
+{
+	dev_exitall(d);
+	dev_close_do(d);
+}
+
+/*
+ * Close the device, but attempt to migrate everything to a new sndio
+ * device.
+ */
+void
+dev_migrate(struct dev *d)
+{
+	struct slot *s;
+	long long pos;
+	unsigned int mode, round, bufsz, rate, pstate;
+	int delta;
+
+	/* not opened */
+	if (d->pstate == DEV_CFG)
+		return;
+
+	if (log_level >= 1) {
+		dev_log(d);
+		log_puts(": attempting to migrate\n");
+	}
+
+	/* save state */
+	mode = d->mode;
+	round = d->round;
+	bufsz = d->bufsz;
+	rate = d->rate;
+	delta = d->delta;
+	pstate = d->pstate;
+
+	/* close device */
+	dev_close_do(d);
+
+	/* open device */
+	if (!dev_open_do(d)) {
+		if (log_level >= 1) {
+			dev_log(d);
+			log_puts(": migration: no alternate device\n");
+		}
+		dev_exitall(d);
+		return;
+	}
+
+	/* check if new parameters are compatible with old ones */
+	if (d->mode != mode ||
+	    d->round != round ||
+	    d->bufsz != bufsz ||
+	    d->rate != rate) {
+		if (log_level >= 1) {
+			dev_log(d);
+			log_puts(": migration: unsupported parameters\n");
+		}
+		dev_close(d);
+		return;
+	}
+
+	/*
+	 * adjust time positions, make anything go back delta ticks, so
+	 * that the new device can start at zero
+	 */
+	for (s = d->slot_list; s != NULL; s = s->next) {
+		pos = (long long)(d->round - delta) * s->round + s->delta_rem;
+		s->delta_rem = pos % d->round;
+		s->delta += pos / (int)d->round;
+		s->delta -= s->round;
+		if (log_level >= 1) {
+			slot_log(s);
+			log_puts(": adjusted: delta -> ");
+			log_puti(s->delta);
+			log_puts(", delta_rem -> ");
+			log_puti(s->delta_rem);
+			log_puts("\n");
+		}
+	}
+	if (d->tstate == MMC_RUN) {
+		d->mtc.delta -= delta * MTC_SEC;
+		if (log_level >= 1) {
+			dev_log(d);
+			log_puts(": adjusted mtc: delta ->");
+			log_puti(d->mtc.delta);
+			log_puts("\n");
+		}
+	}
+
+	/* start the device if needed */
+	if (pstate == DEV_RUN)
+		dev_wakeup(d);
 }
 
 int
@@ -1228,6 +1369,7 @@ void
 dev_del(struct dev *d)
 {
 	struct dev **p;
+	struct devpath *path;
 
 #ifdef DEBUG
 	if (log_level >= 3) {
@@ -1250,7 +1392,11 @@ dev_del(struct dev *d)
 	}
 	midi_del(d->midi);
 	*p = d->next;
-	xfree(d->path);
+	while ((path = d->path_list) != NULL) {
+		d->path_list = path->next;
+		xfree(path->str);
+		xfree(path);
+	}
 	xfree(d);
 }
 

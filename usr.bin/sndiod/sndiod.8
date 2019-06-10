@@ -194,6 +194,16 @@ Sub-devices
 that are applied after will be attached to this device.
 Device mode and parameters are determined from sub-devices
 attached to it.
+.Pp
+Multiple devices separated by the
+.Sq \!
+character may be specified.
+In this case the first working one is used.
+For instance, specifying a USB device followed by a
+PCI device allows
+.Nm
+to use the USB one preferably when it's connected
+and to fall back to the PCI one when it's disconnected.
 .It Fl j Ar flag
 Control whether program channels are joined or expanded if
 the number of channels requested by a program is not equal
@@ -376,11 +386,15 @@ is
 If
 .Nm
 is sent
-.Dv SIGHUP ,
 .Dv SIGINT
 or
 .Dv SIGTERM ,
 it terminates.
+If
+.Nm
+is sent
+.Dv SIGHUP ,
+it reopens all audio devices.
 .Pp
 By default, when the program cannot accept
 recorded data fast enough or cannot provide data to play fast enough,

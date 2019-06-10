@@ -93,6 +93,7 @@
 #endif
 
 void sigint(int);
+void sighup(int);
 void opt_ch(int *, int *);
 void opt_enc(struct aparams *);
 int opt_mmc(void);
@@ -109,7 +110,7 @@ struct opt *mkopt(char *, struct dev *,
     int, int, int, int, int, int, int, int);
 
 unsigned int log_level = 0;
-volatile sig_atomic_t quit_flag = 0;
+volatile sig_atomic_t quit_flag = 0, reopen_flag = 0;
 
 char usagestr[] = "usage: sndiod [-d] [-a flag] [-b nframes] "
     "[-C min:max] [-c min:max] [-e enc]\n\t"
@@ -127,6 +128,16 @@ sigint(int s)
 	if (quit_flag)
 		_exit(1);
 	quit_flag = 1;
+}
+
+/*
+ * SIGHUP handler, it raises the reopen flag, which requests devices
+ * to be reopened.
+ */
+void
+sighup(int s)
+{
+	reopen_flag = 1;
 }
 
 void
@@ -231,6 +242,7 @@ setsig(void)
 	struct sigaction sa;
 
 	quit_flag = 0;
+	reopen_flag = 0;
 	sigfillset(&sa.sa_mask);
 	sa.sa_flags = SA_RESTART;
 	sa.sa_handler = sigint;
@@ -238,6 +250,7 @@ setsig(void)
 		err(1, "sigaction(int) failed");
 	if (sigaction(SIGTERM, &sa, NULL) < 0)
 		err(1, "sigaction(term) failed");
+	sa.sa_handler = sighup;
 	if (sigaction(SIGHUP, &sa, NULL) < 0)
 		err(1, "sigaction(hup) failed");
 }
@@ -293,10 +306,6 @@ mkdev(char *path, struct aparams *par,
 {
 	struct dev *d;
 
-	for (d = dev_list; d != NULL; d = d->next) {
-		if (strcmp(d->path, path) == 0)
-			return d;
-	}
 	if (!bufsz && !round) {
 		round = DEFAULT_ROUND;
 		bufsz = DEFAULT_BUFSZ;
@@ -352,13 +361,14 @@ dounveil(char *name, char *prefix, char *path_prefix)
 		errx(1, "%s: unsupported device or port format", name);
 	snprintf(path, sizeof(path), "%s%s", path_prefix, name + prefix_len);
 	if (unveil(path, "rw") < 0)
-		err(1, "unveil");
+		err(1, "unveil: %s", path);
 }
 
 static int
 start_helper(int background)
 {
 	struct dev *d;
+	struct devpath *path;
 	struct port *p;
 	struct passwd *pw;
 	int s[2];
@@ -395,8 +405,10 @@ start_helper(int background)
 			    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
 				err(1, "cannot drop privileges");
 		}
-		for (d = dev_list; d != NULL; d = d->next)
-			dounveil(d->path, "rsnd/", "/dev/audio");
+		for (d = dev_list; d != NULL; d = d->next) {
+			for (path = d->path_list; path != NULL; path = path->next)
+				dounveil(path->str, "rsnd/", "/dev/audio");
+		}
 		for (p = port_list; p != NULL; p = p->next)
 			dounveil(p->path, "rmidi/", "/dev/rmidi");
 		if (pledge("stdio sendfd rpath wpath", NULL) < 0)
@@ -619,6 +631,11 @@ main(int argc, char **argv)
 			break;
 		if (!fdpass_peer)
 			break;
+		if (reopen_flag) {
+			reopen_flag = 0;
+			for (d = dev_list; d != NULL; d = d->next)
+				dev_migrate(d);
+		}
 		if (!file_poll())
 			break;
 	}

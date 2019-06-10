@@ -48,7 +48,7 @@ struct fileops port_mio_ops = {
 int
 port_mio_open(struct port *p)
 {
-	p->mio.hdl = fdpass_mio_open(p->num, p->midi->mode);
+	p->mio.hdl = fdpass_mio_open(p->path, p->midi->mode);
 	if (p->mio.hdl == NULL)
 		return 0;
 	p->mio.file = file_new(&port_mio_ops, p, p->path, mio_nfds(p->mio.hdl));
