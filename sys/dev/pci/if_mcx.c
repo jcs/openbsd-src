@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mcx.c,v 1.21 2019/06/07 06:53:15 dlg Exp $ */
+/*	$OpenBSD: if_mcx.c,v 1.27 2019/06/12 01:38:30 jmatthew Exp $ */
 
 /*
  * Copyright (c) 2017 David Gwynne <dlg@openbsd.org>
@@ -71,9 +71,13 @@
 
 /* queue sizes */
 #define MCX_LOG_EQ_SIZE		 6		/* one page */
-#define MCX_LOG_CQ_SIZE		 10
-#define MCX_LOG_RQ_SIZE		 5
-#define MCX_LOG_SQ_SIZE		 10
+#define MCX_LOG_CQ_SIZE		 11
+#define MCX_LOG_RQ_SIZE		 10
+#define MCX_LOG_SQ_SIZE		 11
+
+/* completion event moderation - about 10khz, or 90% of the cq */
+#define MCX_CQ_MOD_PERIOD	50
+#define MCX_CQ_MOD_COUNTER	(((1 << (MCX_LOG_CQ_SIZE - 1)) * 9) / 10)
 
 #define MCX_LOG_SQ_ENTRY_SIZE	 6
 #define MCX_SQ_ENTRY_MAX_SLOTS	 4
@@ -1892,6 +1896,18 @@ struct mcx_cq {
 	int			 cq_count;
 };
 
+struct mcx_calibration {
+	uint64_t		 c_timestamp;	/* previous mcx chip time */
+	uint64_t		 c_uptime;	/* previous kernel nanouptime */
+	uint64_t		 c_tbase;	/* mcx chip time */
+	uint64_t		 c_ubase;	/* kernel nanouptime */
+	uint64_t		 c_tdiff;
+	uint64_t		 c_udiff;
+};
+
+#define MCX_CALIBRATE_FIRST    2
+#define MCX_CALIBRATE_NORMAL   30
+
 struct mcx_softc {
 	struct device		 sc_dev;
 	struct arpcom		 sc_ac;
@@ -1944,6 +1960,10 @@ struct mcx_softc {
 	int			 sc_first_mcast_flow_entry;
 	int			 sc_extra_mcast;
 	uint8_t			 sc_mcast_flows[MCX_NUM_MCAST_FLOWS][ETHER_ADDR_LEN];
+
+	struct mcx_calibration	 sc_calibration[2];
+	unsigned int		 sc_calibration_gen;
+	struct timeout		 sc_calibrate;
 
 	struct mcx_cq		 sc_cq[MCX_MAX_CQS];
 	int			 sc_num_cq;
@@ -2037,7 +2057,7 @@ static void	mcx_cmdq_mbox_dump(struct mcx_dmamem *, int);
 */
 static void	mcx_refill(void *);
 static int	mcx_process_rx(struct mcx_softc *, struct mcx_cq_entry *,
-		    struct mbuf_list *);
+		    struct mbuf_list *, const struct mcx_calibration *);
 static void	mcx_process_txeof(struct mcx_softc *, struct mcx_cq_entry *,
 		    int *);
 static void	mcx_process_cq(struct mcx_softc *, struct mcx_cq *);
@@ -2057,12 +2077,17 @@ static void	mcx_media_status(struct ifnet *, struct ifmediareq *);
 static int	mcx_media_change(struct ifnet *);
 static int	mcx_get_sffpage(struct ifnet *, struct if_sffpage *);
 
+static void	mcx_calibrate_first(struct mcx_softc *);
+static void	mcx_calibrate(void *);
+
 static inline uint32_t
 		mcx_rd(struct mcx_softc *, bus_size_t);
 static inline void
 		mcx_wr(struct mcx_softc *, bus_size_t, uint32_t);
 static inline void
 		mcx_bar(struct mcx_softc *, bus_size_t, bus_size_t, int);
+
+static uint64_t	mcx_timer(struct mcx_softc *);
 
 static int	mcx_dmamem_alloc(struct mcx_softc *, struct mcx_dmamem *,
 		    bus_size_t, u_int align);
@@ -2338,6 +2363,7 @@ mcx_attach(struct device *parent, struct device *self, void *aux)
 	ether_ifattach(ifp);
 
 	timeout_set(&sc->sc_rx_refill, mcx_refill, sc);
+	timeout_set(&sc->sc_calibrate, mcx_calibrate, sc);
 
 	sc->sc_flow_table_id = -1;
 	for (i = 0; i < MCX_NUM_FLOW_GROUPS; i++) {
@@ -3857,7 +3883,9 @@ mcx_create_cq(struct mcx_softc *sc, int eqn)
 	mbin->cmd_cq_ctx.cq_uar_size = htobe32(
 	    (MCX_LOG_CQ_SIZE << MCX_CQ_CTX_LOG_CQ_SIZE_SHIFT) | sc->sc_uar);
 	mbin->cmd_cq_ctx.cq_eqn = htobe32(eqn);
-	/* set event moderation bits here */
+	mbin->cmd_cq_ctx.cq_period_max_count = htobe32(
+	    (MCX_CQ_MOD_PERIOD << MCX_CQ_CTX_PERIOD_SHIFT) |
+	    MCX_CQ_MOD_COUNTER);
 	mbin->cmd_cq_ctx.cq_doorbell = htobe64(
 	    MCX_DMA_DVA(&sc->sc_doorbell_mem) +
 	    MCX_CQ_DOORBELL_OFFSET + (MCX_CQ_DOORBELL_SIZE * sc->sc_num_cq));
@@ -5555,9 +5583,65 @@ mcx_process_txeof(struct mcx_softc *sc, struct mcx_cq_entry *cqe, int *txfree)
 	ms->ms_m = NULL;
 }
 
+static uint64_t
+mcx_uptime(void)
+{
+	struct timespec ts;
+
+	nanouptime(&ts);
+
+	return ((uint64_t)ts.tv_sec * 1000000000 + (uint64_t)ts.tv_nsec);
+}
+
+static void
+mcx_calibrate_first(struct mcx_softc *sc)
+{
+	struct mcx_calibration *c = &sc->sc_calibration[0];
+
+	sc->sc_calibration_gen = 0;
+
+	c->c_ubase = mcx_uptime();
+	c->c_tbase = mcx_timer(sc);
+	c->c_tdiff = 0;
+
+	timeout_add_sec(&sc->sc_calibrate, MCX_CALIBRATE_FIRST);
+}
+
+#define MCX_TIMESTAMP_SHIFT 10
+
+static void
+mcx_calibrate(void *arg)
+{
+	struct mcx_softc *sc = arg;
+	struct mcx_calibration *nc, *pc;
+	unsigned int gen;
+
+	if (!ISSET(sc->sc_ac.ac_if.if_flags, IFF_RUNNING))
+		return;
+
+	timeout_add_sec(&sc->sc_calibrate, MCX_CALIBRATE_NORMAL);
+
+	gen = sc->sc_calibration_gen;
+	pc = &sc->sc_calibration[gen % nitems(sc->sc_calibration)];
+	gen++;
+	nc = &sc->sc_calibration[gen % nitems(sc->sc_calibration)];
+
+	nc->c_uptime = pc->c_ubase;
+	nc->c_timestamp = pc->c_tbase;
+
+	nc->c_ubase = mcx_uptime();
+	nc->c_tbase = mcx_timer(sc);
+
+	nc->c_udiff = (nc->c_ubase - nc->c_uptime) >> MCX_TIMESTAMP_SHIFT;
+	nc->c_tdiff = (nc->c_tbase - nc->c_timestamp) >> MCX_TIMESTAMP_SHIFT;
+
+	membar_producer();
+	sc->sc_calibration_gen = gen;
+}
+
 static int
 mcx_process_rx(struct mcx_softc *sc, struct mcx_cq_entry *cqe,
-    struct mbuf_list *ml)
+    struct mbuf_list *ml, const struct mcx_calibration *c)
 {
 	struct mcx_slot *ms;
 	struct mbuf *m;
@@ -5574,6 +5658,20 @@ mcx_process_rx(struct mcx_softc *sc, struct mcx_cq_entry *cqe,
 	ms->ms_m = NULL;
 
 	m->m_pkthdr.len = m->m_len = bemtoh32(&cqe->cq_byte_cnt);
+
+	if (cqe->cq_rx_hash_type) {
+		m->m_pkthdr.ph_flowid = M_FLOWID_VALID |
+		    betoh32(cqe->cq_rx_hash);
+	}
+
+	if (c->c_tdiff) {
+		uint64_t t = bemtoh64(&cqe->cq_timestamp) - c->c_timestamp;
+		t *= c->c_udiff;
+		t /= c->c_tdiff;
+
+		m->m_pkthdr.ph_timestamp = c->c_uptime + t;
+		SET(m->m_pkthdr.csum_flags, M_TIMESTAMP);
+	}
 
 	ml_enqueue(ml, m);
 
@@ -5624,10 +5722,16 @@ void
 mcx_process_cq(struct mcx_softc *sc, struct mcx_cq *cq)
 {
 	struct ifnet *ifp = &sc->sc_ac.ac_if;
+	const struct mcx_calibration *c;
+	unsigned int gen;
 	struct mcx_cq_entry *cqe;
 	uint8_t *cqp;
 	struct mbuf_list ml = MBUF_LIST_INITIALIZER();
 	int rxfree, txfree;
+
+	gen = sc->sc_calibration_gen;
+	membar_consumer();
+	c = &sc->sc_calibration[gen % nitems(sc->sc_calibration)];
 
 	rxfree = 0;
 	txfree = 0;
@@ -5639,7 +5743,7 @@ mcx_process_cq(struct mcx_softc *sc, struct mcx_cq *cq)
 			mcx_process_txeof(sc, cqe, &txfree);
 			break;
 		case MCX_CQ_ENTRY_OPCODE_SEND:
-			rxfree += mcx_process_rx(sc, cqe, &ml);
+			rxfree += mcx_process_rx(sc, cqe, &ml, c);
 			break;
 		case MCX_CQ_ENTRY_OPCODE_REQ_ERR:
 		case MCX_CQ_ENTRY_OPCODE_SEND_ERR:
@@ -5660,10 +5764,11 @@ mcx_process_cq(struct mcx_softc *sc, struct mcx_cq *cq)
 
 	if (rxfree > 0) {
 		if_rxr_put(&sc->sc_rxr, rxfree);
+		if (ifiq_input(&sc->sc_ac.ac_if.if_rcv, &ml))
+			if_rxr_livelocked(&sc->sc_rxr);
+
 		mcx_rx_fill(sc);
 		/* timeout if full somehow */
-
-		if_input(&sc->sc_ac.ac_if, &ml);
 	}
 	if (txfree > 0) {
 		sc->sc_tx_cons += txfree;
@@ -5882,6 +5987,8 @@ mcx_up(struct mcx_softc *sc)
 	sc->sc_rx_prod = 0;
 	mcx_rx_fill(sc);
 
+	mcx_calibrate_first(sc);
+
 	SET(ifp->if_flags, IFF_RUNNING);
 
 	sc->sc_tx_cons = 0;
@@ -5927,8 +6034,10 @@ mcx_down(struct mcx_softc *sc)
 		}
 	}
 
-	intr_barrier(&sc->sc_ih);
+	intr_barrier(sc->sc_ihc);
 	ifq_barrier(&ifp->if_snd);
+
+	timeout_del_barrier(&sc->sc_calibrate);
 
 	for (group = 0; group < MCX_NUM_FLOW_GROUPS; group++) {
 		if (sc->sc_flow_group_id[group] != -1)
@@ -6443,6 +6552,26 @@ static inline void
 mcx_bar(struct mcx_softc *sc, bus_size_t r, bus_size_t l, int f)
 {
 	bus_space_barrier(sc->sc_memt, sc->sc_memh, r, l, f);
+}
+
+static uint64_t
+mcx_timer(struct mcx_softc *sc)
+{
+	uint32_t hi, lo, ni;
+
+	hi = mcx_rd(sc, MCX_INTERNAL_TIMER_H);
+	for (;;) {
+		lo = mcx_rd(sc, MCX_INTERNAL_TIMER_L);
+		mcx_bar(sc, MCX_INTERNAL_TIMER_L, 8, BUS_SPACE_BARRIER_READ);
+		ni = mcx_rd(sc, MCX_INTERNAL_TIMER_H);
+
+		if (ni == hi)
+			break;
+
+		hi = ni;
+	}
+
+	return (((uint64_t)hi << 32) | (uint64_t)lo);
 }
 
 static int

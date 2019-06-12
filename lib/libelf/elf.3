@@ -21,7 +21,7 @@
 .\" out of the use of this software, even if advised of the possibility of
 .\" such damage.
 .\"
-.\" $Id: elf.3,v 1.2 2019/03/19 02:31:35 jsg Exp $
+.\" $Id: elf.3,v 1.4 2019/06/11 18:38:46 schwarze Exp $
 .\"
 .Dd February 5, 2019
 .Dt ELF 3
@@ -50,7 +50,7 @@ section numbering.
 This manual page serves to provide an overview of the functionality in
 the ELF library.
 Further information may found in the manual pages for individual
-.Xr ELF 3
+.Fn *elf*
 functions that comprise the library.
 .Ss ELF Concepts
 As described in
@@ -91,7 +91,7 @@ This version number determines the layout of the individual components
 of an ELF file and the semantics associated with these.
 .Ss Data Representation And Translation
 The
-.Xr ELF 3
+.Nm
 library distinguishes between
 .Dq native
 representations of ELF data structures and their
@@ -109,7 +109,7 @@ and follow different constraints on object alignment than these native
 constraints.
 .Pp
 Accordingly, the
-.Xr ELF 3
+.Nm
 library offers translation facilities
 .Xr ( elf32_xlatetof 3 ,
 .Xr elf32_xlatetom 3 ,
@@ -615,8 +615,11 @@ descriptor itself.
 .Xr ar 5 ,
 .Xr elf 5
 .Sh HISTORY
-The original ELF(3) API was developed for Unix System V.
-The current implementation of the ELF(3) API appeared in
+The original
+.Nm
+API was developed for
+.At V .
+The current implementation of the API appeared in
 .Fx 7.0 .
 .Sh AUTHORS
 The ELF library was written by

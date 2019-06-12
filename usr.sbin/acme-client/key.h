@@ -1,5 +1,6 @@
-/*	$Id: rsa.h,v 1.1 2016/08/31 22:01:42 florian Exp $ */
+/*	$Id: key.h,v 1.1 2019/06/12 11:09:25 gilles Exp $ */
 /*
+ * Copyright (c) 2019 Renaud Allard <renaud@allard.it>
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -14,10 +15,11 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-#ifndef RSA_H
-#define RSA_H
+#ifndef KEY_H
+#define KEY_H
 
 EVP_PKEY	*rsa_key_create(FILE *, const char *);
-EVP_PKEY	*rsa_key_load(FILE *, const char *);
+EVP_PKEY	*ec_key_create(FILE *, const char *);
+EVP_PKEY	*key_load(FILE *, const char *);
 
-#endif /* ! RSA_H */
+#endif /* ! KEY_H */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: mbuf.h,v 1.242 2019/02/11 00:25:33 bluhm Exp $	*/
+/*	$OpenBSD: mbuf.h,v 1.244 2019/06/10 23:45:19 dlg Exp $	*/
 /*	$NetBSD: mbuf.h,v 1.19 1996/02/09 18:25:14 christos Exp $	*/
 
 /*
@@ -226,13 +226,14 @@ struct mbuf {
 #define	M_ICMP_CSUM_IN_OK	0x0400	/* ICMP/ICMPv6 checksum verified */
 #define	M_ICMP_CSUM_IN_BAD	0x0800	/* ICMP/ICMPv6 checksum bad */
 #define	M_IPV6_DF_OUT		0x1000	/* don't fragment outgoing IPv6 */
+#define	M_TIMESTAMP		0x2000	/* ph_timestamp is set */
 
 #ifdef _KERNEL
 #define MCS_BITS \
     ("\20\1IPV4_CSUM_OUT\2TCP_CSUM_OUT\3UDP_CSUM_OUT\4IPV4_CSUM_IN_OK" \
     "\5IPV4_CSUM_IN_BAD\6TCP_CSUM_IN_OK\7TCP_CSUM_IN_BAD\10UDP_CSUM_IN_OK" \
     "\11UDP_CSUM_IN_BAD\12ICMP_CSUM_OUT\13ICMP_CSUM_IN_OK\14ICMP_CSUM_IN_BAD" \
-    "\15IPV6_NODF_OUT")
+    "\15IPV6_NODF_OUT" "\16TIMESTAMP")
 #endif
 
 /* mbuf types */
@@ -445,6 +446,8 @@ int	m_apply(struct mbuf *, int, int,
 	    int (*)(caddr_t, caddr_t, unsigned int), caddr_t);
 struct mbuf *m_dup_pkt(struct mbuf *, unsigned int, int);
 int	m_dup_pkthdr(struct mbuf *, struct mbuf *, int);
+
+void	m_microtime(const struct mbuf *, struct timeval *);
 
 static inline struct mbuf *
 m_freemp(struct mbuf **mp)

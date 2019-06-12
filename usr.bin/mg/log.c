@@ -1,4 +1,4 @@
-/*	$OpenBSD: log.c,v 1.2 2019/06/10 16:48:59 lum Exp $	*/
+/*	$OpenBSD: log.c,v 1.4 2019/06/12 06:01:26 lum Exp $	*/
 
 /* 
  * This file is in the public domain.
@@ -11,6 +11,16 @@
  * Record a history of an mg session for temporal debugging.
  * Sometimes pressing a key will set the scene for a bug only visible 
  * dozens of keystrokes later. gdb has its limitations in this scenario.
+ *
+ * Note this file is not compiled into mg by default, you will need to
+ * amend the 'Makefile' for that to happen. Because of this, the code
+ * is subjet to bit-rot. However, I know myself and others have 
+ * written similar functionally often enough, that recording the below 
+ * in a code repository could aid the developement efforts of mg, even
+ * if it requires a bit of effort to get working. The current code is
+ * written in the spirit of debugging (quickly and perhaps not ideal,
+ * but it does what is required well enough). Should debugging become
+ * more formalised within mg, then I would expect that to change.
  */
 
 #include <sys/queue.h>
@@ -149,7 +159,7 @@ mglog_lines(PF funct)
         	                return (FALSE);
 			}
 			if (fprintf(fd, "lines:raw:%d buf:%d wdot:%d\n\n",
-			    i, curbp->b_lines, curwp->w_dotline)) {
+			    i, curbp->b_lines, curwp->w_dotline) == -1) {
 				fclose(fd);
         	                return (FALSE);
 			}
