@@ -1,4 +1,4 @@
-/*	$OpenBSD: session.c,v 1.382 2019/05/27 09:14:33 claudio Exp $ */
+/*	$OpenBSD: session.c,v 1.385 2019/06/17 21:17:04 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004, 2005 Henning Brauer <henning@openbsd.org>
@@ -1119,8 +1119,10 @@ session_setup_socket(struct peer *p)
 		}
 
 		if (p->conf.ebgp) {
-			/* set TTL to foreign router's distance
-			   1=direct n=multihop with ttlsec, we always use 255 */
+			/*
+			 * set TTL to foreign router's distance
+			 * 1=direct n=multihop with ttlsec, we always use 255
+			 */
 			if (p->conf.ttlsec) {
 				ttl = 256 - p->conf.distance;
 				if (setsockopt(p->fd, IPPROTO_IP, IP_MINTTL,
@@ -1143,8 +1145,10 @@ session_setup_socket(struct peer *p)
 		break;
 	case AID_INET6:
 		if (p->conf.ebgp) {
-			/* set hoplimit to foreign router's distance
-			   1=direct n=multihop with ttlsec, we always use 255 */
+			/*
+			 * set hoplimit to foreign router's distance
+			 * 1=direct n=multihop with ttlsec, we always use 255
+			 */
 			if (p->conf.ttlsec) {
 				ttl = 256 - p->conf.distance;
 				if (setsockopt(p->fd, IPPROTO_IPV6,
@@ -2270,7 +2274,7 @@ parse_notification(struct peer *peer)
 		if (datalen > 1) {
 			shutcomm_len = *p++;
 			datalen--;
-			if(datalen < shutcomm_len) {
+			if (datalen < shutcomm_len) {
 			    log_peer_warnx(&peer->conf,
 				"received truncated shutdown reason");
 			    return (0);
@@ -2555,7 +2559,7 @@ session_dispatch_imsg(struct imsgbuf *ibuf, int idx, u_int *listener_cnt)
 				fatalx("reconf request not from parent");
 			nconf = new_config();
 
-			copy_config(nconf, imsg.data); 
+			copy_config(nconf, imsg.data);
 			pending_reconf = 1;
 			break;
 		case IMSG_RECONF_PEER:
@@ -2743,6 +2747,7 @@ session_dispatch_imsg(struct imsgbuf *ibuf, int idx, u_int *listener_cnt)
 			break;
 		case IMSG_CTL_SHOW_RIB:
 		case IMSG_CTL_SHOW_RIB_PREFIX:
+		case IMSG_CTL_SHOW_RIB_COMMUNITIES:
 		case IMSG_CTL_SHOW_RIB_ATTR:
 		case IMSG_CTL_SHOW_RIB_MEM:
 		case IMSG_CTL_SHOW_RIB_HASH:

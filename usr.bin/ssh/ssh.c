@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh.c,v 1.502 2019/06/06 05:13:13 otto Exp $ */
+/* $OpenBSD: ssh.c,v 1.504 2019/06/14 04:13:58 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -146,7 +146,7 @@ char *config = NULL;
 
 /*
  * Name of the host we are connecting to.  This is the name given on the
- * command line, or the HostName specified for the user-supplied name in a
+ * command line, or the Hostname specified for the user-supplied name in a
  * configuration file.
  */
 char *host;
@@ -764,8 +764,11 @@ main(int ac, char **av)
 #endif
 			break;
 		case 'J':
-			if (options.jump_host != NULL)
-				fatal("Only a single -J option permitted");
+			if (options.jump_host != NULL) {
+				fatal("Only a single -J option is permitted "
+				    "(use commas to separate multiple "
+				    "jump hops)");
+			}
 			if (options.proxy_command != NULL)
 				fatal("Cannot specify -J with ProxyCommand");
 			if (parse_jump(optarg, &options, 1) == -1)

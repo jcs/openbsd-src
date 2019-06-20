@@ -1,4 +1,4 @@
-/* $OpenBSD: window.c,v 1.231 2019/06/09 06:50:24 nicm Exp $ */
+/* $OpenBSD: window.c,v 1.233 2019/06/18 11:08:42 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <fnmatch.h>
+#include <regex.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1206,24 +1207,41 @@ window_pane_visible(struct window_pane *wp)
 }
 
 u_int
-window_pane_search(struct window_pane *wp, const char *searchstr)
+window_pane_search(struct window_pane *wp, const char *term, int regex,
+    int ignore)
 {
 	struct screen	*s = &wp->base;
-	char		*newsearchstr, *line;
+	regex_t		 r;
+	char		*new = NULL, *line;
 	u_int		 i;
+	int		 flags = 0, found;
 
-	xasprintf(&newsearchstr, "*%s*", searchstr);
+	if (!regex) {
+		if (ignore)
+			flags |= FNM_CASEFOLD;
+		xasprintf(&new, "*%s*", term);
+	} else {
+		if (ignore)
+			flags |= REG_ICASE;
+		if (regcomp(&r, term, flags|REG_EXTENDED) != 0)
+			return (0);
+	}
 
 	for (i = 0; i < screen_size_y(s); i++) {
 		line = grid_view_string_cells(s->grid, 0, i, screen_size_x(s));
-		if (fnmatch(newsearchstr, line, 0) == 0) {
-			free(line);
-			break;
-		}
+		if (!regex)
+			found = (fnmatch(new, line, 0) == 0);
+		else
+			found = (regexec(&r, line, 0, NULL, 0) == 0);
 		free(line);
+		if (found)
+			break;
 	}
+	if (!regex)
+		free(new);
+	else
+		regfree(&r);
 
-	free(newsearchstr);
 	if (i == screen_size_y(s))
 		return (0);
 	return (i + 1);
@@ -1494,7 +1512,7 @@ window_pane_input_callback(struct client *c, int closed, void *data)
 		c->stdin_callback = NULL;
 		server_client_unref(c);
 
-		cdata->item->flags &= ~CMDQ_WAITING;
+		cmdq_continue(cdata->item);
 		free(cdata);
 
 		return;

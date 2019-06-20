@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.910 2019/06/07 20:09:17 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.912 2019/06/18 11:08:42 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -2037,6 +2037,7 @@ void		 cmdq_insert_after(struct cmdq_item *, struct cmdq_item *);
 void		 cmdq_append(struct client *, struct cmdq_item *);
 void		 cmdq_insert_hook(struct session *, struct cmdq_item *,
 		     struct cmd_find_state *, const char *, ...);
+void		 cmdq_continue(struct cmdq_item *);
 void printflike(3, 4) cmdq_format(struct cmdq_item *, const char *,
 		     const char *, ...);
 u_int		 cmdq_next(struct client *);
@@ -2396,7 +2397,8 @@ void		 window_pane_key(struct window_pane *, struct client *,
 		     struct session *, struct winlink *, key_code,
 		     struct mouse_event *);
 int		 window_pane_visible(struct window_pane *);
-u_int		 window_pane_search(struct window_pane *, const char *);
+u_int		 window_pane_search(struct window_pane *, const char *, int,
+		     int);
 const char	*window_printable_flags(struct winlink *);
 struct window_pane *window_pane_find_up(struct window_pane *);
 struct window_pane *window_pane_find_down(struct window_pane *);
@@ -2630,5 +2632,8 @@ int		 style_is_default(struct style *);
 /* spawn.c */
 struct winlink	*spawn_window(struct spawn_context *, char **);
 struct window_pane *spawn_pane(struct spawn_context *, char **);
+
+/* regsub.c */
+char		*regsub(const char *, const char *, const char *, int);
 
 #endif /* TMUX_H */

@@ -1,4 +1,4 @@
-/* $OpenBSD: doas.c,v 1.76 2019/06/12 02:50:29 tedu Exp $ */
+/* $OpenBSD: doas.c,v 1.78 2019/06/17 19:51:23 tedu Exp $ */
 /*
  * Copyright (c) 2015 Ted Unangst <tedu@openbsd.org>
  *
@@ -286,6 +286,7 @@ main(int argc, char **argv)
 	const char *confpath = NULL;
 	char *shargv[] = { NULL, NULL };
 	char *sh;
+	const char *p;
 	const char *cmd;
 	char cmdline[LINE_MAX];
 	char mypwbuf[_PW_BUF_LEN], targpwbuf[_PW_BUF_LEN];
@@ -402,6 +403,11 @@ main(int argc, char **argv)
 		authuser(mypw->pw_name, login_style, rule->options & PERSIST);
 	}
 
+	if ((p = getenv("PATH")) != NULL)
+		formerpath = strdup(p);
+	if (formerpath == NULL)
+		formerpath = "";
+
 	if (unveil(_PATH_LOGIN_CONF, "r") == -1)
 		err(1, "unveil");
 	if (rule->cmd) {
@@ -421,6 +427,7 @@ main(int argc, char **argv)
 		errx(1, "no passwd entry for target");
 
 	if (setusercontext(NULL, targpw, target, LOGIN_SETGROUP |
+	    LOGIN_SETPATH |
 	    LOGIN_SETPRIORITY | LOGIN_SETRESOURCES | LOGIN_SETUMASK |
 	    LOGIN_SETUSER) != 0)
 		errx(1, "failed to set user context for target");
@@ -439,8 +446,13 @@ main(int argc, char **argv)
 	syslog(LOG_AUTHPRIV | LOG_INFO, "%s ran command %s as %s from %s",
 	    mypw->pw_name, cmdline, targpw->pw_name, cwd);
 
-	envp = prepenv(rule);
+	envp = prepenv(rule, mypw, targpw);
 
+	if (rule->cmd) {
+		/* do this again after setusercontext reset it */
+		if (setenv("PATH", safepath, 1) == -1)
+			err(1, "failed to set PATH '%s'", safepath);
+	}
 	execvpe(cmd, argv, envp);
 fail:
 	if (errno == ENOENT)

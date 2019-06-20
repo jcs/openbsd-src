@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.y,v 1.35 2019/06/12 11:09:25 gilles Exp $ */
+/*	$OpenBSD: parse.y,v 1.38 2019/06/17 12:42:52 florian Exp $ */
 
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -70,6 +70,7 @@ struct authority_c	*conf_new_authority(struct acme_conf *, char *);
 struct domain_c		*conf_new_domain(struct acme_conf *, char *);
 struct keyfile		*conf_new_keyfile(struct acme_conf *, char *);
 void			 clear_config(struct acme_conf *);
+const char*		 kt2txt(enum keytype);
 void			 print_config(struct acme_conf *);
 int			 conf_check_file(char *);
 
@@ -100,7 +101,7 @@ typedef struct {
 %}
 
 %token	AUTHORITY URL API ACCOUNT
-%token	DOMAIN ALTERNATIVE NAMES CERT FULL CHAIN KEY SIGN WITH CHALLENGEDIR KEYTYPE
+%token	DOMAIN ALTERNATIVE NAMES CERT FULL CHAIN KEY SIGN WITH CHALLENGEDIR
 %token	YES NO
 %token	INCLUDE
 %token	ERROR
@@ -108,6 +109,7 @@ typedef struct {
 %token	<v.string>	STRING
 %token	<v.number>	NUMBER
 %type	<v.string>	string
+%type	<v.number>	keytype
 
 %%
 
@@ -217,7 +219,7 @@ authorityoptsl	: API URL STRING {
 				err(EXIT_FAILURE, "strdup");
 			auth->api = s;
 		}
-		| ACCOUNT KEY STRING {
+		| ACCOUNT KEY STRING keytype{
 			char *s;
 			if (auth->account != NULL) {
 				yyerror("duplicate account");
@@ -226,6 +228,7 @@ authorityoptsl	: API URL STRING {
 			if ((s = strdup($3)) == NULL)
 				err(EXIT_FAILURE, "strdup");
 			auth->account = s;
+			auth->keytype = $4;
 		}
 		;
 
@@ -260,13 +263,9 @@ domain		: DOMAIN STRING {
 		}
 		;
 
-keytype		: RSA { 
-			domain->keytype = 0;
-		}
-		| ECDSA {
-			domain->keytype = 1;
-		}
-		| /* nothing */
+keytype		: RSA	{ $$ = KT_RSA; }
+		| ECDSA	{ $$ = KT_ECDSA; }
+		|	{ $$ = KT_RSA; }
 		;
 
 domainopts_l	: domainopts_l domainoptsl nl
@@ -292,6 +291,7 @@ domainoptsl	: ALTERNATIVE NAMES '{' altname_l '}'
 				YYERROR;
 			}
 			domain->key = s;
+			domain->keytype = $4;
 		}
 		| DOMAIN CERT STRING {
 			char *s;
@@ -995,6 +995,19 @@ clear_config(struct acme_conf *xconf)
 	free(xconf);
 }
 
+const char*
+kt2txt(enum keytype kt)
+{
+	switch (kt) {
+	case KT_RSA:
+		return "rsa";
+	case KT_ECDSA:
+		return "ecdsa";
+	default:
+		return "<unknown>";
+	}
+}
+
 void
 print_config(struct acme_conf *xconf)
 {
@@ -1008,7 +1021,8 @@ print_config(struct acme_conf *xconf)
 		if (a->api != NULL)
 			printf("\tapi url \"%s\"\n", a->api);
 		if (a->account != NULL)
-			printf("\taccount key \"%s\"\n", a->account);
+			printf("\taccount key \"%s\" %s\n", a->account,
+			    kt2txt(a->keytype));
 		printf("}\n\n");
 	}
 	TAILQ_FOREACH(d, &xconf->domain_list, entry) {
@@ -1025,7 +1039,8 @@ print_config(struct acme_conf *xconf)
 		if (f)
 			printf(" }\n");
 		if (d->key != NULL)
-			printf("\tdomain key \"%s\"\n", d->key);
+			printf("\tdomain key \"%s\" %s\n", d->key, kt2txt(
+			    d->keytype));
 		if (d->cert != NULL)
 			printf("\tdomain certificate \"%s\"\n", d->cert);
 		if (d->chain != NULL)

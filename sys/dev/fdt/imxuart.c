@@ -1,4 +1,4 @@
-/* $OpenBSD: imxuart.c,v 1.5 2019/01/28 10:29:35 patrick Exp $ */
+/* $OpenBSD: imxuart.c,v 1.7 2019/06/15 14:15:12 kettenis Exp $ */
 /*
  * Copyright (c) 2005 Dale Rahn <drahn@motorola.com>
  *
@@ -239,7 +239,7 @@ imxuart_intr(void *arg)
 		if (p >= sc->sc_ibufend) {
 			sc->sc_floods++;
 			if (sc->sc_errors++ == 0)
-				timeout_add(&sc->sc_diag_tmo, 60 * hz);
+				timeout_add_sec(&sc->sc_diag_tmo, 60);
 		} else {
 			*p++ = c;
 			if (p == sc->sc_ibufhigh &&
@@ -468,7 +468,7 @@ imxuart_softint(void *arg)
 		if (ISSET(c, IMXUART_RX_OVERRUN)) {
 			sc->sc_overflows++;
 			if (sc->sc_errors++ == 0)
-				timeout_add(&sc->sc_diag_tmo, 60 * hz);
+				timeout_add_sec(&sc->sc_diag_tmo, 60);
 		}
 		/* This is ugly, but fast. */
 
@@ -640,7 +640,7 @@ imxuartclose(dev_t dev, int flag, int mode, struct proc *p)
 		/* tty device is waiting for carrier; drop dtr then re-raise */
 		CLR(sc->sc_ucr3, IMXUART_CR3_DSR);
 		bus_space_write_2(iot, ioh, IMXUART_UCR3, sc->sc_ucr3);
-		timeout_add(&sc->sc_dtr_tmo, hz * 2);
+		timeout_add_sec(&sc->sc_dtr_tmo, 2);
 	} else {
 		/* no one else waiting; turn off the uart */
 		imxuart_pwroff(sc);

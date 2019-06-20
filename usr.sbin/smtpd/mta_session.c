@@ -1,4 +1,4 @@
-/*	$OpenBSD: mta_session.c,v 1.115 2018/12/23 16:37:53 eric Exp $	*/
+/*	$OpenBSD: mta_session.c,v 1.117 2019/06/14 19:55:25 eric Exp $	*/
 
 /*
  * Copyright (c) 2008 Pierre-Yves Ritschard <pyr@openbsd.org>
@@ -352,7 +352,7 @@ mta_free(struct mta_session *s)
 
 	if (s->flags & MTA_HANGON) {
 		log_debug("debug: mta: %p: cancelling hangon timer", s);
-		runq_cancel(hangon, NULL, s);
+		runq_cancel(hangon, s);
 	}
 
 	if (s->io)
@@ -700,7 +700,7 @@ mta_enter_state(struct mta_session *s, int newstate)
 			    (long long)(s->relay->limits->sessdelay_keepalive -
 			    s->hangon));
 			s->flags |= MTA_HANGON;
-			runq_schedule(hangon, time(NULL) + 1, NULL, s);
+			runq_schedule(hangon, 1, s);
 			break;
 		}
 
@@ -1045,9 +1045,8 @@ mta_response(struct mta_session *s, char *line)
 				    (long long int)s->relay->limits->sessdelay_transaction);
 				s->hangon = s->relay->limits->sessdelay_transaction -1;
 				s->flags |= MTA_HANGON;
-				runq_schedule(hangon, time(NULL)
-				    + s->relay->limits->sessdelay_transaction,
-				    NULL, s);
+				runq_schedule(hangon,
+				    s->relay->limits->sessdelay_transaction, s);
 			}
 			else
 				mta_enter_state(s, MTA_READY);
@@ -1061,9 +1060,8 @@ mta_response(struct mta_session *s, char *line)
 			    (long long int)s->relay->limits->sessdelay_transaction);
 			s->hangon = s->relay->limits->sessdelay_transaction -1;
 			s->flags |= MTA_HANGON;
-			runq_schedule(hangon, time(NULL)
-			    + s->relay->limits->sessdelay_transaction,
-			    NULL, s);
+			runq_schedule(hangon,
+			    s->relay->limits->sessdelay_transaction, s);
 		}
 		else
 			mta_enter_state(s, MTA_READY);
@@ -1103,7 +1101,7 @@ mta_io(struct io *io, int evt, void *arg)
 
 	case IO_TLSREADY:
 		log_info("%016"PRIx64" mta tls ciphers=%s",
-		    s->id, ssl_to_text(io_ssl(s->io)));
+		    s->id, ssl_to_text(io_tls(s->io)));
 		s->flags |= MTA_TLS;
 
 		mta_cert_verify(s);
@@ -1512,7 +1510,7 @@ mta_cert_verify(struct mta_session *s)
 		fallback = 1;
 	}
 
-	if (cert_verify(io_ssl(s->io), name, fallback, mta_cert_verify_cb, s)) {
+	if (cert_verify(io_tls(s->io), name, fallback, mta_cert_verify_cb, s)) {
 		tree_xset(&wait_ssl_verify, s->id, s);
 		io_pause(s->io, IO_IN);
 		s->flags |= MTA_WAIT;
@@ -1549,7 +1547,7 @@ mta_tls_verified(struct mta_session *s)
 {
 	X509 *x;
 
-	x = SSL_get_peer_certificate(io_ssl(s->io));
+	x = SSL_get_peer_certificate(io_tls(s->io));
 	if (x) {
 		log_info("smtp-out: Server certificate verification %s "
 		    "on session %016"PRIx64,

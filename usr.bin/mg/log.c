@@ -1,4 +1,4 @@
-/*	$OpenBSD: log.c,v 1.4 2019/06/12 06:01:26 lum Exp $	*/
+/*	$OpenBSD: log.c,v 1.6 2019/06/14 14:27:42 lum Exp $	*/
 
 /* 
  * This file is in the public domain.
@@ -21,6 +21,20 @@
  * written in the spirit of debugging (quickly and perhaps not ideal,
  * but it does what is required well enough). Should debugging become
  * more formalised within mg, then I would expect that to change.
+ *
+ * If you open a file with long lines to run through this debugging 
+ * code, you may run into problems with the 1st fprintf statement in
+ * in the mglog_lines() function. mg sometimes segvs at a strlen call
+ * in fprintf - possibly something to do with the format string?
+ * 	"%s%p b^%p f.%p %d %d\t%c|%s\n"
+ * When I get time I will look into it. But since my debugging 
+ * generally revolves around a file like:
+ * 
+ * abc
+ * def
+ * ghk
+ *
+ * I don't experience this bug. Just note it for future investigation.
  */
 
 #include <sys/queue.h>
@@ -124,7 +138,7 @@ mglog_lines(PF funct)
 {
 	struct line     *lp;
 	struct stat      sb;
-	char		*curline;
+	char		*curline, *tmp, o;
 	FILE            *fd;
 	int		 i;
 
@@ -143,11 +157,23 @@ mglog_lines(PF funct)
 	for(;;) {
 		i++;
 		curline = " ";
-		if (i == curwp->w_dotline)
+		o = ' ';
+		if (i == curwp->w_dotline) {
 			curline = ">";
-		if (fprintf(fd, "%s%p b^%p f.%p %d %d\t|%s\n", curline,
+			if (lp->l_used > 0 && curwp->w_doto < lp->l_used)
+				o = lp->l_text[curwp->w_doto];
+			else
+				o = '-';
+		}
+		if (lp->l_size == 0)
+			tmp = " ";
+		else
+			tmp = lp->l_text;
+
+		/* segv on fprintf below with long lines */
+		if (fprintf(fd, "%s%p b^%p f.%p %d %d\t%c|%s\n", curline,
 		    lp, lp->l_bp, lp->l_fp,
-		    lp->l_size, lp->l_used, lp->l_text) == -1) {
+		    lp->l_size, lp->l_used, o, tmp) == -1) {
 			fclose(fd);
 			return (FALSE);
 		}

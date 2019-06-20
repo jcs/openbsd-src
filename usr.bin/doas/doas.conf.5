@@ -1,4 +1,4 @@
-.\" $OpenBSD: doas.conf.5,v 1.35 2018/02/07 05:13:57 tedu Exp $
+.\" $OpenBSD: doas.conf.5,v 1.38 2019/06/19 09:55:55 schwarze Exp $
 .\"
 .\"Copyright (c) 2015 Ted Unangst <tedu@openbsd.org>
 .\"
@@ -13,7 +13,7 @@
 .\"WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 .\"ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\"OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-.Dd $Mdocdate: February 7 2018 $
+.Dd $Mdocdate: June 19 2019 $
 .Dt DOAS.CONF 5
 .Os
 .Sh NAME
@@ -50,16 +50,18 @@ After the user successfully authenticates, do not ask for a password
 again for some time.
 .It Ic keepenv
 The user's environment is maintained.
-The default is to reset the environment, except for the variables
-.Ev DISPLAY ,
+The default is to retain the variables
+.Ev DISPLAY
+and
+.Ev TERM
+from the invoking process, reset
 .Ev HOME ,
 .Ev LOGNAME ,
-.Ev MAIL ,
 .Ev PATH ,
-.Ev TERM ,
-.Ev USER
+.Ev SHELL ,
 and
-.Ev USERNAME .
+.Ev USER
+as appropriate for the target user, and discard the rest of the environment.
 .It Ic setenv { Oo Ar variable ... Oc Oo Ar variable=value ... Oc Ic }
 In addition to the variables mentioned above, keep the space-separated
 specified variables.

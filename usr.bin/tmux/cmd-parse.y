@@ -1,4 +1,4 @@
-/* $OpenBSD: cmd-parse.y,v 1.14 2019/06/05 20:00:53 nicm Exp $ */
+/* $OpenBSD: cmd-parse.y,v 1.17 2019/06/18 11:17:40 nicm Exp $ */
 
 /*
  * Copyright (c) 2019 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -59,6 +59,7 @@ struct cmd_parse_state {
 	size_t				 len;
 	size_t				 off;
 
+	int				 condition;
 	int				 eol;
 	int				 eof;
 	struct cmd_parse_input		*input;
@@ -104,7 +105,7 @@ static void	 cmd_parse_print_commands(struct cmd_parse_input *, u_int,
 %token ENDIF
 %token <token> FORMAT TOKEN EQUALS
 
-%type <token> argument expanded
+%type <token> argument expanded format
 %type <arguments> arguments
 %type <flag> if_open if_elif
 %type <elif> elif elif1
@@ -160,7 +161,16 @@ statement	: condition
 			}
 		}
 
-expanded	: FORMAT
+format		: FORMAT
+		{
+			$$ = $1;
+		}
+		| TOKEN
+		{
+			$$ = $1;
+		}
+
+expanded	: format
 		{
 			struct cmd_parse_state	*ps = &parse_state;
 			struct cmd_parse_input	*pi = ps->input;
@@ -507,7 +517,10 @@ cmd_parse_print_commands(struct cmd_parse_input *pi, u_int line,
 
 	if (pi->item != NULL && (pi->flags & CMD_PARSE_VERBOSE)) {
 		s = cmd_list_print(cmdlist, 0);
-		cmdq_print(pi->item, "%u: %s", line, s);
+		if (pi->file != NULL)
+			cmdq_print(pi->item, "%s:%u: %s", pi->file, line, s);
+		else
+			cmdq_print(pi->item, "%u: %s", line, s);
 		free(s);
 	}
 }
@@ -967,11 +980,14 @@ yylex(void)
 {
 	struct cmd_parse_state	*ps = &parse_state;
 	char			*token, *cp;
-	int			 ch, next;
+	int			 ch, next, condition;
 
 	if (ps->eol)
 		ps->input->line++;
 	ps->eol = 0;
+
+	condition = ps->condition;
+	ps->condition = 0;
 
 	for (;;) {
 		ch = yylex_getc();
@@ -1012,11 +1028,11 @@ yylex(void)
 
 		if (ch == '#') {
 			/*
-			 * #{ opens a format; anything else is a comment,
-			 * ignore up to the end of the line.
+			 * #{ after a condition opens a format; anything else
+			 * is a comment, ignore up to the end of the line.
 			 */
 			next = yylex_getc();
-			if (next == '{') {
+			if (condition && next == '{') {
 				yylval.token = yylex_format();
 				if (yylval.token == NULL)
 					return (ERROR);
@@ -1043,6 +1059,7 @@ yylex(void)
 			}
 			if (*cp == '\0')
 				return (TOKEN);
+			ps->condition = 1;
 			if (strcmp(yylval.token, "%if") == 0) {
 				free(yylval.token);
 				return (IF);
@@ -1321,8 +1338,8 @@ static int
 yylex_token_brace(char **buf, size_t *len)
 {
 	struct cmd_parse_state	*ps = &parse_state;
-	int 			 ch, nesting = 1, escape = 0, quote = '\0';
-	int			 lines = 0;
+	int 			 ch, lines = 0, nesting = 1, escape = 0;
+	int			 quote = '\0', token = 0;
 
 	/*
 	 * Extract a string up to the matching unquoted '}', including newlines
@@ -1331,6 +1348,10 @@ yylex_token_brace(char **buf, size_t *len)
 	 * To detect the final and intermediate braces which affect the nesting
 	 * depth, we scan the input as if it was a tmux config file, and ignore
 	 * braces which would be considered quoted, escaped, or in a comment.
+	 *
+	 * We update the token state after every character because '#' begins a
+	 * comment only when it begins a token. For simplicity, we treat an
+	 * unquoted directive format as comment.
 	 *
 	 * The result is verbatim copy of the input excluding the final brace.
 	 */
@@ -1351,6 +1372,8 @@ yylex_token_brace(char **buf, size_t *len)
 		    ch == '\n' ||
 		    ch == '\\')) {
 			escape = 0;
+			if (ch != '\n')
+				token = 1;
 			continue;
 		}
 
@@ -1366,7 +1389,7 @@ yylex_token_brace(char **buf, size_t *len)
 
 		/* A newline always resets to unquoted. */
 		if (ch == '\n') {
-			quote = 0;
+			quote = token = 0;
 			continue;
 		}
 
@@ -1377,33 +1400,47 @@ yylex_token_brace(char **buf, size_t *len)
 			 */
 			if (ch == quote && quote != '#')
 				quote = 0;
-		} else  {
+			token = 1;  /* token continues regardless */
+		} else {
 			/* Not inside quotes or comment. */
 			switch (ch) {
 			case '"':
 			case '\'':
 			case '#':
-				/* Beginning of quote or comment. */
-				quote = ch;
+				/* Beginning of quote or maybe comment. */
+				if (ch != '#' || !token)
+					quote = ch;
+				token = 1;
+				break;
+			case ' ':
+			case '\t':
+			case ';':
+				/* Delimiter - token resets. */
+				token = 0;
 				break;
 			case '{':
 				nesting++;
+				token = 0; /* new commands set - token resets */
 				break;
 			case '}':
 				nesting--;
+				token = 1;  /* same as after quotes */
 				if (nesting == 0) {
 					(*len)--; /* remove closing } */
 					ps->input->line += lines;
 					return (1);
 				}
 				break;
+			default:
+				token = 1;
+				break;
 			}
 		}
 	}
 
 	/*
-	 * Update line count after error as reporting the opening line
-	 * is more useful than EOF.
+	 * Update line count after error as reporting the opening line is more
+	 * useful than EOF.
 	 */
 	yyerror("unterminated brace string");
 	ps->input->line += lines;

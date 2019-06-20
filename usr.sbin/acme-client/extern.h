@@ -1,4 +1,4 @@
-/*	$Id: extern.h,v 1.13 2019/06/12 11:09:25 gilles Exp $ */
+/*	$Id: extern.h,v 1.16 2019/06/17 12:42:52 florian Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -199,15 +199,16 @@ __BEGIN_DECLS
  * Start with our components.
  * These are all isolated and talk to each other using sockets.
  */
-int		 acctproc(int, const char *);
+int		 acctproc(int, const char *, enum keytype);
 int		 certproc(int, int);
 int		 chngproc(int, const char *);
 int		 dnsproc(int);
-int		 revokeproc(int, const char *, const char *,
-			int, int, const char *const *, size_t);
+int		 revokeproc(int, const char *, int, int, const char *const *,
+			size_t);
 int		 fileproc(int, const char *, const char *, const char *,
 			const char *);
-int		 keyproc(int, const char *, const char **, size_t);
+int		 keyproc(int, const char *, const char **, size_t,
+			enum keytype);
 int		 netproc(int, int, int, int, int, int, int,
 			struct authority_c *, const char *const *,
 			size_t);
@@ -264,21 +265,19 @@ char		*json_fmt_newacc(void);
 char		*json_fmt_neworder(const char *const *, size_t);
 char		*json_fmt_protected_rsa(const char *,
 			const char *, const char *, const char *);
-char		*json_fmt_protected_kid(const char *, const char *,
+char		*json_fmt_protected_ec(const char *, const char *, const char *,
+			const char *);
+char		*json_fmt_protected_kid(const char*, const char *, const char *,
 			const char *);
 char		*json_fmt_revokecert(const char *);
 char		*json_fmt_thumb_rsa(const char *, const char *);
+char		*json_fmt_thumb_ec(const char *, const char *);
 char		*json_fmt_signed(const char *, const char *, const char *);
 
 /*
  * Should we print debugging messages?
  */
 int		 verbose;
-
-/*
- * Should we switch to ecdsa?
- */
-int		ecdsa;
 
 /*
  * What component is the process within (COMP__MAX for none)?

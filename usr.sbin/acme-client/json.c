@@ -1,4 +1,4 @@
-/*	$Id: json.c,v 1.12 2019/06/07 08:07:52 florian Exp $ */
+/*	$Id: json.c,v 1.14 2019/06/18 18:50:07 florian Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -552,27 +552,31 @@ json_parse(const char *buf, size_t sz)
 {
 	struct jsmnn	*n;
 	jsmn_parser	 p;
-	jsmntok_t	*tok;
+	jsmntok_t	*tok, *ntok;
 	int		 r;
 	size_t		 tokcount;
 
 	jsmn_init(&p);
 	tokcount = 128;
 
-	/* Do this until we don't need any more tokens. */
-again:
-	tok = calloc(tokcount, sizeof(jsmntok_t));
-	if (tok == NULL) {
+	if ((tok = calloc(tokcount, sizeof(jsmntok_t))) == NULL) {
 		warn("calloc");
 		return NULL;
 	}
 
+	/* Do this until we don't need any more tokens. */
+again:
 	/* Actually try to parse the JSON into the tokens. */
-
 	r = jsmn_parse(&p, buf, sz, tok, tokcount);
 	if (r < 0 && r == JSMN_ERROR_NOMEM) {
+		if ((ntok = recallocarray(tok, tokcount, tokcount * 2,
+		    sizeof(jsmntok_t))) == NULL) {
+			warn("calloc");
+			free(tok);
+			return NULL;
+		}
+		tok = ntok;
 		tokcount *= 2;
-		free(tok);
 		goto again;
 	} else if (r < 0) {
 		warnx("jsmn_parse: %d", r);
@@ -733,18 +737,43 @@ json_fmt_protected_rsa(const char *exp, const char *mod, const char *nce,
  * Protected component of json_fmt_signed().
  */
 char *
-json_fmt_protected_kid(const char *kid, const char *nce, const char *url)
+json_fmt_protected_ec(const char *x, const char *y, const char *nce,
+    const char *url)
 {
 	int	 c;
 	char	*p;
 
 	c = asprintf(&p, "{"
-	    "\"alg\": \"RS256\", "
+	    "\"alg\": \"ES384\", "
+	    "\"jwk\": "
+	    "{\"crv\": \"P-384\", \"kty\": \"EC\", \"x\": \"%s\", "
+	    "\"y\": \"%s\"}, \"nonce\": \"%s\", \"url\": \"%s\""
+	    "}",
+	    x, y, nce, url);
+	if (c == -1) {
+		warn("asprintf");
+		p = NULL;
+	}
+	return p;
+}
+
+/*
+ * Protected component of json_fmt_signed().
+ */
+char *
+json_fmt_protected_kid(const char *alg, const char *kid, const char *nce,
+    const char *url)
+{
+	int	 c;
+	char	*p;
+
+	c = asprintf(&p, "{"
+	    "\"alg\": \"%s\", "
 	    "\"kid\": \"%s\", "
 	    "\"nonce\": \"%s\", "
 	    "\"url\": \"%s\""
 	    "}",
-	    kid, nce, url);
+	    alg, kid, nce, url);
 	if (c == -1) {
 		warn("asprintf");
 		p = NULL;
@@ -790,6 +819,30 @@ json_fmt_thumb_rsa(const char *exp, const char *mod)
 
 	c = asprintf(&p, "{\"e\":\"%s\",\"kty\":\"RSA\",\"n\":\"%s\"}",
 	    exp, mod);
+	if (c == -1) {
+		warn("asprintf");
+		p = NULL;
+	}
+	return p;
+}
+
+/*
+ * Produce thumbprint input.
+ * This isn't technically a JSON string--it's the input we'll use for
+ * hashing and digesting.
+ * However, it's in the form of a JSON string, so do it here.
+ */
+char *
+json_fmt_thumb_ec(const char *x, const char *y)
+{
+	int	 c;
+	char	*p;
+
+	/*NOTE: WHITESPACE IS IMPORTANT. */
+
+	c = asprintf(&p, "{\"crv\":\"P-384\",\"kty\":\"EC\",\"x\":\"%s\","
+	    "\"y\":\"%s\"}",
+	    x, y);
 	if (c == -1) {
 		warn("asprintf");
 		p = NULL;

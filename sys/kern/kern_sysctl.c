@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.358 2019/06/01 14:11:17 mpi Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.360 2019/06/16 00:56:53 bluhm Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -1152,8 +1152,19 @@ fill_file(struct kinfo_file *kf, struct file *fp, struct filedesc *fdp,
 		break;
 
 	case DTYPE_SOCKET: {
-		if (so == NULL)
+		int locked = 0;
+
+		if (so == NULL) {
 			so = (struct socket *)fp->f_data;
+			/* if so is passed as parameter it is already locked */
+			switch (so->so_proto->pr_domain->dom_family) {
+			case AF_INET:
+			case AF_INET6:
+				NET_LOCK();
+				locked = 1;
+				break;
+			}
+		}
 
 		kf->so_type = so->so_type;
 		kf->so_state = so->so_state;
@@ -1172,12 +1183,16 @@ fill_file(struct kinfo_file *kf, struct file *fp, struct filedesc *fdp,
 			kf->so_splicelen = so->so_sp->ssp_len;
 		} else if (issplicedback(so))
 			kf->so_splicelen = -1;
-		if (!so->so_pcb)
+		if (so->so_pcb == NULL) {
+			if (locked)
+				NET_UNLOCK();
 			break;
+		}
 		switch (kf->so_family) {
 		case AF_INET: {
 			struct inpcb *inpcb = so->so_pcb;
 
+			NET_ASSERT_LOCKED();
 			if (show_pointers)
 				kf->inp_ppcb = PTRTOINT64(inpcb->inp_ppcb);
 			kf->inp_lport = inpcb->inp_lport;
@@ -1199,6 +1214,7 @@ fill_file(struct kinfo_file *kf, struct file *fp, struct filedesc *fdp,
 		case AF_INET6: {
 			struct inpcb *inpcb = so->so_pcb;
 
+			NET_ASSERT_LOCKED();
 			if (show_pointers)
 				kf->inp_ppcb = PTRTOINT64(inpcb->inp_ppcb);
 			kf->inp_lport = inpcb->inp_lport;
@@ -1244,6 +1260,8 @@ fill_file(struct kinfo_file *kf, struct file *fp, struct filedesc *fdp,
 			break;
 		    }
 		}
+		if (locked)
+			NET_UNLOCK();
 		break;
 	    }
 
