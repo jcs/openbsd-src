@@ -20,6 +20,7 @@ define	radiobus {}
 define	i2cbus {}
 define	gpiobus {}
 define	onewirebus {}
+define	spi {}
 define	video {}
 define	intrmap {}
 
@@ -541,6 +542,10 @@ file	dev/ic/dwiic.c			dwiic
 # Freescale i.MX I2C controller
 device	imxiic: i2cbus
 file	dev/ic/imxiic.c			imxiic
+
+# Intel LPSS SPI controller
+device	ispi: spi
+file	dev/ic/ispi.c			ispi
 
 # legitimate pseudo-devices
 pseudo-device vnd: disk

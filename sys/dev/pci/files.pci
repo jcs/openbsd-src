@@ -849,5 +849,9 @@ file	dev/pci/if_rge.c		rge
 attach	com at pci with com_pci
 file	dev/pci/com_pci.c		com_pci
 
+# Intel LPSS SPI controller
+attach	ispi at pci with ispi_pci
+file	dev/pci/ispi_pci.c		ispi_pci
+
 include "dev/pci/files.agp"
 include "dev/pci/drm/files.drm"
