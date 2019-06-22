@@ -15,11 +15,14 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#ifndef _DEV_SPI_SPIVAR_H_
+#define _DEV_SPI_SPIVAR_H_
+
 struct spi_config {
 	int		 sc_cs;
 	int		 sc_flags;
-#define SPI_CONFIG_CPOL		(1 << 0)
-#define SPI_CONFIG_CPHA		(1 << 1)
+#define SPI_CONFIG_CPOL		(1 << 0)	/* clock polarity */
+#define SPI_CONFIG_CPHA		(1 << 1)	/* clock phase */
 #define SPI_CONFIG_CS_HIGH	(1 << 2)
 	int		 sc_bpw;
 	uint32_t	 sc_freq;
@@ -31,6 +34,9 @@ typedef struct spi_controller {
 	int			(*sc_transfer)(void *, char *, char *, int);
 	int			(*sc_acquire_bus)(void *, int);
 	void			(*sc_release_bus)(void *, int);
+	void			*(*sc_intr_establish)(void *, void *, int,
+				    int (*)(void *), void *, const char *);
+	const char		*(*sc_intr_string)(void *, void *);
 } *spi_tag_t;
 
 struct spi_attach_args {
@@ -51,3 +57,11 @@ struct spi_attach_args {
 	(*(sc)->sc_acquire_bus)((sc)->sc_cookie, (flags))
 #define	spi_release_bus(sc, flags)					\
 	(*(sc)->sc_release_bus)((sc)->sc_cookie, (flags))
+
+#define spi_intr_establish(sc, ih, level, func, arg, name)		\
+	(*(sc)->sc_intr_establish)((sc)->sc_cookie, (ih), (level),	\
+	    (func), (arg), (name))
+#define spi_intr_string(sc, ih)						\
+	(*(sc)->sc_intr_string)((sc)->sc_cookie, (ih))
+
+#endif /* _DEV_SPI_SPIVAR_H_ */

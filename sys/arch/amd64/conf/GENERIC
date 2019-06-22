@@ -186,6 +186,15 @@ wsmouse* at iatp? mux 0
 skgpio0 at isa? port 0x680	# Soekris net6501 GPIO and LEDs
 gpio* at skgpio?
 
+ispi*	at acpi?		# Intel LPSS SPI controller
+ispi*	at pci?
+
+satopcase* at ispi?		# Apple Topcase SPI
+satckbd* at satopcase?
+wskbd*	at satckbd? mux 1	# Apple SPI keyboard
+satctp* at satopcase?
+wsmouse* at satctp? mux 0	# Apple SPI touchpad
+
 #option PCMCIAVERBOSE
 
 # PCI PCMCIA controllers
