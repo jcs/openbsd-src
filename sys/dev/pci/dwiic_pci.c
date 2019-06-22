@@ -26,30 +26,20 @@
 #include <dev/pci/pcidevs.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
+#include <dev/pci/lpssreg.h>
 
 #include <dev/ic/dwiicvar.h>
 
-/* 13.3: I2C Additional Registers Summary */
-#define LPSS_RESETS		0x204
-#define  LPSS_RESETS_I2C	(1 << 0) | (1 << 1)
-#define  LPSS_RESETS_IDMA	(1 << 2)
-#define LPSS_ACTIVELTR		0x210
-#define LPSS_IDLELTR		0x214
-#define LPSS_CAPS		0x2fc
-#define  LPSS_CAPS_NO_IDMA	(1 << 8)
-#define  LPSS_CAPS_TYPE_SHIFT	4
-#define  LPSS_CAPS_TYPE_MASK	(0xf << LPSS_CAPS_TYPE_SHIFT)
+#include "acpi.h"
+#if NACPI > 0
+#include <dev/acpi/acpivar.h>
+#endif
 
 int		dwiic_pci_match(struct device *, void *, void *);
 void		dwiic_pci_attach(struct device *, struct device *, void *);
 int		dwiic_pci_activate(struct device *, int);
 void		dwiic_pci_bus_scan(struct device *,
 		    struct i2cbus_attach_args *, void *);
-
-#include "acpi.h"
-#if NACPI > 0
-struct aml_node *acpi_pci_match(struct device *dev, struct pci_attach_args *pa);
-#endif
 
 struct cfattach dwiic_pci_ca = {
 	sizeof(struct dwiic_softc),
@@ -119,7 +109,7 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 
 	/* un-reset - page 958 */
 	bus_space_write_4(sc->sc_iot, sc->sc_ioh, LPSS_RESETS,
-	    (LPSS_RESETS_I2C | LPSS_RESETS_IDMA));
+	    (LPSS_RESETS_FUNC | LPSS_RESETS_IDMA));
 
 	/* fetch timing parameters */
 	sc->ss_hcnt = dwiic_read(sc, DW_IC_SS_SCL_HCNT);
@@ -196,7 +186,7 @@ dwiic_pci_activate(struct device *self, int act)
 	switch (act) {
 	case DVACT_WAKEUP:
 		bus_space_write_4(sc->sc_iot, sc->sc_ioh, LPSS_RESETS,
-		    (LPSS_RESETS_I2C | LPSS_RESETS_IDMA));
+		    (LPSS_RESETS_FUNC | LPSS_RESETS_IDMA));
 
 		dwiic_init(sc);
 
@@ -212,6 +202,7 @@ void
 dwiic_pci_bus_scan(struct device *iic, struct i2cbus_attach_args *iba,
     void *aux)
 {
+#if NACPI > 0
 	struct dwiic_softc *sc = (struct dwiic_softc *)aux;
 
 	sc->sc_iic = iic;
@@ -226,4 +217,5 @@ dwiic_pci_bus_scan(struct device *iic, struct i2cbus_attach_args *iba,
 
 		aml_find_node(sc->sc_devnode, "_HID", dwiic_acpi_found_hid, sc);
 	}
+#endif
 }

@@ -267,6 +267,14 @@ include "dev/onewire/files.onewire"
 attach	ipmi at mainbus
 
 #
+# SPI
+#
+device	satopcase: hid, hidkbd, wskbddev, wsmousedev
+attach	satopcase at spi
+file	arch/amd64/spi/satopcase.c		satopcase
+
+
+#
 # device major numbers
 #
 

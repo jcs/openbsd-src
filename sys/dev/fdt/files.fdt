@@ -282,7 +282,6 @@ device	fec: ether, ifnet, mii, ifmedia
 attach	fec at fdt
 file	dev/fdt/if_fec.c		fec
 
-define	spi {}
 device	imxspi: spi
 attach	imxspi at fdt
 file	dev/fdt/imxspi.c		imxspi

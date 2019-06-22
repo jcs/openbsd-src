@@ -312,6 +312,8 @@ int	 acpi_bus_space_map(bus_space_tag_t, bus_addr_t, bus_size_t, int,
 	     bus_space_handle_t *);
 void	 acpi_bus_space_unmap(bus_space_tag_t, bus_space_handle_t, bus_size_t);
 
+struct aml_node *acpi_pci_match(struct device *, struct pci_attach_args *);
+
 struct	 bios_attach_args;
 int	 acpi_probe(struct device *, struct cfdata *, struct bios_attach_args *);
 u_int	 acpi_checksum(const void *, size_t);

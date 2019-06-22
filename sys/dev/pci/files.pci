@@ -834,5 +834,9 @@ device  mcx: ether, ifnet, ifmedia
 attach  mcx at pci
 file    dev/pci/if_mcx.c                mcx
 
+# Intel LPSS SPI controller
+attach	ispi at pci with ispi_pci
+file	dev/pci/ispi_pci.c		ispi_pci
+
 include "dev/pci/files.agp"
 include "dev/pci/olddrm/files.drm"
