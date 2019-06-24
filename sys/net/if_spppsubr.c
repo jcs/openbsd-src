@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_spppsubr.c,v 1.174 2018/02/19 08:59:52 mpi Exp $	*/
+/*	$OpenBSD: if_spppsubr.c,v 1.178 2019/06/22 20:15:09 kn Exp $	*/
 /*
  * Synchronous PPP link level subroutines.
  *
@@ -3566,7 +3566,6 @@ sppp_chap_tlu(struct sppp *sp)
 	STDDCL;
 	int i = 0, x;
 
-	i = 0;
 	sp->rst_counter[IDX_CHAP] = sp->lcp.max_configure;
 
 	/*
@@ -3580,7 +3579,7 @@ sppp_chap_tlu(struct sppp *sp)
 		 * Compute the re-challenge timeout.  This will yield
 		 * a number between 300 and 810 seconds.
 		 */
-		i = 300 + (arc4random() & 0x01fe);
+		i = 300 + arc4random_uniform(1 + 810 - 300);
 
 		timeout_add_sec(&sp->ch[IDX_CHAP], i);
 	}
@@ -4167,7 +4166,7 @@ sppp_update_gw(struct ifnet *ifp)
 
 	/* update routing table */
 	for (tid = 0; tid <= RT_TABLEID_MAX; tid++) {
-		rtable_walk(tid, AF_INET, sppp_update_gw_walker, ifp);
+		rtable_walk(tid, AF_INET, NULL, sppp_update_gw_walker, ifp);
 	}
 }
 

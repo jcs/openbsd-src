@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.h,v 1.214 2019/06/17 13:35:43 claudio Exp $ */
+/*	$OpenBSD: rde.h,v 1.218 2019/06/24 06:39:49 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org> and
@@ -228,12 +228,15 @@ struct rde_aspath {
 enum nexthop_state {
 	NEXTHOP_LOOKUP,
 	NEXTHOP_UNREACH,
-	NEXTHOP_REACH
+	NEXTHOP_REACH,
+	NEXTHOP_FLAPPED
 };
 
 struct nexthop {
 	LIST_ENTRY(nexthop)	nexthop_l;
+	TAILQ_ENTRY(nexthop)	runner_l;
 	struct prefix_list	prefix_h;
+	struct prefix		*next_prefix;
 	struct bgpd_addr	exit_nexthop;
 	struct bgpd_addr	true_nexthop;
 	struct bgpd_addr	nexthop_net;
@@ -246,6 +249,7 @@ struct nexthop {
 #endif
 	int			refcnt;
 	enum nexthop_state	state;
+	enum nexthop_state	oldstate;
 	u_int8_t		nexthop_netlen;
 	u_int8_t		flags;
 #define NEXTHOP_CONNECTED	0x01
@@ -304,6 +308,7 @@ struct pt_entry_vpn6 {
 struct prefix {
 	LIST_ENTRY(prefix)		 rib_l, nexthop_l;
 	RB_ENTRY(prefix)		 entry;
+	struct pt_entry			*pt;
 	struct rib_entry		*re;
 	struct rde_aspath		*aspath;
 	struct rde_community		*communities;
@@ -390,20 +395,21 @@ u_char		*aspath_override(struct aspath *, u_int32_t, u_int32_t,
 		    u_int16_t *);
 int		 aspath_lenmatch(struct aspath *, enum aslen_spec, u_int);
 
-int	 community_match(struct rde_community *, struct community *,
+int	community_match(struct rde_community *, struct community *,
 	    struct rde_peer *);
-int	 community_set(struct rde_community *, struct community *,
+int	community_set(struct rde_community *, struct community *,
 	    struct rde_peer *);
-void	 community_delete(struct rde_community *, struct community *,
+void	community_delete(struct rde_community *, struct community *,
 	    struct rde_peer *);
 
-int	 community_add(struct rde_community *, int, void *, size_t);
-int	 community_large_add(struct rde_community *, int, void *, size_t);
-int	 community_ext_add(struct rde_community *, int, void *, size_t);
+int	community_add(struct rde_community *, int, void *, size_t);
+int	community_large_add(struct rde_community *, int, void *, size_t);
+int	community_ext_add(struct rde_community *, int, void *, size_t);
 
-int	 community_write(struct rde_community *, void *, u_int16_t);
-int	 community_large_write(struct rde_community *, void *, u_int16_t);
-int	 community_ext_write(struct rde_community *, int, void *, u_int16_t);
+int	community_write(struct rde_community *, void *, u_int16_t);
+int	community_large_write(struct rde_community *, void *, u_int16_t);
+int	community_ext_write(struct rde_community *, int, void *, u_int16_t);
+int	community_writebuf(struct ibuf *, struct rde_community *);
 
 void			 communities_init(u_int32_t);
 void			 communities_shutdown(void);
@@ -460,20 +466,22 @@ pt_empty(struct pt_entry *pt)
 	return (pt->refcnt == 0);
 }
 
-static inline void
+static inline struct pt_entry *
 pt_ref(struct pt_entry *pt)
 {
 	++pt->refcnt;
 	if (pt->refcnt == 0)
 		fatalx("pt_ref: overflow");
+	return pt;
 }
 
-static inline void
+static inline int
 pt_unref(struct pt_entry *pt)
 {
 	if (pt->refcnt == 0)
 		fatalx("pt_unref: underflow");
 	--pt->refcnt;
+	return pt_empty(pt);
 }
 
 void	 pt_init(void);
@@ -548,8 +556,6 @@ int		 prefix_withdraw(struct rib *, struct rde_peer *,
 int		 prefix_write(u_char *, int, struct bgpd_addr *, u_int8_t, int);
 int		 prefix_writebuf(struct ibuf *, struct bgpd_addr *, u_int8_t);
 struct prefix	*prefix_bypeer(struct rib_entry *, struct rde_peer *);
-void		 prefix_updateall(struct prefix *, enum nexthop_state,
-		     enum nexthop_state);
 void		 prefix_destroy(struct prefix *);
 void		 prefix_relink(struct prefix *, struct rde_aspath *, int);
 
@@ -593,6 +599,8 @@ prefix_vstate(struct prefix *p)
 
 void		 nexthop_init(u_int32_t);
 void		 nexthop_shutdown(void);
+int		 nexthop_pending(void);
+void		 nexthop_runner(void);
 void		 nexthop_modify(struct nexthop *, enum action_types, u_int8_t,
 		    struct nexthop **, u_int8_t *);
 void		 nexthop_link(struct prefix *);

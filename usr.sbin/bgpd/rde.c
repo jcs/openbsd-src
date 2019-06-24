@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.c,v 1.470 2019/06/17 13:35:43 claudio Exp $ */
+/*	$OpenBSD: rde.c,v 1.473 2019/06/22 05:44:05 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -256,9 +256,6 @@ rde_main(int debug, int verbose)
 		set_pollfd(&pfd[PFD_PIPE_SESSION], ibuf_se);
 		set_pollfd(&pfd[PFD_PIPE_SESSION_CTL], ibuf_se_ctl);
 
-		if (rib_dump_pending() || rde_update_queue_pending())
-			timeout = 0;
-
 		i = PFD_PIPE_COUNT;
 		for (mctx = LIST_FIRST(&rde_mrts); mctx != 0; mctx = xmctx) {
 			xmctx = LIST_NEXT(mctx, entry);
@@ -274,6 +271,10 @@ rde_main(int debug, int verbose)
 				rde_mrt_cnt--;
 			}
 		}
+
+		if (rib_dump_pending() || rde_update_queue_pending() ||
+		    nexthop_pending())
+			timeout = 0;
 
 		if (poll(pfd, i, timeout) == -1) {
 			if (errno != EINTR)
@@ -311,12 +312,13 @@ rde_main(int debug, int verbose)
 			mctx = LIST_NEXT(mctx, entry);
 		}
 
+		rib_dump_runner();
+		nexthop_runner();
 		if (ibuf_se && ibuf_se->w.queued < SESS_MSG_HIGH_MARK) {
 			rde_update_queue_runner();
 			for (aid = AID_INET6; aid < AID_MAX; aid++)
 				rde_update6_queue_runner(aid);
 		}
-		rib_dump_runner();
 	}
 
 	/* do not clean up on shutdown on production, it takes ages. */
@@ -2232,11 +2234,11 @@ rde_dump_rib_as(struct prefix *p, struct rde_aspath *asp, pid_t pid, int flags)
 		/* announced network may have a NULL nexthop */
 		bzero(&rib.true_nexthop, sizeof(rib.true_nexthop));
 		bzero(&rib.exit_nexthop, sizeof(rib.exit_nexthop));
-		rib.true_nexthop.aid = p->re->prefix->aid;
-		rib.exit_nexthop.aid = p->re->prefix->aid;
+		rib.true_nexthop.aid = p->pt->aid;
+		rib.exit_nexthop.aid = p->pt->aid;
 	}
-	pt_getaddr(p->re->prefix, &rib.prefix);
-	rib.prefixlen = p->re->prefix->prefixlen;
+	pt_getaddr(p->pt, &rib.prefix);
+	rib.prefixlen = p->pt->prefixlen;
 	rib.origin = asp->origin;
 	rib.validation_state = p->validation_state;
 	rib.flags = 0;
@@ -2252,7 +2254,7 @@ rde_dump_rib_as(struct prefix *p, struct rde_aspath *asp, pid_t pid, int flags)
 		rib.flags &= ~F_PREF_ELIGIBLE;
 	if (asp->flags & F_ATTR_PARSE_ERR)
 		rib.flags |= F_PREF_INVALID;
-	staletime = prefix_peer(p)->staletime[p->re->prefix->aid];
+	staletime = prefix_peer(p)->staletime[p->pt->aid];
 	if (staletime && p->lastchange <= staletime)
 		rib.flags |= F_PREF_STALE;
 	rib.aspath_len = aspath_length(asp->aspath);
@@ -2608,10 +2610,10 @@ rde_send_kroute(struct rib *rib, struct prefix *new, struct prefix *old)
 	}
 
 	asp = prefix_aspath(p);
-	pt_getaddr(p->re->prefix, &addr);
+	pt_getaddr(p->pt, &addr);
 	bzero(&kr, sizeof(kr));
 	memcpy(&kr.prefix, &addr, sizeof(kr.prefix));
-	kr.prefixlen = p->re->prefix->prefixlen;
+	kr.prefixlen = p->pt->prefixlen;
 	if (prefix_nhflags(p) == NEXTHOP_REJECT)
 		kr.flags |= F_REJECT;
 	if (prefix_nhflags(p) == NEXTHOP_BLACKHOLE)
@@ -3320,7 +3322,7 @@ peer_init(u_int32_t hashsize)
 	bzero(&pc, sizeof(pc));
 	snprintf(pc.descr, sizeof(pc.descr), "LOCAL");
 
-	peerself = peer_add(0, &pc);
+	peerself = peer_add(PEER_ID_SELF, &pc);
 	if (peerself == NULL)
 		fatalx("peer_init add self");
 
@@ -3889,7 +3891,7 @@ network_dump_upcall(struct rib_entry *re, void *ptr)
 		asp = prefix_aspath(p);
 		if (!(asp->flags & F_PREFIX_ANNOUNCED))
 			continue;
-		pt_getaddr(p->re->prefix, &addr);
+		pt_getaddr(p->pt, &addr);
 
 		bzero(&k, sizeof(k));
 		memcpy(&k.prefix, &addr, sizeof(k.prefix));
@@ -3899,7 +3901,7 @@ network_dump_upcall(struct rib_entry *re, void *ptr)
 		else
 			memcpy(&k.nexthop, &prefix_nexthop(p)->true_nexthop,
 			    sizeof(k.nexthop));
-		k.prefixlen = p->re->prefix->prefixlen;
+		k.prefixlen = p->pt->prefixlen;
 		k.flags = F_KERNEL;
 		if ((asp->flags & F_ANN_DYNAMIC) == 0)
 			k.flags = F_STATIC;

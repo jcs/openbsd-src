@@ -1,4 +1,4 @@
-/*	$OpenBSD: init_main.c,v 1.288 2019/06/02 03:58:28 visa Exp $	*/
+/*	$OpenBSD: init_main.c,v 1.290 2019/06/21 09:39:48 visa Exp $	*/
 /*	$NetBSD: init_main.c,v 1.84.4.1 1996/06/02 09:08:06 mrg Exp $	*/
 
 /*
@@ -94,6 +94,11 @@
 #if defined(CRYPTO)
 #include <crypto/cryptodev.h>
 #include <crypto/cryptosoft.h>
+#endif
+
+#if defined(KUBSAN)
+extern void kubsan_init(void);
+extern void kubsan_start(void);
 #endif
 
 #if defined(NFSSERVER) || defined(NFSCLIENT)
@@ -214,6 +219,11 @@ main(void *framep)
 	consinit();
 
 	printf("%s\n", copyright);
+
+#ifdef KUBSAN
+	/* Initialize kubsan. */
+	kubsan_init();
+#endif
 
 	WITNESS_INITIALIZE();
 
@@ -343,6 +353,11 @@ main(void *framep)
 	/* Initialize task queues */
 	taskq_init();
 
+#ifdef KUBSAN
+	/* Start reporting kubsan findings. */
+	kubsan_start();
+#endif
+
 	/* Initialize the interface/address trees */
 	ifinit();
 
@@ -358,7 +373,7 @@ main(void *framep)
 	cpu_configure();
 
 	/* Configure virtual memory system, set vm rlimits. */
-	uvm_init_limits(p);
+	uvm_init_limits(&limit0);
 
 	/* Per CPU memory allocation */
 	percpu_init();

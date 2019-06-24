@@ -1,4 +1,4 @@
-/*	$OpenBSD: sys_generic.c,v 1.123 2019/01/21 23:41:26 cheloha Exp $	*/
+/*	$OpenBSD: sys_generic.c,v 1.125 2019/06/22 06:48:25 semarie Exp $	*/
 /*	$NetBSD: sys_generic.c,v 1.24 1996/03/29 00:25:32 cgd Exp $	*/
 
 /*
@@ -366,8 +366,11 @@ dofilewritev(struct proc *p, int fd, struct uio *uio, int flags,
 		if (uio->uio_resid != cnt && (error == ERESTART ||
 		    error == EINTR || error == EWOULDBLOCK))
 			error = 0;
-		if (error == EPIPE)
+		if (error == EPIPE) {
+			KERNEL_LOCK();
 			ptsignal(p, SIGPIPE, STHREAD);
+			KERNEL_UNLOCK();
+		}
 	}
 	cnt -= uio->uio_resid;
 
@@ -935,7 +938,7 @@ doppoll(struct proc *p, struct pollfd *fds, u_int nfds,
 	int timo, ncoll, i, s, error;
 
 	/* Standards say no more than MAX_OPEN; this is possibly better. */
-	if (nfds > min((int)p->p_rlimit[RLIMIT_NOFILE].rlim_cur, maxfiles))
+	if (nfds > min((int)lim_cur(RLIMIT_NOFILE), maxfiles))
 		return (EINVAL);
 
 	/* optimize for the default case, of a small nfds value */

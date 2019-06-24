@@ -1,4 +1,4 @@
-/*	$OpenBSD: mft.c,v 1.4 2019/06/19 16:30:37 deraadt Exp $ */
+/*	$OpenBSD: mft.c,v 1.6 2019/06/20 15:29:01 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *

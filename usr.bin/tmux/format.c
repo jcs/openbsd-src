@@ -1,4 +1,4 @@
-/* $OpenBSD: format.c,v 1.204 2019/06/15 06:33:48 nicm Exp $ */
+/* $OpenBSD: format.c,v 1.207 2019/06/24 10:04:29 nicm Exp $ */
 
 /*
  * Copyright (c) 2011 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -1052,6 +1052,8 @@ format_find(struct format_tree *ft, const char *key, int modifiers)
 
 	if (~modifiers & FORMAT_TIMESTRING) {
 		o = options_parse_get(global_options, key, &idx, 0);
+		if (o == NULL && ft->wp != NULL)
+			o = options_parse_get(ft->wp->options, key, &idx, 0);
 		if (o == NULL && ft->w != NULL)
 			o = options_parse_get(ft->w->options, key, &idx, 0);
 		if (o == NULL)
@@ -1642,13 +1644,15 @@ format_replace(struct format_tree *ft, const char *key, size_t keylen,
 			goto fail;
 	} else if (search != NULL) {
 		/* Search in pane. */
+		new = format_expand(ft, copy);
 		if (wp == NULL) {
-			format_log(ft, "search '%s' but no pane", copy);
+			format_log(ft, "search '%s' but no pane", new);
 			value = xstrdup("0");
 		} else {
-			format_log(ft, "search '%s' pane %%%u", copy,  wp->id);
-			value = format_search(fm, wp, copy);
+			format_log(ft, "search '%s' pane %%%u", new,  wp->id);
+			value = format_search(fm, wp, new);
 		}
+		free(new);
 	} else if (cmp != NULL) {
 		/* Comparison of left and right. */
 		if (format_choose(ft, copy, &left, &right, 1) != 0) {
@@ -1778,11 +1782,14 @@ done:
 
 	/* Perform substitution if any. */
 	if (sub != NULL) {
-		new = format_sub(sub, value, sub->argv[0], sub->argv[1]);
-		format_log(ft, "substituted '%s' to '%s': %s", sub->argv[0],
-		    sub->argv[1], new);
+		left = format_expand(ft, sub->argv[0]);
+		right = format_expand(ft, sub->argv[1]);
+		new = format_sub(sub, value, left, right);
+		format_log(ft, "substitute '%s' to '%s': %s", left, right, new);
 		free(value);
 		value = new;
+		free(right);
+		free(left);
 	}
 
 	/* Truncate the value if needed. */
@@ -2006,10 +2013,10 @@ void
 format_defaults(struct format_tree *ft, struct client *c, struct session *s,
     struct winlink *wl, struct window_pane *wp)
 {
-	if (c != NULL)
+	if (c != NULL && c->name != NULL)
 		log_debug("%s: c=%s", __func__, c->name);
 	else
-		log_debug("%s: s=none", __func__);
+		log_debug("%s: c=none", __func__);
 	if (s != NULL)
 		log_debug("%s: s=$%u", __func__, s->id);
 	else
