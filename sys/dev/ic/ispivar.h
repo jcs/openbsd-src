@@ -102,7 +102,7 @@ void		ispi_send(struct ispi_softc *);
 void		ispi_recv(struct ispi_softc *);
 
 int		ispi_intr(void *);
-int		ispi_subdev_intr(struct aml_node *, int, void *);
+int		ispi_subdev_intr(struct acpi_softc *, int, void *);
 int		ispi_status(struct ispi_softc *);
 int		ispi_flush(struct ispi_softc *);
 void		ispi_clear_status(struct ispi_softc *);

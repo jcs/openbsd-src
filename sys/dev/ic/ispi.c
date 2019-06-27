@@ -400,7 +400,7 @@ ispi_intr(void *arg)
 }
 
 int
-ispi_subdev_intr(struct aml_node *node, int notify_type, void *arg)
+ispi_subdev_intr(struct acpi_softc *acpi_sc, int gpe, void *arg)
 {
 	struct ispi_spi_subdev *subdev = (struct ispi_spi_subdev *)arg;
 #ifdef ISPI_DEBUG

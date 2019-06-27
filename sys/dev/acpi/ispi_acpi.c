@@ -107,6 +107,7 @@ ispi_spi_intr_establish(void *cookie, void *ih, int level,
 {
 	struct ispi_softc *sc = (struct ispi_softc *)cookie;
 	struct ispi_gpe_intr *igi = ih;
+	int flags;
 
 	if (sc->sc_nsubdevs == nitems(sc->sc_subdevs))
 		return NULL;
@@ -116,9 +117,16 @@ ispi_spi_intr_establish(void *cookie, void *ih, int level,
 		sc->sc_subdevs[sc->sc_nsubdevs].func = func;
 		sc->sc_subdevs[sc->sc_nsubdevs].arg = arg;
 
-		aml_register_notify(igi->gpe_node->parent, NULL,
-		    ispi_subdev_intr, &sc->sc_subdevs[sc->sc_nsubdevs],
-		    ACPIDEV_NOPOLL);
+		/*
+		 * Avoid using the ACPI task queue because it's too slow, and
+		 * our subdev might not be doing anything ACPI-related anyway.
+		 */
+		flags = GPE_DIRECT;
+		if (level)
+			flags |= GPE_LEVEL;
+
+		acpi_set_gpehandler(acpi_softc, igi->gpe_int, ispi_subdev_intr,
+		    &sc->sc_subdevs[sc->sc_nsubdevs], flags);
 
 		sc->sc_nsubdevs++;
 
