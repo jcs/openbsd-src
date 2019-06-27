@@ -281,8 +281,10 @@ ispi_flush(struct ispi_softc *sc)
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
 
-	while (!ispi_rx_fifo_empty(sc) && --tries)
-		ispi_read(sc, SSDR);
+	do {
+		while (!ispi_rx_fifo_empty(sc))
+			ispi_read(sc, SSDR);
+	} while ((ispi_read(sc, SSSR) & SSSR_BSY) && --tries);
 
 	DPRINTF(("%s: flushed with %d left\n", sc->sc_dev.dv_xname, tries));
 
@@ -311,6 +313,8 @@ ispi_cs_change(struct ispi_softc *sc, int cs_assert)
 	else
 		t |= LPSS_CS_CONTROL_CS_HIGH;
 	ispi_lpss_write(sc, sc->sc_reg_cs_ctrl, t);
+
+	DELAY(2);
 }
 
 int
@@ -362,7 +366,6 @@ ispi_status(struct ispi_softc *sc)
 void
 ispi_clear_status(struct ispi_softc *sc)
 {
-	//ispi_write(sc, SSSR, 0x80080); //SSSR_TUR | SSSR_TINT | SSSR_PINT | SSSR_ROR);
 	ispi_write(sc, SSSR, SSSR_TUR | SSSR_TINT | SSSR_PINT | SSSR_ROR);
 }
 
