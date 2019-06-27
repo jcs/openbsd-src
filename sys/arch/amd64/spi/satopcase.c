@@ -47,6 +47,8 @@
 #include <dev/wscons/wsksymdef.h>
 #include <dev/wscons/wsksymvar.h>
 
+#include "satopcasevar.h"
+
 /* #define SATOPCASE_DEBUG */
 #define SATOPCASE_DEBUG
 
@@ -55,136 +57,6 @@
 #else
 #define DPRINTF(x)
 #endif
-
-#define SATOPCASE_PACKET_SIZE	256
-
-enum satopcase_kbd_mods {
-	KBD_MOD_CONTROL_L = 84,
-	KBD_MOD_SHIFT_L,
-	KBD_MOD_ALT_L,
-	KBD_MOD_META_L,
-	KBD_MOD_UNKNOWN,
-	KBD_MOD_SHIFT_R,
-	KBD_MOD_ALT_R,
-	KBD_MOD_META_R,
-	KBD_FN = 100,
-};
-
-enum satopcase_kbd_fn_keys {
-	KBD_FN_RIGHT_END = 93,
-	KBD_FN_LEFT_HOME,
-	KBD_FN_DOWN_PAGEDOWN,
-	KBD_FN_UP_PAGEUP,
-	KBD_FN_BACKSPACE_DELETE,
-	KBD_FN_RETURN_INSERT,
-	KBD_FN_F1_BRIGHTNESS_DOWN,
-	KBD_FN_F2_BRIGHTNESS_UP,
-	KBD_FN_F5_KBD_LIGHT_DOWN,
-	KBD_FN_F6_KBD_LIGHT_UP,
-	KBD_FN_F7_MEDIA_PREV,
-	KBD_FN_F8_MEDIA_PLAYPAUSE,
-	KBD_FN_F9_MEDIA_NEXT,
-	KBD_FN_F10_MUTE,
-	KBD_FN_F11_VOLUME_DOWN,
-	KBD_FN_F12_VOLUME_UP,
-};
-
-/* when Fn is held, translate this key to that key */
-static struct satopcase_kbd_fn_trans_entry {
-	keysym_t	from;
-	keysym_t	to;
-} satopcase_kb_fn_trans[] = {
-	{ KS_Right,	KBD_FN_RIGHT_END },
-	{ KS_Left,	KBD_FN_LEFT_HOME },
-	{ KS_Down,	KBD_FN_DOWN_PAGEDOWN },
-	{ KS_Up,	KBD_FN_UP_PAGEUP },
-	{ KS_BackSpace,	KBD_FN_BACKSPACE_DELETE },
-	{ KS_Return,	KBD_FN_RETURN_INSERT },
-	{ KS_F1,	KBD_FN_F1_BRIGHTNESS_DOWN },
-	{ KS_F2,	KBD_FN_F2_BRIGHTNESS_UP },
-	{ KS_F5,	KBD_FN_F5_KBD_LIGHT_DOWN },
-	{ KS_F6,	KBD_FN_F6_KBD_LIGHT_UP },
-	{ KS_F7,	KBD_FN_F7_MEDIA_PREV },
-	{ KS_F8,	KBD_FN_F8_MEDIA_PLAYPAUSE },
-	{ KS_F9,	KBD_FN_F9_MEDIA_NEXT },
-	{ KS_F10,	KBD_FN_F10_MUTE },
-	{ KS_F11,	KBD_FN_F11_VOLUME_DOWN },
-	{ KS_F12,	KBD_FN_F12_VOLUME_UP },
-};
-
-struct satopcase_kbd_message {
-	uint8_t		_unused;
-	uint8_t		modifiers;
-#define KBD_MSG_MODS	8
-	uint8_t		_unused2;
-#define KBD_MSG_KEYS	5
-	uint8_t		pressed[KBD_MSG_KEYS];
-	uint8_t		overflow;
-	uint8_t		fn;
-	uint16_t	crc16;
-};
-
-struct satopcase_spi_packet {
-	uint8_t				type;
-#define PACKET_TYPE_READ		0x20
-#define PACKET_TYPE_WRITE		0x40
-	uint8_t				device;
-#define PACKET_DEVICE_KEYBOARD		0x01
-#define PACKET_DEVICE_TOUCHPAD		0x02
-#define PACKET_DEVICE_INFO		0xd0
-	uint16_t			offset;
-	uint16_t			remaining;
-	uint16_t			length;
-	union {
-		struct satopcase_spi_message {
-			uint16_t	 type;
-			uint8_t		 zero;
-			uint8_t		 counter;
-			uint16_t	 response_len;
-			uint16_t	 length;
-			union {
-				struct satopcase_kbd_message keyboard;
-				uint8_t	data[238];
-			};
-		}			message;
-		uint8_t			data[246];
-	};
-	uint16_t			crc16;
-} __packed;
-
-struct satopcase_softc {
-	struct device	sc_dev;
-	spi_tag_t	sc_spi_tag;
-	struct ispi_gpe_intr sc_gpe_intr;
-	void		*sc_ih;
-
-	struct spi_config sc_spi_conf;
-
-	union {
-		struct satopcase_spi_packet sc_read_packet;
-		uint8_t	sc_read_raw[SATOPCASE_PACKET_SIZE];
-	};
-
-	/* from _DSM */
-	uint64_t	spi_sclk_period;
-	uint64_t	spi_word_size;
-	uint64_t	spi_bit_order;
-	uint64_t	spi_spo;
-	uint64_t	spi_sph;
-	uint64_t	spi_cs_delay;
-	uint64_t	reset_a2r_usec;
-	uint64_t	reset_rec_usec;
-
-	struct device	*sc_wskbddev;
-#ifdef WSDISPLAY_COMPAT_RAWKBD
-	int		sc_rawkbd;
-#endif
-	int		kbd_keys_down[KBD_MSG_KEYS + KBD_MSG_MODS];
-
-	const keysym_t	sc_kcodes;
-	const keysym_t	sc_xt_kcodes;
-	int		sc_ksize;
-};
 
 int	satopcase_match(struct device *, void *, void *);
 void	satopcase_attach(struct device *, struct device *, void *);
@@ -200,6 +72,10 @@ void	satopcase_kbd_cngetc(void *, u_int *, int *);
 void	satopcase_kbd_cnpollc(void *, int);
 
 void	satopcase_handle_msg(struct satopcase_softc *);
+void	satopcase_kbd_handle_msg(struct satopcase_softc *,
+	    struct satopcase_kbd_message);
+
+uint16_t satopcase_crc16(uint8_t *, size_t);
 
 struct cfattach satopcase_ca = {
 	sizeof(struct satopcase_softc),
@@ -224,237 +100,6 @@ struct wskbd_consops satopcase_kbd_consops = {
 	satopcase_kbd_cnpollc,
 	satopcase_kbd_cnbell,
 };
-
-#define KC(n) KS_KEYCODE(n)
-const keysym_t satopcase_keycodes_us[] = {
-/*	idx		command		normal		shifted */
-	KC(0),
-	KC(1),
-	KC(2),
-	KC(3),
-	KC(4),				KS_a,
-	KC(5),				KS_b,
-	KC(6),				KS_c,
-	KC(7),				KS_d,
-	KC(8),				KS_e,
-	KC(9),				KS_f,
-	KC(10),				KS_g,
-	KC(11),				KS_h,
-	KC(12),				KS_i,
-	KC(13),				KS_j,
-	KC(14),				KS_k,
-	KC(15),				KS_l,
-	KC(16),				KS_m,
-	KC(17),				KS_n,
-	KC(18),				KS_o,
-	KC(19),				KS_p,
-	KC(20),				KS_q,
-	KC(21),				KS_r,
-	KC(22),				KS_s,
-	KC(23),				KS_t,
-	KC(24),				KS_u,
-	KC(25),				KS_v,
-	KC(26),				KS_w,
-	KC(27),				KS_x,
-	KC(28),				KS_y,
-	KC(29),				KS_z,
-	KC(30),				KS_1,		KS_exclam,
-	KC(31),				KS_2,		KS_at,
-	KC(32),				KS_3,		KS_numbersign,
-	KC(33),				KS_4,		KS_dollar,
-	KC(34),				KS_5,		KS_percent,
-	KC(35),				KS_6,		KS_asciicircum,
-	KC(36),				KS_7,		KS_ampersand,
-	KC(37),				KS_8,		KS_asterisk,
-	KC(38),				KS_9,		KS_parenleft,
-	KC(39),				KS_0,		KS_parenright,
-	KC(40),				KS_Return,
-	KC(41),				KS_Escape,
-	KC(42),				KS_BackSpace,
-	KC(43),				KS_Tab,
-	KC(44),				KS_space,
-	KC(45),				KS_minus,	KS_underscore,
-	KC(46),				KS_equal,	KS_plus,
-	KC(47),				KS_bracketleft,	KS_braceleft,
-	KC(48),				KS_bracketright,KS_braceright,
-	KC(49),				KS_backslash,	KS_bar,
-	KC(50),
-	KC(51),				KS_semicolon,	KS_colon,
-	KC(52),				KS_apostrophe,	KS_quotedbl,
-	KC(53),				KS_grave,	KS_asciitilde,
-	KC(54),				KS_comma,	KS_less,
-	KC(55),				KS_period,	KS_greater,
-	KC(56),				KS_slash,	KS_question,
-	KC(57),				KS_Caps_Lock,
-	KC(58),				KS_F1,
-	KC(59),				KS_F2,
-	KC(60),				KS_F3,
-	KC(61),				KS_F4,
-	KC(62),				KS_F5,
-	KC(63),				KS_F6,
-	KC(64),				KS_F7,
-	KC(65),				KS_F8,
-	KC(66),				KS_F9,
-	KC(67),				KS_F10,
-	KC(68),				KS_F11,
-	KC(69),				KS_F12,
-	KC(70),
-	KC(71),
-	KC(72),
-	KC(73),
-	KC(74),
-	KC(75),
-	KC(76),
-	KC(77),
-	KC(78),
-	KC(79),				KS_Right,
-	KC(80),				KS_Left,
-	KC(81),				KS_Down,
-	KC(82),				KS_Up,
-	KC(83),
-	/* key codes aren't generated for modifier keys, so fake it */
-	KC(KBD_MOD_CONTROL_L),		KS_Control_L,
-	KC(KBD_MOD_SHIFT_L),		KS_Shift_L,
-	KC(KBD_MOD_ALT_L),		KS_Alt_L,
-	KC(KBD_MOD_META_L),		KS_Meta_L,
-	KC(KBD_MOD_UNKNOWN),
-	KC(KBD_MOD_SHIFT_R),		KS_Shift_R,
-	KC(KBD_MOD_ALT_R),		KS_Alt_R,
-	KC(KBD_MOD_META_R),		KS_Meta_R,
-	KC(92),
-	/* same for keys pressed with fn */
-	KC(KBD_FN_RIGHT_END),		KS_End,
-	KC(KBD_FN_LEFT_HOME),		KS_Home,
-	KC(KBD_FN_DOWN_PAGEDOWN),	KS_Next,
-	KC(KBD_FN_UP_PAGEUP),		KS_Prior,
-	KC(KBD_FN_BACKSPACE_DELETE),	KS_Delete,
-	KC(KBD_FN_RETURN_INSERT),	KS_Insert,
-	KC(KBD_FN_F1_BRIGHTNESS_DOWN),	KS_Cmd_BrightnessDown,
-	KC(KBD_FN_F2_BRIGHTNESS_UP),	KS_Cmd_BrightnessUp,
-	KC(KBD_FN_F5_KBD_LIGHT_DOWN),
-	KC(KBD_FN_F6_KBD_LIGHT_UP),
-	KC(KBD_FN_F7_MEDIA_PREV),
-	KC(KBD_FN_F8_MEDIA_PLAYPAUSE),
-	KC(KBD_FN_F9_MEDIA_NEXT),
-	KC(KBD_FN_F10_MUTE),		KS_AudioMute,
-	KC(KBD_FN_F11_VOLUME_DOWN),	KS_AudioLower,
-	KC(KBD_FN_F12_VOLUME_UP),	KS_AudioRaise,
-};
-#undef KC
-
-#ifdef WSDISPLAY_COMPAT_RAWKBD
-const unsigned char satopcase_raw_keycodes_us[] = {
-	0,
-	0,
-	0,
-	0,
-	RAWKEY_a,
-	RAWKEY_b,
-	RAWKEY_c,
-	RAWKEY_d,
-	RAWKEY_e,
-	RAWKEY_f,
-	RAWKEY_g,
-	RAWKEY_h,
-	RAWKEY_i,
-	RAWKEY_j,
-	RAWKEY_k,
-	RAWKEY_l,
-	RAWKEY_m,
-	RAWKEY_n,
-	RAWKEY_o,
-	RAWKEY_p,
-	RAWKEY_q,
-	RAWKEY_r,
-	RAWKEY_s,
-	RAWKEY_t,
-	RAWKEY_u,
-	RAWKEY_v,
-	RAWKEY_w,
-	RAWKEY_x,
-	RAWKEY_y,
-	RAWKEY_z,
-	RAWKEY_1,
-	RAWKEY_2,
-	RAWKEY_3,
-	RAWKEY_4,
-	RAWKEY_5,
-	RAWKEY_6,
-	RAWKEY_7,
-	RAWKEY_8,
-	RAWKEY_9,
-	RAWKEY_0,
-	RAWKEY_Return,
-	RAWKEY_Escape,
-	RAWKEY_BackSpace,
-	RAWKEY_Tab,
-	RAWKEY_space,
-	RAWKEY_minus,
-	RAWKEY_equal,
-	RAWKEY_bracketleft,
-	RAWKEY_bracketright,
-	RAWKEY_backslash,
-	0,
-	RAWKEY_semicolon,
-	RAWKEY_apostrophe,
-	RAWKEY_grave,
-	RAWKEY_comma,
-	RAWKEY_period,
-	RAWKEY_slash,
-	RAWKEY_Caps_Lock,
-	RAWKEY_f1,
-	RAWKEY_f2,
-	RAWKEY_f3,
-	RAWKEY_f4,
-	RAWKEY_f5,
-	RAWKEY_f6,
-	RAWKEY_f7,
-	RAWKEY_f8,
-	RAWKEY_f9,
-	RAWKEY_f10,
-	RAWKEY_f11,
-	RAWKEY_f12,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	RAWKEY_Right,
-	RAWKEY_Left,
-	RAWKEY_Down,
-	RAWKEY_Up,
-	0,
-	RAWKEY_Control_L,
-	RAWKEY_Shift_L,
-	RAWKEY_Alt_L,
-	0xdb, /* RAWKEY_Meta_L, */
-	0,
-	RAWKEY_Shift_R,
-	RAWKEY_Alt_R,
-	0xdc, /* RAWKEY_Meta_R, */
-	0,
-	RAWKEY_End,
-	RAWKEY_Home,
-	RAWKEY_Next,
-	RAWKEY_Prior,
-	RAWKEY_Delete,
-	RAWKEY_Insert,
-	0, /* KS_Cmd_BrightnessDown, */
-	0, /* KS_Cmd_BrightnessUp, */
-	0,
-	0,
-	0,
-	0,
-	0,
-	RAWKEY_AudioMute,
-	RAWKEY_AudioLower,
-	RAWKEY_AudioRaise,
-};
-#endif /* WSDISPLAY_COMPAT_RAWKBD */
 
 struct wscons_keydesc satopcase_kbd_keydesctab[] = {
 	{ KB_US, 0, sizeof(satopcase_keycodes_us) / sizeof(keysym_t),
@@ -544,13 +189,15 @@ satopcase_detach(struct device *self, int flags)
 		sc->sc_ih = NULL;
 	}
 
-	return (0);
+	return 0;
 }
 
 int
 satopcase_intr(void *arg)
 {
 	struct satopcase_softc *sc = arg;
+	uint16_t crc;
+	uint16_t msg_crc;
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
 
@@ -559,9 +206,18 @@ satopcase_intr(void *arg)
 	spi_read(sc->sc_spi_tag, sc->sc_read_raw, sizeof(sc->sc_read_raw));
 	spi_release_bus(sc->sc_spi_tag, 0);
 
+	crc = satopcase_crc16(sc->sc_read_raw, SATOPCASE_PACKET_SIZE - 2);
+	msg_crc = (sc->sc_read_raw[SATOPCASE_PACKET_SIZE - 1] << 8) |
+	    sc->sc_read_raw[SATOPCASE_PACKET_SIZE - 2];
+	if (crc != msg_crc) {
+		printf("%s: corrupt packet (crc 0x%x != msg crc 0x%x)\n",
+		    sc->sc_dev.dv_xname, crc, msg_crc);
+		return 1;
+	}
+
 	satopcase_handle_msg(sc);
 
-	return (1);
+	return 1;
 }
 
 int
@@ -796,6 +452,37 @@ satopcase_kbd_proc_event(struct satopcase_softc *sc, int key, int fn,
 }
 
 void
+satopcase_handle_msg(struct satopcase_softc *sc)
+{
+	int x;
+
+	DPRINTF(("%s: incoming message:", sc->sc_dev.dv_xname));
+	for (x = 0; x < SATOPCASE_PACKET_SIZE; x++)
+		DPRINTF((" %02x", (sc->sc_read_raw[x] & 0xff)));
+	DPRINTF(("\n"));
+
+	switch (sc->sc_read_packet.type) {
+	case PACKET_TYPE_READ:
+		if (sc->sc_read_packet.remaining || sc->sc_read_packet.offset) {
+			printf("XXXX: remaining %d, offset %d\n",
+				sc->sc_read_packet.remaining,
+				sc->sc_read_packet.offset);
+		}
+
+		switch (sc->sc_read_packet.device) {
+		case PACKET_DEVICE_KEYBOARD:
+			satopcase_kbd_handle_msg(sc,
+			    sc->sc_read_packet.message.keyboard);
+			break;
+		}
+		break;
+	default:
+		DPRINTF(("%s: unknown packet type 0x%x\n", sc->sc_dev.dv_xname,
+		    sc->sc_read_packet.type));
+	}
+}
+
+void
 satopcase_kbd_handle_msg(struct satopcase_softc *sc,
     struct satopcase_kbd_message kbd_msg)
 {
@@ -814,11 +501,6 @@ satopcase_kbd_handle_msg(struct satopcase_softc *sc,
 	for (x = 0; x < KBD_MSG_MODS; x++)
 		pressed[KBD_MSG_KEYS + x] = (kbd_msg.modifiers & (1 << x)) ?
 		    (KBD_MOD_CONTROL_L + x) : 0;
-
-	DPRINTF(("%s: kbd msg, states:", sc->sc_dev.dv_xname));
-	for (x = 0; x < nitems(pressed); x++)
-		DPRINTF((" %02d", pressed[x]));
-	DPRINTF(("\n"));
 
 	/*
 	 * Key press slots are not constant, so when holding down a key, then
@@ -864,27 +546,15 @@ satopcase_kbd_handle_msg(struct satopcase_softc *sc,
 	memcpy(sc->kbd_keys_down, pressed, sizeof(sc->kbd_keys_down));
 }
 
-void
-satopcase_handle_msg(struct satopcase_softc *sc)
+
+uint16_t
+satopcase_crc16(uint8_t *msg, size_t len)
 {
+	uint16_t crc = 0;
 	int x;
 
-	DPRINTF(("%s: incoming message:", sc->sc_dev.dv_xname));
-	for (x = 0; x < SATOPCASE_PACKET_SIZE; x++)
-		DPRINTF((" %02x", (sc->sc_read_raw[x] & 0xff)));
-	DPRINTF(("\n"));
+	for (x = 0; x < len; x++)
+		crc = (crc >> 8) ^ crc16_table[(crc ^ msg[x]) & 0xff];
 
-	switch (sc->sc_read_packet.type) {
-	case PACKET_TYPE_READ:
-		switch (sc->sc_read_packet.device) {
-		case PACKET_DEVICE_KEYBOARD:
-			satopcase_kbd_handle_msg(sc,
-			    sc->sc_read_packet.message.keyboard);
-			break;
-		}
-		break;
-	default:
-		DPRINTF(("%s: unknown packet type 0x%x\n", sc->sc_dev.dv_xname,
-		    sc->sc_read_packet.type));
-	}
+	return crc;
 }
