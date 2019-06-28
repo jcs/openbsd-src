@@ -17,7 +17,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define SATOPCASE_PACKET_SIZE	256
+/*
+ * keyboard structs
+ */
 
 enum satopcase_kbd_mods {
 	KBD_MOD_CONTROL_L = 84,
@@ -71,80 +73,6 @@ static struct satopcase_kbd_fn_trans_entry {
 	{ KS_F10,	KBD_FN_F10_MUTE },
 	{ KS_F11,	KBD_FN_F11_VOLUME_DOWN },
 	{ KS_F12,	KBD_FN_F12_VOLUME_UP },
-};
-
-struct satopcase_kbd_message {
-	uint8_t		_unused;
-	uint8_t		modifiers;
-#define KBD_MSG_MODS	8
-	uint8_t		_unused2;
-#define KBD_MSG_KEYS	5
-	uint8_t		pressed[KBD_MSG_KEYS];
-	uint8_t		overflow;
-	uint8_t		fn;
-	uint16_t	crc16;
-};
-
-struct satopcase_spi_packet {
-	uint8_t				type;
-#define PACKET_TYPE_READ		0x20
-#define PACKET_TYPE_WRITE		0x40
-	uint8_t				device;
-#define PACKET_DEVICE_KEYBOARD		0x01
-#define PACKET_DEVICE_TOUCHPAD		0x02
-#define PACKET_DEVICE_INFO		0xd0
-	uint16_t			offset;
-	uint16_t			remaining;
-	uint16_t			length;
-	union {
-		struct satopcase_spi_message {
-			uint16_t	type;
-			uint8_t		_unused;
-			uint8_t		counter;
-			uint16_t	response_len;
-			uint16_t	length;
-			union {
-				struct satopcase_kbd_message keyboard;
-				uint8_t	data[238];
-			};
-		}			message;
-		uint8_t			data[246];
-	};
-	uint16_t			crc16;
-} __packed;
-
-struct satopcase_softc {
-	struct device	sc_dev;
-	spi_tag_t	sc_spi_tag;
-	struct ispi_gpe_intr sc_gpe_intr;
-	void		*sc_ih;
-
-	struct spi_config sc_spi_conf;
-
-	union {
-		struct satopcase_spi_packet sc_read_packet;
-		uint8_t	sc_read_raw[SATOPCASE_PACKET_SIZE];
-	};
-
-	/* from _DSM */
-	uint64_t	spi_sclk_period;
-	uint64_t	spi_word_size;
-	uint64_t	spi_bit_order;
-	uint64_t	spi_spo;
-	uint64_t	spi_sph;
-	uint64_t	spi_cs_delay;
-	uint64_t	reset_a2r_usec;
-	uint64_t	reset_rec_usec;
-
-	struct device	*sc_wskbddev;
-#ifdef WSDISPLAY_COMPAT_RAWKBD
-	int		sc_rawkbd;
-#endif
-	int		kbd_keys_down[KBD_MSG_KEYS + KBD_MSG_MODS];
-
-	const keysym_t	sc_kcodes;
-	const keysym_t	sc_xt_kcodes;
-	int		sc_ksize;
 };
 
 #define KC(n) KS_KEYCODE(n)
@@ -378,7 +306,175 @@ const unsigned char satopcase_raw_keycodes_us[] = {
 };
 #endif /* WSDISPLAY_COMPAT_RAWKBD */
 
-/* CRC16-ARC, poly 0x8005 */
+
+/*
+ * touchpad structs
+ */
+
+/* most of this came from dev/usb/ubcmtp.c */
+
+#define SATOPCASE_TP_FINGER_ORIENT	16384
+#define SATOPCASE_TP_SN_PRESSURE	45
+#define SATOPCASE_TP_SN_WIDTH		25
+#define SATOPCASE_TP_SN_COORD		250
+#define SATOPCASE_TP_SN_ORIENT		10
+
+struct satopcase_tp_finger {
+	uint16_t	origin;
+	uint16_t	abs_x;
+	uint16_t	abs_y;
+	uint16_t	rel_x;
+	uint16_t	rel_y;
+	uint16_t	tool_major;
+	uint16_t	tool_minor;
+	uint16_t	orientation;
+	uint16_t	touch_major;
+	uint16_t	touch_minor;
+	uint16_t	unused[2];
+	uint16_t	pressure;
+	uint16_t	multi;
+	uint16_t	crc16;
+} __packed __attribute((aligned(2)));
+
+#define SATOPCASE_TP_MAX_FINGERS	16
+#define SATOPCASE_ALL_FINGER_SIZE	(SATOPCASE_MAX_FINGERS * \
+					    sizeof(struct satopcase_tp_finger))
+
+struct satopcase_tp_limit {
+	int limit;
+	int min;
+	int max;
+};
+
+static struct satopcase_tp_dev_type {
+	uint16_t model;
+	struct satopcase_tp_limit l_pressure;	/* finger pressure */
+	struct satopcase_tp_limit l_width;	/* finger width */
+	struct satopcase_tp_limit l_x;
+	struct satopcase_tp_limit l_y;
+	struct satopcase_tp_limit l_orientation;
+} satopcase_tp_devices[] = {
+	{
+		/* MacBook10,1 */
+		0x0417,
+		{ SATOPCASE_TP_SN_PRESSURE, 0, 300 },
+		{ SATOPCASE_TP_SN_WIDTH, 0, 2048 },
+		{ SATOPCASE_TP_SN_COORD, -5087, 5579 },
+		{ SATOPCASE_TP_SN_COORD, -182, 6089 },
+		{ SATOPCASE_TP_SN_ORIENT, -SATOPCASE_TP_FINGER_ORIENT,
+		    SATOPCASE_TP_FINGER_ORIENT },
+	},
+};
+
+
+/*
+ * packet structs
+ */
+
+#define SATOPCASE_PACKET_SIZE	256
+
+struct satopcase_spi_pkt {
+	uint8_t				type;
+#define PACKET_TYPE_READ		0x20
+#define PACKET_TYPE_WRITE		0x40
+	uint8_t				device;
+#define PACKET_DEVICE_KEYBOARD		0x01
+#define PACKET_DEVICE_TOUCHPAD		0x02
+#define PACKET_DEVICE_INFO		0xd0
+	uint16_t			offset;
+	uint16_t			remaining;
+	uint16_t			length;
+	union {
+		struct satopcase_spi_msg {
+			uint16_t	type;
+		#define MSG_TYPE_TP_INFO 0x1020
+			uint8_t		type2;
+		#define MSG_TYPE2_TP_INFO 0x02
+			uint8_t		counter;
+			uint16_t	response_len;
+			uint16_t	length;
+		#define MSG_HEADER_LEN	8
+			union {
+				struct satopcase_kbd_msg {
+					uint8_t		_unused;
+					uint8_t		modifiers;
+				#define KBD_MSG_MODS	8
+					uint8_t		_unused2;
+				#define KBD_MSG_KEYS	5
+					uint8_t		pressed[KBD_MSG_KEYS];
+					uint8_t		overflow;
+					uint8_t		fn;
+					uint16_t	crc16;
+				} __packed kbd;
+				struct satopcase_tp_info_cmd {
+					uint16_t	crc16;
+				}	tp_info_cmd;
+				struct satopcase_tp_info {
+					uint8_t		_unused[105];
+					uint16_t	model;
+					uint8_t		_unused2[3];
+					uint16_t	crc16;
+				} __packed tp_info;
+				uint8_t	data[238];
+			};
+		} __packed		msg;
+		uint8_t			data[246];
+	};
+	uint16_t			crc16;
+} __packed;
+
+
+/*
+ * autoconf
+ */
+
+struct satopcase_softc {
+	struct device		sc_dev;
+	spi_tag_t		sc_spi_tag;
+	struct ispi_gpe_intr 	sc_gpe_intr;
+	void			*sc_ih;
+
+	struct spi_config 	sc_spi_conf;
+
+	struct rwlock		sc_busylock;
+	union {
+		struct satopcase_spi_pkt sc_read_pkt;
+		uint8_t		sc_read_raw[SATOPCASE_PACKET_SIZE];
+	};
+	union {
+		struct satopcase_spi_pkt sc_write_pkt;
+		uint8_t		sc_write_raw[SATOPCASE_PACKET_SIZE];
+	};
+
+	/* from _DSM */
+	uint64_t		spi_sclk_period;
+	uint64_t		spi_word_size;
+	uint64_t		spi_bit_order;
+	uint64_t		spi_spo;
+	uint64_t		spi_sph;
+	uint64_t		spi_cs_delay;
+	uint64_t		reset_a2r_usec;
+	uint64_t		reset_rec_usec;
+
+	struct device		*sc_wskbddev;
+#ifdef WSDISPLAY_COMPAT_RAWKBD
+	int			sc_rawkbd;
+#endif
+	int			kbd_keys_down[KBD_MSG_KEYS + KBD_MSG_MODS];
+
+	struct device		*sc_wsmousedev;
+	struct satopcase_tp_dev_type *sc_tp_dev_type;
+
+	const keysym_t		sc_kcodes;
+	const keysym_t		sc_xt_kcodes;
+	int			sc_ksize;
+};
+
+
+/*
+ * lookup table for satopcase_crc16
+ * CRC16-ARC, poly 0x8005
+ */
 static const uint16_t crc16_table[256] = {
 	0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
 	0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
