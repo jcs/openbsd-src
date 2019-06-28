@@ -77,12 +77,14 @@ int	satopcase_tp_enable(void *);
 int	satopcase_tp_ioctl(void *, u_long, caddr_t, int, struct proc *);
 void	satopcase_tp_disable(void *);
 
-int	satopcase_send_msg(struct satopcase_softc *, size_t);
+int	satopcase_send_msg(struct satopcase_softc *, size_t, int);
 void	satopcase_handle_msg(struct satopcase_softc *);
 void	satopcase_info_handle_msg(struct satopcase_softc *,
 	    struct satopcase_spi_msg *);
 void	satopcase_kbd_handle_msg(struct satopcase_softc *,
-	    struct satopcase_kbd_msg *);
+	    struct satopcase_spi_msg *);
+void	satopcase_tp_handle_msg(struct satopcase_softc *,
+	    struct satopcase_spi_msg *);
 
 uint16_t satopcase_crc16(uint8_t *, size_t);
 
@@ -256,7 +258,7 @@ satopcase_intr(void *arg)
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
 
-	rw_enter(&sc->sc_busylock, RW_WRITE);
+	rw_enter_write(&sc->sc_busylock);
 
 	memset(sc->sc_read_raw, 0, sizeof(struct satopcase_spi_pkt));
 
@@ -267,7 +269,8 @@ satopcase_intr(void *arg)
 
 	satopcase_handle_msg(sc);
 
-	rw_exit(&sc->sc_busylock);
+	rw_exit_write(&sc->sc_busylock);
+	wakeup(&sc);
 
 	return 1;
 }
@@ -345,7 +348,9 @@ satopcase_get_dsm_params(struct satopcase_softc *sc, struct aml_node *node)
 		k = res.v_package[i]->v_string;
 		val = aml_val2int(res.v_package[i + 1]);
 
+#if 0
 		DPRINTF(("%s: %s = %lld\n", sc->sc_dev.dv_xname, k, val));
+#endif
 
 		if (strcmp(k, "spiSclkPeriod") == 0) {
 			sc->spi_sclk_period = val;
@@ -515,18 +520,34 @@ satopcase_tp_init(struct satopcase_softc *sc)
 	memset(pkt, 0, sizeof(struct satopcase_spi_pkt));
 
 	pkt->device = PACKET_DEVICE_INFO;
-
 	msg->type = MSG_TYPE_TP_INFO;
 	msg->type2 = MSG_TYPE2_TP_INFO;
-	msg->response_len = htole16(SATOPCASE_PACKET_SIZE * 2);
+	msg->counter = sc->sc_pkt_counter++;
+	msg->response_length = htole16(SATOPCASE_PACKET_SIZE * 2);
+	msg->length = htole16(sizeof(struct satopcase_tp_info_cmd) - 2);
 	msg->tp_info_cmd.crc16 = htole16(satopcase_crc16((uint8_t *)msg,
 	    MSG_HEADER_LEN));
+	satopcase_send_msg(sc, sizeof(struct satopcase_tp_info_cmd), 1);
 
-	satopcase_send_msg(sc, sizeof(struct satopcase_tp_info_cmd));
+	if (!sc->tp_dev_type) {
+		printf("%s: failed to probe touchpad\n", sc->sc_dev.dv_xname);
+		/* TODO: wsmouse detach? */
+		return;
+	}
 
-	/* poll for a reply since we need it to configure the touchpad */
-	DELAY(10);
-	satopcase_intr(sc);
+	/* put the touchpad into multitouch mode */
+
+	memset(pkt, 0, sizeof(struct satopcase_spi_pkt));
+
+	pkt->device = PACKET_DEVICE_TOUCHPAD;
+	msg->type = MSG_TYPE_TP_MT;
+	msg->counter = sc->sc_pkt_counter++;
+	msg->response_length = htole16(SATOPCASE_PACKET_SIZE * 2);
+	msg->length = htole16(sizeof(struct satopcase_tp_mt_cmd) - 2);
+	msg->tp_mt_cmd.mode = htole16(TP_MT_CMD_MT_MODE);
+	msg->tp_mt_cmd.crc16 = htole16(satopcase_crc16((uint8_t *)msg,
+	    MSG_HEADER_LEN + sizeof(struct satopcase_tp_mt_cmd) - 2));
+	satopcase_send_msg(sc, sizeof(struct satopcase_tp_mt_cmd), 1);
 }
 
 int
@@ -537,15 +558,15 @@ satopcase_tp_enable(void *v)
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
 
-	KASSERT(sc->sc_tp_dev_type != NULL);
+	KASSERT(sc->tp_dev_type != NULL);
 
 	hw->type = WSMOUSE_TYPE_TOUCHPAD;
 	hw->hw_type = WSMOUSEHW_CLICKPAD;
-	hw->x_min = sc->sc_tp_dev_type->l_x.min;
-	hw->x_max = sc->sc_tp_dev_type->l_x.max;
-	hw->y_min = sc->sc_tp_dev_type->l_y.min;
-	hw->y_max = sc->sc_tp_dev_type->l_y.max;
-	hw->mt_slots = SATOPCASE_TP_MAX_FINGERS;
+	hw->x_min = sc->tp_dev_type->l_x.min;
+	hw->x_max = sc->tp_dev_type->l_x.max;
+	hw->y_min = sc->tp_dev_type->l_y.min;
+	hw->y_max = sc->tp_dev_type->l_y.max;
+	hw->mt_slots = TP_MAX_FINGERS;
 	hw->flags = WSMOUSEHW_MT_TRACKING;
 
 	wsmouse_configure(sc->sc_wsmousedev, NULL, 0);
@@ -578,10 +599,10 @@ satopcase_tp_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 	}
 
 	case WSMOUSEIO_GCALIBCOORDS:
-		wsmc->minx = sc->sc_tp_dev_type->l_x.min;
-		wsmc->maxx = sc->sc_tp_dev_type->l_x.max;
-		wsmc->miny = sc->sc_tp_dev_type->l_y.min;
-		wsmc->maxy = sc->sc_tp_dev_type->l_y.max;
+		wsmc->minx = sc->tp_dev_type->l_x.min;
+		wsmc->maxx = sc->tp_dev_type->l_x.max;
+		wsmc->miny = sc->tp_dev_type->l_y.min;
+		wsmc->maxy = sc->tp_dev_type->l_y.max;
 		wsmc->swapxy = 0;
 		wsmc->resx = 0;
 		wsmc->resy = 0;
@@ -609,10 +630,10 @@ satopcase_tp_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 }
 
 int
-satopcase_send_msg(struct satopcase_softc *sc, size_t len)
+satopcase_send_msg(struct satopcase_softc *sc, size_t len, int wait_reply)
 {
 	struct satopcase_spi_pkt *packet = &sc->sc_write_pkt;
-	int x;
+	int x, tries = 10;
 
 	/* sc->sc_write_raw should have already been zeroed and msg filled in */
 
@@ -634,6 +655,17 @@ satopcase_send_msg(struct satopcase_softc *sc, size_t len)
 	    sizeof(struct satopcase_spi_pkt));
 	spi_release_bus(sc->sc_spi_tag, 0);
 
+	if (wait_reply) {
+		if (cold) {
+			do {
+				DELAY(10);
+				satopcase_intr(sc);
+			} while (sc->sc_last_read_error && --tries);
+		} else if (tsleep(&sc, PRIBIO, "satopcase", hz / 100) != 0)
+			DPRINTF(("%s: timed out waiting for reply\n",
+			    sc->sc_dev.dv_xname));
+	}
+
 	return 0;
 }
 
@@ -643,6 +675,8 @@ satopcase_handle_msg(struct satopcase_softc *sc)
 	uint16_t crc;
 	uint16_t msg_crc;
 	int x;
+
+	sc->sc_last_read_error = 0;
 
 	DPRINTF(("%s: incoming message:", sc->sc_dev.dv_xname));
 	for (x = 0; x < SATOPCASE_PACKET_SIZE; x++)
@@ -655,6 +689,7 @@ satopcase_handle_msg(struct satopcase_softc *sc)
 	if (crc != msg_crc) {
 		printf("%s: corrupt packet (crc 0x%x != msg crc 0x%x)\n",
 		    sc->sc_dev.dv_xname, crc, msg_crc);
+		sc->sc_last_read_error = 1;
 		return;
 	}
 
@@ -668,8 +703,15 @@ satopcase_handle_msg(struct satopcase_softc *sc)
 
 		switch (sc->sc_read_pkt.device) {
 		case PACKET_DEVICE_KEYBOARD:
-			satopcase_kbd_handle_msg(sc, &sc->sc_read_pkt.msg.kbd);
+			satopcase_kbd_handle_msg(sc, &sc->sc_read_pkt.msg);
 			break;
+		case PACKET_DEVICE_TOUCHPAD:
+			satopcase_tp_handle_msg(sc, &sc->sc_read_pkt.msg);
+			break;
+		default:
+			DPRINTF(("%s: unknown device for read packet: 0x%x\n",
+			    sc->sc_dev.dv_xname, sc->sc_read_pkt.device));
+			sc->sc_last_read_error = 1;
 		}
 		break;
 
@@ -679,11 +721,29 @@ satopcase_handle_msg(struct satopcase_softc *sc)
 		case PACKET_DEVICE_INFO:
 			satopcase_info_handle_msg(sc, &sc->sc_read_pkt.msg);
 			break;
+		case PACKET_DEVICE_TOUCHPAD:
+			satopcase_tp_handle_msg(sc, &sc->sc_read_pkt.msg);
+			break;
+		default:
+			DPRINTF(("%s: unknown device for write packet "
+			    "response: 0x%x\n", sc->sc_dev.dv_xname,
+			    sc->sc_read_pkt.device));
+			sc->sc_last_read_error = 1;
 		}
+		break;
+	case PACKET_TYPE_ERROR:
+		/*
+		 * Response to bogus command, or doing a read when there is
+		 * nothing to read (such as when forcing a read while cold and
+		 * the corresponding GPE doesn't get serviced until !cold).
+		 */
+		DPRINTF(("%s: received error packet\n", sc->sc_dev.dv_xname));
+		sc->sc_last_read_error = 1;
 		break;
 	default:
 		DPRINTF(("%s: unknown packet type 0x%x\n", sc->sc_dev.dv_xname,
 		    sc->sc_read_pkt.type));
+		sc->sc_last_read_error = 1;
 	}
 }
 
@@ -698,16 +758,16 @@ satopcase_info_handle_msg(struct satopcase_softc *sc,
 
 		for (i = 0; i < nitems(satopcase_tp_devices); i++) {
 			if (model == satopcase_tp_devices[i].model) {
-				sc->sc_tp_dev_type = &satopcase_tp_devices[i];
+				sc->tp_dev_type = &satopcase_tp_devices[i];
 				break;
 			}
 		}
 
-		if (!sc->sc_tp_dev_type) {
+		if (!sc->tp_dev_type) {
 			printf("%s: unrecognized device model 0x%04x, "
 			    "touchpad coordinates will be wrong\n",
 			    sc->sc_dev.dv_xname, model);
-			sc->sc_tp_dev_type = &satopcase_tp_devices[0];
+			sc->tp_dev_type = &satopcase_tp_devices[0];
 		}
 
 		break;
@@ -717,10 +777,17 @@ satopcase_info_handle_msg(struct satopcase_softc *sc,
 
 void
 satopcase_kbd_handle_msg(struct satopcase_softc *sc,
-    struct satopcase_kbd_msg *kbd_msg)
+    struct satopcase_spi_msg *msg)
 {
-	int pressed[KBD_MSG_KEYS + KBD_MSG_MODS] = { 0 };
+	struct satopcase_kbd_data *kbd_msg = &msg->kbd_data;
+	int pressed[KBD_DATA_KEYS + KBD_DATA_MODS] = { 0 };
 	int x, y, tdown;
+
+	if (le16toh(msg->type) != MSG_TYPE_KBD_DATA) {
+		DPRINTF(("%s: unhandled keyboard message type 0x%x\n",
+		    sc->sc_dev.dv_xname, le16toh(msg->type)));
+		return;
+	}
 
 	if (kbd_msg->overflow)
 		return;
@@ -729,10 +796,10 @@ satopcase_kbd_handle_msg(struct satopcase_softc *sc,
 	 * We don't get key codes for modifier keys, so turn bits in the
 	 * modifiers field into key codes to track pressed state.
 	 */
-	for (x = 0; x < KBD_MSG_KEYS; x++)
+	for (x = 0; x < KBD_DATA_KEYS; x++)
 		pressed[x] = kbd_msg->pressed[x];
-	for (x = 0; x < KBD_MSG_MODS; x++)
-		pressed[KBD_MSG_KEYS + x] = (kbd_msg->modifiers & (1 << x)) ?
+	for (x = 0; x < KBD_DATA_MODS; x++)
+		pressed[KBD_DATA_KEYS + x] = (kbd_msg->modifiers & (1 << x)) ?
 		    (KBD_MOD_CONTROL_L + x) : 0;
 
 	/*
@@ -779,6 +846,45 @@ satopcase_kbd_handle_msg(struct satopcase_softc *sc,
 	memcpy(sc->kbd_keys_down, pressed, sizeof(sc->kbd_keys_down));
 }
 
+void
+satopcase_tp_handle_msg(struct satopcase_softc *sc,
+    struct satopcase_spi_msg *msg)
+{
+	int x, s, contacts;
+	struct satopcase_tp_finger *finger;
+
+	switch (le16toh(msg->type)) {
+	case MSG_TYPE_TP_MT:
+		DPRINTF(("%s: got ack for mt mode: 0x%x\n",
+		    sc->sc_dev.dv_xname, le16toh(msg->tp_mt_cmd.mode)));
+		break;
+	case MSG_TYPE_TP_DATA:
+		contacts = 0;
+
+		for (x = 0; x < msg->tp_data.fingers; x++) {
+			finger = &msg->tp_data.finger_data[x];
+
+			if (letoh16(finger->touch_major) == 0)
+				continue; /* finger lifted */
+
+			sc->frame[contacts].x = (int16_t)letoh16(finger->abs_x);
+			sc->frame[contacts].y = (int16_t)letoh16(finger->abs_y);
+			sc->frame[contacts].pressure = SATOPCASE_TP_DEFAULT_PRESSURE;
+			contacts++;
+		}
+
+		s = spltty();
+		wsmouse_buttons(sc->sc_wsmousedev, !!(msg->tp_data.button));
+		wsmouse_mtframe(sc->sc_wsmousedev, sc->frame, contacts);
+		wsmouse_input_sync(sc->sc_wsmousedev);
+		splx(s);
+
+		break;
+	default:
+		printf("%s: unhandled tp message type 0x%x\n",
+		    sc->sc_dev.dv_xname, le16toh(msg->type));
+	}
+}
 
 uint16_t
 satopcase_crc16(uint8_t *msg, size_t len)
