@@ -344,6 +344,13 @@ void	satckbd_cnbell(void *, u_int, u_int, u_int);
 void	satckbd_cngetc(void *, u_int *, int *);
 void	satckbd_cnpollc(void *, int);
 
+/* for keyboard backlight control */
+void	satckbd_set_backlight(void *);
+extern int (*wskbd_get_backlight)(struct wskbd_backlight *);
+extern int (*wskbd_set_backlight)(struct wskbd_backlight *);
+int	satckbd_wskbd_get_backlight(struct wskbd_backlight *);
+int	satckbd_wskbd_set_backlight(struct wskbd_backlight *);
+
 struct cfattach satckbd_ca = {
 	sizeof(struct satckbd_softc),
 	satckbd_match,
@@ -406,6 +413,11 @@ satckbd_attach(struct device *parent, struct device *self, void *aux)
 	wkaa.accessops = &satckbd_accessops;
 	wkaa.accesscookie = sc;
 	sc->sc_wskbddev = config_found(self, &wkaa, wskbddevprint);
+
+	sc->backlight = SATCKBD_BACKLIGHT_LEVEL_MIN;
+	task_set(&sc->sc_task_backlight, satckbd_set_backlight, sc);
+	wskbd_get_backlight = satckbd_wskbd_get_backlight;
+	wskbd_set_backlight = satckbd_wskbd_set_backlight;
 }
 
 int
@@ -461,6 +473,66 @@ void
 satckbd_cnpollc(void *v, int on)
 {
 	DPRINTF(("%s\n", __func__));
+}
+
+void
+satckbd_set_backlight(void *v)
+{
+	struct satckbd_softc *sc = v;
+	struct satopcase_spi_pkt pkt;
+
+	memset(&pkt, 0, sizeof(pkt));
+	pkt.device = SATOPCASE_PACKET_DEVICE_KEYBOARD;
+	pkt.msg.type = SATOPCASE_MSG_TYPE_KBD_BACKLIGHT;
+	pkt.msg.kbd_backlight_cmd.const1 = htole16(SATCKBD_BACKLIGHT_CONST1);
+	pkt.msg.kbd_backlight_cmd.level =
+	    (sc->backlight <= SATCKBD_BACKLIGHT_LEVEL_MIN ? 0 :
+	    htole16(sc->backlight));
+	pkt.msg.kbd_backlight_cmd.on_off =
+	    htole16(sc->backlight <= SATCKBD_BACKLIGHT_LEVEL_MIN ?
+	    SATCKBD_BACKLIGHT_OFF : SATCKBD_BACKLIGHT_ON);
+
+	satopcase_send_msg(sc->sc_satopcase, &pkt,
+	    sizeof(struct satckbd_backlight_cmd), 0);
+}
+
+int
+satckbd_wskbd_get_backlight(struct wskbd_backlight *kbl)
+{
+	struct satckbd_softc *sc = satckbd_cd.cd_devs[0];
+
+	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
+
+        if (sc == NULL)
+                return 0;
+
+	kbl->min = SATCKBD_BACKLIGHT_LEVEL_MIN;
+	kbl->max = SATCKBD_BACKLIGHT_LEVEL_MAX;
+	kbl->curval = sc->backlight;
+
+	return 0;
+}
+
+int
+satckbd_wskbd_set_backlight(struct wskbd_backlight *kbl)
+{
+	struct satckbd_softc *sc = satckbd_cd.cd_devs[0];
+	int value = kbl->curval;
+
+	DPRINTF(("%s: %s -> %d\n", sc->sc_dev.dv_xname, __func__, value));
+
+	if (sc == NULL)
+		return -1;
+
+	if (value < SATCKBD_BACKLIGHT_LEVEL_MIN)
+		value = SATCKBD_BACKLIGHT_LEVEL_MIN;
+	if (value > SATCKBD_BACKLIGHT_LEVEL_MAX)
+		value = SATCKBD_BACKLIGHT_LEVEL_MAX;
+
+	sc->backlight = value;
+	task_add(systq, &sc->sc_task_backlight);
+
+	return -1;
 }
 
 void

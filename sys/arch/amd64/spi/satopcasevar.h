@@ -17,6 +17,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/task.h>
+
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpidev.h>
@@ -48,8 +50,9 @@ struct satopcase_spi_pkt {
 			uint16_t	type;
 		#define SATOPCASE_MSG_TYPE_KBD_DATA	0x0110
 		#define SATOPCASE_MSG_TYPE_TP_DATA	0x0210
-		#define SATOPCASE_MSG_TYPE_TP_INFO	0x1020
 		#define SATOPCASE_MSG_TYPE_TP_MT	0x0252
+		#define SATOPCASE_MSG_TYPE_TP_INFO	0x1020
+		#define SATOPCASE_MSG_TYPE_KBD_BACKLIGHT 0xb051
 			uint8_t		type2;
 		#define SATOPCASE_MSG_TYPE2_TP_INFO	0x02
 			uint8_t		counter;
@@ -68,6 +71,17 @@ struct satopcase_spi_pkt {
 					uint8_t		fn;
 					uint16_t	crc16;
 				} __packed kbd_data;
+				struct satckbd_backlight_cmd {
+					uint16_t	const1;
+				#define SATCKBD_BACKLIGHT_CONST1 0x01b0
+					uint16_t	level;
+				#define SATCKBD_BACKLIGHT_LEVEL_MIN 32
+				#define SATCKBD_BACKLIGHT_LEVEL_MAX 255
+					uint16_t	on_off;
+				#define SATCKBD_BACKLIGHT_ON 0x01f4
+				#define SATCKBD_BACKLIGHT_OFF 0x0001
+					uint16_t	crc16;
+				} __packed kbd_backlight_cmd;
 				struct satctp_data {
 					uint8_t		_unused[1];
 					uint8_t		button;
@@ -153,11 +167,14 @@ struct satckbd_softc {
 
 	struct device		*sc_wskbddev;
 
+	struct task		sc_task_backlight;
+
 #ifdef WSDISPLAY_COMPAT_RAWKBD
 	int			sc_rawkbd;
 #endif
 	int			kbd_keys_down[SATCKBD_DATA_KEYS +
 				    SATCKBD_DATA_MODS];
+	int			backlight;
 };
 
 void	satckbd_recv_msg(struct satckbd_softc *, struct satopcase_spi_msg *);

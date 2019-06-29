@@ -269,6 +269,13 @@ satopcase_intr(void *arg)
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
 
+	if (rw_status(&sc->sc_busylock))
+		/*
+		 * Avoid locking against ourselves, the GPE will re-fire if we
+		 * don't read the outstanding data.
+		 */
+		return 1;
+
 	/* serialize packet access */
 	rw_enter_write(&sc->sc_busylock);
 
@@ -291,8 +298,14 @@ int
 satopcase_send_msg(struct satopcase_softc *sc, struct satopcase_spi_pkt *pkt,
     int msg_len, int wait_reply)
 {
-	int x, tries = 10;
+	int x, tries = 10, didlock = 0;
 	uint16_t crc16;
+
+	/* if we're here from another thread, we probably didn't lock */
+	if (!rw_status(&sc->sc_busylock)) {
+		didlock = 1;
+		rw_enter_write(&sc->sc_busylock);
+	}
 
 	/* complete the message parameters */
 	pkt->msg.counter = sc->sc_pkt_counter++;
@@ -326,13 +339,16 @@ satopcase_send_msg(struct satopcase_softc *sc, struct satopcase_spi_pkt *pkt,
 	    sizeof(struct satopcase_spi_pkt));
 	spi_release_bus(sc->sc_spi_tag, 0);
 
+	if (didlock)
+		rw_exit(&sc->sc_busylock);
+
 	if (wait_reply) {
 		if (cold) {
 			do {
-				DELAY(10);
+				DELAY(20);
 				satopcase_intr(sc);
 			} while (sc->sc_last_read_error && --tries);
-		} else if (tsleep(&sc, PRIBIO, "satopcase", hz / 100) != 0)
+		} else if (tsleep(&sc, PRIBIO, "satopcase", hz / 10) != 0)
 			DPRINTF(("%s: timed out waiting for reply\n",
 			    sc->sc_dev.dv_xname));
 	}
