@@ -41,7 +41,6 @@
 #include "satopcasevar.h"
 
 /* #define SATCKBD_DEBUG */
-#define SATCKBD_DEBUG
 
 #ifdef SATCKBD_DEBUG
 #define DPRINTF(x) printf x

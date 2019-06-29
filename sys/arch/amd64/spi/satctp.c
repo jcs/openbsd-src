@@ -33,7 +33,6 @@
 #include "satopcasevar.h"
 
 /* #define SATCTP_DEBUG */
-#define SATCTP_DEBUG
 
 #ifdef SATCTP_DEBUG
 #define DPRINTF(x) printf x
@@ -135,10 +134,7 @@ satctp_attach(struct device *parent, struct device *self, void *aux)
 	wmaa.accesscookie = sc;
 	sc->sc_wsmousedev = config_found(self, &wmaa, wsmousedevprint);
 
-	/*
-	 * satopcase would set this itself once we return, but we need packet
-	 * responses before we finish attaching, so jump the gun.
-	 */
+	/* satopcase needs to know how to reach us before we finish attaching */
 	sc->sc_satopcase->sc_satctp = sc;
 
 	satctp_init(sc);
@@ -205,9 +201,11 @@ satctp_enable(void *v)
 void
 satctp_disable(void *v)
 {
+#ifdef SATCTP_DEBUG
 	struct satctp_softc *sc = v;
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
+#endif
 }
 
 int

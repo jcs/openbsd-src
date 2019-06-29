@@ -31,7 +31,6 @@
 #include "satopcasevar.h"
 
 /* #define SATOPCASE_DEBUG */
-#define SATOPCASE_DEBUG
 
 #ifdef SATOPCASE_DEBUG
 #define DPRINTF(x) printf x
