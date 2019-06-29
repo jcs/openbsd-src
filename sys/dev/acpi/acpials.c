@@ -74,11 +74,20 @@ const char *acpials_hids[] = {
 	NULL
 };
 
+extern char *hw_vendor;
+
 int
 acpials_match(struct device *parent, void *match, void *aux)
 {
 	struct acpi_attach_args *aa = aux;
 	struct cfdata *cf = match;
+
+	/*
+	 * Apple hardware will most likely have asmc(4) which also provides an
+	 * illuminance sensor.
+	 */
+	if (hw_vendor != NULL && strncmp(hw_vendor, "Apple", 5) == 0)
+		return 0;
 
 	return (acpi_matchhids(aa, acpials_hids, cf->cf_driver->cd_name));
 }
