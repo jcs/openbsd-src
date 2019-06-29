@@ -49,6 +49,7 @@ struct satopcase_spi_pkt {
 		struct satopcase_spi_msg {
 			uint16_t	type;
 		#define SATOPCASE_MSG_TYPE_KBD_DATA	0x0110
+		#define SATOPCASE_MSG_TYPE_KBD_CAPS_LIGHT 0x0151
 		#define SATOPCASE_MSG_TYPE_TP_DATA	0x0210
 		#define SATOPCASE_MSG_TYPE_TP_MT	0x0252
 		#define SATOPCASE_MSG_TYPE_TP_INFO	0x1020
@@ -71,6 +72,12 @@ struct satopcase_spi_pkt {
 					uint8_t		fn;
 					uint16_t	crc16;
 				} __packed kbd_data;
+				struct satckbd_capslock_light_cmd {
+					uint16_t	on_off;
+				#define SATCKBD_CAPSLOCK_LIGHT_ON 0x0201
+				#define SATCKBD_CAPSLOCK_LIGHT_OFF 0x0001
+					uint16_t	crc16;
+				} __packed kbd_capslock_light_cmd;
 				struct satckbd_backlight_cmd {
 					uint16_t	const1;
 				#define SATCKBD_BACKLIGHT_CONST1 0x01b0
@@ -168,6 +175,7 @@ struct satckbd_softc {
 	struct device		*sc_wskbddev;
 
 	struct task		sc_task_backlight;
+	struct task		sc_task_caps_light;
 
 #ifdef WSDISPLAY_COMPAT_RAWKBD
 	int			sc_rawkbd;
@@ -175,6 +183,7 @@ struct satckbd_softc {
 	int			kbd_keys_down[SATCKBD_DATA_KEYS +
 				    SATCKBD_DATA_MODS];
 	int			backlight;
+	int			leds;
 };
 
 void	satckbd_recv_msg(struct satckbd_softc *, struct satopcase_spi_msg *);

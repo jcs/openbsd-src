@@ -337,11 +337,13 @@ int	satckbd_match(struct device *, void *, void *);
 void	satckbd_attach(struct device *, struct device *, void *);
 
 int	satckbd_enable(void *, int);
-void	satckbd_setleds(void *, int);
+void	satckbd_wskbd_setleds(void *, int);
 int	satckbd_ioctl(void *, u_long, caddr_t, int, struct proc *);
 void	satckbd_cnbell(void *, u_int, u_int, u_int);
 void	satckbd_cngetc(void *, u_int *, int *);
 void	satckbd_cnpollc(void *, int);
+
+void	satckbd_set_caps_light(void *);
 
 /* for keyboard backlight control */
 void	satckbd_set_backlight(void *);
@@ -364,7 +366,7 @@ struct cfdriver satckbd_cd = {
 
 struct wskbd_accessops satckbd_accessops = {
 	satckbd_enable,
-	satckbd_setleds,
+	satckbd_wskbd_setleds,
 	satckbd_ioctl,
 };
 
@@ -413,6 +415,8 @@ satckbd_attach(struct device *parent, struct device *self, void *aux)
 	wkaa.accesscookie = sc;
 	sc->sc_wskbddev = config_found(self, &wkaa, wskbddevprint);
 
+	task_set(&sc->sc_task_caps_light, satckbd_set_caps_light, sc);
+
 	sc->backlight = SATCKBD_BACKLIGHT_LEVEL_MIN;
 	task_set(&sc->sc_task_backlight, satckbd_set_backlight, sc);
 	wskbd_get_backlight = satckbd_wskbd_get_backlight;
@@ -426,9 +430,37 @@ satckbd_enable(void *v, int power)
 }
 
 void
-satckbd_setleds(void *v, int power)
+satckbd_wskbd_setleds(void *v, int leds)
 {
-	DPRINTF(("%s\n", __func__));
+	struct satckbd_softc *sc = v;
+
+	DPRINTF(("%s: %s(0x%x)\n", sc->sc_dev.dv_xname, __func__, leds));
+
+	if (sc->leds == leds)
+		return;
+
+	sc->leds = leds;
+	task_add(systq, &sc->sc_task_caps_light);
+}
+
+void
+satckbd_set_caps_light(void *v)
+{
+	struct satckbd_softc *sc = v;
+	struct satopcase_spi_pkt pkt;
+
+	DPRINTF(("%s: %s: sending caps cmd %s\n", sc->sc_dev.dv_xname, __func__,
+	    ((sc->leds & WSKBD_LED_CAPS) ? "on" : "off")));
+
+	memset(&pkt, 0, sizeof(pkt));
+	pkt.device = SATOPCASE_PACKET_DEVICE_KEYBOARD;
+	pkt.msg.type = htole16(SATOPCASE_MSG_TYPE_KBD_CAPS_LIGHT);
+	pkt.msg.kbd_capslock_light_cmd.on_off =
+	    htole16((sc->leds & WSKBD_LED_CAPS) ? SATCKBD_CAPSLOCK_LIGHT_ON :
+	    SATCKBD_CAPSLOCK_LIGHT_OFF);
+
+	satopcase_send_msg(sc->sc_satopcase, &pkt,
+	    sizeof(struct satckbd_capslock_light_cmd), 0);
 }
 
 int
@@ -442,10 +474,10 @@ satckbd_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 	case WSKBDIO_GTYPE:
 		*(int *)data = WSKBD_TYPE_USB; /* XXX */
 		return 0;
-	case WSKBDIO_SETLEDS:
-		return 0;
 	case WSKBDIO_GETLEDS:
-		*(int *)data = 0;
+		*(int *)data = sc->leds;
+		return 0;
+	case WSKBDIO_SETLEDS:
 		return 0;
 #ifdef WSDISPLAY_COMPAT_RAWKBD
 	case WSKBDIO_SETMODE:
