@@ -269,9 +269,17 @@ attach	ipmi at mainbus
 #
 # SPI
 #
-device	satopcase: hid, hidkbd, wskbddev, wsmousedev
+device	satopcase {}
 attach	satopcase at spi
 file	arch/amd64/spi/satopcase.c		satopcase
+
+device	satckbd: wskbddev
+attach	satckbd at satopcase
+file	arch/amd64/spi/satckbd.c		satckbd
+
+device	satctp: wsmousedev
+attach	satctp at satopcase
+file	arch/amd64/spi/satctp.c			satctp
 
 
 #

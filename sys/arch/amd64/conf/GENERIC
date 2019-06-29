@@ -187,9 +187,11 @@ gpio* at skgpio?
 ispi*	at acpi?		# Intel LPSS SPI controller
 ispi*	at pci?
 
-satopcase* at ispi?		# Apple Topcase SPI keyboard and touchpad
-wsmouse* at satopcase? mux 0
-wskbd*	at satopcase? mux 1
+satopcase* at ispi?		# Apple Topcase SPI
+satckbd* at satopcase?
+wskbd*	at satckbd? mux 1	# Apple SPI keyboard
+satctp* at satopcase?
+wsmouse* at satctp? mux 0	# Apple SPI touchpad
 
 #option PCMCIAVERBOSE
 

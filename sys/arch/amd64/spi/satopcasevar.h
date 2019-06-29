@@ -17,419 +17,79 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/*
- * keyboard structs
- */
+#include <dev/acpi/acpireg.h>
+#include <dev/acpi/acpivar.h>
+#include <dev/acpi/acpidev.h>
+#include <dev/acpi/amltypes.h>
+#include <dev/acpi/dsdt.h>
 
-enum satopcase_kbd_mods {
-	KBD_MOD_CONTROL_L = 84,
-	KBD_MOD_SHIFT_L,
-	KBD_MOD_ALT_L,
-	KBD_MOD_META_L,
-	KBD_MOD_UNKNOWN,
-	KBD_MOD_SHIFT_R,
-	KBD_MOD_ALT_R,
-	KBD_MOD_META_R,
-	KBD_FN = 100,
-};
+#include <dev/ic/ispivar.h>
+#include <dev/spi/spivar.h>
 
-enum satopcase_kbd_fn_keys {
-	KBD_FN_RIGHT_END = 93,
-	KBD_FN_LEFT_HOME,
-	KBD_FN_DOWN_PAGEDOWN,
-	KBD_FN_UP_PAGEUP,
-	KBD_FN_BACKSPACE_DELETE,
-	KBD_FN_RETURN_INSERT,
-	KBD_FN_F1_BRIGHTNESS_DOWN,
-	KBD_FN_F2_BRIGHTNESS_UP,
-	KBD_FN_F5_KBD_LIGHT_DOWN,
-	KBD_FN_F6_KBD_LIGHT_UP,
-	KBD_FN_F7_MEDIA_PREV,
-	KBD_FN_F8_MEDIA_PLAYPAUSE,
-	KBD_FN_F9_MEDIA_NEXT,
-	KBD_FN_F10_MUTE,
-	KBD_FN_F11_VOLUME_DOWN,
-	KBD_FN_F12_VOLUME_UP,
-};
-
-/* when Fn is held, translate this key to that key */
-static struct satopcase_kbd_fn_trans_entry {
-	keysym_t	from;
-	keysym_t	to;
-} satopcase_kb_fn_trans[] = {
-	{ KS_Right,	KBD_FN_RIGHT_END },
-	{ KS_Left,	KBD_FN_LEFT_HOME },
-	{ KS_Down,	KBD_FN_DOWN_PAGEDOWN },
-	{ KS_Up,	KBD_FN_UP_PAGEUP },
-	{ KS_BackSpace,	KBD_FN_BACKSPACE_DELETE },
-	{ KS_Return,	KBD_FN_RETURN_INSERT },
-	{ KS_F1,	KBD_FN_F1_BRIGHTNESS_DOWN },
-	{ KS_F2,	KBD_FN_F2_BRIGHTNESS_UP },
-	{ KS_F5,	KBD_FN_F5_KBD_LIGHT_DOWN },
-	{ KS_F6,	KBD_FN_F6_KBD_LIGHT_UP },
-	{ KS_F7,	KBD_FN_F7_MEDIA_PREV },
-	{ KS_F8,	KBD_FN_F8_MEDIA_PLAYPAUSE },
-	{ KS_F9,	KBD_FN_F9_MEDIA_NEXT },
-	{ KS_F10,	KBD_FN_F10_MUTE },
-	{ KS_F11,	KBD_FN_F11_VOLUME_DOWN },
-	{ KS_F12,	KBD_FN_F12_VOLUME_UP },
-};
-
-#define KC(n) KS_KEYCODE(n)
-const keysym_t satopcase_keycodes_us[] = {
-/*	idx		command		normal		shifted */
-	KC(0),
-	KC(1),
-	KC(2),
-	KC(3),
-	KC(4),				KS_a,
-	KC(5),				KS_b,
-	KC(6),				KS_c,
-	KC(7),				KS_d,
-	KC(8),				KS_e,
-	KC(9),				KS_f,
-	KC(10),				KS_g,
-	KC(11),				KS_h,
-	KC(12),				KS_i,
-	KC(13),				KS_j,
-	KC(14),				KS_k,
-	KC(15),				KS_l,
-	KC(16),				KS_m,
-	KC(17),				KS_n,
-	KC(18),				KS_o,
-	KC(19),				KS_p,
-	KC(20),				KS_q,
-	KC(21),				KS_r,
-	KC(22),				KS_s,
-	KC(23),				KS_t,
-	KC(24),				KS_u,
-	KC(25),				KS_v,
-	KC(26),				KS_w,
-	KC(27),				KS_x,
-	KC(28),				KS_y,
-	KC(29),				KS_z,
-	KC(30),				KS_1,		KS_exclam,
-	KC(31),				KS_2,		KS_at,
-	KC(32),				KS_3,		KS_numbersign,
-	KC(33),				KS_4,		KS_dollar,
-	KC(34),				KS_5,		KS_percent,
-	KC(35),				KS_6,		KS_asciicircum,
-	KC(36),				KS_7,		KS_ampersand,
-	KC(37),				KS_8,		KS_asterisk,
-	KC(38),				KS_9,		KS_parenleft,
-	KC(39),				KS_0,		KS_parenright,
-	KC(40),				KS_Return,
-	KC(41),				KS_Escape,
-	KC(42),				KS_BackSpace,
-	KC(43),				KS_Tab,
-	KC(44),				KS_space,
-	KC(45),				KS_minus,	KS_underscore,
-	KC(46),				KS_equal,	KS_plus,
-	KC(47),				KS_bracketleft,	KS_braceleft,
-	KC(48),				KS_bracketright,KS_braceright,
-	KC(49),				KS_backslash,	KS_bar,
-	KC(50),
-	KC(51),				KS_semicolon,	KS_colon,
-	KC(52),				KS_apostrophe,	KS_quotedbl,
-	KC(53),				KS_grave,	KS_asciitilde,
-	KC(54),				KS_comma,	KS_less,
-	KC(55),				KS_period,	KS_greater,
-	KC(56),				KS_slash,	KS_question,
-	KC(57),				KS_Caps_Lock,
-	KC(58),				KS_F1,
-	KC(59),				KS_F2,
-	KC(60),				KS_F3,
-	KC(61),				KS_F4,
-	KC(62),				KS_F5,
-	KC(63),				KS_F6,
-	KC(64),				KS_F7,
-	KC(65),				KS_F8,
-	KC(66),				KS_F9,
-	KC(67),				KS_F10,
-	KC(68),				KS_F11,
-	KC(69),				KS_F12,
-	KC(70),
-	KC(71),
-	KC(72),
-	KC(73),
-	KC(74),
-	KC(75),
-	KC(76),
-	KC(77),
-	KC(78),
-	KC(79),				KS_Right,
-	KC(80),				KS_Left,
-	KC(81),				KS_Down,
-	KC(82),				KS_Up,
-	KC(83),
-	/* key codes aren't generated for modifier keys, so fake it */
-	KC(KBD_MOD_CONTROL_L),		KS_Control_L,
-	KC(KBD_MOD_SHIFT_L),		KS_Shift_L,
-	KC(KBD_MOD_ALT_L),		KS_Alt_L,
-	KC(KBD_MOD_META_L),		KS_Meta_L,
-	KC(KBD_MOD_UNKNOWN),
-	KC(KBD_MOD_SHIFT_R),		KS_Shift_R,
-	KC(KBD_MOD_ALT_R),		KS_Alt_R,
-	KC(KBD_MOD_META_R),		KS_Meta_R,
-	KC(92),
-	/* same for keys pressed with fn */
-	KC(KBD_FN_RIGHT_END),		KS_End,
-	KC(KBD_FN_LEFT_HOME),		KS_Home,
-	KC(KBD_FN_DOWN_PAGEDOWN),	KS_Next,
-	KC(KBD_FN_UP_PAGEUP),		KS_Prior,
-	KC(KBD_FN_BACKSPACE_DELETE),	KS_Delete,
-	KC(KBD_FN_RETURN_INSERT),	KS_Insert,
-	KC(KBD_FN_F1_BRIGHTNESS_DOWN),	KS_Cmd_BrightnessDown,
-	KC(KBD_FN_F2_BRIGHTNESS_UP),	KS_Cmd_BrightnessUp,
-	KC(KBD_FN_F5_KBD_LIGHT_DOWN),
-	KC(KBD_FN_F6_KBD_LIGHT_UP),
-	KC(KBD_FN_F7_MEDIA_PREV),
-	KC(KBD_FN_F8_MEDIA_PLAYPAUSE),
-	KC(KBD_FN_F9_MEDIA_NEXT),
-	KC(KBD_FN_F10_MUTE),		KS_AudioMute,
-	KC(KBD_FN_F11_VOLUME_DOWN),	KS_AudioLower,
-	KC(KBD_FN_F12_VOLUME_UP),	KS_AudioRaise,
-};
-#undef KC
-
-#ifdef WSDISPLAY_COMPAT_RAWKBD
-const unsigned char satopcase_raw_keycodes_us[] = {
-	0,
-	0,
-	0,
-	0,
-	RAWKEY_a,
-	RAWKEY_b,
-	RAWKEY_c,
-	RAWKEY_d,
-	RAWKEY_e,
-	RAWKEY_f,
-	RAWKEY_g,
-	RAWKEY_h,
-	RAWKEY_i,
-	RAWKEY_j,
-	RAWKEY_k,
-	RAWKEY_l,
-	RAWKEY_m,
-	RAWKEY_n,
-	RAWKEY_o,
-	RAWKEY_p,
-	RAWKEY_q,
-	RAWKEY_r,
-	RAWKEY_s,
-	RAWKEY_t,
-	RAWKEY_u,
-	RAWKEY_v,
-	RAWKEY_w,
-	RAWKEY_x,
-	RAWKEY_y,
-	RAWKEY_z,
-	RAWKEY_1,
-	RAWKEY_2,
-	RAWKEY_3,
-	RAWKEY_4,
-	RAWKEY_5,
-	RAWKEY_6,
-	RAWKEY_7,
-	RAWKEY_8,
-	RAWKEY_9,
-	RAWKEY_0,
-	RAWKEY_Return,
-	RAWKEY_Escape,
-	RAWKEY_BackSpace,
-	RAWKEY_Tab,
-	RAWKEY_space,
-	RAWKEY_minus,
-	RAWKEY_equal,
-	RAWKEY_bracketleft,
-	RAWKEY_bracketright,
-	RAWKEY_backslash,
-	0,
-	RAWKEY_semicolon,
-	RAWKEY_apostrophe,
-	RAWKEY_grave,
-	RAWKEY_comma,
-	RAWKEY_period,
-	RAWKEY_slash,
-	RAWKEY_Caps_Lock,
-	RAWKEY_f1,
-	RAWKEY_f2,
-	RAWKEY_f3,
-	RAWKEY_f4,
-	RAWKEY_f5,
-	RAWKEY_f6,
-	RAWKEY_f7,
-	RAWKEY_f8,
-	RAWKEY_f9,
-	RAWKEY_f10,
-	RAWKEY_f11,
-	RAWKEY_f12,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	RAWKEY_Right,
-	RAWKEY_Left,
-	RAWKEY_Down,
-	RAWKEY_Up,
-	0,
-	RAWKEY_Control_L,
-	RAWKEY_Shift_L,
-	RAWKEY_Alt_L,
-	0xdb, /* RAWKEY_Meta_L, */
-	0,
-	RAWKEY_Shift_R,
-	RAWKEY_Alt_R,
-	0xdc, /* RAWKEY_Meta_R, */
-	0,
-	RAWKEY_End,
-	RAWKEY_Home,
-	RAWKEY_Next,
-	RAWKEY_Prior,
-	RAWKEY_Delete,
-	RAWKEY_Insert,
-	0, /* KS_Cmd_BrightnessDown, */
-	0, /* KS_Cmd_BrightnessUp, */
-	0,
-	0,
-	0,
-	0,
-	0,
-	RAWKEY_AudioMute,
-	RAWKEY_AudioLower,
-	RAWKEY_AudioRaise,
-};
-#endif /* WSDISPLAY_COMPAT_RAWKBD */
-
-
-/*
- * touchpad structs
- */
-
-/* most of this came from dev/usb/ubcmtp.c */
-
-#define SATOPCASE_TP_FINGER_ORIENT	16384
-#define SATOPCASE_TP_SN_PRESSURE	45
-#define SATOPCASE_TP_SN_WIDTH		25
-#define SATOPCASE_TP_SN_COORD		250
-#define SATOPCASE_TP_SN_ORIENT		10
-
-struct satopcase_tp_finger {
-	uint16_t	origin;
-	uint16_t	abs_x;
-	uint16_t	abs_y;
-	uint16_t	rel_x;
-	uint16_t	rel_y;
-	uint16_t	tool_major;
-	uint16_t	tool_minor;
-	uint16_t	orientation;
-	uint16_t	touch_major;
-	uint16_t	touch_minor;
-	uint16_t	unused[2];
-	uint16_t	pressure;
-	/* Use a constant, synaptics-compatible pressure value for now. */
-#define SATOPCASE_TP_DEFAULT_PRESSURE	40
-	uint16_t	multi;
-	uint16_t	crc16;
-} __packed __attribute((aligned(2)));
-
-struct satopcase_tp_limit {
-	int limit;
-	int min;
-	int max;
-};
-
-static struct satopcase_tp_dev_type {
-	uint16_t model;
-	struct satopcase_tp_limit l_pressure;	/* finger pressure */
-	struct satopcase_tp_limit l_width;	/* finger width */
-	struct satopcase_tp_limit l_x;
-	struct satopcase_tp_limit l_y;
-	struct satopcase_tp_limit l_orientation;
-} satopcase_tp_devices[] = {
-	{
-		/* MacBook10,1 */
-		0x0417,
-		{ SATOPCASE_TP_SN_PRESSURE, 0, 300 },
-		{ SATOPCASE_TP_SN_WIDTH, 0, 2048 },
-		{ SATOPCASE_TP_SN_COORD, -5087, 5579 },
-		{ SATOPCASE_TP_SN_COORD, -182, 6089 },
-		{ SATOPCASE_TP_SN_ORIENT, -SATOPCASE_TP_FINGER_ORIENT,
-		    SATOPCASE_TP_FINGER_ORIENT },
-	},
-};
-
-
-/*
- * packet structs
- */
+#include <dev/wscons/wsconsio.h>
+#include <dev/wscons/wsmousevar.h>
 
 #define SATOPCASE_PACKET_SIZE	256
 
 struct satopcase_spi_pkt {
 	uint8_t				type;
-#define PACKET_TYPE_READ		0x20
-#define PACKET_TYPE_WRITE		0x40
-#define PACKET_TYPE_ERROR		0x80
+#define SATOPCASE_PACKET_TYPE_READ	0x20
+#define SATOPCASE_PACKET_TYPE_WRITE	0x40
+#define SATOPCASE_PACKET_TYPE_ERROR	0x80
 	uint8_t				device;
-#define PACKET_DEVICE_KEYBOARD		0x01
-#define PACKET_DEVICE_TOUCHPAD		0x02
-#define PACKET_DEVICE_INFO		0xd0
+#define SATOPCASE_PACKET_DEVICE_KEYBOARD 0x01
+#define SATOPCASE_PACKET_DEVICE_TOUCHPAD 0x02
+#define SATOPCASE_PACKET_DEVICE_INFO	0xd0
 	uint16_t			offset;
 	uint16_t			remaining;
 	uint16_t			length;
 	union {
 		struct satopcase_spi_msg {
 			uint16_t	type;
-		#define MSG_TYPE_KBD_DATA 0x0110
-		#define MSG_TYPE_TP_DATA 0x0210
-		#define MSG_TYPE_TP_INFO 0x1020
-		#define MSG_TYPE_TP_MT	0x0252
+		#define SATOPCASE_MSG_TYPE_KBD_DATA	0x0110
+		#define SATOPCASE_MSG_TYPE_TP_DATA	0x0210
+		#define SATOPCASE_MSG_TYPE_TP_INFO	0x1020
+		#define SATOPCASE_MSG_TYPE_TP_MT	0x0252
 			uint8_t		type2;
-		#define MSG_TYPE2_TP_INFO 0x02
+		#define SATOPCASE_MSG_TYPE2_TP_INFO	0x02
 			uint8_t		counter;
 			uint16_t	response_length;
 			uint16_t	length;
-		#define MSG_HEADER_LEN	8
+		#define SATOPCASE_MSG_HEADER_LEN	8
 			union {
-				struct satopcase_kbd_data {
+				struct satckbd_data {
 					uint8_t		_unused;
 					uint8_t		modifiers;
-				#define KBD_DATA_MODS	8
+				#define SATCKBD_DATA_MODS 8
 					uint8_t		_unused2;
-				#define KBD_DATA_KEYS	5
-					uint8_t		pressed[KBD_DATA_KEYS];
+				#define SATCKBD_DATA_KEYS 5
+					uint8_t		pressed[SATCKBD_DATA_KEYS];
 					uint8_t		overflow;
 					uint8_t		fn;
 					uint16_t	crc16;
 				} __packed kbd_data;
-				struct satopcase_tp_data {
+				struct satctp_data {
 					uint8_t		_unused[1];
 					uint8_t		button;
 					uint8_t		_unused2[28];
 					uint8_t		fingers;
-				#define TP_MAX_FINGERS	16
+				#define SATCTP_MAX_FINGERS 16
 					uint8_t		clicked2;
 					uint8_t		_unused3[16];
-					struct satopcase_tp_finger finger_data[0];
+					uint8_t		finger_data[];
 				} __packed tp_data;
-				struct satopcase_tp_info_cmd {
+				struct satctp_info_cmd {
 					uint16_t	crc16;
 				} __packed tp_info_cmd;
-				struct satopcase_tp_info {
+				struct satctp_info {
 					uint8_t		_unused[105];
 					uint16_t	model;
 					uint8_t		_unused2[3];
 					uint16_t	crc16;
 				} __packed tp_info;
-				struct satopcase_tp_mt_cmd {
+				struct satctp_mt_cmd {
 					uint16_t	mode;
-				#define TP_MT_CMD_MT_MODE 0x0102
+				#define SATCTP_MT_CMD_MT_MODE 0x0102
 					uint16_t	crc16;
 				} __packed tp_mt_cmd;
 				uint8_t	data[238];
@@ -445,12 +105,16 @@ struct satopcase_spi_pkt {
  * autoconf
  */
 
+struct satopcase_attach_args {
+	struct satopcase_softc	*sa_satopcase;
+	char			*sa_name;
+};
+
 struct satopcase_softc {
 	struct device		sc_dev;
 	spi_tag_t		sc_spi_tag;
 	struct ispi_gpe_intr 	sc_gpe_intr;
 	void			*sc_ih;
-
 	struct spi_config 	sc_spi_conf;
 
 	struct rwlock		sc_busylock;
@@ -461,10 +125,6 @@ struct satopcase_softc {
 		uint8_t		sc_read_raw[SATOPCASE_PACKET_SIZE];
 	};
 	int			sc_last_read_error;
-	union {
-		struct satopcase_spi_pkt sc_write_pkt;
-		uint8_t		sc_write_raw[SATOPCASE_PACKET_SIZE];
-	};
 
 	/* from _DSM */
 	uint64_t		spi_sclk_period;
@@ -476,20 +136,62 @@ struct satopcase_softc {
 	uint64_t		reset_a2r_usec;
 	uint64_t		reset_rec_usec;
 
+	struct satckbd_softc	*sc_satckbd;
+	struct satctp_softc	*sc_satctp;
+};
+
+int	satopcase_send_msg(struct satopcase_softc *, struct satopcase_spi_pkt *,
+	    int, int);
+
+/*
+ * satckbd - keyboard driver
+ */
+
+struct satckbd_softc {
+	struct device		sc_dev;
+	struct satopcase_softc	*sc_satopcase;
+
 	struct device		*sc_wskbddev;
+
 #ifdef WSDISPLAY_COMPAT_RAWKBD
 	int			sc_rawkbd;
 #endif
-	int			kbd_keys_down[KBD_DATA_KEYS + KBD_DATA_MODS];
+	int			kbd_keys_down[SATCKBD_DATA_KEYS +
+				    SATCKBD_DATA_MODS];
+};
+
+void	satckbd_recv_msg(struct satckbd_softc *, struct satopcase_spi_msg *);
+
+
+/*
+ * satctp - touchpad driver
+ */
+
+struct satctp_limit {
+	int limit;
+	int min;
+	int max;
+};
+struct satctp_dev_type {
+	uint16_t model;
+	struct satctp_limit l_pressure;	/* finger pressure */
+	struct satctp_limit l_width;	/* finger width */
+	struct satctp_limit l_x;
+	struct satctp_limit l_y;
+	struct satctp_limit l_orientation;
+};
+struct satctp_softc {
+	struct device		sc_dev;
+	struct satopcase_softc	*sc_satopcase;
 
 	struct device		*sc_wsmousedev;
-	struct satopcase_tp_dev_type *tp_dev_type;
-	struct mtpoint		frame[TP_MAX_FINGERS];
 
-	const keysym_t		sc_kcodes;
-	const keysym_t		sc_xt_kcodes;
-	int			sc_ksize;
+	struct satctp_dev_type	*dev_type;
+	struct mtpoint		frame[SATCTP_MAX_FINGERS];
 };
+
+void	satctp_recv_msg(struct satctp_softc *, struct satopcase_spi_msg *);
+void	satctp_recv_info(struct satctp_softc *sc, struct satopcase_spi_msg *);
 
 
 /*
@@ -530,3 +232,4 @@ static const uint16_t crc16_table[256] = {
 	0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
 	0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040,
 };
+
