@@ -109,6 +109,16 @@ struct cfdriver asmc_cd = {
 	NULL, "asmc", DV_DULL
 };
 
+
+/*
+ * Devices (matching hw_prod) where we should not attach due to conflicts with
+ * other drivers.
+ */
+static char *asmc_prod_blacklist[] = {
+	"MacBook10,1",
+	NULL,
+};
+
 static struct asmc_prod asmc_prods[] = {
 	{ "MacBookAir", 1, {
 		"TB0T", "TB1S", "TB1T", "TB2S", "TB2T", "TBXT", "TC0C", "TC0D",
@@ -229,6 +239,23 @@ static const char *asmc_light_desc[ASMC_MAXLIGHT] = {
 extern char *hw_vendor, *hw_prod;
 
 int
+asmc_blacklisted(void)
+{
+	int i;
+
+	if (!hw_vendor || !hw_prod || strncmp(hw_vendor, "Apple", 5) != 0)
+		return 0;
+
+	for (i = 0; asmc_prod_blacklist[i] != NULL &&
+	    i < nitems(asmc_prod_blacklist); i++) {
+		if (strcmp(asmc_prod_blacklist[i], hw_prod) == 0)
+			return 1;
+	}
+
+	return 0;
+}
+
+int
 asmc_match(struct device *parent, void *match, void *aux)
 {
 	struct asmc_softc *sc = match;
@@ -236,7 +263,7 @@ asmc_match(struct device *parent, void *match, void *aux)
 	bus_space_handle_t ioh;
 	int i;
 
-	if (!hw_vendor || !hw_prod || strncmp(hw_vendor, "Apple", 5))
+	if (asmc_blacklisted())
 		return 0;
 
 	for (i = 0; asmc_prods[i].pr_name && !sc->sc_prod; i++)

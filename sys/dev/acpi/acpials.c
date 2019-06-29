@@ -59,6 +59,11 @@ int	acpials_notify(struct aml_node *, int, void *);
 void	acpials_addtask(void *);
 void	acpials_update(void *, int);
 
+#include "asmc.h"
+#if NASMC > 0
+extern int asmc_blacklisted(void);
+#endif
+
 const struct cfattach acpials_ca = {
 	sizeof(struct acpials_softc),
 	acpials_match,
@@ -86,8 +91,12 @@ acpials_match(struct device *parent, void *match, void *aux)
 	 * Apple hardware will most likely have asmc(4) which also provides an
 	 * illuminance sensor.
 	 */
-	if (hw_vendor != NULL && strncmp(hw_vendor, "Apple", 5) == 0)
-		return 0;
+	if (hw_vendor != NULL && strncmp(hw_vendor, "Apple", 5) == 0) {
+#if NASMC > 0
+		if (!asmc_blacklisted())
+#endif
+			return 0;
+	}
 
 	return (acpi_matchhids(aa, acpials_hids, cf->cf_driver->cd_name));
 }
