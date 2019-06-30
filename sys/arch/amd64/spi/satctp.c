@@ -73,6 +73,7 @@ void	satctp_attach(struct device *, struct device *, void *);
 int	satctp_detach(struct device *, int);
 
 void	satctp_init(struct satctp_softc *);
+void	satctp_configure(struct satctp_softc *);
 int	satctp_enable(void *);
 int	satctp_ioctl(void *, u_long, caddr_t, int, struct proc *);
 void	satctp_disable(void *);
@@ -160,12 +161,13 @@ satctp_init(struct satctp_softc *sc)
 
 	satopcase_send_msg(sc->sc_satopcase, &pkt,
 	    sizeof(struct satctp_mt_cmd), 1);
+
+	satctp_configure(sc);
 }
 
-int
-satctp_enable(void *v)
+void
+satctp_configure(struct satctp_softc *sc)
 {
-	struct satctp_softc *sc = v;
 	struct wsmousehw *hw = wsmouse_get_hw(sc->sc_wsmousedev);
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
@@ -182,7 +184,16 @@ satctp_enable(void *v)
 	hw->flags = WSMOUSEHW_MT_TRACKING;
 
 	wsmouse_configure(sc->sc_wsmousedev, NULL, 0);
+}
 
+int
+satctp_enable(void *v)
+{
+#ifdef SATCTP_DEBUG
+	struct satctp_softc *sc = v;
+
+	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
+#endif
 	return 0;
 }
 
