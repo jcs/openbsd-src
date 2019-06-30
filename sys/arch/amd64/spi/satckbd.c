@@ -28,8 +28,6 @@
 #include <sys/malloc.h>
 #include <sys/stdint.h>
 
-#include <dev/spi/spivar.h>
-
 #include <dev/wscons/wsconsio.h>
 #ifdef WSDISPLAY_COMPAT_RAWKBD
 #include <dev/wscons/wskbdraw.h>

@@ -40,14 +40,6 @@
 #define DPRINTF(x)
 #endif
 
-/* most of these definitions came from ubcmtp(4) */
-
-#define SATCTP_FINGER_ORIENT	16384
-#define SATCTP_SN_PRESSURE	45
-#define SATCTP_SN_WIDTH		25
-#define SATCTP_SN_COORD		250
-#define SATCTP_SN_ORIENT	10
-
 struct satctp_finger {
 	uint16_t	origin;
 	uint16_t	abs_x;
@@ -71,12 +63,8 @@ static struct satctp_dev_type satctp_devices[] = {
 	{
 		/* MacBook10,1 */
 		0x0417,
-		{ SATCTP_SN_PRESSURE, 0, 300 },
-		{ SATCTP_SN_WIDTH, 0, 2048 },
-		{ SATCTP_SN_COORD, -5087, 5579 },
-		{ SATCTP_SN_COORD, -182, 6089 },
-		{ SATCTP_SN_ORIENT, -SATCTP_FINGER_ORIENT,
-		    SATCTP_FINGER_ORIENT },
+		{ -5087, 5579 }, /* x */
+		{ -182, 6089 }, /* y */
 	},
 };
 
@@ -186,10 +174,10 @@ satctp_enable(void *v)
 
 	hw->type = WSMOUSE_TYPE_TOUCHPAD;
 	hw->hw_type = WSMOUSEHW_CLICKPAD;
-	hw->x_min = sc->dev_type->l_x.min;
-	hw->x_max = sc->dev_type->l_x.max;
-	hw->y_min = sc->dev_type->l_y.min;
-	hw->y_max = sc->dev_type->l_y.max;
+	hw->x_min = sc->dev_type->x.min;
+	hw->x_max = sc->dev_type->x.max;
+	hw->y_min = sc->dev_type->y.min;
+	hw->y_max = sc->dev_type->y.max;
 	hw->mt_slots = SATCTP_MAX_FINGERS;
 	hw->flags = WSMOUSEHW_MT_TRACKING;
 
@@ -223,10 +211,10 @@ satctp_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 	}
 
 	case WSMOUSEIO_GCALIBCOORDS:
-		wsmc->minx = sc->dev_type->l_x.min;
-		wsmc->maxx = sc->dev_type->l_x.max;
-		wsmc->miny = sc->dev_type->l_y.min;
-		wsmc->maxy = sc->dev_type->l_y.max;
+		wsmc->minx = sc->dev_type->x.min;
+		wsmc->maxx = sc->dev_type->x.max;
+		wsmc->miny = sc->dev_type->y.min;
+		wsmc->maxy = sc->dev_type->y.max;
 		wsmc->swapxy = 0;
 		wsmc->resx = 0;
 		wsmc->resy = 0;

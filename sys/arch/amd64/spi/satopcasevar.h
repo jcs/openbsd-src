@@ -193,18 +193,14 @@ void	satckbd_recv_msg(struct satckbd_softc *, struct satopcase_spi_msg *);
  * satctp - touchpad driver
  */
 
-struct satctp_limit {
-	int limit;
+struct satctp_range {
 	int min;
 	int max;
 };
 struct satctp_dev_type {
 	uint16_t model;
-	struct satctp_limit l_pressure;	/* finger pressure */
-	struct satctp_limit l_width;	/* finger width */
-	struct satctp_limit l_x;
-	struct satctp_limit l_y;
-	struct satctp_limit l_orientation;
+	struct satctp_range x;
+	struct satctp_range y;
 };
 struct satctp_softc {
 	struct device		sc_dev;
