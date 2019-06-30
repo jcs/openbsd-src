@@ -101,11 +101,10 @@ main(int argc, char **argv)
 	struct command *cmd;
 	long usbv, usbp;
 	int reportid = -1;
-	int loop = 0;
 
 	demon = 1;
 	ignore = 0;
-	while ((ch = getopt(argc, argv, "c:df:ilr:u:v")) != -1) {
+	while ((ch = getopt(argc, argv, "c:df:ir:u:v")) != -1) {
 		switch(ch) {
 		case 'c':
 			conf = optarg;
@@ -115,9 +114,6 @@ main(int argc, char **argv)
 			break;
 		case 'i':
 			ignore++;
-			break;
-		case 'l':
-			loop = 1;
 			break;
 		case 'f':
 			strlcpy(dev, optarg, sizeof(dev));
@@ -158,10 +154,10 @@ main(int argc, char **argv)
 		usage();
 	if (usbv && usbp && reportid < 0)
 		usage();
-	if (dev[0] && usbv && usbp)
-		errx(1, "-f and -u are mutually exclusive");
-	if (dev[0] && loop)
-		errx(1, "-l not supported with -f");
+	if (dev[0] && usbv && usbp) {
+		warnx("-f and -u are mutually exclusive");
+		usage();
+	}
 
 	if (hid_start(NULL) == -1)
 		errx(1, "hid_init");
@@ -187,7 +183,6 @@ main(int argc, char **argv)
 		isdemon = 1;
 	}
 
-finddev:
 	if (!dev[0]) {
 		usbwait(usbv, usbp, reportid, dev);
 		fd = open(dev, O_RDWR | O_CLOEXEC);
@@ -228,12 +223,12 @@ finddev:
 		}
 		if (n < 0) {
 			if (verbose)
-				warn("read");
-			break;
+				err(1, "read");
+			else
+				exit(1);
 		}
 		if (n != sz) {
-			warn("read size");
-			break;
+			err(2, "read size");
 		}
 		for (cmd = commands; cmd; cmd = cmd->next) {
 			val = hid_get_data(buf, &cmd->item);
@@ -251,14 +246,7 @@ finddev:
 		}
 	}
 
-	if (loop) {
-		/* device probably went away */
-		memset(dev, 0, sizeof(dev));
-		sleep(1);
-		goto finddev;
-	}
-
-	exit(1);
+	exit(0);
 }
 
 void
@@ -268,7 +256,7 @@ usage(void)
 
 	fprintf(stderr, "usage: %s [-div] -c config-file -f device arg ...\n",
 	    __progname);
-	fprintf(stderr, "       %s [-dilv] -c config-file -r reportid "
+	fprintf(stderr, "       %s [-div] -c config-file -r reportid "
 	    "-u vend:prod arg ...\n", __progname);
 	exit(1);
 }
