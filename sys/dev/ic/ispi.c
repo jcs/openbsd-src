@@ -314,14 +314,14 @@ ispi_cs_change(struct ispi_softc *sc, int cs_assert)
 		t |= LPSS_CS_CONTROL_CS_HIGH;
 	ispi_lpss_write(sc, sc->sc_reg_cs_ctrl, t);
 
-	DELAY(2);
+	DELAY(10);
 }
 
 int
 ispi_transfer(void *cookie, char *out, char *in, int len)
 {
 	struct ispi_softc *sc = cookie;
-	int s = splbio();
+	int s = spltty();
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
 
