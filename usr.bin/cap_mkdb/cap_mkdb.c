@@ -1,4 +1,4 @@
-/*	$OpenBSD: cap_mkdb.c,v 1.22 2015/12/04 19:15:54 jmc Exp $	*/
+/*	$OpenBSD: cap_mkdb.c,v 1.24 2019/06/28 14:20:40 schwarze Exp $	*/
 /*	$NetBSD: cap_mkdb.c,v 1.5 1995/09/02 05:47:12 jtc Exp $	*/
 
 /*-
@@ -111,7 +111,7 @@ main(int argc, char *argv[])
 	    DEFFILEMODE, DB_HASH, &openinfo)) == NULL)
 		err(1, "%s", buf);
 
-	if (atexit(dounlink))
+	if (atexit(dounlink) != 0)
 		err(1, "atexit");
 
 	db_build(argv);

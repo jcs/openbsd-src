@@ -1,4 +1,4 @@
-/* $OpenBSD: clientloop.c,v 1.324 2019/06/12 11:31:50 jmc Exp $ */
+/* $OpenBSD: clientloop.c,v 1.326 2019/06/28 13:35:04 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -330,7 +330,6 @@ client_x11_get_proto(struct ssh *ssh, const char *display,
 			    "%s/xauthfile", xauthdir)) < 0 ||
 			    (size_t)r >= sizeof(xauthfile)) {
 				error("%s: xauthfile path too long", __func__);
-				unlink(xauthfile);
 				rmdir(xauthdir);
 				return -1;
 			}
@@ -554,7 +553,7 @@ client_wait_until_can_do_something(struct ssh *ssh,
 	}
 
 	ret = select((*maxfdp)+1, *readsetp, *writesetp, NULL, tvp);
-	if (ret < 0) {
+	if (ret == -1) {
 		/*
 		 * We have to clear the select masks, because we return.
 		 * We have to return, because the mainloop checks for the flags
@@ -637,10 +636,10 @@ client_process_net_input(struct ssh *ssh, fd_set *readset)
 		 * There is a kernel bug on Solaris that causes select to
 		 * sometimes wake up even though there is no data available.
 		 */
-		if (len < 0 && (errno == EAGAIN || errno == EINTR))
+		if (len == -1 && (errno == EAGAIN || errno == EINTR))
 			len = 0;
 
-		if (len < 0) {
+		if (len == -1) {
 			/*
 			 * An error has encountered.  Perhaps there is a
 			 * network problem.
@@ -1088,7 +1087,7 @@ process_escapes(struct ssh *ssh, Channel *c,
 
 				/* Fork into background. */
 				pid = fork();
-				if (pid < 0) {
+				if (pid == -1) {
 					error("fork: %.100s", strerror(errno));
 					continue;
 				}
@@ -2234,7 +2233,7 @@ client_session2_setup(struct ssh *ssh, int id, int want_tty, int want_subsystem,
 		struct winsize ws;
 
 		/* Store window size in the packet. */
-		if (ioctl(in_fd, TIOCGWINSZ, &ws) < 0)
+		if (ioctl(in_fd, TIOCGWINSZ, &ws) == -1)
 			memset(&ws, 0, sizeof(ws));
 
 		channel_request_start(ssh, id, "pty-req", 1);

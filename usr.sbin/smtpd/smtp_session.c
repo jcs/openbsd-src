@@ -1,4 +1,4 @@
-/*	$OpenBSD: smtp_session.c,v 1.391 2019/06/12 17:42:53 eric Exp $	*/
+/*	$OpenBSD: smtp_session.c,v 1.394 2019/06/28 13:32:51 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2008 Gilles Chehade <gilles@poolp.org>
@@ -1092,6 +1092,15 @@ smtp_io(struct io *io, int evt, void *arg)
 		/* No complete line received */
 		if (line == NULL)
 			return;
+
+		if (strchr(line, '\r')) {
+			s->flags |= SF_BADINPUT;
+			smtp_reply(s, "500 %s: <CR> is only allowed before <LF>",
+			    esc_code(ESC_STATUS_PERMFAIL, ESC_OTHER_STATUS));
+			smtp_enter_state(s, STATE_QUIT);
+			io_set_write(io);
+			return;
+		}
 
 		/* Message body */
 		eom = 0;
@@ -2903,7 +2912,7 @@ smtp_message_printf(struct smtp_tx *tx, const char *fmt, ...)
 	len = vfprintf(tx->ofile, fmt, ap);
 	va_end(ap);
 
-	if (len < 0) {
+	if (len == -1) {
 		log_warn("smtp-in: session %016"PRIx64": vfprintf", tx->session->id);
 		tx->error = TX_ERROR_IO;
 	}

@@ -1,4 +1,4 @@
-/*	$OpenBSD: dired.c,v 1.84 2018/12/30 23:09:58 guenther Exp $	*/
+/*	$OpenBSD: dired.c,v 1.90 2019/06/28 13:35:02 deraadt Exp $	*/
 
 /* This file is in the public domain. */
 
@@ -201,20 +201,21 @@ void
 dired_init(void)
 {
 	funmap_add(dired, "dired");
-	funmap_add(d_undelbak, "dired-unmark-backward");
 	funmap_add(d_create_directory, "dired-create-directory");
 	funmap_add(d_copy, "dired-do-copy");
 	funmap_add(d_expunge, "dired-do-flagged-delete");
+	funmap_add(d_rename, "dired-do-rename");
 	funmap_add(d_findfile, "dired-find-file");
 	funmap_add(d_ffotherwindow, "dired-find-file-other-window");
 	funmap_add(d_del, "dired-flag-file-deletion");
 	funmap_add(d_forwline, "dired-next-line");
 	funmap_add(d_otherwindow, "dired-other-window");
 	funmap_add(d_backline, "dired-previous-line");
-	funmap_add(d_rename, "dired-do-rename");
+	funmap_add(d_refreshbuffer, "dired-revert");
 	funmap_add(d_backpage, "dired-scroll-down");
 	funmap_add(d_forwpage, "dired-scroll-up");
 	funmap_add(d_undel, "dired-unmark");
+	funmap_add(d_undelbak, "dired-unmark-backward");
 	funmap_add(d_killbuffer_cmd, "quit-window");
 	maps_add((KEYMAP *)&diredmap, "dired");
 	dobindkey(fundamental_map, "dired", "^Xd");
@@ -405,7 +406,7 @@ d_expunge(int f, int n)
 				curwp->w_dotline = tmp;
 				return (FALSE);
 			case FALSE:
-				if (unlink(fname) < 0) {
+				if (unlink(fname) == -1) {
 					(void)xbasename(sname, fname, NFILEN);
 					dobeep();
 					ewprintf("Could not delete '%s'", sname);
@@ -414,7 +415,7 @@ d_expunge(int f, int n)
 				}
 				break;
 			case TRUE:
-				if (rmdir(fname) < 0) {
+				if (rmdir(fname) == -1) {
 					(void)xbasename(sname, fname, NFILEN);
 					dobeep();
 					ewprintf("Could not delete directory "
@@ -444,6 +445,7 @@ d_expunge(int f, int n)
 int
 d_copy(int f, int n)
 {
+	struct stat      statbuf;
 	char		 frname[NFILEN], toname[NFILEN], sname[NFILEN];
 	char		*topath, *bufp;
 	int		 ret;
@@ -470,11 +472,29 @@ d_copy(int f, int n)
 		return (FALSE);
 
 	topath = adjustname(toname, TRUE);
+	if (stat(topath, &statbuf) == 0) {
+		if (S_ISDIR(statbuf.st_mode)) {
+			off = snprintf(toname, sizeof(toname), "%s/%s",
+			    topath, sname);
+			if (off < 0 || off >= sizeof(toname) - 1) {
+				dobeep();
+				ewprintf("Directory name too long");
+				return (FALSE);
+			}
+			topath = adjustname(toname, TRUE);
+		}
+	}
+	if (strcmp(frname, topath) == 0) {
+		ewprintf("Cannot copy to same file: %s", frname);
+		return (TRUE);
+	}
 	ret = (copy(frname, topath) >= 0) ? TRUE : FALSE;
 	if (ret != TRUE)
 		return (ret);
 	if ((bp = refreshbuffer(curbp)) == NULL)
 		return (FALSE);
+
+	ewprintf("Copy: 1 file");
 	return (showbuffer(bp, curwp, WFFULL | WFMODE));
 }
 
@@ -482,6 +502,7 @@ d_copy(int f, int n)
 int
 d_rename(int f, int n)
 {
+	struct stat      statbuf;
 	char		 frname[NFILEN], toname[NFILEN];
 	char		*topath, *bufp;
 	int		 ret;
@@ -509,11 +530,29 @@ d_rename(int f, int n)
 		return (FALSE);
 
 	topath = adjustname(toname, TRUE);
+	if (stat(topath, &statbuf) == 0) {
+		if (S_ISDIR(statbuf.st_mode)) {
+			off = snprintf(toname, sizeof(toname), "%s/%s",
+			    topath, sname);
+			if (off < 0 || off >= sizeof(toname) - 1) {
+				dobeep();
+				ewprintf("Directory name too long");
+				return (FALSE);
+			}
+			topath = adjustname(toname, TRUE);
+		}
+	}
+	if (strcmp(frname, topath) == 0) {
+		ewprintf("Cannot move to same file: %s", frname);
+		return (TRUE);
+	}
 	ret = (rename(frname, topath) >= 0) ? TRUE : FALSE;
 	if (ret != TRUE)
 		return (ret);
 	if ((bp = refreshbuffer(curbp)) == NULL)
 		return (FALSE);
+
+	ewprintf("Move: 1 file");
 	return (showbuffer(bp, curwp, WFFULL | WFMODE));
 }
 
