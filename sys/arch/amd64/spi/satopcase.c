@@ -44,8 +44,6 @@ int	satopcase_get_dsm_params(struct satopcase_softc *, struct aml_node *);
 int	satopcase_intr(void *);
 
 void	satopcase_recv_msg(struct satopcase_softc *);
-void	satopcase_recv_info(struct satopcase_softc *,
-	    struct satopcase_spi_msg *);
 
 uint16_t satopcase_crc16(uint8_t *, size_t);
 
@@ -360,14 +358,12 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 {
 	uint16_t crc;
 	uint16_t msg_crc;
-	int x;
 
 	sc->sc_last_read_error = 0;
 
-	DPRINTF(("%s: incoming message:", sc->sc_dev.dv_xname));
-	for (x = 0; x < SATOPCASE_PACKET_SIZE; x++)
-		DPRINTF((" %02x", (sc->sc_read_raw[x] & 0xff)));
-	DPRINTF(("\n"));
+#ifdef SATOPCASE_DEBUG
+	satopcase_dump_read_packet(sc);
+#endif
 
 	crc = satopcase_crc16(sc->sc_read_raw, SATOPCASE_PACKET_SIZE - 2);
 	msg_crc = (sc->sc_read_raw[SATOPCASE_PACKET_SIZE - 1] << 8) |
@@ -375,6 +371,9 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 	if (crc != msg_crc) {
 		printf("%s: corrupt packet (crc 0x%x != msg crc 0x%x)\n",
 		    sc->sc_dev.dv_xname, crc, msg_crc);
+#ifndef SATOPCASE_DEBUG
+		satopcase_dump_read_packet(sc);
+#endif
 		sc->sc_last_read_error = 1;
 		return;
 	}
@@ -468,8 +467,14 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 }
 
 void
-satopcase_recv_info(struct satopcase_softc *sc, struct satopcase_spi_msg *msg)
+satopcase_dump_read_packet(struct satopcase_softc *sc)
 {
+	int x;
+
+	printf("%s: received message:", sc->sc_dev.dv_xname);
+	for (x = 0; x < SATOPCASE_PACKET_SIZE; x++)
+		printf(" %02x", (sc->sc_read_raw[x] & 0xff));
+	printf("\n");
 }
 
 uint16_t

@@ -163,6 +163,7 @@ struct satopcase_softc {
 
 int	satopcase_send_msg(struct satopcase_softc *, struct satopcase_spi_pkt *,
 	    int, int);
+void	satopcase_dump_read_packet(struct satopcase_softc *);
 
 /*
  * satckbd - keyboard driver
