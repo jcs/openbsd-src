@@ -561,7 +561,7 @@ satckbd_wskbd_set_backlight(struct wskbd_backlight *kbl)
 	sc->backlight = value;
 	task_add(systq, &sc->sc_task_backlight);
 
-	return -1;
+	return 0;
 }
 
 void
