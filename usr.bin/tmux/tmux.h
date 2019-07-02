@@ -1,4 +1,4 @@
-/* $OpenBSD: tmux.h,v 1.916 2019/06/27 15:17:41 nicm Exp $ */
+/* $OpenBSD: tmux.h,v 1.918 2019/07/01 06:56:00 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -682,6 +682,7 @@ TAILQ_HEAD(style_ranges, style_range);
 struct style {
 	struct grid_cell	gc;
 
+	int			fill;
 	enum style_align	align;
 	enum style_list		list;
 
@@ -2362,7 +2363,6 @@ struct window	*window_find_by_id_str(const char *);
 struct window	*window_find_by_id(u_int);
 void		 window_update_activity(struct window *);
 struct window	*window_create(u_int, u_int);
-void		 window_destroy(struct window *);
 void		 window_pane_set_event(struct window_pane *);
 struct window_pane *window_get_active_at(struct window *, u_int, u_int);
 struct window_pane *window_find_string(struct window *, const char *);

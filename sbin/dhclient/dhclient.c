@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.637 2019/06/29 16:39:57 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.641 2019/07/01 16:53:59 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -248,7 +248,7 @@ interface_state(struct interface_info *ifi)
 
 	oldlinkup = LINK_STATE_IS_UP(ifi->link_state);
 
-	if (getifaddrs(&ifap) != 0)
+	if (getifaddrs(&ifap) == -1)
 		fatal("getifaddrs");
 
 	ifa = get_link_ifa(ifi->name, ifap);
@@ -289,7 +289,7 @@ get_hw_address(struct interface_info *ifi)
 	struct ifaddrs		*ifap, *ifa;
 	struct sockaddr_dl	*sdl;
 
-	if (getifaddrs(&ifap) != 0)
+	if (getifaddrs(&ifap) == -1)
 		fatal("getifaddrs");
 
 	ifa = get_link_ifa(ifi->name, ifap);
@@ -1798,9 +1798,6 @@ write_lease_db(char *name, struct client_lease_tq *lease_db)
 	char			*leasestr;
 	time_t			 cur_time;
 
-	if (leaseFile == NULL)
-		fatalx("lease file not open");
-
 	rewind(leaseFile);
 
 	/*
@@ -2431,11 +2428,16 @@ take_charge(struct interface_info *ifi, int routefd)
 {
 	struct pollfd		 fds[1];
 	struct rt_msghdr	 rtm;
-	time_t			 start_time, cur_time;
-	int			 nfds, retries;
+	time_t			 cur_time, sent_time, start_time;
+	int			 nfds;
+
+#define	MAXSECONDS		9
+#define	SENTSECONDS		3
+#define	POLLMILLISECONDS	3
 
 	if (time(&start_time) == -1)
 		fatal("time");
+	sent_time = start_time;
 
 	/*
 	 * Send RTM_PROPOSAL with RTF_PROTO3 set.
@@ -2458,33 +2460,32 @@ take_charge(struct interface_info *ifi, int routefd)
 	if (write(routefd, &rtm, sizeof(rtm)) == -1)
 		fatal("write(routefd)");
 
-	retries = 0;
 	while ((ifi->flags & IFI_IN_CHARGE) == 0) {
-		time(&cur_time);
-		if ((cur_time - start_time) > 3) {
-			if (++retries <= 3) {
-				if (time(&start_time) == -1)
-					fatal("time");
-				rtm.rtm_seq = ifi->xid = arc4random();
-				if (write(routefd, &rtm, sizeof(rtm)) == -1)
-					fatal("write(routefd)");
-			} else {
-				fatalx("failed to take charge");
-			}
+		if (time(&cur_time) == -1)
+			fatal("time");
+		if (cur_time - start_time >= MAXSECONDS)
+			fatalx("failed to take charge");
+
+		if ((cur_time - sent_time) >= SENTSECONDS) {
+			sent_time = cur_time;
+			rtm.rtm_seq = ifi->xid = arc4random();
+			if (write(routefd, &rtm, sizeof(rtm)) == -1)
+				fatal("write(routefd)");
 		}
+
 		fds[0].fd = routefd;
 		fds[0].events = POLLIN;
-		nfds = poll(fds, 1, 3);
+		nfds = poll(fds, 1, POLLMILLISECONDS);
 		if (nfds == -1) {
 			if (errno == EINTR)
 				continue;
 			fatal("poll(routefd)");
 		}
+
 		if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-			fatal("routefd: ERR|HUP|NVAL");
-		if (nfds == 0 || (fds[0].revents & POLLIN) == 0)
-			continue;
-		routefd_handler(ifi, routefd);
+			fatalx("routefd: ERR|HUP|NVAL");
+		if (nfds == 1 && (fds[0].revents & POLLIN) == POLLIN)
+			routefd_handler(ifi, routefd);
 	}
 }
 
@@ -2738,7 +2739,7 @@ propose_release(struct interface_info *ifi)
 			fatal("poll(routefd)");
 		}
 		if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-			fatal("routefd: ERR|HUP|NVAL");
+			fatalx("routefd: ERR|HUP|NVAL");
 		if (nfds == 0 || (fds[0].revents & POLLIN) == 0)
 			continue;
 		routefd_handler(ifi, routefd);
