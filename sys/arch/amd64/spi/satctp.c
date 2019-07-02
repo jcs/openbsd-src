@@ -33,6 +33,13 @@
 #include "satopcasevar.h"
 
 /* #define SATCTP_DEBUG */
+/* #define SATCTP_FINGER_DEBUG */
+
+#ifdef SATCTP_FINGER_DEBUG
+#ifndef SATCTP_DEBUG
+#define SATCTP_DEBUG
+#endif
+#endif
 
 #ifdef SATCTP_DEBUG
 #define DPRINTF(x) printf x
@@ -301,11 +308,43 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 			finger = (struct satctp_finger *)&msg->tp_data.
 			    finger_data[x * sizeof(struct satctp_finger)];
 
-			if (letoh16(finger->touch_major) == 0)
-				continue; /* finger lifted */
+#ifdef SATCTP_FINGER_DEBUG
+			DPRINTF(("%s: finger[%d] origin:%d abs_x:%d abs_y:%d "
+			    "rel_x:%d rel_y:%d tool_major:%d tool_minor:%d "
+			    "orientation:%d touch_major:%d touch_minor:%d "
+			    "pressure:%d multi:%d",
+			    sc->sc_dev.dv_xname, x,
+			    letoh16(finger->origin),
+			    letoh16(finger->abs_x),
+			    letoh16(finger->abs_y),
+			    letoh16(finger->rel_x),
+			    letoh16(finger->rel_y),
+			    letoh16(finger->tool_major),
+			    letoh16(finger->tool_minor),
+			    letoh16(finger->orientation),
+			    letoh16(finger->touch_major),
+			    letoh16(finger->touch_minor),
+			    letoh16(finger->pressure),
+			    letoh16(finger->multi)));
+#endif
 
-			if (letoh16(finger->orientation) != 16384)
-				continue; /* probably a palm, reject */
+			if (finger->touch_major == 0) {
+				/* finger lifted */
+#ifdef SATCTP_FINGER_DEBUG
+				DPRINTF((" (lifted)\n"));
+#endif
+				continue;
+			}
+
+			if (letoh16(finger->orientation) != 16384) {
+				/* probably a palm, reject */
+#ifdef SATCTP_FINGER_DEBUG
+				DPRINTF((" (palm)\n"));
+#endif
+				continue;
+			}
+
+			DPRINTF(("\n"));
 
 			sc->frame[contacts].x = (int16_t)letoh16(finger->abs_x);
 			sc->frame[contacts].y = (int16_t)letoh16(finger->abs_y);
