@@ -304,6 +304,9 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 			if (letoh16(finger->touch_major) == 0)
 				continue; /* finger lifted */
 
+			if (letoh16(finger->orientation) != 16384)
+				continue; /* probably a palm, reject */
+
 			sc->frame[contacts].x = (int16_t)letoh16(finger->abs_x);
 			sc->frame[contacts].y = (int16_t)letoh16(finger->abs_y);
 			sc->frame[contacts].pressure = SATCTP_DEFAULT_PRESSURE;
