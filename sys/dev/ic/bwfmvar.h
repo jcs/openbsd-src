@@ -167,6 +167,7 @@ struct bwfm_softc {
 	struct bwfm_host_cmd_ring sc_cmdq;
 	struct taskq		*sc_taskq;
 	struct task		 sc_task;
+	struct mbuf_list	 sc_evml;
 
 	int			 sc_bcdc_reqid;
 	TAILQ_HEAD(, bwfm_proto_bcdc_ctl) sc_bcdc_rxctlq;
