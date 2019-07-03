@@ -79,7 +79,7 @@ int	satctp_match(struct device *, void *, void *);
 void	satctp_attach(struct device *, struct device *, void *);
 int	satctp_detach(struct device *, int);
 
-void	satctp_init(struct satctp_softc *);
+int	satctp_init(struct satctp_softc *);
 void	satctp_configure(struct satctp_softc *);
 int	satctp_enable(void *);
 int	satctp_ioctl(void *, u_long, caddr_t, int, struct proc *);
@@ -123,20 +123,21 @@ satctp_attach(struct device *parent, struct device *self, void *aux)
 
 	sc->sc_satopcase = sa->sa_satopcase;
 
-	printf("\n");
+	/* satopcase needs to know how to reach us before we finish attaching */
+	sc->sc_satopcase->sc_satctp = sc;
+
+	if (satctp_init(sc) != 0)
+		return;
 
 	memset(&wmaa, 0, sizeof(wmaa));
 	wmaa.accessops = &satctp_accessops;
 	wmaa.accesscookie = sc;
 	sc->sc_wsmousedev = config_found(self, &wmaa, wsmousedevprint);
 
-	/* satopcase needs to know how to reach us before we finish attaching */
-	sc->sc_satopcase->sc_satctp = sc;
-
-	satctp_init(sc);
+	satctp_configure(sc);
 }
 
-void
+int
 satctp_init(struct satctp_softc *sc)
 {
 	struct satopcase_spi_pkt pkt;
@@ -151,14 +152,13 @@ satctp_init(struct satctp_softc *sc)
 	 * Send the info request, wait for the response, and the controller
 	 * will call satctp_recv_info, filling in our dev_type.
 	 */
-	satopcase_send_msg(sc->sc_satopcase, &pkt,
-	    sizeof(struct satctp_info_cmd), 1);
-
-	if (!sc->dev_type) {
-		printf("%s: failed to probe touchpad\n", sc->sc_dev.dv_xname);
-		/* TODO: wsmouse detach? */
-		return;
+	if (satopcase_send_msg(sc->sc_satopcase, &pkt,
+	    sizeof(struct satctp_info_cmd), 1) != 0 || !sc->dev_type) {
+		printf(": failed to probe touchpad\n");
+		return 1;
 	}
+
+	printf(": model %04x\n", sc->dev_type->model);
 
 	/* now put the touchpad into multitouch mode */
 	memset(&pkt, 0, sizeof(pkt));
@@ -166,10 +166,13 @@ satctp_init(struct satctp_softc *sc)
 	pkt.msg.type = SATOPCASE_MSG_TYPE_TP_MT;
 	pkt.msg.tp_mt_cmd.mode = htole16(SATCTP_MT_CMD_MT_MODE);
 
-	satopcase_send_msg(sc->sc_satopcase, &pkt,
-	    sizeof(struct satctp_mt_cmd), 1);
+	if (satopcase_send_msg(sc->sc_satopcase, &pkt,
+	    sizeof(struct satctp_mt_cmd), 1) != 0) {
+		printf("%s: failed switch to MT mode\n", sc->sc_dev.dv_xname);
+		return 1;
+	}
 
-	satctp_configure(sc);
+	return 0;
 }
 
 void
@@ -220,6 +223,9 @@ satctp_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 	struct satctp_softc *sc = v;
 	struct wsmouse_calibcoords *wsmc = (struct wsmouse_calibcoords *)data;
 	int wsmode;
+
+	if (!sc->sc_wsmousedev)
+		return -1;
 
 	switch (cmd) {
 	case WSMOUSEIO_GTYPE: {
@@ -277,9 +283,7 @@ satctp_recv_info(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 		}
 
 		if (!sc->dev_type) {
-			printf("%s: unrecognized device model 0x%04x, "
-			    "touchpad coordinates will be wrong\n",
-			    sc->sc_dev.dv_xname, model);
+			printf(": unsupported device model");
 			sc->dev_type = &satctp_devices[0];
 		}
 	}
@@ -302,9 +306,10 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 		    sc->sc_dev.dv_xname, le16toh(msg->tp_mt_cmd.mode)));
 		break;
 	case SATOPCASE_MSG_TYPE_TP_DATA:
-		contacts = 0;
+		if (!sc->sc_wsmousedev)
+			return;
 
-		for (x = 0; x < msg->tp_data.fingers; x++) {
+		for (x = 0, contacts = 0; x < msg->tp_data.fingers; x++) {
 			finger = (struct satctp_finger *)&msg->tp_data.
 			    finger_data[x * sizeof(struct satctp_finger)];
 

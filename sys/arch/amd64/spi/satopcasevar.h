@@ -140,12 +140,15 @@ struct satopcase_softc {
 
 	struct rwlock		sc_busylock;
 
-	uint8_t			sc_pkt_counter;
+	/* sending */
+	uint8_t			pkt_counter;
+
+	/* receiving */
 	union {
-		struct satopcase_spi_pkt sc_read_pkt;
-		uint8_t		sc_read_raw[SATOPCASE_PACKET_SIZE];
+		struct satopcase_spi_pkt read_pkt;
+		uint8_t		read_raw[SATOPCASE_PACKET_SIZE];
 	};
-	int			sc_last_read_error;
+	uint16_t		read_expect;
 
 	/* from _DSM */
 	uint64_t		spi_sclk_period;

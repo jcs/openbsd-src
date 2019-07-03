@@ -276,11 +276,11 @@ satopcase_intr(void *arg)
 	/* serialize packet access */
 	rw_enter_write(&sc->sc_busylock);
 
-	memset(sc->sc_read_raw, 0, sizeof(struct satopcase_spi_pkt));
+	memset(sc->read_raw, 0, sizeof(struct satopcase_spi_pkt));
 
 	spi_acquire_bus(sc->sc_spi_tag, 0);
 	spi_config(sc->sc_spi_tag, &sc->sc_spi_conf);
-	spi_read(sc->sc_spi_tag, sc->sc_read_raw, sizeof(sc->sc_read_raw));
+	spi_read(sc->sc_spi_tag, sc->read_raw, sizeof(sc->read_raw));
 	spi_release_bus(sc->sc_spi_tag, 0);
 
 	satopcase_recv_msg(sc);
@@ -295,7 +295,7 @@ int
 satopcase_send_msg(struct satopcase_softc *sc, struct satopcase_spi_pkt *pkt,
     int msg_len, int wait_reply)
 {
-	int x, tries = 10, didlock = 0;
+	int x, tries = 100, didlock = 0;
 	uint16_t crc16;
 
 	/* if we're here from another thread, we probably didn't lock */
@@ -305,7 +305,7 @@ satopcase_send_msg(struct satopcase_softc *sc, struct satopcase_spi_pkt *pkt,
 	}
 
 	/* complete the message parameters */
-	pkt->msg.counter = sc->sc_pkt_counter++;
+	pkt->msg.counter = sc->pkt_counter++;
 	pkt->msg.length = htole16(msg_len - 2);
 	if (!pkt->msg.response_length)
 		pkt->msg.response_length = pkt->msg.length;
@@ -330,6 +330,9 @@ satopcase_send_msg(struct satopcase_softc *sc, struct satopcase_spi_pkt *pkt,
 		DPRINTF((" %02x", (((uint8_t *)pkt)[x] & 0xff)));
 	DPRINTF(("\n"));
 
+	if (wait_reply)
+		sc->read_expect = pkt->msg.type;
+
 	spi_acquire_bus(sc->sc_spi_tag, 0);
 	spi_config(sc->sc_spi_tag, &sc->sc_spi_conf);
 	spi_write(sc->sc_spi_tag, (uint8_t *)pkt,
@@ -339,15 +342,23 @@ satopcase_send_msg(struct satopcase_softc *sc, struct satopcase_spi_pkt *pkt,
 	if (didlock)
 		rw_exit(&sc->sc_busylock);
 
-	if (wait_reply) {
+	/*
+	 * If requested, wait until we receive the packet we expected,
+	 * processing (!cold) or dropping (cold) other packets along the way.
+	 */
+	while (sc->read_expect != 0) {
 		if (cold) {
-			do {
-				DELAY(20);
-				satopcase_intr(sc);
-			} while (sc->sc_last_read_error && --tries);
-		} else if (tsleep(&sc, PRIBIO, "satopcase", hz / 10) != 0)
-			DPRINTF(("%s: timed out waiting for reply\n",
-			    sc->sc_dev.dv_xname));
+			DELAY(20);
+			satopcase_intr(sc);
+		} else
+			tsleep(&sc, PRIBIO, "satopcase", hz / 10);
+
+		if (!--tries) {
+			DPRINTF(("%s: timed out waiting for 0x%x reply\n",
+			    sc->sc_dev.dv_xname, sc->read_expect));
+			sc->read_expect = 0;
+			return 1;
+		}
 	}
 
 	return 0;
@@ -359,38 +370,38 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 	uint16_t crc;
 	uint16_t msg_crc;
 
-	sc->sc_last_read_error = 0;
-
 #ifdef SATOPCASE_DEBUG
 	satopcase_dump_read_packet(sc);
 #endif
 
-	crc = satopcase_crc16(sc->sc_read_raw, SATOPCASE_PACKET_SIZE - 2);
-	msg_crc = (sc->sc_read_raw[SATOPCASE_PACKET_SIZE - 1] << 8) |
-	    sc->sc_read_raw[SATOPCASE_PACKET_SIZE - 2];
+	crc = satopcase_crc16(sc->read_raw, SATOPCASE_PACKET_SIZE - 2);
+	msg_crc = (sc->read_raw[SATOPCASE_PACKET_SIZE - 1] << 8) |
+	    sc->read_raw[SATOPCASE_PACKET_SIZE - 2];
 	if (crc != msg_crc) {
-		printf("%s: corrupt packet (crc 0x%x != msg crc 0x%x)\n",
-		    sc->sc_dev.dv_xname, crc, msg_crc);
+		/* Some weirdness at autoconf time is expected... */
+		if (!cold) {
+			printf("%s: corrupt packet (crc 0x%x != msg crc 0x%x)\n",
+			    sc->sc_dev.dv_xname, crc, msg_crc);
 #ifndef SATOPCASE_DEBUG
-		satopcase_dump_read_packet(sc);
+			satopcase_dump_read_packet(sc);
 #endif
-		sc->sc_last_read_error = 1;
+		}
 		return;
 	}
 
-	switch (sc->sc_read_pkt.type) {
+	switch (sc->read_pkt.type) {
 	case SATOPCASE_PACKET_TYPE_READ:
-		if (sc->sc_read_pkt.remaining || sc->sc_read_pkt.offset) {
+		if (sc->read_pkt.remaining || sc->read_pkt.offset) {
 			DPRINTF(("%s: remaining %d, offset %d\n",
-			    sc->sc_dev.dv_xname, sc->sc_read_pkt.remaining,
-			    sc->sc_read_pkt.offset));
+			    sc->sc_dev.dv_xname, sc->read_pkt.remaining,
+			    sc->read_pkt.offset));
 		}
 
-		switch (sc->sc_read_pkt.device) {
+		switch (sc->read_pkt.device) {
 		case SATOPCASE_PACKET_DEVICE_KEYBOARD:
 			if (sc->sc_satckbd)
 				satckbd_recv_msg(sc->sc_satckbd,
-				    &sc->sc_read_pkt.msg);
+				    &sc->read_pkt.msg);
 			else {
 				DPRINTF(("%s: keyboard data but no keyboard\n",
 				    sc->sc_dev.dv_xname));
@@ -399,7 +410,7 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 		case SATOPCASE_PACKET_DEVICE_TOUCHPAD:
 			if (sc->sc_satctp)
 				satctp_recv_msg(sc->sc_satctp,
-				    &sc->sc_read_pkt.msg);
+				    &sc->read_pkt.msg);
 			else {
 				DPRINTF(("%s: touchpad data but no touchpad\n",
 				    sc->sc_dev.dv_xname));
@@ -407,20 +418,26 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 			break;
 		default:
 			DPRINTF(("%s: unknown device for read packet: 0x%x\n",
-			    sc->sc_dev.dv_xname, sc->sc_read_pkt.device));
-			sc->sc_last_read_error = 1;
+			    sc->sc_dev.dv_xname, sc->read_pkt.device));
 		}
 		break;
 
 	case SATOPCASE_PACKET_TYPE_WRITE:
 		/* command response */
-		switch (sc->sc_read_pkt.device) {
+		if (sc->read_expect &&
+		    sc->read_expect == sc->read_pkt.msg.type) {
+			DPRINTF(("%s: got expected response packet 0x%x\n",
+			    sc->sc_dev.dv_xname, sc->read_expect));
+			sc->read_expect = 0;
+		}
+
+		switch (sc->read_pkt.device) {
 		case SATOPCASE_PACKET_DEVICE_INFO:
-			switch (le16toh(sc->sc_read_pkt.msg.type)) {
+			switch (le16toh(sc->read_pkt.msg.type)) {
 			case SATOPCASE_MSG_TYPE_TP_INFO:
 				if (sc->sc_satctp)
 					satctp_recv_info(sc->sc_satctp,
-					    &sc->sc_read_pkt.msg);
+					    &sc->read_pkt.msg);
 				else {
 					DPRINTF(("%s: touchpad info message "
 					    "but no touchpad\n",
@@ -430,13 +447,13 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 			default:
 				DPRINTF(("%s: unknown type for info packet: "
 				    "0x%x\n", sc->sc_dev.dv_xname,
-				    le16toh(sc->sc_read_pkt.msg.type)));
+				    le16toh(sc->read_pkt.msg.type)));
 			}
 			break;
 		case SATOPCASE_PACKET_DEVICE_TOUCHPAD:
 			if (sc->sc_satctp)
 				satctp_recv_msg(sc->sc_satctp,
-				    &sc->sc_read_pkt.msg);
+				    &sc->read_pkt.msg);
 			else {
 				DPRINTF(("%s: touchpad write message "
 				    "but no touchpad\n",
@@ -446,8 +463,7 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 		default:
 			DPRINTF(("%s: unknown device for write packet "
 			    "response: 0x%x\n", sc->sc_dev.dv_xname,
-			    sc->sc_read_pkt.device));
-			sc->sc_last_read_error = 1;
+			    sc->read_pkt.device));
 		}
 		break;
 	case SATOPCASE_PACKET_TYPE_ERROR:
@@ -457,12 +473,10 @@ satopcase_recv_msg(struct satopcase_softc *sc)
 		 * the corresponding GPE doesn't get serviced until !cold).
 		 */
 		DPRINTF(("%s: received error packet\n", sc->sc_dev.dv_xname));
-		sc->sc_last_read_error = 1;
 		break;
 	default:
 		DPRINTF(("%s: unknown packet type 0x%x\n", sc->sc_dev.dv_xname,
-		    sc->sc_read_pkt.type));
-		sc->sc_last_read_error = 1;
+		    sc->read_pkt.type));
 	}
 }
 
@@ -473,7 +487,7 @@ satopcase_dump_read_packet(struct satopcase_softc *sc)
 
 	printf("%s: received message:", sc->sc_dev.dv_xname);
 	for (x = 0; x < SATOPCASE_PACKET_SIZE; x++)
-		printf(" %02x", (sc->sc_read_raw[x] & 0xff));
+		printf(" %02x", (sc->read_raw[x] & 0xff));
 	printf("\n");
 }
 
