@@ -48,22 +48,22 @@
 #endif
 
 struct satctp_finger {
-	uint16_t	origin;
-	uint16_t	abs_x;
-	uint16_t	abs_y;
-	uint16_t	rel_x;
-	uint16_t	rel_y;
-	uint16_t	tool_major;
-	uint16_t	tool_minor;
-	uint16_t	orientation;
-	uint16_t	touch_major;
-	uint16_t	touch_minor;
-	uint16_t	unused[2];
-	uint16_t	pressure;
+	int16_t		origin;
+	int16_t		abs_x;
+	int16_t		abs_y;
+	int16_t		rel_x;
+	int16_t		rel_y;
+	int16_t		tool_major;
+	int16_t		tool_minor;
+	int16_t		orientation;
+	int16_t		touch_major;
+	int16_t		touch_minor;
+	int16_t		unused[2];
+	int16_t		pressure;
 	/* Use a constant, synaptics-compatible pressure value for now. */
 #define SATCTP_DEFAULT_PRESSURE	40
-	uint16_t	multi;
-	uint16_t	crc16;
+	int16_t		multi;
+	int16_t		crc16;
 } __packed __attribute((aligned(2)));
 
 static struct satctp_dev_type satctp_devices[] = {
@@ -297,7 +297,7 @@ satctp_recv_info(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 void
 satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 {
-	int x, s, contacts;
+	int x, s, contacts, xpct, ypct, palm;
 	struct satctp_finger *finger;
 
 	switch (le16toh(msg->type)) {
@@ -309,7 +309,8 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 		if (!sc->sc_wsmousedev)
 			return;
 
-		for (x = 0, contacts = 0; x < msg->tp_data.fingers; x++) {
+		for (x = 0, contacts = 0, palm = 0; x < msg->tp_data.fingers;
+		    x++) {
 			finger = (struct satctp_finger *)&msg->tp_data.
 			    finger_data[x * sizeof(struct satctp_finger)];
 
@@ -319,21 +320,21 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 			    "orientation:%d touch_major:%d touch_minor:%d "
 			    "pressure:%d multi:%d",
 			    sc->sc_dev.dv_xname, x,
-			    letoh16(finger->origin),
-			    letoh16(finger->abs_x),
-			    letoh16(finger->abs_y),
-			    letoh16(finger->rel_x),
-			    letoh16(finger->rel_y),
-			    letoh16(finger->tool_major),
-			    letoh16(finger->tool_minor),
-			    letoh16(finger->orientation),
-			    letoh16(finger->touch_major),
-			    letoh16(finger->touch_minor),
-			    letoh16(finger->pressure),
-			    letoh16(finger->multi)));
+			    (int16_t)letoh16(finger->origin),
+			    (int16_t)letoh16(finger->abs_x),
+			    (int16_t)letoh16(finger->abs_y),
+			    (int16_t)letoh16(finger->rel_x),
+			    (int16_t)letoh16(finger->rel_y),
+			    (int16_t)letoh16(finger->tool_major),
+			    (int16_t)letoh16(finger->tool_minor),
+			    (int16_t)letoh16(finger->orientation),
+			    (int16_t)letoh16(finger->touch_major),
+			    (int16_t)letoh16(finger->touch_minor),
+			    (int16_t)letoh16(finger->pressure),
+			    (int16_t)letoh16(finger->multi)));
 #endif
 
-			if (finger->touch_major == 0) {
+			if (finger->touch_major == 0 || finger->pressure == 0) {
 				/* finger lifted */
 #ifdef SATCTP_FINGER_DEBUG
 				DPRINTF((" (lifted)\n"));
@@ -341,12 +342,43 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 				continue;
 			}
 
-			if (letoh16(finger->orientation) != 16384) {
-				/* probably a palm, reject */
+			if ((int16_t)letoh16(finger->orientation) != 16384) {
+				/*
+				 * Not a point, check location for palm
+				 * rejection
+				 */
+
+				/* ((x + abs(min)) * 100) / (abs(min) + max) */
+				xpct = (((int16_t)letoh16(finger->abs_x) +
+				    abs(sc->dev_type->x.min)) * 100) /
+				    (abs(sc->dev_type->x.min) +
+				    sc->dev_type->x.max);
+				ypct = (((int16_t)letoh16(finger->abs_y) +
+				    abs(sc->dev_type->y.min)) * 100) /
+				    (abs(sc->dev_type->y.min) +
+				    sc->dev_type->y.max);
 #ifdef SATCTP_FINGER_DEBUG
-				DPRINTF((" (palm)\n"));
+				DPRINTF((" xpct:%d ypct:%d", xpct, ypct));
 #endif
-				continue;
+
+				if (xpct >= 75 && ypct <= 50) {
+					/*
+					 * Non-point in the lower half of the
+					 * right quarter = probably a palm,
+					 * reject
+					 */
+#ifdef SATCTP_FINGER_DEBUG
+					DPRINTF((" (palm area)\n"));
+#endif
+					/*
+					 * We can cancel this touch but there
+					 * is often another touch registered
+					 * a different, bogus coordinate, so
+					 * cancel that one too.
+					 */
+					palm = 1;
+					break;
+				}
 			}
 
 			DPRINTF(("\n"));
@@ -357,13 +389,14 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 			contacts++;
 		}
 
-		DPRINTF(("%s: data: fingers:%d contacts:%d button:%d\n",
+		DPRINTF(("%s: data: fingers:%d contacts:%d button:%d palm:%d\n",
 		    sc->sc_dev.dv_xname, msg->tp_data.fingers, contacts,
-		    msg->tp_data.button));
+		    msg->tp_data.button, palm));
 
 		s = spltty();
 		wsmouse_buttons(sc->sc_wsmousedev, !!(msg->tp_data.button));
-		wsmouse_mtframe(sc->sc_wsmousedev, sc->frame, contacts);
+		if (!palm)
+			wsmouse_mtframe(sc->sc_wsmousedev, sc->frame, contacts);
 		wsmouse_input_sync(sc->sc_wsmousedev);
 		splx(s);
 
