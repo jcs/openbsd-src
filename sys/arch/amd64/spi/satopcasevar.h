@@ -134,6 +134,7 @@ struct satopcase_attach_args {
 struct satopcase_softc {
 	struct device		sc_dev;
 	spi_tag_t		sc_spi_tag;
+	struct aml_node		*sc_dev_node;
 	struct ispi_gpe_intr 	sc_gpe_intr;
 	void			*sc_ih;
 	struct spi_config 	sc_spi_conf;

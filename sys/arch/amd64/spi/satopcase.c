@@ -40,6 +40,8 @@
 
 int	satopcase_match(struct device *, void *, void *);
 void	satopcase_attach(struct device *, struct device *, void *);
+int	satopcase_enable_spi(struct satopcase_softc *);
+int	satopcase_activate(struct device *, int);
 int	satopcase_get_dsm_params(struct satopcase_softc *, struct aml_node *);
 int	satopcase_intr(void *);
 
@@ -52,7 +54,7 @@ struct cfattach satopcase_ca = {
 	satopcase_match,
 	satopcase_attach,
 	NULL,
-	NULL
+	satopcase_activate,
 };
 
 struct cfdriver satopcase_cd = {
@@ -64,7 +66,6 @@ satopcase_match(struct device *parent, void *match, void *aux)
 {
 	struct spi_attach_args *sa = aux;
 	struct aml_node *node = sa->sa_cookie;
-	struct aml_value res;
 	uint64_t val;
 
 	if (strcmp(sa->sa_name, "satopcase") != 0)
@@ -77,18 +78,6 @@ satopcase_match(struct device *parent, void *match, void *aux)
 		DPRINTF(("%s: not attaching satopcase, USB enabled\n",
 		    sa->sa_name));
 		return 0;
-	}
-
-	/* if SPI is not enabled, enable it */
-	if (aml_evalinteger(acpi_softc, node, "SIST", 0, NULL, &val) == 0 &&
-	    !val) {
-		if (aml_evalname(acpi_softc, node, "SIEN", 0, NULL, &res)) {
-			DPRINTF(("%s: couldn't enable SPI mode\n",
-			    sa->sa_name));
-			return 0;
-		}
-
-		DELAY(500);
 	}
 
 	return 1;
@@ -113,6 +102,14 @@ satopcase_attach(struct device *parent, struct device *self, void *aux)
 	struct satopcase_attach_args saa;
 
 	rw_init(&sc->sc_busylock, sc->sc_dev.dv_xname);
+
+	sc->sc_dev_node = sa->sa_cookie;
+
+	/* if SPI is not enabled, enable it */
+	if (satopcase_enable_spi(sc) != 0) {
+		printf(": failed enabling SPI\n");
+		return;
+	}
 
 	if (satopcase_get_dsm_params(sc, sa->sa_cookie) != 0)
 		return;
@@ -140,6 +137,55 @@ satopcase_attach(struct device *parent, struct device *self, void *aux)
 	saa.sa_name = "satctp";
 	sc->sc_satctp = (struct satctp_softc *)config_found(self, &saa,
 	    satopcase_print);
+}
+
+int
+satopcase_enable_spi(struct satopcase_softc *sc)
+{
+	uint64_t val;
+	struct aml_value arg;
+
+	/* if SPI is not enabled, enable it */
+	if (aml_evalinteger(acpi_softc, sc->sc_dev_node, "SIST", 0, NULL,
+	    &val) == 0 && !val) {
+	    	DPRINTF(("%s: SIST is %lld\n", sc->sc_dev.dv_xname, val));
+
+		bzero(&arg, sizeof(arg));
+		arg.type = AML_OBJTYPE_INTEGER;
+		arg.v_integer = 1;
+		arg.length = 1;
+
+		if (aml_evalname(acpi_softc, sc->sc_dev_node, "SIEN", 1, &arg,
+		    NULL) != 0) {
+			DPRINTF(("%s: couldn't enable SPI mode\n", __func__));
+			return 1;
+		}
+
+		DELAY(500);
+	} else {
+	    	DPRINTF(("%s: SIST is already %lld\n", sc->sc_dev.dv_xname, val));
+	}
+
+	return 0;
+}
+
+int
+satopcase_activate(struct device *self, int act)
+{
+	struct satopcase_softc *sc = (struct satopcase_softc *)self;
+
+	switch (act) {
+	case DVACT_WAKEUP:
+		if (satopcase_enable_spi(sc) != 0) {
+			printf("%s: failed re-enabling SPI\n",
+			    sc->sc_dev.dv_xname);
+			return 0;
+		}
+
+		break;
+	}
+
+	return config_activate_children(self, act);
 }
 
 int
