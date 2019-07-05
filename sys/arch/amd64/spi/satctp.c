@@ -334,14 +334,6 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 			    (int16_t)letoh16(finger->multi)));
 #endif
 
-			if (finger->touch_major == 0 || finger->pressure == 0) {
-				/* finger lifted */
-#ifdef SATCTP_FINGER_DEBUG
-				DPRINTF((" (lifted)\n"));
-#endif
-				continue;
-			}
-
 			if ((int16_t)letoh16(finger->orientation) != 16384) {
 				/*
 				 * Not a point, check location for palm
@@ -379,6 +371,14 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 					palm = 1;
 					break;
 				}
+			}
+
+			if (finger->touch_major == 0 || finger->pressure == 0) {
+				/* finger lifted */
+#ifdef SATCTP_FINGER_DEBUG
+				DPRINTF((" (lifted)\n"));
+#endif
+				continue;
 			}
 
 			DPRINTF(("\n"));
