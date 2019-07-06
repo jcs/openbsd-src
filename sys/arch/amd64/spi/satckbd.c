@@ -333,6 +333,7 @@ const unsigned char satckbd_raw_keycodes_us[] = {
 
 int	satckbd_match(struct device *, void *, void *);
 void	satckbd_attach(struct device *, struct device *, void *);
+int	satckbd_activate(struct device *, int);
 
 int	satckbd_enable(void *, int);
 void	satckbd_wskbd_setleds(void *, int);
@@ -355,7 +356,7 @@ struct cfattach satckbd_ca = {
 	satckbd_match,
 	satckbd_attach,
 	NULL,
-	NULL,
+	satckbd_activate,
 };
 
 struct cfdriver satckbd_cd = {
@@ -419,6 +420,21 @@ satckbd_attach(struct device *parent, struct device *self, void *aux)
 	task_set(&sc->sc_task_backlight, satckbd_set_backlight, sc);
 	wskbd_get_backlight = satckbd_wskbd_get_backlight;
 	wskbd_set_backlight = satckbd_wskbd_set_backlight;
+}
+
+int
+satckbd_activate(struct device *self, int act)
+{
+	struct satckbd_softc *sc = (struct satckbd_softc *)self;
+
+	switch (act) {
+	case DVACT_WAKEUP:
+		/* caps lock LED is turned off at suspend */
+		if (sc->leds & WSKBD_LED_CAPS)
+			task_add(systq, &sc->sc_task_caps_light);
+	}
+
+	return config_activate_children(self, act);
 }
 
 int
