@@ -1063,7 +1063,7 @@ cpu_update_turbo(void)
 	turbo = (msr & MISC_ENABLE_TURBO_DISABLE) ? 0 : 1;
 
 	if (turbo != cpu_allow_turbo) {
-		if (turbo)
+		if (cpu_allow_turbo)
 			msr &= ~MISC_ENABLE_TURBO_DISABLE;
 		else
 			msr |= MISC_ENABLE_TURBO_DISABLE;
