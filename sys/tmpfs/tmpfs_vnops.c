@@ -1,4 +1,4 @@
-/*	$OpenBSD: tmpfs_vnops.c,v 1.33 2018/10/22 17:31:25 krw Exp $	*/
+/*	$OpenBSD: tmpfs_vnops.c,v 1.35 2019/07/12 13:56:28 solene Exp $	*/
 /*	$NetBSD: tmpfs_vnops.c,v 1.100 2012/11/05 17:27:39 dholland Exp $	*/
 
 /*

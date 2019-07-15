@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mue.c,v 1.5 2018/09/19 07:47:54 mestre Exp $	*/
+/*	$OpenBSD: if_mue.c,v 1.7 2019/07/07 06:40:10 kevlo Exp $	*/
 
 /*
  * Copyright (c) 2018 Kevin Lo <kevlo@openbsd.org>
@@ -855,10 +855,6 @@ mue_detach(struct device *self, int flags)
 		if_detach(ifp);
 	}
 
-	if (--sc->mue_refcnt >= 0) {
-		/* Wait for processes to go away. */
-		usb_detach_wait(&sc->mue_dev);
-	}
 	splx(s);
 
 	return (0);
@@ -1339,6 +1335,8 @@ void
 mue_stop(struct mue_softc *sc)
 {
 	struct ifnet *ifp;
+	usbd_status err;
+	int i;
 
 	ifp = GET_IFP(sc);
 	ifp->if_timer = 0;
@@ -1346,6 +1344,61 @@ mue_stop(struct mue_softc *sc)
 	ifq_clr_oactive(&ifp->if_snd);
 
 	timeout_del(&sc->mue_stat_ch);
+
+	/* Stop transfers. */
+	if (sc->mue_ep[MUE_ENDPT_RX] != NULL) {
+		usbd_abort_pipe(sc->mue_ep[MUE_ENDPT_RX]);
+		err = usbd_close_pipe(sc->mue_ep[MUE_ENDPT_RX]);
+		if (err) {
+			printf("%s: close rx pipe failed: %s\n",
+			    sc->mue_dev.dv_xname, usbd_errstr(err));
+		}
+		sc->mue_ep[MUE_ENDPT_RX] = NULL;
+	}
+
+	if (sc->mue_ep[MUE_ENDPT_TX] != NULL) {
+		usbd_abort_pipe(sc->mue_ep[MUE_ENDPT_TX]);
+		err = usbd_close_pipe(sc->mue_ep[MUE_ENDPT_TX]);
+		if (err) {
+			printf("%s: close tx pipe failed: %s\n",
+			    sc->mue_dev.dv_xname, usbd_errstr(err));
+		}
+		sc->mue_ep[MUE_ENDPT_TX] = NULL;
+	}
+
+	if (sc->mue_ep[MUE_ENDPT_INTR] != NULL) {
+		usbd_abort_pipe(sc->mue_ep[MUE_ENDPT_INTR]);
+		err = usbd_close_pipe(sc->mue_ep[MUE_ENDPT_INTR]);
+		if (err) {
+			printf("%s: close intr pipe failed: %s\n",
+			    sc->mue_dev.dv_xname, usbd_errstr(err));
+		}
+		sc->mue_ep[MUE_ENDPT_INTR] = NULL;
+	}
+
+	/* Free RX resources. */
+	for (i = 0; i < MUE_RX_LIST_CNT; i++) {
+		if (sc->mue_cdata.mue_rx_chain[i].mue_mbuf != NULL) {
+			m_freem(sc->mue_cdata.mue_rx_chain[i].mue_mbuf);
+			sc->mue_cdata.mue_rx_chain[i].mue_mbuf = NULL;
+		}
+		if (sc->mue_cdata.mue_rx_chain[i].mue_xfer != NULL) {
+			usbd_free_xfer(sc->mue_cdata.mue_rx_chain[i].mue_xfer);
+			sc->mue_cdata.mue_rx_chain[i].mue_xfer = NULL;
+		}
+	}
+
+	/* Free TX resources. */
+	for (i = 0; i < MUE_TX_LIST_CNT; i++) {
+		if (sc->mue_cdata.mue_tx_chain[i].mue_mbuf != NULL) {
+			m_freem(sc->mue_cdata.mue_tx_chain[i].mue_mbuf);
+			sc->mue_cdata.mue_tx_chain[i].mue_mbuf = NULL;
+		}
+		if (sc->mue_cdata.mue_tx_chain[i].mue_xfer != NULL) {
+			usbd_free_xfer(sc->mue_cdata.mue_tx_chain[i].mue_xfer);
+			sc->mue_cdata.mue_tx_chain[i].mue_xfer = NULL;
+		}
+	}
 
 	sc->mue_link = 0;
 }

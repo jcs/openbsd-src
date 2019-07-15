@@ -1,4 +1,4 @@
-/* $OpenBSD: bwfm.c,v 1.62 2019/05/22 15:25:25 patrick Exp $ */
+/* $OpenBSD: bwfm.c,v 1.63 2019/07/05 12:35:16 patrick Exp $ */
 /*
  * Copyright (c) 2010-2016 Broadcom Corporation
  * Copyright (c) 2016,2017 Patrick Wildt <patrick@blueri.se>

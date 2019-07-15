@@ -1,4 +1,4 @@
-.\" $OpenBSD: openssl.1,v 1.104 2019/07/04 13:55:20 inoguchi Exp $
+.\" $OpenBSD: openssl.1,v 1.111 2019/07/12 10:21:08 inoguchi Exp $
 .\" ====================================================================
 .\" Copyright (c) 1998-2002 The OpenSSL Project.  All rights reserved.
 .\"
@@ -110,7 +110,7 @@
 .\" copied and put under another distribution licence
 .\" [including the GNU Public Licence.]
 .\"
-.Dd $Mdocdate: July 4 2019 $
+.Dd $Mdocdate: July 12 2019 $
 .Dt OPENSSL 1
 .Os
 .Sh NAME
@@ -321,7 +321,7 @@ into a nested structure.
 .Op Fl keyform Cm pem | der
 .Op Fl md Ar alg
 .Op Fl msie_hack
-.Op Fl multivalue\-rdn
+.Op Fl multivalue-rdn
 .Op Fl name Ar section
 .Op Fl noemailDN
 .Op Fl notext
@@ -428,14 +428,14 @@ its use is strongly discouraged.
 The newer control
 .Qq Xenroll
 does not need this option.
-.It Fl multivalue\-rdn
+.It Fl multivalue-rdn
 This option causes the
 .Fl subj
 argument to be interpreted with full support for multivalued RDNs,
 for example
 .Qq "/DC=org/DC=OpenSSL/DC=users/UID=123456+CN=John Doe" .
 If
-.Fl multivalue\-rdn
+.Fl multivalue-rdn
 is not used, the UID value is set to
 .Qq "123456+CN=John Doe" .
 .It Fl name Ar section
@@ -993,7 +993,7 @@ The output format.
 .Sh DGST
 .nr nS 1
 .Nm "openssl dgst"
-.Op Fl cd
+.Op Fl cdr
 .Op Fl binary
 .Op Fl Ar digest
 .Op Fl hex
@@ -1081,6 +1081,8 @@ The output is either
 .Qq Verification OK
 or
 .Qq Verification Failure .
+.It Fl r
+Print the digest in coreutils format.
 .It Fl sign Ar file
 Digitally sign the digest using the private key in
 .Ar file .
@@ -1182,15 +1184,16 @@ parameters are generated instead.
 .Fl des | des3
 .Oc
 .Op Fl in Ar file
-.Op Fl inform Cm der | pem
+.Op Fl inform Cm der | pem | pvk
 .Op Fl modulus
 .Op Fl noout
 .Op Fl out Ar file
-.Op Fl outform Cm der | pem
+.Op Fl outform Cm der | pem | pvk
 .Op Fl passin Ar arg
 .Op Fl passout Ar arg
 .Op Fl pubin
 .Op Fl pubout
+.Op Fl pvk-none | pvk-strong | pvk-weak
 .Op Fl text
 .nr nS 0
 .Pp
@@ -1228,7 +1231,7 @@ These options can only be used with PEM format output files.
 The input file to read from,
 or standard input if not specified.
 If the key is encrypted, a pass phrase will be prompted for.
-.It Fl inform Cm der | pem
+.It Fl inform Cm der | pem | pvk
 The input format.
 .It Fl modulus
 Print the value of the public key component of the key.
@@ -1239,7 +1242,7 @@ The output file to write to,
 or standard output if not specified.
 If any encryption options are set then a pass phrase will be
 prompted for.
-.It Fl outform Cm der | pem
+.It Fl outform Cm der | pem | pvk
 The output format.
 .It Fl passin Ar arg
 The key password source.
@@ -1250,6 +1253,12 @@ Read in a public key, not a private key.
 .It Fl pubout
 Output a public key, not a private key.
 Automatically set if the input is a public key.
+.It Xo
+.Fl pvk-none | pvk-strong | pvk-weak
+.Xc
+Enable or disable PVK encoding.
+The default is
+.Fl pvk-strong .
 .It Fl text
 Print the public/private key in plain text.
 .El
@@ -1399,6 +1408,8 @@ Note: the
 alternative,
 as specified in RFC 3279,
 is currently not implemented.
+.It Fl param_out
+Print the elliptic curve parameters.
 .It Fl passin Ar arg
 The key password source.
 .It Fl passout Ar arg
@@ -1508,7 +1519,7 @@ Print the EC parameters in plain text.
 .nr nS 1
 .Nm "openssl enc"
 .Fl ciphername
-.Op Fl AadePp
+.Op Fl AadePpv
 .Op Fl base64
 .Op Fl bufsize Ar number
 .Op Fl debug
@@ -1665,6 +1676,8 @@ When the salt is being used
 the first eight bytes of the encrypted data are reserved for the salt:
 it is randomly generated when encrypting a file and read from the
 encrypted file when it is decrypted.
+.It Fl v
+Print extra details about the processing.
 .El
 .Sh ERRSTR
 .Nm openssl errstr
@@ -1846,7 +1859,10 @@ Print the private/public key in plain text.
 .nr nS 1
 .Nm "openssl genrsa"
 .Op Fl 3 | f4
-.Op Fl aes128 | aes192 | aes256 | des | des3
+.Oo
+.Fl aes128 | aes192 | aes256 | camellia128 |
+.Fl camellia192 | camellia256 | des | des3 | idea
+.Oc
 .Op Fl out Ar file
 .Op Fl passout Ar arg
 .Op Ar numbits
@@ -1871,9 +1887,14 @@ The options are as follows:
 .It Fl 3 | f4
 The public exponent to use, either 3 or 65537.
 The default is 65537.
-.It Fl aes128 | aes192 | aes256 | des | des3
-Encrypt the private key with the AES, DES,
-or the triple DES ciphers, respectively, before outputting it.
+.It Xo
+.Fl aes128 | aes192 | aes256 |
+.Fl camellia128 | camellia192 | camellia256 |
+.Fl des | des3 |
+.Fl idea
+.Xc
+Encrypt the private key with the AES, CAMELLIA, DES, triple DES
+or the IDEA ciphers, respectively, before outputting it.
 If none of these options are specified, no encryption is used.
 If encryption is used, a pass phrase is prompted for,
 if it is not supplied via the
@@ -1927,7 +1948,9 @@ a Netscape certificate sequence is created from a file of certificates.
 .Op Fl CApath Ar directory
 .Op Fl cert Ar file
 .Op Fl dgst Ar alg
+.Op Fl header Ar name value
 .Op Fl host Ar hostname : Ns Ar port
+.Op Fl ignore_err
 .Op Fl index Ar indexfile
 .Op Fl issuer Ar file
 .Op Fl ndays Ar days
@@ -1936,6 +1959,7 @@ a Netscape certificate sequence is created from a file of certificates.
 .Op Fl no_cert_verify
 .Op Fl no_certs
 .Op Fl no_chain
+.Op Fl no_explicit
 .Op Fl no_intern
 .Op Fl no_nonce
 .Op Fl no_signature_verify
@@ -1956,12 +1980,13 @@ a Netscape certificate sequence is created from a file of certificates.
 .Op Fl rkey Ar file
 .Op Fl rother Ar file
 .Op Fl rsigner Ar file
-.Op Fl serial Ar number
+.Op Fl serial Ar num
 .Op Fl sign_other Ar file
 .Op Fl signer Ar file
 .Op Fl signkey Ar file
 .Op Fl status_age Ar age
 .Op Fl text
+.Op Fl timeout Ar seconds
 .Op Fl trust_other
 .Op Fl url Ar responder_url
 .Op Fl VAfile Ar file
@@ -2010,6 +2035,10 @@ on
 specifies the HTTP path name to use, or
 .Pa /
 by default.
+.It Fl header Ar name value
+Add the header name with the specified value to the OCSP request that is sent
+to the responder.
+This may be repeated.
 .It Fl issuer Ar file
 The current issuer certificate, in PEM format.
 Can be used multiple times and must come before any
@@ -2029,6 +2058,8 @@ Don't include any certificates in the signed request.
 .It Fl no_chain
 Do not use certificates in the response as additional untrusted CA
 certificates.
+.It Fl no_explicit
+Don't check the explicit trust for OCSP signing in the root CA certificate.
 .It Fl no_intern
 Ignore certificates contained in the OCSP response
 when searching for the signer's certificate.
@@ -2103,6 +2134,8 @@ If the
 option is not present, then the private key is read from the same file
 as the certificate.
 If neither option is specified, the OCSP request is not signed.
+.It Fl timeout Ar seconds
+Connection timeout to the OCSP responder in seconds.
 .It Fl trust_other
 The certificates specified by the
 .Fl verify_other
@@ -2154,6 +2187,8 @@ The options for the OCSP server are as follows:
 .It Fl CA Ar file
 CA certificate corresponding to the revocation information in
 .Ar indexfile .
+.It Fl ignore_err
+Ignore the invalid response.
 .It Fl index Ar indexfile
 .Ar indexfile
 is a text index file in ca format
@@ -2324,6 +2359,7 @@ to each password hash.
 .Op Fl noout
 .Op Fl out Ar file
 .Op Fl outform Cm der | pem
+.Op Fl print
 .Op Fl print_certs
 .Op Fl text
 .nr nS 0
@@ -2350,6 +2386,8 @@ The output to write to,
 or standard output if not specified.
 .It Fl outform Cm der | pem
 The output format.
+.It Fl print
+Print the ASN.1 representation of PKCS#7 structure.
 .It Fl print_certs
 Print any certificates or CRLs contained in the file,
 preceded by their subject and issuer names in a one-line format.
@@ -2440,7 +2478,10 @@ It is recommended that des3 is used.
 .Sh PKCS12
 .nr nS 1
 .Nm "openssl pkcs12"
-.Op Fl aes128 | aes192 | aes256 | des | des3
+.Oo
+.Fl aes128 | aes192 | aes256 | camellia128 |
+.Fl camellia192 | camellia256 | des | des3 | idea
+.Oc
 .Op Fl cacerts
 .Op Fl CAfile Ar file
 .Op Fl caname Ar name
@@ -2458,6 +2499,7 @@ It is recommended that des3 is used.
 .Op Fl keyex
 .Op Fl keypbe Ar alg
 .Op Fl keysig
+.Op Fl LMK
 .Op Fl macalg Ar alg
 .Op Fl maciter
 .Op Fl name Ar name
@@ -2472,6 +2514,7 @@ It is recommended that des3 is used.
 .Op Fl out Ar file
 .Op Fl passin Ar arg
 .Op Fl passout Ar arg
+.Op Fl password Ar arg
 .Op Fl twopass
 .nr nS 0
 .Pp
@@ -2487,9 +2530,14 @@ option.
 .Pp
 The options for parsing a PKCS12 file are as follows:
 .Bl -tag -width "XXXX"
-.It Fl aes128 | aes192 | aes256 | des | des3
-Encrypt private keys
-using AES, DES, or triple DES, respectively.
+.It Xo
+.Fl aes128 | aes192 | aes256 |
+.Fl camellia128 | camellia192 | camellia256 |
+.Fl des | des3 |
+.Fl idea
+.Xc
+Encrypt private keys using AES, CAMELLIA, DES, triple DES
+or the IDEA ciphers, respectively.
 The default is triple DES.
 .It Fl cacerts
 Only output CA certificates
@@ -2594,6 +2642,8 @@ option marks the key for signing only.
 Signing only keys can be used for S/MIME signing, authenticode
 (ActiveX control signing)
 and SSL client authentication.
+.It Fl LMK
+Add local machine keyset attribute to private key.
 .It Fl macalg Ar alg
 Specify the MAC digest algorithm.
 The default is SHA1.
@@ -2629,6 +2679,16 @@ or standard output if not specified.
 The key password source.
 .It Fl passout Ar arg
 The output file password source.
+.It Fl password Ar arg
+With
+.Fl export ,
+.Fl password
+is equivalent to
+.Fl passout .
+Otherwise,
+.Fl password
+is equivalent to
+.Fl passin .
 .El
 .Sh PKEY
 .nr nS 1
@@ -2950,6 +3010,7 @@ or standard output if not specified.
 .Op Fl keyout Ar file
 .Op Fl md4 | md5 | sha1
 .Op Fl modulus
+.Op Fl multivalue-rdn
 .Op Fl nameopt Ar option
 .Op Fl new
 .Op Fl newhdr
@@ -2961,10 +3022,12 @@ or standard output if not specified.
 .Op Fl outform Cm der | pem
 .Op Fl passin Ar arg
 .Op Fl passout Ar arg
+.Op Fl pkeyopt Ar opt:value
 .Op Fl pubkey
 .Op Fl reqexts Ar section
 .Op Fl reqopt Ar option
 .Op Fl set_serial Ar n
+.Op Fl sigopt Ar nm:v
 .Op Fl subj Ar arg
 .Op Fl subject
 .Op Fl text
@@ -3033,6 +3096,16 @@ Some public key algorithms may override this choice.
 For instance, DSA signatures always use SHA1.
 .It Fl modulus
 Print the value of the modulus of the public key contained in the request.
+.It Fl multivalue-rdn
+This option causes the
+.Fl subj
+argument to be interpreted with full support for multivalued RDNs,
+for example
+.Qq "/DC=org/DC=OpenSSL/DC=users/UID=123456+CN=John Doe" .
+If
+.Fl multivalue-rdn
+is not used, the UID value is set to
+.Qq "123456+CN=John Doe" .
 .It Fl nameopt Ar option , Fl reqopt Ar option
 Determine how the subject or issuer names are displayed.
 .Ar option
@@ -3103,6 +3176,11 @@ The output format.
 The key password source.
 .It Fl passout Ar arg
 The output file password source.
+.It Fl pkeyopt Ar opt:value
+Set the public key algorithm option
+.Ar opt
+to
+.Ar value .
 .It Fl pubkey
 Output the public key.
 .It Fl reqopt Ar option
@@ -3121,6 +3199,9 @@ Serial number to use when outputting a self-signed certificate.
 This may be specified as a decimal value or a hex value if preceded by
 .Sq 0x .
 It is possible to use negative serial numbers but this is not recommended.
+.It Fl sigopt Ar nm:v
+Pass options to the signature algorithm during sign operation.
+The names and values of these options are algorithm-specific.
 .It Fl subj Ar arg
 Replaces the subject field of an input request
 with the specified data and output the modified request.
@@ -3359,15 +3440,18 @@ Any additional fields will be treated as though they were a
 .Op Fl aes128 | aes192 | aes256 | des | des3
 .Op Fl check
 .Op Fl in Ar file
-.Op Fl inform Cm der | net | pem
+.Op Fl inform Cm der | net | pem | pvk
 .Op Fl modulus
 .Op Fl noout
 .Op Fl out Ar file
-.Op Fl outform Cm der | net | pem
+.Op Fl outform Cm der | net | pem | pvk
 .Op Fl passin Ar arg
 .Op Fl passout Ar arg
 .Op Fl pubin
 .Op Fl pubout
+.Op Fl pvk-none | pvk-strong | pvk-weak
+.Op Fl RSAPublicKey_in
+.Op Fl RSAPublicKey_out
 .Op Fl sgckey
 .Op Fl text
 .nr nS 0
@@ -3403,7 +3487,7 @@ Check the consistency of an RSA private key.
 The input file to read from,
 or standard input if not specified.
 If the key is encrypted, a pass phrase will be prompted for.
-.It Fl inform Cm der | net | pem
+.It Fl inform Cm der | net | pem | pvk
 The input format.
 .It Fl noout
 Do not output the encoded version of the key.
@@ -3412,7 +3496,7 @@ Print the value of the modulus of the key.
 .It Fl out Ar file
 The output file to write to,
 or standard output if not specified.
-.It Fl outform Cm der | net | pem
+.It Fl outform Cm der | net | pem | pvk
 The output format.
 .It Fl passin Ar arg
 The key password source.
@@ -3425,6 +3509,20 @@ not a private key.
 Output a public key,
 not a private key.
 Automatically set if the input is a public key.
+.It Xo
+.Fl pvk-none | pvk-strong | pvk-weak
+.Xc
+Enable or disable PVK encoding.
+The default is
+.Fl pvk-strong .
+.It Fl RSAPublicKey_in , RSAPublicKey_out
+Same as
+.Fl pubin
+and
+.Fl pubout
+except
+.Cm RSAPublicKey
+format is used instead.
 .It Fl sgckey
 Use the modified NET algorithm used with some versions of Microsoft IIS
 and SGC keys.
@@ -3507,10 +3605,12 @@ Verify the input data and output the recovered data.
 .nr nS 1
 .Nm "openssl s_client"
 .Op Fl 4 | 6
+.Op Fl alpn Ar protocols
 .Op Fl bugs
 .Op Fl CAfile Ar file
 .Op Fl CApath Ar directory
 .Op Fl cert Ar file
+.Op Fl certform Cm der | pem
 .Op Fl check_ss_sig
 .Op Fl cipher Ar cipherlist
 .Op Fl connect Ar host Ns Op : Ns Ar port
@@ -3518,36 +3618,53 @@ Verify the input data and output the recovered data.
 .Op Fl crl_check_all
 .Op Fl crlf
 .Op Fl debug
+.Op Fl dtls1
 .Op Fl extended_crl
 .Op Fl groups
+.Op Fl host Ar host
 .Op Fl ign_eof
 .Op Fl ignore_critical
 .Op Fl issuer_checks
 .Op Fl key Ar keyfile
+.Op Fl keyform Cm der | pem
+.Op Fl keymatexport Ar label
+.Op Fl keymatexportlen Ar len
+.Op Fl legacy_server_connect
 .Op Fl msg
+.Op Fl mtu Ar mtu
 .Op Fl nbio
 .Op Fl nbio_test
+.Op Fl no_comp
+.Op Fl no_ign_eof
+.Op Fl no_legacy_server_connect
 .Op Fl no_ticket
 .Op Fl no_tls1
 .Op Fl no_tls1_1
 .Op Fl no_tls1_2
+.Op Fl pass Ar arg
 .Op Fl pause
 .Op Fl policy_check
+.Op Fl port Ar port
 .Op Fl prexit
 .Op Fl proxy Ar host : Ns Ar port
-.Op Fl psk Ar key
-.Op Fl psk_identity Ar identity
 .Op Fl quiet
 .Op Fl reconnect
 .Op Fl servername Ar name
+.Op Fl serverpref
+.Op Fl sess_in Ar file
+.Op Fl sess_out Ar file
 .Op Fl showcerts
 .Op Fl starttls Ar protocol
 .Op Fl state
+.Op Fl status
+.Op Fl timeout
 .Op Fl tls1
 .Op Fl tls1_1
 .Op Fl tls1_2
 .Op Fl tlsextdebug
+.Op Fl use_srtp Ar profiles
 .Op Fl verify Ar depth
+.Op Fl verify_return_error
 .Op Fl x509_strict
 .Op Fl xmpphost Ar host
 .nr nS 0
@@ -3576,6 +3693,11 @@ The options are as follows:
 Attempt connections using IPv4 only.
 .It Fl 6
 Attempt connections using IPv6 only.
+.It Fl alpn Ar protocols
+Enable the Application-Layer Protocol Negotiation.
+.Ar protocols
+is a comma-separated list of protocol names that the client should advertise
+support for.
 .It Fl bugs
 Enable various workarounds for buggy implementations.
 .It Fl CAfile Ar file
@@ -3596,6 +3718,10 @@ These are also used when building the client certificate chain.
 .It Fl cert Ar file
 The certificate to use, if one is requested by the server.
 The default is not to use a certificate.
+.It Fl certform Cm der | pem
+The certificate format.
+The default is
+.Cm pem .
 .It Xo
 .Fl check_ss_sig ,
 .Fl crl_check ,
@@ -3633,25 +3759,57 @@ Translate a line feed from the terminal into CR+LF,
 as required by some servers.
 .It Fl debug
 Print extensive debugging information, including a hex dump of all traffic.
+.It Fl dtls1
+Permit only DTLS1.0.
 .It Fl groups Ar ecgroups
 Specify a colon-separated list of permitted EC curve groups.
+.It Fl host Ar host
+The
+.Ar host
+to connect to.
+The default is localhost.
 .It Fl ign_eof
 Inhibit shutting down the connection when end of file is reached in the input.
 .It Fl key Ar keyfile
 The private key to use.
 If not specified, the certificate file will be used.
+.It Fl keyform Cm der | pem
+The private key format.
+The default is
+.Cm pem .
+.It Fl keymatexport Ar label
+Export keying material using label.
+.It Fl keymatexportlen Ar len
+Export len bytes of keying material (default 20).
+.It Fl legacy_server_connect , no_legacy_server_connect
+Allow or disallow initial connection to servers that don't support RI.
 .It Fl msg
 Show all protocol messages with hex dump.
+.It Fl mtu Ar mtu
+Set the link layer MTU.
 .It Fl nbio
 Turn on non-blocking I/O.
 .It Fl nbio_test
 Test non-blocking I/O.
+.It Fl no_ign_eof
+Shut down the connection when end of file is reached in the input.
+Can be used to override the implicit
+.Fl ign_eof
+after
+.Fl quiet .
 .It Fl no_tls1 | no_tls1_1 | no_tls1_2
 Disable the use of TLS1.0, 1.1, and 1.2, respectively.
 .It Fl no_ticket
 Disable RFC 4507 session ticket support.
+.It Fl pass Ar arg
+The private key password source.
 .It Fl pause
 Pause 1 second between each read and write call.
+.It Fl port Ar port
+The
+.Ar port
+to connect to.
+The default is 4433.
 .It Fl prexit
 Print session information when the program exits.
 This will always attempt
@@ -3673,16 +3831,6 @@ argument is given to the proxy.
 If not specified, localhost is used as final destination.
 After that, switch the connection through the proxy to the destination
 to TLS.
-.It Fl psk Ar key
-Use the PSK key
-.Ar key
-when using a PSK cipher suite.
-The key is given as a hexadecimal number without the leading 0x,
-for example -psk 1a2b3c4d.
-.It Fl psk_identity Ar identity
-Use the PSK
-.Ar identity
-when using a PSK cipher suite.
 .It Fl quiet
 Inhibit printing of session and certificate information.
 This implicitly turns on
@@ -3698,6 +3846,13 @@ message, using the specified server
 .It Fl showcerts
 Display the whole server certificate chain: normally only the server
 certificate itself is displayed.
+.It Fl serverpref
+Use the server's cipher preferences.
+.It Fl sess_in Ar file
+Load TLS session from file.
+The client will attempt to resume a connection from this session.
+.It Fl sess_out Ar file
+Output TLS session to file.
 .It Fl starttls Ar protocol
 Send the protocol-specific messages to switch to TLS for communication.
 .Ar protocol
@@ -3711,10 +3866,17 @@ and
 .Qq xmpp .
 .It Fl state
 Print the SSL session states.
+.It Fl status
+Send a certificate status request to the server (OCSP stapling).
+The server response (if any) is printed out.
+.It Fl timeout
+Enable send/receive timeout on DTLS connections.
 .It Fl tls1 | tls1_1 | tls1_2
 Permit only TLS1.0, 1.1, or 1.2, respectively.
 .It Fl tlsextdebug
 Print a hex dump of any TLS extensions received from the server.
+.It Fl use_srtp Ar profiles
+Offer SRTP key management with a colon-separated profile list.
 .It Fl verify Ar depth
 Turn on server certificate verification,
 with a maximum length of
@@ -3723,6 +3885,8 @@ Currently the verify operation continues after errors so all the problems
 with a certificate chain can be seen.
 As a side effect the connection will never fail due to a server
 certificate verify failure.
+.It Fl verify_return_error
+Return verification error.
 .It Fl xmpphost Ar hostname
 When used with
 .Fl starttls Ar xmpp ,
@@ -3735,42 +3899,67 @@ will be used.
 .nr nS 1
 .Nm "openssl s_server"
 .Op Fl accept Ar port
+.Op Fl alpn Ar protocols
 .Op Fl bugs
 .Op Fl CAfile Ar file
 .Op Fl CApath Ar directory
 .Op Fl cert Ar file
+.Op Fl cert2 Ar file
+.Op Fl certform Cm der | pem
 .Op Fl cipher Ar cipherlist
 .Op Fl context Ar id
 .Op Fl crl_check
 .Op Fl crl_check_all
 .Op Fl crlf
 .Op Fl dcert Ar file
+.Op Fl dcertform Cm der | pem
 .Op Fl debug
 .Op Fl dhparam Ar file
 .Op Fl dkey Ar file
-.Op Fl hack
+.Op Fl dkeyform Cm der | pem
+.Op Fl dpass Ar arg
+.Op Fl dtls1
 .Op Fl HTTP
 .Op Fl id_prefix Ar arg
 .Op Fl key Ar keyfile
+.Op Fl key2 Ar keyfile
+.Op Fl keyform Cm der | pem
+.Op Fl keymatexport Ar label
+.Op Fl keymatexportlen Ar len
 .Op Fl msg
+.Op Fl mtu Ar mtu
+.Op Fl named_curve Ar arg
 .Op Fl nbio
 .Op Fl nbio_test
+.Op Fl no_cache
 .Op Fl no_dhe
+.Op Fl no_ecdhe
+.Op Fl no_ticket
 .Op Fl no_tls1
 .Op Fl no_tls1_1
 .Op Fl no_tls1_2
 .Op Fl no_tmp_rsa
 .Op Fl nocert
-.Op Fl psk Ar key
-.Op Fl psk_hint Ar hint
+.Op Fl pass Ar arg
+.Op Fl port Ar port
 .Op Fl quiet
+.Op Fl servername Ar name
+.Op Fl servername_fatal
 .Op Fl serverpref
 .Op Fl state
+.Op Fl status
+.Op Fl status_timeout Ar nsec
+.Op Fl status_url Ar url
+.Op Fl status_verbose
+.Op Fl timeout
 .Op Fl tls1
 .Op Fl tls1_1
 .Op Fl tls1_2
+.Op Fl tlsextdebug
+.Op Fl use_srtp Ar profiles
 .Op Fl Verify Ar depth
 .Op Fl verify Ar depth
+.Op Fl verify_return_error
 .Op Fl WWW
 .Op Fl www
 .nr nS 0
@@ -3805,11 +3994,15 @@ Print out some session cache status information.
 .Pp
 The options are as follows:
 .Bl -tag -width Ds
-.It Fl accept Ar port
+.It Fl accept Ar port , Fl port Ar port
 Listen on TCP
 .Ar port
 for connections.
 The default is port 4433.
+.It Fl alpn Ar protocols
+Enable the Application-Layer Protocol Negotiation.
+.Ar protocols
+is a comma-separated list of supported protocol names.
 .It Fl bugs
 Enable various workarounds for buggy implementations.
 .It Fl CAfile Ar file
@@ -3837,6 +4030,12 @@ For example, the DSS cipher suites require a certificate containing a DSS
 If not specified, the file
 .Pa server.pem
 will be used.
+.It Fl cert2 Ar file
+The certificate to use for servername.
+.It Fl certform Cm der | pem
+The certificate format.
+The default is
+.Cm pem .
 .It Fl cipher Ar cipherlist
 Modify the cipher list used by the server.
 This allows the cipher list used by the server to be modified.
@@ -3868,6 +4067,9 @@ options except there is no default if they are not specified
 By using RSA and DSS certificates and keys,
 a server can support clients which only support RSA or DSS cipher suites
 by using an appropriate certificate.
+.It Fl dcertform Cm der | pem , Fl dkeyform Cm der | pem , Fl dpass Ar arg
+Additional certificate and private key format, and private key password source,
+respectively.
 .It Fl debug
 Print extensive debugging information, including a hex dump of all traffic.
 .It Fl dhparam Ar file
@@ -3879,8 +4081,8 @@ load the parameters from the server certificate file.
 If this fails, a static set of parameters hard coded into the
 .Nm s_server
 program will be used.
-.It Fl hack
-Enables a further workaround for some early Netscape SSL code.
+.It Fl dtls1
+Permit only DTLS1.0.
 .It Fl HTTP
 Emulate a simple web server.
 Pages are resolved relative to the current directory.
@@ -3901,14 +4103,34 @@ when each of which might be generating a unique range of session IDs.
 .It Fl key Ar keyfile
 The private key to use.
 If not specified, the certificate file will be used.
+.It Fl key2 Ar keyfile
+The private key to use for servername.
+.It Fl keyform Cm der | pem
+The private key format.
+The default is
+.Cm pem .
+.It Fl keymatexport Ar label
+Export keying material using label.
+.It Fl keymatexportlen Ar len
+Export len bytes of keying material (default 20).
 .It Fl msg
 Show all protocol messages with hex dump.
+.It Fl mtu Ar mtu
+Set the link layer MTU.
+.It Fl named_curve Ar arg
+Specify the elliptic curve name to use for ephemeral ECDH keys.
 .It Fl nbio
 Turn on non-blocking I/O.
 .It Fl nbio_test
 Test non-blocking I/O.
+.It Fl no_cache
+Disable session caching.
 .It Fl no_dhe
 Disable ephemeral DH cipher suites.
+.It Fl no_ecdhe
+Disable ephemeral ECDH cipher suites.
+.It Fl no_ticket
+Disable RFC 4507 session ticket support.
 .It Fl no_tls1 | no_tls1_1 | no_tls1_2
 Disable the use of TLS1.0, 1.1, and 1.2, respectively.
 .It Fl no_tmp_rsa
@@ -3917,24 +4139,42 @@ Disable temporary RSA key generation.
 Do not use a certificate.
 This restricts the cipher suites available to the anonymous ones
 (currently just anonymous DH).
-.It Fl psk Ar key
-Use the PSK key
-.Ar key
-when using a PSK cipher suite.
-The key is given as a hexadecimal number without the leading 0x,
-for example -psk 1a2b3c4d.
-.It Fl psk_hint Ar hint
-Use the PSK identity hint
-.Ar hint
-when using a PSK cipher suite.
+.It Fl pass Ar arg
+The private key password source.
 .It Fl quiet
 Inhibit printing of session and certificate information.
+.It Fl servername Ar name
+Set the TLS Server Name Indication (SNI) extension with
+.Ar name .
+.It Fl servername_fatal
+Send fatal alert if servername does not match.
+The default is warning alert.
 .It Fl serverpref
 Use server's cipher preferences.
 .It Fl state
 Print the SSL session states.
+.It Fl status
+Enables certificate status request support (OCSP stapling).
+.It Fl status_timeout Ar nsec
+Sets the timeout for OCSP response in seconds.
+.It Fl status_url Ar url
+Sets a fallback responder URL to use if no responder URL is present in the
+server certificate.
+Without this option, an error is returned if the server certificate does not
+contain a responder address.
+.It Fl status_verbose
+Enables certificate status request support (OCSP stapling) and gives a verbose
+printout of the OCSP response.
+.It Fl timeout
+Enable send/receive timeout on DTLS connections.
 .It Fl tls1 | tls1_1 | tls1_2
 Permit only TLS1.0, 1.1, or 1.2, respectively.
+.It Fl tlsextdebug
+Print a hex dump of any TLS extensions received from the server.
+.It Fl use_srtp Ar profiles
+Offer SRTP key management with a colon-separated profile list.
+.It Fl verify_return_error
+Return verification error.
 .It Fl WWW
 Emulate a simple web server.
 Pages are resolved relative to the current directory.
@@ -4191,6 +4431,7 @@ debugging purposes.
 .Op Fl noindef
 .Op Fl nointern
 .Op Fl nosigs
+.Op Fl nosmimecap
 .Op Fl noverify
 .Op Fl out Ar file
 .Op Fl outform Cm der | pem | smime
@@ -4388,6 +4629,9 @@ Only use certificates specified in the
 The supplied certificates can still be used as untrusted CAs.
 .It Fl nosigs
 Do not try to verify the signatures on the message.
+.It Fl nosmimecap
+Exclude the list of supported algorithms from signed attributes,
+other options such as signing time and content type are still included.
 .It Fl noverify
 Do not verify the signer's certificate of a signed message.
 .It Fl out Ar file
@@ -4911,6 +5155,7 @@ The default is no.
 .Op Fl CAfile Ar file
 .Op Fl CApath Ar directory
 .Op Fl check_ss_sig
+.Op Fl CRLfile Ar file
 .Op Fl crl_check
 .Op Fl crl_check_all
 .Op Fl explicit_policy
@@ -4922,6 +5167,7 @@ The default is no.
 .Op Fl issuer_checks
 .Op Fl policy_check
 .Op Fl purpose Ar purpose
+.Op Fl trusted Ar file
 .Op Fl untrusted Ar file
 .Op Fl verbose
 .Op Fl x509_strict
@@ -4934,10 +5180,6 @@ command verifies certificate chains.
 .Pp
 The options are as follows:
 .Bl -tag -width Ds
-.It Fl check_ss_sig
-Verify the signature on the self-signed root CA.
-This is disabled by default
-because it doesn't add any security.
 .It Fl CAfile Ar file
 A
 .Ar file
@@ -4960,6 +5202,14 @@ is the hashed certificate subject name
 option of the
 .Nm x509
 utility).
+.It Fl check_ss_sig
+Verify the signature on the self-signed root CA.
+This is disabled by default
+because it doesn't add any security.
+.It Fl CRLfile Ar file
+The
+.Ar file
+should contain one or more CRLs in PEM format.
 .It Fl crl_check
 Check end entity certificate validity by attempting to look up a valid CRL.
 If a valid CRL cannot be found an error occurs.
@@ -4998,6 +5248,13 @@ Currently accepted uses are
 .Cm any ,
 and
 .Cm ocsphelper .
+.It Fl trusted Ar file
+A
+.Ar file
+of trusted certificates.
+The
+.Ar file
+should contain multiple certificates.
 .It Fl untrusted Ar file
 A
 .Ar file
@@ -5283,6 +5540,7 @@ version.
 .Op Fl md5 | sha1
 .Op Fl modulus
 .Op Fl nameopt Ar option
+.Op Fl next_serial
 .Op Fl noout
 .Op Fl ocsp_uri
 .Op Fl ocspid
@@ -5296,6 +5554,7 @@ version.
 .Op Fl set_serial Ar n
 .Op Fl setalias Ar arg
 .Op Fl signkey Ar file
+.Op Fl sigopt Ar nm:v
 .Op Fl startdate
 .Op Fl subject
 .Op Fl subject_hash
@@ -5563,6 +5822,8 @@ are represented using the format \eUXXXX for 16 bits and \eWXXXXXXXX
 for 32 bits,
 and any UTF8Strings are converted to their character form first.
 .El
+.It Fl next_serial
+Print the next serial number.
 .It Fl noout
 Do not output the encoded version of the request.
 .It Fl ocsp_uri
@@ -5573,6 +5834,9 @@ Print OCSP hash values for the subject name and public key.
 Print the public key.
 .It Fl serial
 Print the certificate serial number.
+.It Fl sigopt Ar nm:v
+Pass options to the signature algorithm during sign or certify operations.
+The names and values of these options are algorithm-specific.
 .It Fl startdate
 Print the start date of the certificate; that is, the
 .Cm notBefore
@@ -5963,6 +6227,8 @@ Insecure legacy format.
 .It Cm pem
 Privacy Enhanced Mail (PEM)
 is base64-encoded.
+.It Cm pvk
+Private Key format.
 .It Cm smime
 An SMIME format message.
 .It Cm txt

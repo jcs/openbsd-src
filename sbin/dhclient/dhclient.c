@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.641 2019/07/01 16:53:59 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.643 2019/07/15 11:07:00 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -450,7 +450,7 @@ main(int argc, char *argv[])
 
 	log_setverbose(0);	/* Don't show log_debug() messages. */
 
-	while ((ch = getopt(argc, argv, "c:di:l:L:nrv")) != -1)
+	while ((ch = getopt(argc, argv, "c:di:L:nrv")) != -1)
 		switch (ch) {
 		case 'c':
 			path_dhclient_conf = optarg;
@@ -462,14 +462,6 @@ main(int argc, char *argv[])
 			ignore_list = strdup(optarg);
 			if (ignore_list == NULL)
 				fatal("ignore_list");
-			break;
-		case 'l':
-			path_lease_db = optarg;
-			if (lstat(path_lease_db, &sb) != -1) {
-				if (S_ISREG(sb.st_mode) == 0)
-					fatalx("'%s' is not a regular file",
-					    path_lease_db);
-			}
 			break;
 		case 'L':
 			path_option_db = optarg;
@@ -574,8 +566,7 @@ main(int argc, char *argv[])
 	if ((pw = getpwnam("_dhcp")) == NULL)
 		fatalx("no such user: _dhcp");
 
-	if (path_lease_db == NULL && asprintf(&path_lease_db, "%s.%s",
-	    _PATH_LEASE_DB, ifi->name) == -1)
+	if (asprintf(&path_lease_db, "%s.%s", _PATH_LEASE_DB, ifi->name) == -1)
 		fatal("path_lease_db");
 
 	interface_state(ifi);
@@ -667,7 +658,7 @@ usage(void)
 
 	fprintf(stderr,
 	    "usage: %s [-dnrv] [-c file] [-i options] [-L file] "
-	    "[-l file] interface\n", __progname);
+	    "interface\n", __progname);
 	exit(1);
 }
 
@@ -2231,6 +2222,13 @@ fork_privchld(struct interface_info *ifi, int fd, int fd2)
 		fatal("socket(AF_INET, SOCK_DGRAM)");
 	if ((routefd = socket(AF_ROUTE, SOCK_RAW, 0)) == -1)
 		fatal("socket(AF_ROUTE, SOCK_RAW)");
+
+	if (unveil("/etc/resolv.conf", "wc") == -1)
+		fatal("unveil");
+	if (unveil("/etc/resolv.conf.tail", "r") == -1)
+		fatal("unveil");
+	if (unveil(NULL, NULL) == -1)
+		fatal("unveil");
 
 	while (quit == 0) {
 		pfd[0].fd = priv_ibuf->fd;

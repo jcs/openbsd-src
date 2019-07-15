@@ -1,4 +1,4 @@
-/*	$OpenBSD: control.c,v 1.15 2019/05/28 06:49:46 otto Exp $ */
+/*	$OpenBSD: control.c,v 1.17 2019/07/10 05:53:37 otto Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -47,12 +47,12 @@ control_check(char *path)
 	strlcpy(sun.sun_path, path, sizeof(sun.sun_path));
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-		log_warn("control_check: socket check");
+		log_debug("control_check: socket check");
 		return (-1);
 	}
 
 	if (connect(fd, (struct sockaddr *)&sun, sizeof(sun)) == 0) {
-		log_warnx("control_check: socket in use");
+		log_debug("control_check: socket in use");
 		close(fd);
 		return (-1);
 	}
@@ -353,7 +353,7 @@ build_show_peer(struct ctl_show_peer *cp, struct ntp_peer *p)
 	if (p->addr_head.pool)
 		pool = "from pool ";
 
-	if (0 != strcmp(a, p->addr_head.name))
+	if (0 != strcmp(a, p->addr_head.name) || p->addr_head.pool)
 		addr_head_name = p->addr_head.name;
 
 	snprintf(cp->peer_desc, sizeof(cp->peer_desc),

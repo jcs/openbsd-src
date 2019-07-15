@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.14 2018/12/18 13:44:11 visa Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.16 2019/07/12 03:03:48 visa Exp $	*/
 /*
  * Copyright (c) 2009 Miodrag Vallat.
  *
@@ -27,13 +27,12 @@
 
 extern void dumpconf(void);
 int parseduid(const char *, u_char *);
-void parse_uboot_root(void);
 
 int	cold = 1;
 struct device *bootdv = NULL;
 char    bootdev[16];
+char uboot_rootdev[64];
 enum devclass bootdev_class = DV_DULL;
-extern char uboot_rootdev[];
 
 void
 cpu_configure(void)
@@ -54,7 +53,7 @@ struct devmap {
 	enum devclass	 class;
 };
 
-struct devmap *
+enum devclass
 findtype(void)
 {
 	static struct devmap devmap[] = {
@@ -62,45 +61,41 @@ findtype(void)
 		{ "sd", DV_DISK },
 		{ "octcf", DV_DISK },
 		{ "amdcf", DV_DISK },
-		{ "cnmac", DV_IFNET },
-		{ NULL, DV_DULL }
+		{ NULL, DV_IFNET }
 	};
 	struct devmap *dp = &devmap[0];
 
 	if (strlen(bootdev) < 2)
-		return dp;
+		return DV_DISK;
 
 	while (dp->dev) {
 		if (strncmp(bootdev, dp->dev, strlen(dp->dev)) == 0)
 			break;
 		dp++;
 	}
-
-	if (dp->dev == NULL)
-		printf("%s is not a valid rootdev\n", bootdev);
-
-	return dp;
+	return dp->class;
 }
 
 void
-parse_uboot_root(void)
+parse_uboot_root(const char *p)
 {
-	struct devmap *dp;
-	char *p;
+	const char *base;
 	size_t len;
 
 	/*
-	 * Turn the U-Boot root device (rootdev=/dev/octcf0) into a boot device.
+	 * Turn the U-Boot root device (/dev/octcf0) into a boot device.
 	 */
-	p = strrchr(uboot_rootdev, '/');
-	if (p == NULL) {
-		p = strchr(uboot_rootdev, '=');
-		if (p == NULL)
-			return;
-	}
-	p++;
+
+	if (strlen(uboot_rootdev) != 0)
+		return;
+
+	/* Get device basename. */
+	base = strrchr(p, '/');
+	if (base != NULL)
+		p = base + 1;
 
 	if (parseduid(p, bootduid) == 0) {
+		strlcpy(uboot_rootdev, p, sizeof(uboot_rootdev));
 		bootdev_class = DV_DISK;
 		return;
 	}
@@ -110,9 +105,8 @@ parse_uboot_root(void)
 		return;
 
 	strlcpy(bootdev, p, sizeof(bootdev));
-
-	dp = findtype();
-	bootdev_class = dp->class;
+	strlcpy(uboot_rootdev, p, sizeof(uboot_rootdev));
+	bootdev_class = findtype();
 }
 
 static unsigned int

@@ -1,4 +1,4 @@
-/*	$OpenBSD: file.h,v 1.54 2019/06/22 06:48:25 semarie Exp $	*/
+/*	$OpenBSD: file.h,v 1.57 2019/07/12 13:56:28 solene Exp $	*/
 /*	$NetBSD: file.h,v 1.11 1995/03/26 20:24:13 jtc Exp $	*/
 
 /*
@@ -63,8 +63,7 @@ struct	fileops {
 	int	(*fo_close)(struct file *, struct proc *);
 	int	(*fo_seek)(struct file *, off_t *, int, struct proc *);
 };
-#define FO_POSITION 0x01	/* positioned read/write */
-
+#define FO_POSITION	0x00000001	/* positioned read/write */
 
 /*
  * Kernel descriptor table.

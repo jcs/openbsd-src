@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 # ex:ts=8 sw=4:
-# $OpenBSD: PkgCreate.pm,v 1.155 2019/05/28 23:24:44 espie Exp $
+# $OpenBSD: PkgCreate.pm,v 1.161 2019/07/14 07:27:18 espie Exp $
 #
 # Copyright (c) 2003-2014 Marc Espie <espie@openbsd.org>
 #
@@ -635,7 +635,9 @@ sub format_source_page
 	my $fullname = $self->cwd."/".$dest;
 	my $d = dirname($fullname);
 	$state->{mandir} //= OpenBSD::Temp::permanent_dir(
-	    $ENV{TMPDIR} // '/tmp', "manpage");
+	    $ENV{TMPDIR} // '/tmp', "manpage") or
+	    	$state->error(OpenBSD::Temp->last_error) and
+		return 0;
 	my $tempname = $state->{mandir}.$fullname;
 	require File::Path;
 	File::Path::make_path($state->{mandir}.$d);
@@ -1396,7 +1398,11 @@ sub create_plist
 		    if defined $state->opt('v');
 		$state->set_status("reading plist");
 	}
-	$plist->set_infodir(OpenBSD::Temp->dir);
+	my $dir = OpenBSD::Temp->dir;
+	if (!$dir) {
+		$state->fatal(OpenBSD::Temp->last_error);
+	}
+	$plist->set_infodir($dir);
 	if (!defined $state->opt('S')) {
 		$self->read_all_fragments($state, $plist);
 	}
@@ -1581,26 +1587,9 @@ sub save_history
 	return $l;
 }
 
-sub parse_and_run
+sub run_command
 {
-	my ($self, $cmd) = @_;
-
-	my $regen_package = 0;
-	my $sign_only = 0;
-
-	my $state = OpenBSD::PkgCreate::State->new($cmd);
-	$state->handle_options;
-
-	if (@ARGV == 0) {
-		$regen_package = 1;
-	} elsif (@ARGV != 1) {
-		if (defined $state->{contents} || 
-		    !defined $state->{signature_params}) {
-			$state->usage("Exactly one single package name is required: #1", join(' ', @ARGV));
-		}
-	}
-
-	try {
+	my ($self, $state) = @_;
 	if (defined $state->opt('Q')) {
 		$state->{opt}{q} = 1;
 	}
@@ -1610,7 +1599,7 @@ sub parse_and_run
 	}
 
 	my $plist;
-	if ($regen_package) {
+	if ($state->{regen_package}) {
 		if (!defined $state->{contents} || @{$state->{contents}} > 1) {
 			$state->usage("Exactly one single packing-list is required");
 		}
@@ -1634,7 +1623,7 @@ sub parse_and_run
 			$plist->stub_digest($ordered);
 		} else {
 			$state->set_status("checksumming");
-			if ($regen_package) {
+			if ($state->{regen_package}) {
 				$state->progress->visit_with_count($plist, 
 				    'verify_checksum');
 			} else {
@@ -1677,7 +1666,7 @@ sub parse_and_run
 	$state->{bad} = 0;
 
 	my $wname;
-	if ($regen_package) {
+	if ($state->{regen_package}) {
 		$wname = $plist->pkgname.".tgz";
 	} else {
 		$plist->save or $state->fatal("can't write packing-list");
@@ -1694,11 +1683,29 @@ sub parse_and_run
 	if (!$state->defines("stub")) {
 		$self->finish_manpages($state, $plist);
 	}
-	}catch {
-		print STDERR "$0: $_\n";
-		return 1;
-	};
-	return 0;
+}
+
+sub parse_and_run
+{
+	my ($self, $cmd) = @_;
+
+	my $sign_only = 0;
+	my $rc = 0;
+
+	my $state = OpenBSD::PkgCreate::State->new($cmd);
+	$state->handle_options;
+
+	if (@ARGV == 0) {
+		$state->{regen_package} = 1;
+	} elsif (@ARGV != 1) {
+		if (defined $state->{contents} || 
+		    !defined $state->{signature_params}) {
+			$state->usage("Exactly one single package name is required: #1", join(' ', @ARGV));
+		}
+	}
+
+	$self->try_and_run_command($state);
+	return $state->{bad} != 0;
 }
 
 1;

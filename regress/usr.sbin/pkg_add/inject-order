@@ -1,13 +1,12 @@
 #! /usr/bin/perl
 
-# $OpenBSD: injectadd,v 1.2 2018/06/18 14:59:15 espie Exp $
+# $OpenBSD: inject-order,v 1.1 2019/07/09 10:48:30 espie Exp $
 
 use warnings;
 use strict;
 
 # This script injects a specific order in the dependencies key to reproduce
 # the cups bug
-use OpenBSD::PkgAdd;
 use OpenBSD::Dependencies;
 
 package OpenBSD::Dependencies::SolverBase;
@@ -24,5 +23,4 @@ sub dependencies
 }
 }
 
-package main;
-exit (OpenBSD::PkgAdd->parse_and_run('pkg_add'));
+1;

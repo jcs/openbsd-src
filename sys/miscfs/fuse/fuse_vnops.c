@@ -1,4 +1,4 @@
-/* $OpenBSD: fuse_vnops.c,v 1.52 2018/07/18 10:47:02 helg Exp $ */
+/* $OpenBSD: fuse_vnops.c,v 1.54 2019/07/12 13:56:27 solene Exp $ */
 /*
  * Copyright (c) 2012-2013 Sylvestre Gallon <ccna.syl@gmail.com>
  *

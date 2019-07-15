@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1083 2019/07/02 09:04:53 yasuoka Exp $ */
+/*	$OpenBSD: pf.c,v 1.1085 2019/07/11 09:39:52 sashan Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -586,7 +586,10 @@ pf_insert_src_node(struct pf_src_node **sn, struct pf_rule *rule,
 		}
 		(*sn)->creation = time_uptime;
 		(*sn)->rule.ptr->src_nodes++;
-		(*sn)->kif = kif;
+		if (kif != NULL) {
+			(*sn)->kif = kif;
+			pfi_kif_ref(kif, PFI_KIF_REF_SRCNODE);
+		}
 		pf_status.scounters[SCNT_SRC_NODE_INSERT]++;
 		pf_status.src_nodes++;
 	} else {
@@ -612,6 +615,7 @@ pf_remove_src_node(struct pf_src_node *sn)
 	RB_REMOVE(pf_src_tree, &tree_src_tracking, sn);
 	pf_status.scounters[SCNT_SRC_NODE_REMOVALS]++;
 	pf_status.src_nodes--;
+	pfi_kif_unref(sn->kif, PFI_KIF_REF_SRCNODE);
 	pool_put(&pf_src_tree_pl, sn);
 }
 

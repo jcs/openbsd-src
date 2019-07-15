@@ -1,7 +1,7 @@
 #! /usr/bin/perl
 
 # ex:ts=8 sw=4:
-# $OpenBSD: my,v 1.2 2014/11/20 11:42:50 espie Exp $
+# $OpenBSD: my,v 1.5 2019/07/09 11:27:09 espie Exp $
 #
 # Copyright (c) 2011 Marc Espie <espie@openbsd.org>
 #
@@ -26,7 +26,6 @@ File::Path::make_path("$root/pkgdb");
 
 $ENV{'PKG_DBDIR'} = "$root/pkgdb";
 my $prog = "pkg_".(shift @ARGV);
-my $run;
 
 my @args = ('-D', 'nonroot', @ARGV);
 if ($prog ne 'pkg_info') {
@@ -35,14 +34,37 @@ if ($prog ne 'pkg_info') {
 if ($prog eq 'pkg_add') {
 	unshift(@args, '-D', 'unsigned');
 }
+unshift(@args, '-D', 'NOINSTALLPATH');
 if ($ENV{'DEBUG'}) {
 	unshift(@args, 'perl', '-d', "/usr/sbin/$prog", '-D', 'debug');
-	$run = 'perl';
 } else {
 	unshift(@args, $prog);
-	$run = $prog;
 }
 print STDERR join(' ', $prog, @ARGV), "\n" unless $ENV{'SILENT'} || $ENV{'VERBOSE'};
-print join(' ', $run, @args), "\n" if $ENV{'VERBOSE'};
+print join(' ', @args), "\n" if $ENV{'VERBOSE'};
 
-exec {$run} @args;
+my $choices = {
+	pkg_add => 'PkgAdd',
+	pkg_check => 'PkgCheck',
+	pkg_create => 'PkgCreate',
+	pkg_delete => 'PkgDelete',
+	pkg_info => 'PkgInfo',
+	pkg_sign => 'PkgSign',
+	fw_update => 'FwUpdate',
+};
+
+if (defined $ENV{INJECT}) {
+	my $module = "OpenBSD::$choices->{$prog}";
+	eval "require $module";
+	if ($@) {
+		die $@;
+	}
+	eval "require \"$ENV{INJECT}\"";
+	if ($@) {
+		die $@;
+	}
+	@ARGV = @args;
+	exit($module->parse_and_run(shift @ARGV));
+} else {
+	exec {$args[0]} @args;
+}

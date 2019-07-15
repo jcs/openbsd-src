@@ -1,4 +1,4 @@
-/*	$OpenBSD: sys_pipe.c,v 1.88 2019/06/22 06:48:25 semarie Exp $	*/
+/*	$OpenBSD: sys_pipe.c,v 1.94 2019/07/15 09:05:46 semarie Exp $	*/
 
 /*
  * Copyright (c) 1996 John S. Dyson
@@ -98,12 +98,13 @@ struct pool pipe_pool;
 
 int	dopipe(struct proc *, int *, int);
 void	pipeclose(struct pipe *);
-void	pipe_free_kmem(struct pipe *);
 int	pipe_create(struct pipe *);
 int	pipelock(struct pipe *);
 void	pipeunlock(struct pipe *);
 void	pipeselwakeup(struct pipe *);
-int	pipespace(struct pipe *, u_int);
+
+int	pipe_buffer_realloc(struct pipe *, u_int);
+void	pipe_buffer_free(struct pipe *);
 
 /*
  * The pipe system call for the DTYPE_PIPE type of pipes
@@ -143,11 +144,11 @@ dopipe(struct proc *p, int *ufds, int flags)
 
 	cloexec = (flags & O_CLOEXEC) ? UF_EXCLOSE : 0;
 
-	rpipe = pool_get(&pipe_pool, PR_WAITOK);
+	rpipe = pool_get(&pipe_pool, PR_WAITOK | PR_ZERO);
 	error = pipe_create(rpipe);
 	if (error != 0)
 		goto free1;
-	wpipe = pool_get(&pipe_pool, PR_WAITOK);
+	wpipe = pool_get(&pipe_pool, PR_WAITOK | PR_ZERO);
 	error = pipe_create(wpipe);
 	if (error != 0)
 		goto free1;
@@ -177,15 +178,18 @@ dopipe(struct proc *p, int *ufds, int flags)
 	fdinsert(fdp, fds[1], cloexec, wf);
 
 	error = copyout(fds, ufds, sizeof(fds));
-	if (error != 0) {
+	if (error == 0) {
+		fdpunlock(fdp);
+#ifdef KTRACE
+		if (KTRPOINT(p, KTR_STRUCT))
+			ktrfds(p, fds, 2);
+#endif
+	} else {
+		/* fdrelease() unlocks fdp. */
 		fdrelease(p, fds[0]);
+		fdplock(fdp);
 		fdrelease(p, fds[1]);
 	}
-#ifdef KTRACE
-	else if (KTRPOINT(p, KTR_STRUCT))
-		ktrfds(p, fds, 2);
-#endif
-	fdpunlock(fdp);
 
 	FRELE(rf, p);
 	FRELE(wf, p);
@@ -210,24 +214,30 @@ free1:
  * If it fails it will return ENOMEM.
  */
 int
-pipespace(struct pipe *cpipe, u_int size)
+pipe_buffer_realloc(struct pipe *cpipe, u_int size)
 {
 	caddr_t buffer;
+
+	/* buffer uninitialized or pipe locked */
+	KASSERT((cpipe->pipe_buffer.buffer == NULL) ||
+	    (cpipe->pipe_state & PIPE_LOCK));
+
+	/* buffer should be empty */
+	KASSERT(cpipe->pipe_buffer.cnt == 0);
 
 	KERNEL_LOCK();
 	buffer = km_alloc(size, &kv_any, &kp_pageable, &kd_waitok);
 	KERNEL_UNLOCK();
-	if (buffer == NULL) {
+	if (buffer == NULL)
 		return (ENOMEM);
-	}
 
 	/* free old resources if we are resizing */
-	pipe_free_kmem(cpipe);
+	pipe_buffer_free(cpipe);
+
 	cpipe->pipe_buffer.buffer = buffer;
 	cpipe->pipe_buffer.size = size;
 	cpipe->pipe_buffer.in = 0;
 	cpipe->pipe_buffer.out = 0;
-	cpipe->pipe_buffer.cnt = 0;
 
 	atomic_add_int(&amountpipekva, cpipe->pipe_buffer.size);
 
@@ -242,19 +252,9 @@ pipe_create(struct pipe *cpipe)
 {
 	int error;
 
-	/* so pipe_free_kmem() doesn't follow junk pointer */
-	cpipe->pipe_buffer.buffer = NULL;
-	/*
-	 * protect so pipeclose() doesn't follow a junk pointer
-	 * if pipespace() fails.
-	 */
-	memset(&cpipe->pipe_sel, 0, sizeof(cpipe->pipe_sel));
-	cpipe->pipe_state = 0;
-	cpipe->pipe_peer = NULL;
-	cpipe->pipe_busy = 0;
 	sigio_init(&cpipe->pipe_sigio);
 
-	error = pipespace(cpipe, PIPE_SIZE);
+	error = pipe_buffer_realloc(cpipe, PIPE_SIZE);
 	if (error != 0)
 		return (error);
 
@@ -303,6 +303,7 @@ pipeselwakeup(struct pipe *cpipe)
 		selwakeup(&cpipe->pipe_sel);
 	} else
 		KNOTE(&cpipe->pipe_sel.si_note, 0);
+
 	if (cpipe->pipe_state & PIPE_ASYNC)
 		pgsigio(&cpipe->pipe_sigio, SIGIO, 0);
 }
@@ -404,10 +405,10 @@ unlocked_error:
 	--rpipe->pipe_busy;
 
 	/*
-	 * PIPE_WANT processing only makes sense if pipe_busy is 0.
+	 * PIPE_WANTD processing only makes sense if pipe_busy is 0.
 	 */
-	if ((rpipe->pipe_busy == 0) && (rpipe->pipe_state & PIPE_WANT)) {
-		rpipe->pipe_state &= ~(PIPE_WANT|PIPE_WANTW);
+	if ((rpipe->pipe_busy == 0) && (rpipe->pipe_state & PIPE_WANTD)) {
+		rpipe->pipe_state &= ~(PIPE_WANTD|PIPE_WANTW);
 		wakeup(rpipe);
 	} else if (rpipe->pipe_buffer.cnt < MINPIPESIZE) {
 		/*
@@ -460,7 +461,8 @@ pipe_write(struct file *fp, struct uio *uio, int fflags)
 		npipe = atomic_inc_int_nv(&nbigpipe);
 		if ((npipe <= LIMITBIGPIPES) &&
 		    (error = pipelock(wpipe)) == 0) {
-			if (pipespace(wpipe, BIG_PIPE_SIZE) != 0)
+			if ((wpipe->pipe_buffer.cnt != 0) ||
+			    (pipe_buffer_realloc(wpipe, BIG_PIPE_SIZE) != 0))
 				atomic_dec_int(&nbigpipe);
 			pipeunlock(wpipe);
 		} else
@@ -474,8 +476,8 @@ pipe_write(struct file *fp, struct uio *uio, int fflags)
 	if (error) {
 		--wpipe->pipe_busy;
 		if ((wpipe->pipe_busy == 0) &&
-		    (wpipe->pipe_state & PIPE_WANT)) {
-			wpipe->pipe_state &= ~(PIPE_WANT | PIPE_WANTR);
+		    (wpipe->pipe_state & PIPE_WANTD)) {
+			wpipe->pipe_state &= ~(PIPE_WANTD | PIPE_WANTR);
 			wakeup(wpipe);
 		}
 		goto done;
@@ -618,8 +620,8 @@ retrywrite:
 
 	--wpipe->pipe_busy;
 
-	if ((wpipe->pipe_busy == 0) && (wpipe->pipe_state & PIPE_WANT)) {
-		wpipe->pipe_state &= ~(PIPE_WANT | PIPE_WANTR);
+	if ((wpipe->pipe_busy == 0) && (wpipe->pipe_state & PIPE_WANTD)) {
+		wpipe->pipe_state &= ~(PIPE_WANTD | PIPE_WANTR);
 		wakeup(wpipe);
 	} else if (wpipe->pipe_buffer.cnt > 0) {
 		/*
@@ -771,20 +773,29 @@ pipe_close(struct file *fp, struct proc *p)
 	return (0);
 }
 
+/*
+ * Free kva for pipe circular buffer.
+ * No pipe lock check as only called from pipe_buffer_realloc() and pipeclose()
+ */
 void
-pipe_free_kmem(struct pipe *cpipe)
+pipe_buffer_free(struct pipe *cpipe)
 {
-	u_int size = cpipe->pipe_buffer.size;
+	u_int size;
 
-	if (cpipe->pipe_buffer.buffer != NULL) {
-		KERNEL_LOCK();
-		km_free(cpipe->pipe_buffer.buffer, size, &kv_any, &kp_pageable);
-		KERNEL_UNLOCK();
-		atomic_sub_int(&amountpipekva, size);
-		cpipe->pipe_buffer.buffer = NULL;
-		if (size > PIPE_SIZE)
-			atomic_dec_int(&nbigpipe);
-	}
+	if (cpipe->pipe_buffer.buffer == NULL)
+		return;
+
+	size = cpipe->pipe_buffer.size;
+
+	KERNEL_LOCK();
+	km_free(cpipe->pipe_buffer.buffer, size, &kv_any, &kp_pageable);
+	KERNEL_UNLOCK();
+
+	cpipe->pipe_buffer.buffer = NULL;
+
+	atomic_sub_int(&amountpipekva, size);
+	if (size > PIPE_SIZE)
+		atomic_dec_int(&nbigpipe);
 }
 
 /*
@@ -805,7 +816,7 @@ pipeclose(struct pipe *cpipe)
 		cpipe->pipe_state |= PIPE_EOF;
 		while (cpipe->pipe_busy) {
 			wakeup(cpipe);
-			cpipe->pipe_state |= PIPE_WANT;
+			cpipe->pipe_state |= PIPE_WANTD;
 			tsleep(cpipe, PRIBIO, "pipecl", 0);
 		}
 
@@ -823,7 +834,7 @@ pipeclose(struct pipe *cpipe)
 		/*
 		 * free resources
 		 */
-		pipe_free_kmem(cpipe);
+		pipe_buffer_free(cpipe);
 		pool_put(&pipe_pool, cpipe);
 	}
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: nfs_kq.c,v 1.22 2014/11/15 00:03:12 tedu Exp $ */
+/*	$OpenBSD: nfs_kq.c,v 1.24 2019/07/12 13:56:27 solene Exp $ */
 /*	$NetBSD: nfs_kq.c,v 1.7 2003/10/30 01:43:10 simonb Exp $	*/
 
 /*-

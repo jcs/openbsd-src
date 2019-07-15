@@ -1,4 +1,4 @@
-/*	$OpenBSD: msdosfs_vnops.c,v 1.122 2018/06/21 14:17:23 visa Exp $	*/
+/*	$OpenBSD: msdosfs_vnops.c,v 1.124 2019/07/12 13:56:27 solene Exp $	*/
 /*	$NetBSD: msdosfs_vnops.c,v 1.63 1997/10/17 11:24:19 ws Exp $	*/
 
 /*-

@@ -1,4 +1,4 @@
-/*	$OpenBSD: drm_linux.c,v 1.38 2019/06/09 12:58:30 kettenis Exp $	*/
+/*	$OpenBSD: drm_linux.c,v 1.46 2019/07/15 01:05:01 jsg Exp $	*/
 /*
  * Copyright (c) 2013 Jonathan Gray <jsg@openbsd.org>
  * Copyright (c) 2015, 2016 Mark Kettenis <kettenis@openbsd.org>
@@ -20,6 +20,7 @@
 #include <dev/pci/ppbreg.h>
 #include <sys/event.h>
 #include <sys/filedesc.h>
+#include <sys/kthread.h>
 #include <sys/stat.h>
 #include <sys/unistd.h>
 #include <linux/dma-buf.h>
@@ -27,6 +28,10 @@
 #include <linux/acpi.h>
 #include <linux/pagevec.h>
 #include <linux/dma-fence-array.h>
+
+#if defined(__amd64__) || defined(__i386__)
+#include "bios.h"
+#endif
 
 void
 tasklet_run(void *arg)
@@ -162,6 +167,126 @@ flush_delayed_work(struct delayed_work *dwork)
 	return ret;
 }
 
+struct kthread {
+	int (*func)(void *);
+	void *data;
+	struct proc *proc;
+	volatile u_int flags;
+#define KTHREAD_SHOULDSTOP	0x0000001
+#define KTHREAD_STOPPED		0x0000002
+#define KTHREAD_SHOULDPARK	0x0000004
+#define KTHREAD_PARKED		0x0000008
+	LIST_ENTRY(kthread) next;
+};
+
+LIST_HEAD(, kthread) kthread_list = LIST_HEAD_INITIALIZER(kthread_list);
+
+void
+kthread_func(void *arg)
+{
+	struct kthread *thread = arg;
+	int ret;
+
+	ret = thread->func(thread->data);
+	thread->flags |= KTHREAD_STOPPED;
+	kthread_exit(ret);
+}
+
+struct proc *
+kthread_run(int (*func)(void *), void *data, const char *name)
+{
+	struct kthread *thread;
+
+	thread = malloc(sizeof(*thread), M_DRM, M_WAITOK);
+	thread->func = func;
+	thread->data = data;
+	thread->flags = 0;
+	
+	if (kthread_create(kthread_func, thread, &thread->proc, name)) {
+		free(thread, M_DRM, sizeof(*thread));
+		return ERR_PTR(-ENOMEM);
+	}
+
+	LIST_INSERT_HEAD(&kthread_list, thread, next);
+	return thread->proc;
+}
+
+struct kthread *
+kthread_lookup(struct proc *p)
+{
+	struct kthread *thread;
+
+	LIST_FOREACH(thread, &kthread_list, next) {
+		if (thread->proc == p)
+			break;
+	}
+	KASSERT(thread);
+
+	return thread;
+}
+
+int
+kthread_should_park(void)
+{
+	struct kthread *thread = kthread_lookup(curproc);
+	return (thread->flags & KTHREAD_SHOULDPARK);
+}
+
+void
+kthread_parkme(void)
+{
+	struct kthread *thread = kthread_lookup(curproc);
+
+	while (thread->flags & KTHREAD_SHOULDPARK) {
+		thread->flags |= KTHREAD_PARKED;
+		wakeup(thread);
+		tsleep(thread, PPAUSE | PCATCH, "parkme", 0);
+		thread->flags &= ~KTHREAD_PARKED;
+	}
+}
+
+void
+kthread_park(struct proc *p)
+{
+	struct kthread *thread = kthread_lookup(p);
+
+	while ((thread->flags & KTHREAD_PARKED) == 0) {
+		thread->flags |= KTHREAD_SHOULDPARK;
+		wake_up_process(thread->proc);
+		tsleep(thread, PPAUSE | PCATCH, "park", 0);
+	}
+}
+
+void
+kthread_unpark(struct proc *p)
+{
+	struct kthread *thread = kthread_lookup(p);
+
+	thread->flags &= ~KTHREAD_SHOULDPARK;
+	wakeup(thread);
+}
+
+int
+kthread_should_stop(void)
+{
+	struct kthread *thread = kthread_lookup(curproc);
+	return (thread->flags & KTHREAD_SHOULDSTOP);
+}
+
+void
+kthread_stop(struct proc *p)
+{
+	struct kthread *thread = kthread_lookup(p);
+
+	while ((thread->flags & KTHREAD_STOPPED) == 0) {
+		thread->flags |= KTHREAD_SHOULDSTOP;
+		wake_up_process(thread->proc);
+		tsleep(thread, PPAUSE | PCATCH, "stop", 0);
+	}
+	LIST_REMOVE(thread, next);
+	free(thread, M_DRM, sizeof(*thread));
+}
+
 struct timespec
 ns_to_timespec(const int64_t nsec)
 {
@@ -271,6 +396,34 @@ dmi_found(const struct dmi_system_id *dsi)
 	}
 
 	return true;
+}
+
+const struct dmi_system_id *
+dmi_first_match(const struct dmi_system_id *sysid)
+{
+	const struct dmi_system_id *dsi;
+
+	for (dsi = sysid; dsi->matches[0].slot != 0 ; dsi++) {
+		if (dmi_found(dsi))
+			return dsi;
+	}
+
+	return NULL;
+}
+
+#if NBIOS > 0
+extern char smbios_bios_date[];
+#endif
+
+const char *
+dmi_get_system_info(int slot)
+{
+	WARN_ON(slot != DMI_BIOS_DATE);
+#if NBIOS > 0
+	if (slot == DMI_BIOS_DATE)
+		return smbios_bios_date;
+#endif
+	return NULL;
 }
 
 int
@@ -907,10 +1060,17 @@ dma_fence_context_alloc(unsigned int num)
 	return __sync_add_and_fetch(&drm_fence_count, num) - num;
 }
 
+struct default_wait_cb {
+	struct dma_fence_cb base;
+	struct proc *proc;
+};
+
 static void
 dma_fence_default_wait_cb(struct dma_fence *fence, struct dma_fence_cb *cb)
 {
-	wakeup(fence);
+	struct default_wait_cb *wait =
+	    container_of(cb, struct default_wait_cb, base);
+	wake_up_process(wait->proc);
 }
 
 long
@@ -918,7 +1078,7 @@ dma_fence_default_wait(struct dma_fence *fence, bool intr, signed long timeout)
 {
 	long ret = timeout ? timeout : 1;
 	int err;
-	struct dma_fence_cb cb;
+	struct default_wait_cb cb;
 	bool was_set;
 
 	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
@@ -944,11 +1104,12 @@ dma_fence_default_wait(struct dma_fence *fence, bool intr, signed long timeout)
 		goto out;
 	}
 
-	cb.func = dma_fence_default_wait_cb;
-	list_add(&cb.node, &fence->cb_list);
+	cb.base.func = dma_fence_default_wait_cb;
+	cb.proc = curproc;
+	list_add(&cb.base.node, &fence->cb_list);
 
 	while (!test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags)) {
-		err = msleep(fence, fence->lock, intr ? PCATCH : 0, "dmafence",
+		err = msleep(curproc, fence->lock, intr ? PCATCH : 0, "dmafence",
 		    timeout);
 		if (err == EINTR || err == ERESTART) {
 			ret = -ERESTARTSYS;
@@ -959,11 +1120,84 @@ dma_fence_default_wait(struct dma_fence *fence, bool intr, signed long timeout)
 		}
 	}
 
-	if (!list_empty(&cb.node))
-		list_del(&cb.node);
+	if (!list_empty(&cb.base.node))
+		list_del(&cb.base.node);
 out:
 	mtx_leave(fence->lock);
 	
+	return ret;
+}
+
+static bool
+dma_fence_test_signaled_any(struct dma_fence **fences, uint32_t count,
+    uint32_t *idx)
+{
+	int i;
+
+	for (i = 0; i < count; ++i) {
+		struct dma_fence *fence = fences[i];
+		if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags)) {
+			if (idx)
+				*idx = i;
+			return true;
+		}
+	}
+	return false;
+}
+
+long
+dma_fence_wait_any_timeout(struct dma_fence **fences, uint32_t count,
+    bool intr, long timeout, uint32_t *idx)
+{
+	struct default_wait_cb *cb;
+	int i, err;
+	int ret = timeout;
+
+	if (timeout == 0) {
+		for (i = 0; i < count; i++) {
+			if (dma_fence_is_signaled(fences[i])) {
+				if (idx)
+					*idx = i;
+				return 1;
+			}
+		}
+		return 0;
+	}
+
+	cb = mallocarray(count, sizeof(*cb), M_DRM, M_WAITOK|M_CANFAIL|M_ZERO);
+	if (cb == NULL)
+		return -ENOMEM;
+	
+	for (i = 0; i < count; i++) {
+		struct dma_fence *fence = fences[i];
+		cb[i].proc = curproc;
+		if (dma_fence_add_callback(fence, &cb[i].base,
+		    dma_fence_default_wait_cb)) {
+			if (idx)
+				*idx = i;
+			goto cb_cleanup;
+		}
+	}
+
+	while (ret > 0) {
+		if (dma_fence_test_signaled_any(fences, count, idx))
+			break;
+
+		err = tsleep(curproc, intr ? PCATCH : 0,
+		    "dfwat", timeout);
+		if (err == EINTR || err == ERESTART) {
+			ret = -ERESTARTSYS;
+			break;
+		} else if (err == EWOULDBLOCK) {
+			ret = 0;
+			break;
+		}
+	}
+
+cb_cleanup:
+	while (i-- > 0)
+		dma_fence_remove_callback(fences[i], &cb[i].base);
+	free(cb, M_DRM, count * sizeof(*cb));
 	return ret;
 }
 
@@ -1399,15 +1633,15 @@ drm_linux_init(void)
 {
 	if (system_wq == NULL) {
 		system_wq = (struct workqueue_struct *)
-		    taskq_create("drmwq", 1, IPL_HIGH, 0);
+		    taskq_create("drmwq", 4, IPL_HIGH, 0);
 	}
 	if (system_unbound_wq == NULL) {
 		system_unbound_wq = (struct workqueue_struct *)
-		    taskq_create("drmubwq", 1, IPL_HIGH, 0);
+		    taskq_create("drmubwq", 4, IPL_HIGH, 0);
 	}
 	if (system_long_wq == NULL) {
 		system_long_wq = (struct workqueue_struct *)
-		    taskq_create("drmlwq", 1, IPL_HIGH, 0);
+		    taskq_create("drmlwq", 4, IPL_HIGH, 0);
 	}
 
 	if (taskletq == NULL)
