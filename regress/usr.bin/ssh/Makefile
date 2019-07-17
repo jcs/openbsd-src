@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.101 2019/07/05 04:19:39 dtucker Exp $
+#	$OpenBSD: Makefile,v 1.103 2019/07/16 03:21:54 dtucker Exp $
 
 .ifndef SKIP_UNIT
 SUBDIR=		unittests
@@ -91,14 +91,15 @@ CLEANFILES+=	*.core actual agent-key.* authorized_keys_${USERNAME} \
 		banner.in banner.out cert_host_key* cert_user_key* \
 		copy.1 copy.2 data ed25519-agent ed25519-agent* \
 		ed25519-agent.pub empty.in expect failed-regress.log \
-		failed-ssh.log failed-sshd.log hkr.* host.rsa host.rsa1 \
+		failed-ssh.log failed-sshd.log hkr.* host.ecdsa-sha2-nistp256 \
+		host.ecdsa-sha2-nistp384 host.ecdsa-sha2-nistp521 \
+		host.ssh-dss host.ssh-ed25519 host.ssh-rsa \
 		host_* host_ca_key* host_krl_* host_revoked_* key.* \
 		key.dsa-* key.ecdsa-* key.ed25519-512 key.ed25519-512.pub \
 		key.rsa-* keys-command-args kh.* known_hosts \
 		known_hosts-cert known_hosts.* krl-* ls.copy modpipe \
 		netcat pidfile putty.rsa2 ready regress.log remote_pid \
-		revoked-* rsa rsa-agent rsa-agent.pub rsa.pub rsa1 \
-		rsa1-agent rsa1-agent.pub rsa1.pub rsa_ssh2_cr.prv \
+		revoked-* rsa rsa-agent rsa-agent.pub rsa.pub rsa_ssh2_cr.prv \
 		rsa_ssh2_crnl.prv scp-ssh-wrapper.exe \
 		scp-ssh-wrapper.scp setuid-allowed sftp-server.log \
 		sftp-server.sh sftp.log ssh-log-wrapper.sh ssh.log \

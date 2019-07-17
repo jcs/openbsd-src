@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.321 2019/07/12 13:56:27 solene Exp $	*/
+/*	$OpenBSD: vfs_syscalls.c,v 1.323 2019/07/15 15:05:21 beck Exp $	*/
 /*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 
 /*
@@ -928,7 +928,7 @@ sys___realpath(struct proc *p, void *v, register_t *retval)
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | SAVENAME | REALPATH,
 		    UIO_SYSSPACE, pathname, p);
 	else
-		NDINIT(&nd, CREATE, FOLLOW | LOCKLEAF | LOCKPARENT | SAVENAME |
+		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | LOCKPARENT | SAVENAME |
 		    REALPATH, UIO_SYSSPACE, pathname, p);
 
 	nd.ni_cnd.cn_rpbuf = rpbuf;
