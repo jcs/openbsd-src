@@ -89,9 +89,10 @@ struct ihidev_softc {
 	int		sc_refcnt;
 
 	int		sc_poll;
-	int		sc_dopoll;
+	int		sc_frompoll;
 	int		sc_fastpoll;
 	struct timeout	sc_timer;
+	int		sc_dying;
 };
 
 struct ihidev {
