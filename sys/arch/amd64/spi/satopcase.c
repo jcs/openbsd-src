@@ -30,6 +30,8 @@
 
 #include "satopcasevar.h"
 
+/* #define SATOPCASE_FORCE_ATTACH */
+
 /* #define SATOPCASE_DEBUG */
 
 #ifdef SATOPCASE_DEBUG
@@ -72,12 +74,14 @@ satopcase_match(struct device *parent, void *match, void *aux)
 		return 0;
 
 	/* don't attach if USB interface is present */
-	/* TODO: should we then call UIEN(1) to force USB attachment? */
 	if (aml_evalinteger(acpi_softc, node, "UIST", 0, NULL, &val) == 0 &&
 	    val) {
-		DPRINTF(("%s: not attaching satopcase, USB enabled\n",
+#ifdef SATOPCASE_FORCE_ATTACH
+		DPRINTF(("%s: USB enabled, forcing attachment\n",
 		    sa->sa_name));
+#else
 		return 0;
+#endif
 	}
 
 	return 1;
@@ -163,7 +167,8 @@ satopcase_enable_spi(struct satopcase_softc *sc)
 
 		DELAY(500);
 	} else {
-	    	DPRINTF(("%s: SIST is already %lld\n", sc->sc_dev.dv_xname, val));
+	    	DPRINTF(("%s: SIST is already %lld\n", sc->sc_dev.dv_xname,
+		    val));
 	}
 
 	return 0;

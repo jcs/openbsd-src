@@ -68,10 +68,16 @@ struct satctp_finger {
 
 static struct satctp_dev_type satctp_devices[] = {
 	{
+		/* MacBookPro12,1 - normally USB-attached */
+		0x03df,
+		{ -4828, 5345}, /* x */
+		{ -203, 6803}, /* y */
+	},
+	{
 		/* MacBook10,1 */
 		0x0417,
-		{ -5087, 5579 }, /* x */
-		{ -182, 6089 }, /* y */
+		{ -5087, 5579 },
+		{ -182, 6089 },
 	},
 };
 
@@ -153,12 +159,12 @@ satctp_init(struct satctp_softc *sc)
 	 * will call satctp_recv_info, filling in our dev_type.
 	 */
 	if (satopcase_send_msg(sc->sc_satopcase, &pkt,
-	    sizeof(struct satctp_info_cmd), 1) != 0 || !sc->dev_type) {
+	    sizeof(struct satctp_info_cmd), 1) != 0 || !sc->dev_type.model) {
 		printf(": failed to probe touchpad\n");
 		return 1;
 	}
 
-	printf(": model %04x\n", sc->dev_type->model);
+	printf(": model %04x\n", sc->dev_type.model);
 
 	/* now put the touchpad into multitouch mode */
 	memset(&pkt, 0, sizeof(pkt));
@@ -182,14 +188,12 @@ satctp_configure(struct satctp_softc *sc)
 
 	DPRINTF(("%s: %s\n", sc->sc_dev.dv_xname, __func__));
 
-	KASSERT(sc->dev_type != NULL);
-
 	hw->type = WSMOUSE_TYPE_TOUCHPAD;
 	hw->hw_type = WSMOUSEHW_CLICKPAD;
-	hw->x_min = sc->dev_type->x.min;
-	hw->x_max = sc->dev_type->x.max;
-	hw->y_min = sc->dev_type->y.min;
-	hw->y_max = sc->dev_type->y.max;
+	hw->x_min = sc->dev_type.x.min;
+	hw->x_max = sc->dev_type.x.max;
+	hw->y_min = sc->dev_type.y.min;
+	hw->y_max = sc->dev_type.y.max;
 	hw->mt_slots = SATCTP_MAX_FINGERS;
 	hw->flags = WSMOUSEHW_MT_TRACKING;
 
@@ -235,10 +239,10 @@ satctp_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 	}
 
 	case WSMOUSEIO_GCALIBCOORDS:
-		wsmc->minx = sc->dev_type->x.min;
-		wsmc->maxx = sc->dev_type->x.max;
-		wsmc->miny = sc->dev_type->y.min;
-		wsmc->maxy = sc->dev_type->y.max;
+		wsmc->minx = sc->dev_type.x.min;
+		wsmc->maxx = sc->dev_type.x.max;
+		wsmc->miny = sc->dev_type.y.min;
+		wsmc->maxy = sc->dev_type.y.max;
 		wsmc->swapxy = 0;
 		wsmc->resx = 0;
 		wsmc->resy = 0;
@@ -275,16 +279,22 @@ satctp_recv_info(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 
 		for (i = 0; i < nitems(satctp_devices); i++) {
 			if (model == satctp_devices[i].model) {
-				sc->dev_type = &satctp_devices[i];
+				memcpy(&sc->dev_type, &satctp_devices[i],
+				    sizeof(struct satctp_dev_type));
 				DPRINTF(("%s: touchpad device is type 0x%04x\n",
 				    sc->sc_dev.dv_xname, model));
 				break;
 			}
 		}
 
-		if (!sc->dev_type) {
-			printf(": unsupported device model");
-			sc->dev_type = &satctp_devices[0];
+		if (!sc->dev_type.model) {
+			printf(": unrecognized device model");
+			sc->dev_type.model = model;
+			/* shrug */
+			sc->dev_type.x.min = -5000;
+			sc->dev_type.x.max = 5000;
+			sc->dev_type.y.min = -200;
+			sc->dev_type.y.max = 6000;
 		}
 	}
 		break;
@@ -342,13 +352,13 @@ satctp_recv_msg(struct satctp_softc *sc, struct satopcase_spi_msg *msg)
 
 				/* ((x + abs(min)) * 100) / (abs(min) + max) */
 				xpct = (((int16_t)letoh16(finger->abs_x) +
-				    abs(sc->dev_type->x.min)) * 100) /
-				    (abs(sc->dev_type->x.min) +
-				    sc->dev_type->x.max);
+				    abs(sc->dev_type.x.min)) * 100) /
+				    (abs(sc->dev_type.x.min) +
+				    sc->dev_type.x.max);
 				ypct = (((int16_t)letoh16(finger->abs_y) +
-				    abs(sc->dev_type->y.min)) * 100) /
-				    (abs(sc->dev_type->y.min) +
-				    sc->dev_type->y.max);
+				    abs(sc->dev_type.y.min)) * 100) /
+				    (abs(sc->dev_type.y.min) +
+				    sc->dev_type.y.max);
 #ifdef SATCTP_FINGER_DEBUG
 				DPRINTF((" xpct:%d ypct:%d", xpct, ypct));
 #endif

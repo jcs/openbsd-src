@@ -213,7 +213,7 @@ struct satctp_softc {
 
 	struct device		*sc_wsmousedev;
 
-	struct satctp_dev_type	*dev_type;
+	struct satctp_dev_type	dev_type;
 	struct mtpoint		frame[SATCTP_MAX_FINGERS];
 };
 
