@@ -1,4 +1,4 @@
-/*	$OpenBSD: parse.c,v 1.80 2019/03/19 23:57:30 krw Exp $	*/
+/*	$OpenBSD: parse.c,v 1.83 2019/07/22 17:20:06 krw Exp $	*/
 
 /* Common parser code for dhcpd and dhclient. */
 
@@ -111,16 +111,17 @@ parse_semi(FILE *cfile)
 	int token;
 
 	token = next_token(NULL, cfile);
-	if (token != ';') {
-		parse_warn("expecting semicolon.");
-		skip_to_semi(cfile);
-		return 0;
-	}
-	return 1;
+	if (token == ';')
+		return 1;
+
+	parse_warn("expecting semicolon.");
+	skip_to_semi(cfile);
+
+	return 0;
 }
 
 int
-parse_string(FILE *cfile, unsigned int *len, char **string)
+parse_string(FILE *cfile, char **string)
 {
 	static char	 unvisbuf[1500];
 	char		*val;
@@ -130,12 +131,9 @@ parse_string(FILE *cfile, unsigned int *len, char **string)
 	if (token == TOK_STRING) {
 		i = strnunvis(unvisbuf, val, sizeof(unvisbuf));
 		if (i >= 0) {
-			*string = malloc(i+1);
+			*string = strdup(unvisbuf);
 			if (*string == NULL)
-				fatal("unvis string %s", val);
-			memcpy(*string, unvisbuf, i+1);	/* Copy the NUL. */
-			if (len != NULL)
-				*len = i;
+				fatal("strdup(unvisbuf)");
 			return 1;
 		}
 	}
@@ -253,49 +251,18 @@ parse_boolean(FILE *cfile, unsigned char *buf)
 }
 
 int
-parse_number(FILE *cfile, unsigned char *buf, char fmt)
+parse_number(FILE *cfile, long long *number, long long low, long long high)
 {
 	const char	*errstr;
 	char		*val, *msg;
-	int		 bytes, rslt, token;
-	long long	 numval, low, high;
+	int		 rslt, token;
+	long long	 numval;
 
 	token = next_token(&val, cfile);
 
-	switch (fmt) {
-	case 't':	/* Signed 64-bit integer. */
-		low = INT64_MIN;
-		high = INT64_MAX;
-		bytes = 8;
-		break;
-	case 'l':	/* Signed 32-bit integer. */
-		low = INT32_MIN;
-		high = INT32_MAX;
-		bytes = 4;
-		break;
-	case 'L':	/* Unsigned 32-bit integer. */
-		low = 0;
-		high = UINT32_MAX;
-		bytes = 4;
-		break;
-	case 'S':	/* Unsigned 16-bit integer. */
-		low = 0;
-		high = UINT16_MAX;
-		bytes = 2;
-		break;
-	case 'B':	/* Unsigned 8-bit integer. */
-		low = 0;
-		high = UINT8_MAX;
-		bytes = 1;
-		break;
-	default:
-		return 0;
-	}
-
 	numval = strtonum(val, low, high, &errstr);
 	if (errstr == NULL) {
-		numval = htobe64(numval);
-		memcpy(buf, (char *)&numval + (sizeof(numval) - bytes), bytes);
+		*number = numval;
 		return 1;
 	}
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.c,v 1.476 2019/07/17 10:13:26 claudio Exp $ */
+/*	$OpenBSD: rde.c,v 1.478 2019/07/23 13:07:32 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -259,6 +259,8 @@ rde_main(int debug, int verbose)
 		for (mctx = LIST_FIRST(&rde_mrts); mctx != 0; mctx = xmctx) {
 			xmctx = LIST_NEXT(mctx, entry);
 
+			if (i >= pfd_elms)
+				fatalx("poll pfd too small");
 			if (mctx->mrt.wbuf.queued) {
 				pfd[i].fd = mctx->mrt.wbuf.fd;
 				pfd[i].events = POLLOUT;
@@ -811,13 +813,15 @@ rde_dispatch_imsg_parent(struct imsgbuf *ibuf)
 			rib = rib_byid(rib_find(rn.name));
 			if (rib == NULL)
 				rib = rib_new(rn.name, rn.rtableid, rn.flags);
-			else if ((rib->flags & F_RIB_HASNOFIB) !=
-			    (rn.flags & F_RIB_HASNOFIB) || (rib->rtableid !=
-			    rn.rtableid && !(rn.flags & F_RIB_HASNOFIB))) {
+			else if (
+			    (rib->flags & (F_RIB_NOFIB | F_RIB_NOEVALUATE)) !=
+			    (rn.flags & (F_RIB_NOFIB | F_RIB_NOEVALUATE)) ||
+			    (rib->rtableid != rn.rtableid &&
+			    !(rn.flags & (F_RIB_NOFIB | F_RIB_NOEVALUATE)))) {
 				struct filter_head	*in_rules;
 				struct rib_desc		*ribd = rib_desc(rib);
 				/*
-				 * Big hammer in the F_RIB_HASNOFIB case but
+				 * Big hammer in the F_RIB_NOFIB case but
 				 * not often enough used to optimise it more.
 				 * Need to save the filters so that they're not
 				 * lost. If the rtableid changes but there is

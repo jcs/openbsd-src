@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_aggr.c,v 1.9 2019/07/05 07:18:12 dlg Exp $ */
+/*	$OpenBSD: if_aggr.c,v 1.18 2019/07/20 04:54:22 dlg Exp $ */
 
 /*
  * Copyright (c) 2019 The University of Queensland
@@ -190,6 +190,7 @@ enum lacp_rxm_state {
 
 enum lacp_rxm_event {
 	LACP_RXM_E_BEGIN,
+	LACP_RXM_E_UCT,
 	LACP_RXM_E_PORT_MOVED,
 	LACP_RXM_E_NOT_PORT_MOVED,
 	LACP_RXM_E_PORT_ENABLED,
@@ -239,6 +240,7 @@ static const char *lacp_rxm_state_names[] = {
 
 static const char *lacp_rxm_event_names[] = {
 	"BEGIN",
+	"UCT",
 	"port_moved",
 	"!port_moved",
 	"port_enabled",
@@ -293,6 +295,12 @@ enum aggr_port_selected {
 	AGGR_PORT_UNSELECTED,
 	AGGR_PORT_SELECTED,
 	AGGR_PORT_STANDBY,
+};
+
+static const char *aggr_port_selected_names[] = {
+	"UNSELECTED",
+	"SELECTED",
+	"STANDBY",
 };
 
 struct aggr_port {
@@ -444,6 +452,7 @@ static int	aggr_multi_del(struct aggr_softc *, struct ifreq *);
 
 static void	aggr_map(struct aggr_softc *);
 
+static void	aggr_record_default(struct aggr_softc *, struct aggr_port *);
 static void	aggr_current_while_timer(void *);
 static void	aggr_wait_while_timer(void *);
 static void	aggr_rx(void *);
@@ -465,6 +474,7 @@ static void	aggr_ptm_tx(void *);
 
 static void	aggr_transmit_machine(void *);
 static void	aggr_ntt(struct aggr_port *);
+static void	aggr_ntt_transmit(struct aggr_port *);
 
 static void	aggr_set_selected(struct aggr_port *, enum aggr_port_selected,
 		    enum lacp_mux_event);
@@ -472,10 +482,7 @@ static void	aggr_unselected(struct aggr_port *);
 
 static void	aggr_selection_logic(struct aggr_softc *, struct aggr_port *);
 
-#define ether_cmp(_a, _b)	memcmp((_a), (_b), ETHER_ADDR_LEN)
-#define ether_is_eq(_a, _b)	(ether_cmp((_a), (_b)) == 0)
-#define ether_is_slow(_a)	ether_is_eq((_a), lacp_address_slow)
-#define ether_is_zero(_a)	ether_is_eq((_a), etheranyaddr)
+#define ETHER_IS_SLOWADDR(_a)	ETHER_IS_EQ((_a), lacp_address_slow)
 
 static struct if_clone aggr_cloner =
     IF_CLONE_INITIALIZER("aggr", aggr_clone_create, aggr_clone_destroy);
@@ -589,14 +596,8 @@ aggr_port_enabled(struct aggr_port *p)
 	if (!ISSET(ifp0->if_flags, IFF_RUNNING))
 		return (0);
 
-	switch (ifp0->if_link_state) {
-	case LINK_STATE_UNKNOWN:
-	case LINK_STATE_UP:
-	case LINK_STATE_FULL_DUPLEX:
-		break;
-	default:
+	if (!LINK_STATE_IS_UP(ifp0->if_link_state))
 		return (0);
-	}
 
 	return (1);
 }
@@ -694,7 +695,7 @@ aggr_start(struct ifqueue *ifq)
 static inline int
 aggr_eh_is_slow(const struct ether_header *eh)
 {
-	return (ether_is_slow(eh->ether_dhost) &&
+	return (ETHER_IS_SLOWADDR(eh->ether_dhost) &&
 	    eh->ether_type == htons(ETHERTYPE_SLOW));
 }
 
@@ -926,7 +927,27 @@ aggr_get_trunk(struct aggr_softc *sc, struct trunk_reqall *ra)
 			SET(rp.rp_flags, TRUNK_PORT_DISABLED);
 
 		opreq = &rp.rp_lacpreq;
+
+		opreq->actor_prio = sc->sc_lacp_prio;
+		memcpy(opreq->actor_mac, &sc->sc_ac.ac_enaddr,
+		    sizeof(req->actor_mac));
+		opreq->actor_key = ifp->if_index;
+		opreq->actor_portprio = sc->sc_lacp_port_prio;
+		opreq->actor_portno = ifp0->if_index;
 		opreq->actor_state = state | p->p_actor_state;
+
+		opreq->partner_prio =
+		    ntohs(p->p_partner.lacp_sysid.lacp_sysid_priority);
+		CTASSERT(sizeof(opreq->partner_mac) ==
+		    sizeof(p->p_partner.lacp_sysid.lacp_sysid_mac));
+		memcpy(opreq->partner_mac,
+		    p->p_partner.lacp_sysid.lacp_sysid_mac,
+		    sizeof(opreq->partner_mac));
+		opreq->partner_key = ntohs(p->p_partner.lacp_key);
+		opreq->partner_portprio =
+		    ntohs(p->p_partner.lacp_portid.lacp_portid_priority);
+		opreq->partner_portno =
+		    ntohs(p->p_partner.lacp_portid.lacp_portid_number);
 		opreq->partner_state = p->p_partner_state;
 
 		error = copyout(&rp, ubuf, sizeof(rp));
@@ -1288,6 +1309,16 @@ aggr_p_ioctl(struct ifnet *ifp0, u_long cmd, caddr_t data)
 		error = EBUSY;
 		break;
 
+	case SIOCSIFFLAGS:
+		if (!ISSET(ifp0->if_flags, IFF_UP) &&
+		    ISSET(ifp0->if_flags, IFF_RUNNING)) {
+			/* port is going down */
+			if (p->p_selected == AGGR_PORT_SELECTED) {
+				aggr_unselected(p);
+				aggr_ntt_transmit(p); /* XXX */
+			}
+		}
+		/* FALLTHROUGH */
 	default:
 		error = (*p->p_ioctl)(ifp0, cmd, data);
 		break;
@@ -1319,12 +1350,16 @@ aggr_p_dtor(struct aggr_softc *sc, struct aggr_port *p, const char *op)
 	struct ifnet *ifp0 = p->p_ifp0;
 	struct arpcom *ac0 = (struct arpcom *)ifp0;
 	struct aggr_multiaddr *ma;
+	enum aggr_port_selected selected;
 
 	DPRINTF(sc, "%s %s %s: destroying port\n",
 	    ifp->if_xname, ifp0->if_xname, op);
 
+	selected = p->p_selected;
 	aggr_rxm(sc, p, LACP_RXM_E_NOT_PORT_ENABLED);
 	aggr_unselected(p);
+	if (aggr_port_enabled(p) && selected == AGGR_PORT_SELECTED)
+		aggr_ntt_transmit(p);
 
 	timeout_del(&p->p_ptm_tx);
 	timeout_del_barrier(&p->p_txm_ntt); /* XXX */
@@ -1409,6 +1444,7 @@ aggr_p_linkch(void *arg)
 	} else {
 		aggr_rxm(sc, p, LACP_RXM_E_NOT_PORT_ENABLED);
 		aggr_unselected(p);
+		aggr_record_default(sc, p);
 		timeout_del(&p->p_ptm_tx);
 	}
 }
@@ -1501,7 +1537,7 @@ aggr_input_lacpdu(struct aggr_port *p, struct mbuf *m)
 	m_freem(m);
 }
 
-static int
+static void
 aggr_update_selected(struct aggr_softc *sc, struct aggr_port *p,
     const struct lacp_du *lacpdu)
 {
@@ -1512,17 +1548,16 @@ aggr_update_selected(struct aggr_softc *sc, struct aggr_port *p,
 	     lpi->lacp_portid.lacp_portid_number) &&
 	    (rpi->lacp_portid.lacp_portid_priority ==
 	     lpi->lacp_portid.lacp_portid_priority) &&
-	    ether_is_eq(rpi->lacp_sysid.lacp_sysid_mac,
+	    ETHER_IS_EQ(rpi->lacp_sysid.lacp_sysid_mac,
 	     lpi->lacp_sysid.lacp_sysid_mac) &&
 	    (rpi->lacp_sysid.lacp_sysid_priority ==
 	     lpi->lacp_sysid.lacp_sysid_priority) &&
 	    (rpi->lacp_key == lpi->lacp_key) &&
 	    (ISSET(rpi->lacp_state, LACP_STATE_AGGREGATION) ==
 	     ISSET(lpi->lacp_state, LACP_STATE_AGGREGATION)))
-		return (0);
+		return;
 
 	aggr_unselected(p);
-	return (1);
 }
 
 static void
@@ -1559,7 +1594,7 @@ aggr_update_default_selected(struct aggr_softc *sc, struct aggr_port *p)
 
 	if ((pi->lacp_portid.lacp_portid_number == htons(0)) &&
 	    (pi->lacp_portid.lacp_portid_priority == htons(0)) &&
-	    ether_is_zero(pi->lacp_sysid.lacp_sysid_mac) &&
+	    ETHER_IS_ANYADDR(pi->lacp_sysid.lacp_sysid_mac) &&
 	    (pi->lacp_sysid.lacp_sysid_priority == htons(0)) &&
 	    (pi->lacp_key == htons(0)) &&
 	    ISSET(pi->lacp_state, LACP_STATE_AGGREGATION))
@@ -1587,7 +1622,7 @@ aggr_update_ntt(struct aggr_port *p, const struct lacp_du *lacpdu)
 	if (pi->lacp_portid.lacp_portid_priority !=
 	     htons(sc->sc_lacp_port_prio))
 		goto ntt;
-	if (!ether_is_eq(pi->lacp_sysid.lacp_sysid_mac, ac->ac_enaddr))
+	if (!ETHER_IS_EQ(pi->lacp_sysid.lacp_sysid_mac, ac->ac_enaddr))
 		goto ntt;
 	if (pi->lacp_sysid.lacp_sysid_priority !=
 	     htons(sc->sc_lacp_prio))
@@ -1690,7 +1725,13 @@ aggr_set_selected(struct aggr_port *p, enum aggr_port_selected s,
 {
 	struct aggr_softc *sc = p->p_aggr;
 
-	p->p_selected = s;
+	if (p->p_selected != s) {
+		DPRINTF(sc, "%s %s: Selected %s -> %s\n",
+		    sc->sc_if.if_xname, p->p_ifp0->if_xname,
+		    aggr_port_selected_names[p->p_selected],
+		    aggr_port_selected_names[s]);
+		p->p_selected = s;
+	}
 	aggr_mux(sc, p, ev);
 }
 
@@ -1722,18 +1763,30 @@ aggr_selection_logic(struct aggr_softc *sc, struct aggr_port *p)
 	struct ifnet *ifp = &ac->ac_if;
 	const uint8_t *mac;
 
-	if (p->p_rxm_state != LACP_RXM_S_CURRENT)
+	if (p->p_rxm_state != LACP_RXM_S_CURRENT) {
+		DPRINTF(sc, "%s %s: selection logic: unselected (rxm !%s)\n",
+		    ifp->if_xname, p->p_ifp0->if_xname,
+		    lacp_rxm_state_names[LACP_RXM_S_CURRENT]);
 		goto unselected;
+	}
 
 	pi = &p->p_partner;
-	if (pi->lacp_key == htons(0))
+	if (pi->lacp_key == htons(0)) {
+		DPRINTF(sc, "%s %s: selection logic: unselected "
+		    "(partner key == 0)\n",
+		    ifp->if_xname, p->p_ifp0->if_xname);
 		goto unselected;
+	}
 
 	/*
 	 * aggr(4) does not support individual interfaces
 	 */
-	if (!ISSET(pi->lacp_state, LACP_STATE_AGGREGATION))
+	if (!ISSET(pi->lacp_state, LACP_STATE_AGGREGATION)) {
+		DPRINTF(sc, "%s %s: selection logic: unselected "
+		    "(partner state is Individual)\n",
+		    ifp->if_xname, p->p_ifp0->if_xname);
 		goto unselected;
+	}
 
 	/*
 	 * Any pair of Aggregation Ports that are members of the same
@@ -1742,15 +1795,23 @@ aggr_selection_logic(struct aggr_softc *sc, struct aggr_port *p)
 	 */
 
 	mac = pi->lacp_sysid.lacp_sysid_mac;
-	if (ether_is_eq(mac, ac->ac_enaddr) &&
-	    pi->lacp_key == htons(ifp->if_index))
+	if (ETHER_IS_EQ(mac, ac->ac_enaddr) &&
+	    pi->lacp_key == htons(ifp->if_index)) {
+		DPRINTF(sc, "%s %s: selection logic: unselected "
+		    "(partner sysid !eq)\n",
+		    ifp->if_xname, p->p_ifp0->if_xname);
 		goto unselected;
+	}
 
 	if (!TAILQ_EMPTY(&sc->sc_muxen)) {
 		/* an aggregation has already been selected */
-		if (!ether_is_eq(mac, sc->sc_partner_system.lacp_sysid_mac) ||
-		    sc->sc_partner_key != pi->lacp_key)
+		if (!ETHER_IS_EQ(mac, sc->sc_partner_system.lacp_sysid_mac) ||
+		    sc->sc_partner_key != pi->lacp_key) {
+			DPRINTF(sc, "%s %s: selection logic: unselected "
+			    "(partner sysid != selection)\n",
+			    ifp->if_xname, p->p_ifp0->if_xname);
 			goto unselected;
+		}
 	}
 
 	aggr_selected(p);
@@ -2162,6 +2223,7 @@ aggr_rxm_ev(struct aggr_softc *sc, struct aggr_port *p,
 		break;
 	}
 
+uct:
 	if (p->p_rxm_state != nstate) {
 		DPRINTF(sc, "%s %s rxm: %s (%s) -> %s\n",
 		    sc->sc_if.if_xname, p->p_ifp0->if_xname,
@@ -2189,8 +2251,10 @@ aggr_rxm_ev(struct aggr_softc *sc, struct aggr_port *p,
 		aggr_record_default(sc, p);
 		CLR(p->p_actor_state, LACP_STATE_EXPIRED);
 
-		p->p_rxm_state = LACP_RXM_S_PORT_DISABLED; /* UCT */
-		/* FALLTHROUGH */
+		ev = LACP_RXM_E_UCT;
+		nstate = LACP_RXM_S_PORT_DISABLED;
+		goto uct;
+		/* NOTREACHED */
 	case LACP_RXM_S_PORT_DISABLED:
 		/*
 		 * Partner_Oper_Port_State.Synchronization = FALSE;
@@ -2245,16 +2309,16 @@ aggr_rxm_ev(struct aggr_softc *sc, struct aggr_port *p,
 		 *     Actor_Oper_Port_State.LACP_Timeout);
 		 * Actor_Oper_Port_State.Expired = FALSE;
 		 */
-		int sync, unselected;
+		int sync;
 
-		unselected = aggr_update_selected(sc, p, lacpdu);
+		aggr_update_selected(sc, p, lacpdu);
 		sync = aggr_update_ntt(p, lacpdu);
 		/* don't support v2 yet */
 		aggr_recordpdu(p, lacpdu, sync);
 		aggr_start_current_while_timer(p, sc->sc_lacp_timeout);
 		CLR(p->p_actor_state, LACP_STATE_EXPIRED);
 
-		if (unselected)
+		if (p->p_selected == AGGR_PORT_UNSELECTED)
 			aggr_selection_logic(sc, p); /* restart */
 
 		}
@@ -2665,8 +2729,8 @@ static int
 aggr_multi_eq(const struct aggr_multiaddr *ma,
     const uint8_t *addrlo, const uint8_t *addrhi)
 {
-	return (ether_is_eq(ma->m_addrlo, addrlo) &&
-	    ether_is_eq(ma->m_addrhi, addrhi));
+	return (ETHER_IS_EQ(ma->m_addrlo, addrlo) &&
+	    ETHER_IS_EQ(ma->m_addrhi, addrhi));
 }
 
 static int

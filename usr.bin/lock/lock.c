@@ -1,4 +1,4 @@
-/*	$OpenBSD: lock.c,v 1.42 2019/07/05 14:11:26 cheloha Exp $	*/
+/*	$OpenBSD: lock.c,v 1.45 2019/07/21 22:44:44 jca Exp $	*/
 /*	$NetBSD: lock.c,v 1.8 1996/05/07 18:32:31 jtc Exp $	*/
 
 /*
@@ -34,11 +34,8 @@
  */
 
 /*
- * Lock a terminal up until the given key is entered, until the root
- * password is entered, or the given interval times out.
- *
- * Timeout interval is by default TIMEOUT, it can be changed with
- * an argument of the form -time where time is in minutes
+ * Lock a terminal up until the given key or user password is entered,
+ * or the given interval times out.
  */
 
 #include <sys/stat.h>
@@ -59,14 +56,11 @@
 #include <login_cap.h>
 #include <bsd_auth.h>
 
-#define	TIMEOUT	15
-
 void bye(int);
 void hi(int);
 void usage(void);
 
-int	custom_timeout;
-int	no_timeout;			/* lock terminal forever */
+int	no_timeout = 1;			/* lock terminal forever */
 
 int
 main(int argc, char *argv[])
@@ -83,10 +77,8 @@ main(int argc, char *argv[])
 	time_t curtime;
 	login_cap_t *lc;
 
-	sectimeout = TIMEOUT;
 	style = NULL;
 	usemine = 0;
-	custom_timeout = no_timeout = 0;
 	memset(&timeout, 0, sizeof(timeout));
 
 	if (pledge("stdio rpath wpath getpw tty proc exec", NULL) == -1)
@@ -118,26 +110,21 @@ main(int argc, char *argv[])
 			usemine = 1;
 			break;
 		case 't':
-			if (no_timeout)
-				usage();
 			sectimeout = strtonum(optarg, 1, INT_MAX, &errstr);
 			if (errstr)
 				errx(1, "timeout %s: %s", errstr, optarg);
-			custom_timeout = 1;
+			no_timeout = 0;
 			break;
 		case 'p':
 			usemine = 1;
 			break;
 		case 'n':
-			if (custom_timeout)
-				usage();
-			no_timeout = 1;
+			/* backward compatibility, -n meant "lock forever" */
 			break;
 		default:
 			usage();
 		}
 	}
-	timeout.tv_sec = sectimeout * 60;
 
 	gethostname(hostname, sizeof(hostname));
 	if (usemine && lc == NULL)
@@ -173,10 +160,12 @@ main(int argc, char *argv[])
 	signal(SIGTSTP, hi);
 	signal(SIGALRM, bye);
 
-	memset(&ntimer, 0, sizeof(ntimer));
-	ntimer.it_value = timeout;
-	if (!no_timeout)
+	if (!no_timeout) {
+		timeout.tv_sec = (time_t)sectimeout * 60;
+		memset(&ntimer, 0, sizeof(ntimer));
+		ntimer.it_value = timeout;
 		setitimer(ITIMER_REAL, &ntimer, &otimer);
+	}
 
 	/* header info */
 	if (no_timeout) {
@@ -260,7 +249,7 @@ bye(int signo)
 void
 usage(void)
 {
-	fprintf(stderr, "usage: %s [-np] [-a style] [-t timeout]\n",
+	fprintf(stderr, "usage: %s [-p] [-a style] [-t timeout]\n",
 	    getprogname());
 	exit(1);
 }

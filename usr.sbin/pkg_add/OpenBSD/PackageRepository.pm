@@ -1,5 +1,5 @@
 # ex:ts=8 sw=4:
-# $OpenBSD: PackageRepository.pm,v 1.165 2019/07/14 07:27:18 espie Exp $
+# $OpenBSD: PackageRepository.pm,v 1.167 2019/07/22 06:59:41 espie Exp $
 #
 # Copyright (c) 2003-2010 Marc Espie <espie@openbsd.org>
 #
@@ -82,7 +82,7 @@ sub unique
 	return $o;
 }
 
-OpenBSD::Handler->register(
+OpenBSD::Handler->atend(
     sub {
 	for my $repo (values %$cache) {
 		$repo->cleanup;

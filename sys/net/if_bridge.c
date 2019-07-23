@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bridge.c,v 1.335 2019/06/09 17:42:16 mpi Exp $	*/
+/*	$OpenBSD: if_bridge.c,v 1.337 2019/07/20 23:01:51 mpi Exp $	*/
 
 /*
  * Copyright (c) 1999, 2000 Jason L. Wright (jason@thought.net)
@@ -931,10 +931,6 @@ bridgeintr_frame(struct ifnet *brifp, struct ifnet *src_if, struct mbuf *m)
 	bif = bridge_getbif(src_if);
 	KASSERT(bif != NULL);
 
-	if (m->m_pkthdr.len < sizeof(eh)) {
-		m_freem(m);
-		return;
-	}
 	m_copydata(m, 0, ETHER_HDR_LEN, (caddr_t)&eh);
 	dst = (struct ether_addr *)&eh.ether_dhost[0];
 	src = (struct ether_addr *)&eh.ether_shost[0];
@@ -944,10 +940,8 @@ bridgeintr_frame(struct ifnet *brifp, struct ifnet *src_if, struct mbuf *m)
 	 * is not broadcast or multicast, record its address.
 	 */
 	if ((bif->bif_flags & IFBIF_LEARNING) &&
-	    (eh.ether_shost[0] & 1) == 0 &&
-	    !(eh.ether_shost[0] == 0 && eh.ether_shost[1] == 0 &&
-	    eh.ether_shost[2] == 0 && eh.ether_shost[3] == 0 &&
-	    eh.ether_shost[4] == 0 && eh.ether_shost[5] == 0))
+	    !ETHER_IS_MULTICAST(eh.ether_shost) &&
+	    !ETHER_IS_ANYADDR(eh.ether_shost))
 		bridge_rtupdate(sc, src, src_if, 0, IFBAF_DYNAMIC, m);
 
 	if ((bif->bif_flags & IFBIF_STP) &&
@@ -972,8 +966,7 @@ bridgeintr_frame(struct ifnet *brifp, struct ifnet *src_if, struct mbuf *m)
 			return;
 		}
 	} else {
-		if (memcmp(etherbroadcastaddr, eh.ether_dhost,
-		    sizeof(etherbroadcastaddr)) == 0)
+		if (ETHER_IS_BROADCAST(eh.ether_dhost))
 			m->m_flags |= M_BCAST;
 		else
 			m->m_flags |= M_MCAST;
@@ -1118,7 +1111,7 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 {
 	struct ifnet *brifp;
 	struct bridge_softc *sc;
-	struct bridge_iflist *bif, *bif0;
+	struct bridge_iflist *bif = NULL, *bif0 = NULL;
 	struct ether_header *eh;
 	struct mbuf *mc;
 #if NBPFILTER > 0
@@ -1130,6 +1123,9 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 	brifp = if_get(ifp->if_bridgeidx);
 	if ((brifp == NULL) || !ISSET(brifp->if_flags, IFF_RUNNING))
 		goto reenqueue;
+
+	if (m->m_pkthdr.len < sizeof(*eh))
+		goto bad;
 
 #if NVLAN > 0
 	/*
@@ -1149,17 +1145,20 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 		bpf_mtap_ether(if_bpf, m, BPF_DIRECTION_IN);
 #endif
 
+	eh = mtod(m, struct ether_header *);
+
 	sc = brifp->if_softc;
 	SMR_SLIST_FOREACH_LOCKED(bif, &sc->sc_iflist, bif_next) {
+		if (bridge_ourether(bif->ifp, eh->ether_shost))
+			goto bad;
 		if (bif->ifp == ifp)
-			break;
+			bif0 = bif;
 	}
-	if (bif == NULL)
+	if (bif0 == NULL)
 		goto reenqueue;
 
 	bridge_span(brifp, m);
 
-	eh = mtod(m, struct ether_header *);
 	if (ETHER_IS_MULTICAST(eh->ether_dhost)) {
 		/*
 		 * Reserved destination MAC addresses (01:80:C2:00:00:0x)
@@ -1172,7 +1171,8 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 		    ETHER_ADDR_LEN - 1) == 0) {
 			if (eh->ether_dhost[ETHER_ADDR_LEN - 1] == 0) {
 				/* STP traffic */
-				m = bstp_input(sc->sc_stp, bif->bif_stp, eh, m);
+				m = bstp_input(sc->sc_stp, bif0->bif_stp, eh,
+				    m);
 				if (m == NULL)
 					goto bad;
 			} else if (eh->ether_dhost[ETHER_ADDR_LEN - 1] <= 0xf)
@@ -1182,8 +1182,8 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 		/*
 		 * No need to process frames for ifs in the discarding state
 		 */
-		if ((bif->bif_flags & IFBIF_STP) &&
-		    (bif->bif_state == BSTP_IFSTATE_DISCARDING))
+		if ((bif0->bif_flags & IFBIF_STP) &&
+		    (bif0->bif_state == BSTP_IFSTATE_DISCARDING))
 			goto reenqueue;
 
 		mc = m_dup_pkt(m, ETHER_ALIGN, M_NOWAIT);
@@ -1200,27 +1200,32 @@ bridge_process(struct ifnet *ifp, struct mbuf *m)
 	/*
 	 * Unicast, make sure it's not for us.
 	 */
-	bif0 = bif;
-	SMR_SLIST_FOREACH_LOCKED(bif, &sc->sc_iflist, bif_next) {
-		if (bridge_ourether(bif->ifp, eh->ether_dhost)) {
-			if (bif0->bif_flags & IFBIF_LEARNING)
-				bridge_rtupdate(sc,
-				    (struct ether_addr *)&eh->ether_shost,
-				    ifp, 0, IFBAF_DYNAMIC, m);
-			if (bridge_filterrule(&bif0->bif_brlin, eh, m) ==
-			    BRL_ACTION_BLOCK) {
-			    	goto bad;
-			}
-
-			/* Count for the bridge */
-			brifp->if_ipackets++;
-			brifp->if_ibytes += m->m_pkthdr.len;
-
-			ifp = bif->ifp;
-			goto reenqueue;
+	if (bridge_ourether(bif0->ifp, eh->ether_dhost)) {
+		bif = bif0;
+	} else {
+		SMR_SLIST_FOREACH_LOCKED(bif, &sc->sc_iflist, bif_next) {
+			if (bif->ifp == ifp)
+				continue;
+			if (bridge_ourether(bif->ifp, eh->ether_dhost))
+				break;
 		}
-		if (bridge_ourether(bif->ifp, eh->ether_shost))
+	}
+	if (bif != NULL) {
+		if (bif0->bif_flags & IFBIF_LEARNING)
+			bridge_rtupdate(sc,
+			    (struct ether_addr *)&eh->ether_shost,
+			    ifp, 0, IFBAF_DYNAMIC, m);
+		if (bridge_filterrule(&bif0->bif_brlin, eh, m) ==
+		    BRL_ACTION_BLOCK) {
 			goto bad;
+		}
+
+		/* Count for the bridge */
+		brifp->if_ipackets++;
+		brifp->if_ibytes += m->m_pkthdr.len;
+
+		ifp = bif->ifp;
+		goto reenqueue;
 	}
 
 	bridgeintr_frame(brifp, ifp, m);

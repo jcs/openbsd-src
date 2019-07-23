@@ -1,4 +1,4 @@
-/* $OpenBSD: ihidev.h,v 1.6 2018/08/25 18:32:05 jcs Exp $ */
+/* $OpenBSD: ihidev.h,v 1.7 2019/07/22 14:37:06 jcs Exp $ */
 /*
  * HID-over-i2c driver
  *

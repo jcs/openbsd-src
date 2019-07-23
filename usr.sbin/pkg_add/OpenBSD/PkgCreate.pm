@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 # ex:ts=8 sw=4:
-# $OpenBSD: PkgCreate.pm,v 1.161 2019/07/14 07:27:18 espie Exp $
+# $OpenBSD: PkgCreate.pm,v 1.163 2019/07/21 14:05:30 espie Exp $
 #
 # Copyright (c) 2003-2014 Marc Espie <espie@openbsd.org>
 #

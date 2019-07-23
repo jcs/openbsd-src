@@ -1,4 +1,4 @@
-/* $OpenBSD: ihidev.c,v 1.19 2019/04/08 17:50:45 jcs Exp $ */
+/* $OpenBSD: ihidev.c,v 1.20 2019/07/22 14:37:06 jcs Exp $ */
 /*
  * HID-over-i2c driver
  *
@@ -639,8 +639,8 @@ ihidev_intr(void *arg)
 		return 1;
 
 	if (sc->sc_poll && !sc->sc_frompoll) {
-		printf("%s: received interrupt while polling, disabling "
-		    "polling\n", sc->sc_dev.dv_xname);
+		DPRINTF(("%s: received interrupt while polling, disabling "
+		    "polling\n", sc->sc_dev.dv_xname));
 		sc->sc_poll = 0;
 		timeout_del_barrier(&sc->sc_timer);
 	}

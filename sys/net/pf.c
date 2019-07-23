@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1085 2019/07/11 09:39:52 sashan Exp $ */
+/*	$OpenBSD: pf.c,v 1.1087 2019/07/18 20:45:10 sashan Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -3864,6 +3864,13 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 	if (r->action == PF_DROP)
 		goto cleanup;
 
+	/*
+	 * If an expired "once" rule has not been purged, drop any new matching
+	 * packets.
+	 */
+	if (r->rule_flag & PFRULE_EXPIRED)
+		goto cleanup;
+
 	pf_tag_packet(pd->m, ctx.tag, ctx.act.rtableid);
 	if (ctx.act.rtableid >= 0 &&
 	    rtable_l2(ctx.act.rtableid) != pd->rdomain)
@@ -3949,9 +3956,19 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 #endif	/* NPFSYNC > 0 */
 
 	if (r->rule_flag & PFRULE_ONCE) {
-		r->rule_flag |= PFRULE_EXPIRED;
-		r->exptime = time_second;
-		SLIST_INSERT_HEAD(&pf_rule_gcl, r, gcle);
+		u_int32_t	rule_flag;
+
+		/*
+		 * Use atomic_cas() to determine a clear winner, which will
+		 * insert an expired rule to gcl.
+		 */
+		rule_flag = r->rule_flag;
+		if (((rule_flag & PFRULE_EXPIRED) == 0) &&
+		    atomic_cas_uint(&r->rule_flag, rule_flag,
+			rule_flag | PFRULE_EXPIRED) == rule_flag) {
+			r->exptime = time_second;
+			SLIST_INSERT_HEAD(&pf_rule_gcl, r, gcle);
+		}
 	}
 
 	return (action);

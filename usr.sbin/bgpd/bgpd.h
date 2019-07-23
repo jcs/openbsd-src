@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.388 2019/06/22 05:36:40 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.390 2019/07/23 06:26:44 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -48,6 +48,7 @@
 #define	MAX_PKTSIZE			4096
 #define	MIN_HOLDTIME			3
 #define	READ_BUF_SIZE			65535
+#define	MAX_SOCK_BUF			(4 * READ_BUF_SIZE)
 #define	RT_BUF_SIZE			16384
 #define	MAX_RTSOCK_BUF			(2 * 1024 * 1024)
 #define	MAX_COMM_MATCH			3
@@ -110,8 +111,8 @@
  * IMSG_XON message will be sent and the RDE will produce more messages again.
  */
 #define RDE_RUNNER_ROUNDS	100
-#define SESS_MSG_HIGH_MARK	300
-#define SESS_MSG_LOW_MARK	50
+#define SESS_MSG_HIGH_MARK	2000
+#define SESS_MSG_LOW_MARK	500
 #define CTL_MSG_HIGH_MARK	500
 #define CTL_MSG_LOW_MARK	100
 
@@ -505,6 +506,7 @@ enum imsg_type {
 	IMSG_MRT_CLOSE,
 	IMSG_KROUTE_CHANGE,
 	IMSG_KROUTE_DELETE,
+	IMSG_KROUTE_FLUSH,
 	IMSG_NEXTHOP_ADD,
 	IMSG_NEXTHOP_REMOVE,
 	IMSG_NEXTHOP_UPDATE,
@@ -1072,7 +1074,6 @@ extern struct rib_names ribnames;
 #define F_RIB_NOEVALUATE	0x0002
 #define F_RIB_NOFIB		0x0004
 #define F_RIB_NOFIBSYNC		0x0008
-#define F_RIB_HASNOFIB		(F_RIB_NOFIB | F_RIB_NOEVALUATE)
 
 /* 4-byte magic AS number */
 #define AS_TRANS	23456
@@ -1190,6 +1191,7 @@ void		 ktable_postload(u_int8_t);
 int		 ktable_exists(u_int, u_int *);
 int		 kr_change(u_int, struct kroute_full *,  u_int8_t);
 int		 kr_delete(u_int, struct kroute_full *, u_int8_t);
+int		 kr_flush(u_int);
 void		 kr_shutdown(u_int8_t, u_int);
 void		 kr_fib_couple(u_int, u_int8_t);
 void		 kr_fib_couple_all(u_int8_t);
