@@ -1,4 +1,4 @@
-/* $OpenBSD: drmP.h,v 1.1 2019/04/14 10:14:52 jsg Exp $ */
+/* $OpenBSD: drmP.h,v 1.3 2019/07/25 05:48:16 jsg Exp $ */
 /* drmP.h -- Private header for Direct Rendering Manager -*- linux-c -*-
  * Created: Mon Jan  4 10:05:05 1999 by faith@precisioninsight.com
  */
@@ -126,8 +126,6 @@ struct fb_fillrect;
 struct fb_copyarea;
 struct fb_image;
 
-#define drm_debug	0
-
 				/* Internal types and structures */
 #define DRM_IF_VERSION(maj, min) (maj << 16 | min)
 
@@ -246,8 +244,6 @@ struct drm_attach_args {
 #define drmdevcf_console	cf_loc[DRMDEVCF_CONSOLE]
 /* spec'd as console? */
 #define DRMDEVCF_CONSOLE_UNK	-1
-
-extern int	drm_debug_flag;
 
 void	drm_linux_init(void);
 

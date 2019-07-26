@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde_rib.c,v 1.199 2019/07/17 10:13:26 claudio Exp $ */
+/*	$OpenBSD: rde_rib.c,v 1.201 2019/07/24 20:54:54 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Claudio Jeker <claudio@openbsd.org>
@@ -95,6 +95,36 @@ static inline int
 re_is_locked(struct rib_entry *re)
 {
 	return (re->lock != 0);
+}
+
+static inline struct prefix *
+prefix_lock(struct prefix *p)
+{
+	if (p->flags & PREFIX_FLAG_LOCKED)
+		fatalx("%s: locking locked prefix", __func__);
+	p->flags |= PREFIX_FLAG_LOCKED;
+	return p;
+}
+
+static inline struct prefix *
+prefix_unlock(struct prefix *p)
+{
+	if ((p->flags & PREFIX_FLAG_LOCKED) == 0)
+		fatalx("%s: unlocking unlocked prefix", __func__);
+	p->flags &= ~PREFIX_FLAG_LOCKED;
+	return p;
+}
+
+static inline int
+prefix_is_locked(struct prefix *p)
+{
+	return (p->flags & PREFIX_FLAG_LOCKED) != 0;
+}
+
+static inline int
+prefix_is_dead(struct prefix *p)
+{
+	return (p->flags & PREFIX_FLAG_DEAD) != 0;
 }
 
 static inline struct rib_tree *
@@ -349,8 +379,7 @@ rib_restart(struct rib_context *ctx)
 {
 	struct rib_entry *re;
 
-	re = ctx->ctx_re;
-	re_unlock(re);
+	re = re_unlock(ctx->ctx_re);
 
 	/* find first non empty element */
 	while (re && rib_empty(re))
@@ -390,8 +419,7 @@ rib_dump_r(struct rib_context *ctx)
 		if (ctx->ctx_count && i++ >= ctx->ctx_count &&
 		    !re_is_locked(re)) {
 			/* store and lock last element */
-			ctx->ctx_re = re;
-			re_lock(re);
+			ctx->ctx_re = re_lock(re);
 			return;
 		}
 		ctx->ctx_rib_call(re, ctx->ctx_arg);
@@ -442,6 +470,29 @@ rib_dump_abort(u_int16_t id)
 			continue;
 		if (ctx->ctx_done)
 			ctx->ctx_done(ctx->ctx_arg, ctx->ctx_aid);
+		if (ctx->ctx_re && rib_empty(re_unlock(ctx->ctx_re)))
+			rib_remove(ctx->ctx_re);
+		if (ctx->ctx_p && prefix_is_dead(prefix_unlock(ctx->ctx_p)))
+			prefix_adjout_destroy(ctx->ctx_p);
+		LIST_REMOVE(ctx, entry);
+		free(ctx);
+	}
+}
+
+void
+rib_dump_terminate(void *arg)
+{
+	struct rib_context *ctx, *next;
+
+	LIST_FOREACH_SAFE(ctx, &rib_dumps, entry, next) {
+		if (ctx->ctx_arg != arg)
+			continue;
+		if (ctx->ctx_done)
+			ctx->ctx_done(ctx->ctx_arg, ctx->ctx_aid);
+		if (ctx->ctx_re && rib_empty(re_unlock(ctx->ctx_re)))
+			rib_remove(ctx->ctx_re);
+		if (ctx->ctx_p && prefix_is_dead(prefix_unlock(ctx->ctx_p)))
+			prefix_adjout_destroy(ctx->ctx_p);
 		LIST_REMOVE(ctx, entry);
 		free(ctx);
 	}
@@ -471,21 +522,6 @@ rib_dump_new(u_int16_t id, u_int8_t aid, unsigned int count, void *arg,
 		rib_dump_r(ctx);
 
 	return 0;
-}
-
-void
-rib_dump_terminate(void *arg)
-{
-	struct rib_context *ctx, *next;
-
-	LIST_FOREACH_SAFE(ctx, &rib_dumps, entry, next) {
-		if (ctx->ctx_arg != arg)
-			continue;
-		if (ctx->ctx_done)
-			ctx->ctx_done(ctx->ctx_arg, ctx->ctx_aid);
-		LIST_REMOVE(ctx, entry);
-		free(ctx);
-	}
 }
 
 /* path specific functions */
@@ -1208,41 +1244,12 @@ prefix_withdraw(struct rde_peer *peer, struct bgpd_addr *prefix, int prefixlen)
 	return (1);
 }
 
-static inline void
-prefix_lock(struct prefix *p)
-{
-	if (p->flags & PREFIX_FLAG_LOCKED)
-		fatalx("%s: locking locked prefix", __func__);
-	p->flags |= PREFIX_FLAG_LOCKED;
-}
-
-static inline void
-prefix_unlock(struct prefix *p)
-{
-	if ((p->flags & PREFIX_FLAG_LOCKED) == 0)
-		fatalx("%s: unlocking unlocked prefix", __func__);
-	p->flags &= ~PREFIX_FLAG_LOCKED;
-}
-
-static inline int
-prefix_is_locked(struct prefix *p)
-{
-	return (p->flags & PREFIX_FLAG_LOCKED) != 0;
-}
-
-static inline int
-prefix_is_dead(struct prefix *p)
-{
-	return (p->flags & PREFIX_FLAG_DEAD) != 0;
-}
-
 static struct prefix *
 prefix_restart(struct rib_context *ctx)
 {
 	struct prefix *p;
 
-	p = ctx->ctx_p;
-	prefix_unlock(p);
+	p = prefix_unlock(ctx->ctx_p);
 
 	if (prefix_is_dead(p)) {
 		struct prefix *next;
@@ -1251,6 +1258,7 @@ prefix_restart(struct rib_context *ctx)
 		prefix_adjout_destroy(p);
 		p = next;
 	}
+	ctx->ctx_p = NULL;
 	return p;
 }
 
@@ -1322,8 +1330,7 @@ prefix_dump_r(struct rib_context *ctx)
 		if (ctx->ctx_count && i++ >= ctx->ctx_count &&
 		    !prefix_is_locked(p)) {
 			/* store and lock last element */
-			ctx->ctx_p = p;
-			prefix_lock(p);
+			ctx->ctx_p = prefix_lock(p);
 			return;
 		}
 		ctx->ctx_prefix_call(p, ctx->ctx_arg);
@@ -1367,7 +1374,7 @@ int
 prefix_write(u_char *buf, int len, struct bgpd_addr *prefix, u_int8_t plen,
     int withdraw)
 {
-	int	totlen;
+	int	totlen, psize;
 
 	switch (prefix->aid) {
 	case AID_INET:
@@ -1381,6 +1388,7 @@ prefix_write(u_char *buf, int len, struct bgpd_addr *prefix, u_int8_t plen,
 		return (totlen);
 	case AID_VPN_IPv4:
 		totlen = PREFIX_SIZE(plen) + sizeof(prefix->vpn4.rd);
+		psize = PREFIX_SIZE(plen) - 1;
 		plen += sizeof(prefix->vpn4.rd) * 8;
 		if (withdraw) {
 			/* withdraw have one compat label as placeholder */
@@ -1406,10 +1414,11 @@ prefix_write(u_char *buf, int len, struct bgpd_addr *prefix, u_int8_t plen,
 		}
 		memcpy(buf, &prefix->vpn4.rd, sizeof(prefix->vpn4.rd));
 		buf += sizeof(prefix->vpn4.rd);
-		memcpy(buf, &prefix->vpn4.addr, PREFIX_SIZE(plen) - 1);
+		memcpy(buf, &prefix->vpn4.addr, psize);
 		return (totlen);
 	case AID_VPN_IPv6:
 		totlen = PREFIX_SIZE(plen) + sizeof(prefix->vpn6.rd);
+		psize = PREFIX_SIZE(plen) - 1;
 		plen += sizeof(prefix->vpn6.rd) * 8;
 		if (withdraw) {
 			/* withdraw have one compat label as placeholder */
@@ -1434,7 +1443,7 @@ prefix_write(u_char *buf, int len, struct bgpd_addr *prefix, u_int8_t plen,
 		}
 		memcpy(buf, &prefix->vpn6.rd, sizeof(prefix->vpn6.rd));
 		buf += sizeof(prefix->vpn6.rd);
-		memcpy(buf, &prefix->vpn6.addr, PREFIX_SIZE(plen) - 1);
+		memcpy(buf, &prefix->vpn6.addr, psize);
 		return (totlen);
 	default:
 		return (-1);

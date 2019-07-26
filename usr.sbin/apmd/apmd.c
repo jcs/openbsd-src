@@ -1,4 +1,4 @@
-/*	$OpenBSD: apmd.c,v 1.86 2019/07/22 08:06:52 kn Exp $	*/
+/*	$OpenBSD: apmd.c,v 1.88 2019/07/25 07:29:44 kn Exp $	*/
 
 /*
  *  Copyright (c) 1995, 1996 John T. Kohl
@@ -201,7 +201,7 @@ power_status(int fd, int force, struct apm_power_info *pinfo)
 		if (pinfo)
 			*pinfo = bstate;
 	} else
-		logmsg(LOG_ERR, "cannot fetch power status: %m");
+		logmsg(LOG_ERR, "cannot fetch power status: %s", strerror(errno));
 
 	return acon;
 }
@@ -683,7 +683,7 @@ do_etc_file(const char *file)
 	case 0:
 		/* We are the child. */
 		execl(file, prog, (char *)NULL);
-		logmsg(LOG_ERR, "failed to exec %s: %m", file, strerror(errno));
+		logmsg(LOG_ERR, "failed to exec %s: %s", file, strerror(errno));
 		_exit(1);
 		/* NOTREACHED */
 	default:
