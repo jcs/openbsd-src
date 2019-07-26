@@ -2276,7 +2276,7 @@ static inline int
 in_dbg_master(void)
 {
 #ifdef DDB
-	return (db_is_active);
+	return (db_active);
 #endif
 	return (0);
 }
