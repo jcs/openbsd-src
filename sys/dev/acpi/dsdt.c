@@ -1263,6 +1263,7 @@ aml_find_node(struct aml_node *node, const char *name,
 	struct aml_node *child;
 	const char *nn;
 
+	/* match child of this node first before recursing */
 	SIMPLEQ_FOREACH(child, &node->son, sib) {
 		nn = child->name;
 		if (nn != NULL) {
@@ -1270,12 +1271,14 @@ aml_find_node(struct aml_node *node, const char *name,
 			while (*nn == AMLOP_PARENTPREFIX) nn++;
 			if (strcmp(name, nn) == 0) {
 				/* Only recurse if cbproc() wants us to */
-				if (cbproc(child, arg) == 0)
-					continue;
+				if (cbproc(child, arg) != 0)
+					return;
 			}
 		}
-		aml_find_node(child, name, cbproc, arg);
 	}
+
+	SIMPLEQ_FOREACH(child, &node->son, sib)
+		aml_find_node(child, name, cbproc, arg);
 }
 
 /*
