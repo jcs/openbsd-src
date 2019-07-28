@@ -206,14 +206,8 @@ dwiic_pci_bus_scan(struct device *iic, struct i2cbus_attach_args *iba,
 
 	sc->sc_iic = iic;
 
-	if (sc->sc_devnode != NULL) {
-		/*
-		 * XXX: until we can figure out why interrupts don't arrive for
-		 * i2c slave devices on intel 100 series and newer, force
-		 * polling for ihidev.
-		 */
-		sc->sc_poll_ihidev = 1;
-
+#if NACPI > 0
+	if (sc->sc_devnode != NULL)
 		aml_find_node(sc->sc_devnode, "_HID", dwiic_acpi_found_hid, sc);
-	}
+#endif
 }
