@@ -51,6 +51,11 @@ void		tsc_delay(int usecs);
 extern u_int32_t lapic_per_second;
 #endif
 
+#include "lapic.h"
+#if NLAPIC > 0
+extern u_int32_t lapic_per_second;
+#endif
+
 struct timecounter tsc_timecounter = {
 	.tc_get_timecount = tsc_get_timecount,
 	.tc_poll_pps = NULL,
