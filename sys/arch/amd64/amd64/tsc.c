@@ -35,6 +35,11 @@ int		tsc_is_invariant;
 
 uint		tsc_get_timecount(struct timecounter *tc);
 
+#include "lapic.h"
+#if NLAPIC > 0
+extern u_int32_t lapic_per_second;
+#endif
+
 struct timecounter tsc_timecounter = {
 	tsc_get_timecount, NULL, ~0u, 0, "tsc", -1000, NULL
 };
@@ -68,8 +73,12 @@ tsc_freq_cpuid(struct cpu_info *ci)
 		}
 		if (ebx == 0 || eax == 0)
 			count = 0;
-		else if ((count = (uint64_t)khz * (uint64_t)ebx / eax) != 0)
+		else if ((count = (uint64_t)khz * (uint64_t)ebx / eax) != 0) {
+#if NLAPIC > 0
+			lapic_per_second = khz * 1000;
+#endif
 			return (count * 1000);
+		}
 	}
 
 	return (0);

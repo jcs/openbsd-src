@@ -408,7 +408,7 @@ u_int32_t lapic_tval;
 /*
  * this gets us up to a 4GHz busclock....
  */
-u_int32_t lapic_per_second;
+u_int32_t lapic_per_second = 0;
 u_int32_t lapic_frac_usec_per_cycle;
 u_int64_t lapic_frac_cycle_per_usec;
 u_int32_t lapic_delaytab[26];
@@ -488,6 +488,9 @@ lapic_calibrate_timer(struct cpu_info *ci)
 	u_long s;
 	int i;
 
+	if (lapic_per_second)
+		goto skip_calibration;
+
 	if (mp_verbose)
 		printf("%s: calibrating local timer\n", ci->ci_dev->dv_xname);
 
@@ -525,8 +528,9 @@ lapic_calibrate_timer(struct cpu_info *ci)
 
 	lapic_per_second = tmp;
 
-	printf("%s: apic clock running at %lldMHz\n",
-	    ci->ci_dev->dv_xname, tmp / (1000 * 1000));
+skip_calibration:
+	printf("%s: apic clock running at %dMHz\n",
+	    ci->ci_dev->dv_xname, lapic_per_second / (1000 * 1000));
 
 	if (lapic_per_second != 0) {
 		/*
