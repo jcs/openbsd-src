@@ -230,8 +230,8 @@ struct aml_opcode aml_table[] = {
 	/* Conversion operations */
 	{ AMLOP_TOINTEGER,	"ToInteger",	"tr",	},
 	{ AMLOP_TOBUFFER,	"ToBuffer",	"tr",	},
-	{ AMLOP_TODECSTRING,	"ToDecString",	"ir",	},
-	{ AMLOP_TOHEXSTRING,	"ToHexString",	"ir",	},
+	{ AMLOP_TODECSTRING,	"ToDecString",	"tr",	},
+	{ AMLOP_TOHEXSTRING,	"ToHexString",	"tr",	},
 	{ AMLOP_TOSTRING,	"ToString",	"tir",	},
 	{ AMLOP_MID,		"Mid",		"tiir",	},
 	{ AMLOP_FROMBCD,	"FromBCD",	"ir",	},
