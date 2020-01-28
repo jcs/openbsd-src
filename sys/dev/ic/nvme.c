@@ -36,6 +36,7 @@
 
 #include <dev/ic/nvmereg.h>
 #include <dev/ic/nvmevar.h>
+#include <dev/ic/nvmeio.h>
 
 struct cfdriver nvme_cd = {
 	NULL,
@@ -88,6 +89,7 @@ void	nvme_scsi_cmd(struct scsi_xfer *);
 void	nvme_minphys(struct buf *, struct scsi_link *);
 int	nvme_scsi_probe(struct scsi_link *);
 void	nvme_scsi_free(struct scsi_link *);
+int	nvme_scsi_ioctl(struct scsi_link *, u_long, caddr_t, int);
 
 #ifdef HIBERNATE
 #include <uvm/uvm_extern.h>
@@ -99,7 +101,8 @@ int	nvme_hibernate_io(dev_t, daddr_t, vaddr_t, size_t, int, void *);
 #endif
 
 struct scsi_adapter nvme_switch = {
-	nvme_scsi_cmd, nvme_minphys, nvme_scsi_probe, nvme_scsi_free, NULL
+	nvme_scsi_cmd, nvme_minphys, nvme_scsi_probe, nvme_scsi_free,
+	nvme_scsi_ioctl
 };
 
 void	nvme_scsi_io(struct scsi_xfer *, int);
@@ -311,7 +314,7 @@ nvme_attach(struct nvme_softc *sc)
 		return (1);
 	}
 
-	sc->sc_admin_q = nvme_q_alloc(sc, NVME_ADMIN_Q, 128, sc->sc_dstrd);
+	sc->sc_admin_q = nvme_q_alloc(sc, NVME_ADMIN_Q, 32, sc->sc_dstrd);
 	if (sc->sc_admin_q == NULL) {
 		printf("%s: unable to allocate admin queue\n", DEVNAME(sc));
 		return (1);
@@ -879,6 +882,89 @@ nvme_scsi_free(struct scsi_link *link)
 	sc->sc_namespaces[link->target].ident = NULL;
 
 	free(identify, M_DEVBUF, sizeof(*identify));
+}
+
+struct nvme_ioctl_command_wrapper {
+	struct nvme_ioctl_command	cmd;
+	struct nvme_dmamem		*mem;
+};
+
+void
+nvme_fill_ioctl_command(struct nvme_softc *sc, struct nvme_ccb *ccb, void *slot)
+{
+	struct nvme_sqe *sqe = slot;
+	struct nvme_ioctl_command_wrapper *wrap = ccb->ccb_cookie;
+
+	memcpy(sqe, &wrap->cmd.cmd, sizeof(*sqe));
+
+	if (wrap->cmd.len)
+		htolem64(&sqe->entry.prp[0], NVME_DMA_DVA(wrap->mem));
+}
+
+void
+nvme_ioctl_command_done(struct nvme_softc *sc, struct nvme_ccb *ccb,
+    struct nvme_cqe *cqe)
+{
+	struct nvme_ioctl_command_wrapper *wrap = ccb->ccb_cookie;
+
+	memcpy(&wrap->cmd.res, cqe, sizeof(struct nvme_cqe));
+}
+
+int
+nvme_scsi_ioctl(struct scsi_link *link, u_long cmd, caddr_t addr, int flag)
+{
+	struct nvme_softc *sc = link->adapter_softc;
+	struct nvme_ioctl_command_wrapper wrap;
+	struct nvme_ioctl_command *iocmd = (struct nvme_ioctl_command *)addr;
+	struct nvme_ccb *ccb;
+	int error, rv;
+
+	if (cmd != NVMEIOCCOMMAND)
+		return (EINVAL);
+
+	if (iocmd->len > sizeof(struct nvm_identify_controller))
+		return (EINVAL);
+
+	ccb = nvme_ccb_get(sc);
+	if (ccb == NULL)
+		return (ENOMEM);
+
+	if (iocmd->len) {
+		wrap.mem = nvme_dmamem_alloc(sc, iocmd->len);
+		if (wrap.mem == NULL)
+			return (ENOMEM);
+	}
+
+	memcpy(&wrap.cmd, &iocmd->cmd, sizeof(wrap.cmd));
+
+	ccb->ccb_done = nvme_ioctl_command_done;
+	ccb->ccb_cookie = &wrap;
+
+	if (iocmd->len)
+		nvme_dmamem_sync(sc, wrap.mem, BUS_DMASYNC_PREREAD);
+	rv = nvme_poll(sc, sc->sc_admin_q, ccb,
+	    nvme_fill_ioctl_command);
+	if (iocmd->len)
+		nvme_dmamem_sync(sc, wrap.mem, BUS_DMASYNC_POSTREAD);
+
+	nvme_ccb_put(sc, ccb);
+
+	memcpy(&iocmd->res, &wrap.cmd.res, sizeof(struct nvme_cqe));
+
+	if (rv != 0) {
+		if (iocmd->len)
+			nvme_dmamem_free(sc, wrap.mem);
+		return (EINVAL);
+	}
+
+	if (iocmd->len) {
+		error = copyout(NVME_DMA_KVA(wrap.mem), iocmd->buf, iocmd->len);
+		nvme_dmamem_free(sc, wrap.mem);
+		if (error)
+			return (EINVAL);
+	}
+
+	return 0;
 }
 
 void

@@ -103,6 +103,8 @@ struct nvme_softc {
 
 	struct scsi_link	sc_link;
 	struct scsibus_softc	*sc_scsibus;
+
+	struct mutex		sc_ioctl_mtx;
 };
 
 int	nvme_attach(struct nvme_softc *);

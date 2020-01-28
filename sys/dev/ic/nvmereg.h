@@ -255,21 +255,76 @@ struct nvme_cqe {
 #define NVM_CMD_COMPARE		0x05 /* Compare */
 #define NVM_CMD_DSM		0x09 /* Dataset Management */
 
+#define NVM_FEAT_ARBITRATION				0x01
+#define NVM_FEAT_POWER_MANAGEMENT			0x02
+#define NVM_FEAT_LBA_RANGE_TYPE				0x03
+#define NVM_FEAT_TEMPERATURE_THRESHOLD			0x04
+#define NVM_FEAT_ERROR_RECOVERY				0x05
+#define NVM_FEAT_VOLATILE_WRITE_CACHE			0x06
+#define NVM_FEAT_NUMBER_OF_QUEUES			0x07
+#define NVM_FEAT_INTERRUPT_COALESCING			0x08
+#define NVM_FEAT_INTERRUPT_VECTOR_CONFIGURATION		0x09
+#define NVM_FEAT_WRITE_ATOMICITY			0x0a
+#define NVM_FEAT_ASYNC_EVENT_CONFIGURATION		0x0b
+#define NVM_FEAT_AUTONOMOUS_POWER_STATE_TRANSITION	0x0c
+#define NVM_FEAT_HOST_MEMORY_BUFFER			0x0d
+#define NVM_FEAT_TIMESTAMP				0x0e
+#define NVM_FEAT_KEEP_ALIVE_TIMER			0x0f
+#define NVM_FEAT_HOST_CONTROLLED_THERMAL_MGMT		0x10
+#define NVM_FEAT_NON_OP_POWER_STATE_CONFIG		0x11
+#define NVM_FEAT_READ_RECOVERY_LEVEL_CONFIG		0x12
+#define NVM_FEAT_PREDICTABLE_LATENCY_MODE_CONFIG	0x13
+#define NVM_FEAT_PREDICTABLE_LATENCY_MODE_WINDOW	0x14
+#define NVM_FEAT_LBA_STATUS_INFORMATION_ATTRIBUTES	0x15
+#define NVM_FEAT_HOST_BEHAVIOR_SUPPORT			0x16
+#define NVM_FEAT_SANITIZE_CONFIG			0x17
+#define NVM_FEAT_ENDURANCE_GROUP_EVENT_CONFIGURATION	0x18
+#define NVM_FEAT_SOFTWARE_PROGRESS_MARKER		0x80
+#define NVM_FEAT_HOST_IDENTIFIER			0x81
+#define NVM_FEAT_RESERVATION_NOTIFICATION_MASK		0x82
+#define NVM_FEAT_RESERVATION_PERSISTENCE		0x83
+#define NVM_FEAT_NAMESPACE_WRITE_PROTECTION_CONFIG	0x84
+
 /* Power State Descriptor Data */
 struct nvm_identify_psd {
 	u_int16_t	mp;		/* Max Power */
-	u_int16_t	flags;
-
+	u_int8_t	_reserved1;
+	u_int8_t	mps_nops;	/* Max Power Scale,
+					   Non-Operational State */
+#define NVM_PSD_MPS_SHIFT		(0)
+#define NVM_PSD_MPS_MASK		(0x1)
+#define NVM_PSD_NOPS_SHIFT		(1)
+#define NVM_PSD_NOPS_MASK		(0x1)
 	u_int32_t	enlat;		/* Entry Latency */
-
 	u_int32_t	exlat;		/* Exit Latency */
 
 	u_int8_t	rrt;		/* Relative Read Throughput */
+#define NVM_PSD_RRT_SHIFT		(0)
+#define NVM_PSD_RRT_MASK		(0x1F)
 	u_int8_t	rrl;		/* Relative Read Latency */
+#define NVM_PSD_RRL_SHIFT		(0)
+#define NVM_PSD_RRL_MASK		(0x1F)
 	u_int8_t	rwt;		/* Relative Write Throughput */
+#define NVM_PSD_RWT_SHIFT		(0)
+#define NVM_PSD_RWT_MASK		(0x1F)
 	u_int8_t	rwl;		/* Relative Write Latency */
+#define NVM_PSD_RWL_SHIFT		(0)
+#define NVM_PSD_RWL_MASK		(0x1F)
 
-	u_int8_t	_reserved[16];
+	uint16_t	idlp;		/* Idle Power */
+        uint8_t         ips;		/* Idle Power Scale */
+#define NVM_PSD_IPS_SHIFT		(6)
+#define NVM_PSD_IPS_MASK		(0x3)
+        uint8_t         _reserved2;
+
+        uint16_t	actp;		/* Active Power */
+        uint8_t		apw_aps;	/* Active Power Workload,
+					   Active Power Scale */
+#define NVM_PSD_APW_SHIFT		(0)
+#define NVM_PSD_APW_MASK		(0x7)
+#define NVM_PSD_APS_SHIFT		(6)
+#define NVM_PSD_APS_MASK		(0x3)
+        uint8_t		_reserved3[9];
 } __packed __aligned(8);
 
 struct nvm_identify_controller {
