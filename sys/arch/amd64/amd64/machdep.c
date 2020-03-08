@@ -141,6 +141,11 @@ extern int db_console;
 #include <dev/ic/pckbcvar.h>
 #endif
 
+#include "voltage.h"
+#if NVOLTAGE > 0
+#include <machine/voltagevar.h>
+#endif
+
 /* #define MACHDEP_DEBUG */
 
 #ifdef MACHDEP_DEBUG
@@ -577,6 +582,11 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 			}
 		}
 		return (error);
+#endif
+#if NVOLTAGE > 0
+	case CPU_VOLTAGE:
+		return voltage_sysctl(name + 1, namelen - 1, oldp, oldlenp,
+		    newp, newlen, p);
 #endif
 	default:
 		return (EOPNOTSUPP);
