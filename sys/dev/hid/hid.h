@@ -353,6 +353,7 @@ int	hid_is_collection(const void *, int, uint8_t, int32_t);
 #define HUD_TOUCHSCREEN		0x0004
 #define HUD_TOUCHPAD		0x0005
 #define HUD_CONFIG		0x000e
+#define HUD_STYLUS		0x0020
 #define HUD_FINGER		0x0022
 #define HUD_TIP_PRESSURE	0x0030
 #define HUD_BARREL_PRESSURE	0x0031
