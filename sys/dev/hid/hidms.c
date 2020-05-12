@@ -68,7 +68,7 @@ hidms_setup(struct device *self, struct hidms *ms, uint32_t quirks,
 	struct hid_item h;
 	struct hid_data *d;
 	uint32_t flags;
-	int i, wheel, twheel;
+	int i, wheel, twheel, colusage = 0;
 
 	ms->sc_device = self;
 	ms->sc_rawmode = 1;
@@ -247,9 +247,19 @@ hidms_setup(struct device *self, struct hidms *ms, uint32_t quirks,
 	/* Parse descriptors to get touch panel bounds */
 	d = hid_start_parse(desc, dlen, hid_input);
 	while (hid_get_item(d, &h)) {
+		if (h.kind == hid_collection)
+			colusage = h.usage;
+		else if (h.kind == hid_endcollection)
+			colusage = 0;
+
 		if (h.kind != hid_input ||
 		    HID_GET_USAGE_PAGE(h.usage) != HUP_GENERIC_DESKTOP)
 			continue;
+
+		/* Ignore collections for a stylus when figuring min/max x/y */
+		if (HID_GET_USAGE(colusage) == HUD_STYLUS)
+			continue;
+
 		DPRINTF(("hidms: usage=0x%x range %d..%d\n",
 			h.usage, h.logical_minimum, h.logical_maximum));
 		switch (HID_GET_USAGE(h.usage)) {
