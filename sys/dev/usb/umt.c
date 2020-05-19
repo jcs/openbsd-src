@@ -3,9 +3,9 @@
  * USB multitouch touchpad driver for devices conforming to
  * Windows Precision Touchpad standard
  *
- * https://msdn.microsoft.com/en-us/library/windows/hardware/dn467314%28v=vs.85%29.aspx
+ * https://docs.microsoft.com/en-us/windows-hardware/design/component-guidelines/windows-precision-touchpad-required-hid-top-level-collections
  *
- * Copyright (c) 2016-2018 joshua stein <jcs@openbsd.org>
+ * Copyright (c) 2016-2020 joshua stein <jcs@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -46,6 +46,20 @@ struct umt_softc {
 	int		sc_rep_input;
 	int		sc_rep_config;
 	int		sc_rep_cap;
+
+	u_int32_t	quirks;
+};
+
+#define UMT_ALWAYS_OPEN		0x0001	/* always keep usb pipe open */
+
+struct umt_devs {
+	struct usb_devno	uv_dev;
+	int			flags;
+} umt_devs[] = {
+	{ { USB_VENDOR_MICROSOFT, USB_PRODUCT_MICROSOFT_TYPECOVER },
+	    UMT_ALWAYS_OPEN },
+	{ { USB_VENDOR_MICROSOFT, USB_PRODUCT_MICROSOFT_TYPECOVER2 },
+	    UMT_ALWAYS_OPEN },
 };
 
 int	umt_enable(void *);
@@ -144,6 +158,7 @@ umt_attach(struct device *parent, struct device *self, void *aux)
 	struct umt_softc *sc = (struct umt_softc *)self;
 	struct hidmt *mt = &sc->sc_mt;
 	struct uhidev_attach_arg *uha = (struct uhidev_attach_arg *)aux;
+	struct umt_devs *quirk;
 	int size;
 	void *desc;
 
@@ -151,6 +166,11 @@ umt_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_hdev.sc_parent = uha->parent;
 
 	usbd_set_idle(uha->parent->sc_udev, uha->parent->sc_ifaceno, 0, 0);
+
+	quirk = (struct umt_devs *)usb_lookup(umt_devs, uha->uaa->vendor,
+	    uha->uaa->product);
+	if (quirk)
+		sc->quirks = quirk->flags;
 
 	uhidev_get_report_desc(uha->parent, &desc, &size);
 	umt_find_winptp_reports(uha->parent, desc, size, sc);
@@ -171,6 +191,13 @@ umt_attach(struct device *parent, struct device *self, void *aux)
 		return;
 
 	hidmt_attach(mt, &umt_accessops);
+
+	if (sc->quirks & UMT_ALWAYS_OPEN) {
+		/* open uhidev and keep it open */
+		umt_enable(sc);
+		/* but mark the hidmt not in use */
+		umt_disable(sc);
+	}
 }
 
 int
@@ -224,7 +251,11 @@ umt_enable(void *v)
 	if ((rv = hidmt_enable(mt)) != 0)
 		return rv;
 
-	rv = uhidev_open(&sc->sc_hdev);
+	if ((sc->quirks & UMT_ALWAYS_OPEN) &&
+	    (sc->sc_hdev.sc_state & UHIDEV_OPEN))
+		rv = 0;
+	else
+		rv = uhidev_open(&sc->sc_hdev);
 
 	hidmt_set_input_mode(mt, HIDMT_INPUT_MODE_MT_TOUCHPAD);
 
@@ -238,6 +269,10 @@ umt_disable(void *v)
 	struct hidmt *mt = &sc->sc_mt;
 
 	hidmt_disable(mt);
+
+	if (sc->quirks & UMT_ALWAYS_OPEN)
+		return;
+
 	uhidev_close(&sc->sc_hdev);
 }
 
