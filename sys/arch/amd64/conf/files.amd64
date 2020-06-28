@@ -64,6 +64,7 @@ file	arch/amd64/isa/clock.c
 file	arch/amd64/amd64/powernow-k8.c		!small_kernel
 file	arch/amd64/amd64/est.c			!small_kernel
 file	arch/amd64/amd64/k1x-pstate.c		!small_kernel
+file	arch/amd64/amd64/pstate.c		!small_kernel
 
 include "dev/rasops/files.rasops"
 include "dev/wsfont/files.wsfont"
