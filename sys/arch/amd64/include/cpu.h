@@ -145,7 +145,8 @@ struct cpu_info {
 	u_int32_t	ci_feature_sefflags_ecx;
 	u_int32_t	ci_feature_sefflags_edx;
 	u_int32_t	ci_feature_amdspec_ebx;
-	u_int32_t	ci_feature_tpmflags;
+	u_int32_t	ci_feature_tpmflags_eax;
+	u_int32_t	ci_feature_tpmflags_ecx;
 	u_int32_t	ci_pnfeatset;
 	u_int32_t	ci_efeature_eax;
 	u_int32_t	ci_efeature_ecx;
@@ -435,8 +436,15 @@ void k8_powernow_setperf(int);
 void k1x_init(struct cpu_info *);
 void k1x_setperf(int);
 
+/* est.c */
 void est_init(struct cpu_info *);
 void est_setperf(int);
+
+/* pstate.c */
+void pstate_init(struct cpu_info *);
+void pstate_setperf(int);
+int pstate_hwp_sysctl(int *, u_int, void *, size_t *, void *, size_t,
+    struct proc *);
 
 #ifdef MULTIPROCESSOR
 /* mp_setperf.c */
@@ -463,7 +471,8 @@ void mp_setperf_init(void);
 #define CPU_TSCFREQ		16	/* TSC frequency */
 #define CPU_INVARIANTTSC	17	/* has invariant TSC */
 #define CPU_PWRACTION		18	/* action caused by power button */
-#define CPU_MAXID		19	/* number of valid machdep ids */
+#define CPU_HWP			19	/* hardware p-state knobs */
+#define CPU_MAXID		20	/* number of valid machdep ids */
 
 #define	CTL_MACHDEP_NAMES { \
 	{ 0, 0 }, \
@@ -485,6 +494,28 @@ void mp_setperf_init(void);
 	{ "tscfreq", CTLTYPE_QUAD }, \
 	{ "invarianttsc", CTLTYPE_INT }, \
 	{ "pwraction", CTLTYPE_INT }, \
+	{ "hwp", CTLTYPE_INT }, \
+}
+
+/*
+ * CTL_HWP definitions.
+ */
+#define HWP_MIN_PERF		1
+#define HWP_MIN_PERF_NAME	"min_perf"
+#define HWP_MAX_PERF		2
+#define HWP_MAX_PERF_NAME	"max_perf"
+#define HWP_DESIRED_PERF	3
+#define HWP_DESIRED_PERF_NAME	"desired_perf"
+#define HWP_EPP			4
+#define HWP_EPP_NAME		"epp_bias"
+#define HWP_MAXID		5
+
+#define CTL_HWP_NAMES { \
+	{ 0, 0 }, \
+	{ HWP_MIN_PERF_NAME, CTLTYPE_INT }, \
+	{ HWP_MAX_PERF_NAME, CTLTYPE_INT }, \
+	{ HWP_DESIRED_PERF_NAME, CTLTYPE_INT }, \
+	{ HWP_EPP_NAME, CTLTYPE_STRING }, \
 }
 
 #endif /* !_MACHINE_CPU_H_ */
