@@ -213,7 +213,11 @@ const struct {
 	{ SEFF0EDX_SSBD,	"SSBD" },
 }, cpu_tpm_eaxfeatures[] = {
 	{ TPM_SENSOR,		"SENSOR" },
+	{ TPM_TURBO,		"TURBO" },
 	{ TPM_ARAT,		"ARAT" },
+	{ TPM_HWP,		"HWP" },
+}, cpu_tpm_ecxfeatures[] = {
+	{ TPM_EPB,		"EPB" },
 }, cpu_cpuid_perf_eax[] = {
 	{ CPUIDEAX_VERID,	"PERF" },
 }, cpu_cpuid_apmi_edx[] = {
@@ -605,14 +609,19 @@ identifycpu(struct cpu_info *ci)
 	}
 
 	if (!strcmp(cpu_vendor, "GenuineIntel") && cpuid_level >= 0x06) {
-		CPUID(0x06, ci->ci_feature_tpmflags, dummy, dummy, dummy);
+		CPUID(0x06, ci->ci_feature_tpmflags_eax, dummy,
+		    ci->ci_feature_tpmflags_ecx, dummy);
 		for (i = 0; i < nitems(cpu_tpm_eaxfeatures); i++)
-			if (ci->ci_feature_tpmflags &
+			if (ci->ci_feature_tpmflags_eax &
 			    cpu_tpm_eaxfeatures[i].bit)
 				printf(",%s", cpu_tpm_eaxfeatures[i].str);
+		for (i = 0; i < nitems(cpu_tpm_eaxfeatures); i++)
+			if (ci->ci_feature_tpmflags_ecx &
+			    cpu_tpm_ecxfeatures[i].bit)
+				printf(",%s", cpu_tpm_ecxfeatures[i].str);
 	} else if (!strcmp(cpu_vendor, "AuthenticAMD")) {
 		if (ci->ci_family >= 0x12)
-			ci->ci_feature_tpmflags |= TPM_ARAT;
+			ci->ci_feature_tpmflags_eax |= TPM_ARAT;
 	}
 
 	/* AMD speculation control features */
@@ -699,7 +708,9 @@ identifycpu(struct cpu_info *ci)
 				setperf_setup = k1x_init;
 		}
 
-		if (cpu_ecxfeature & CPUIDECX_EST)
+		if (ci->ci_feature_tpmflags_eax & TPM_HWP)
+			setperf_setup = pstate_init;
+		else if (cpu_ecxfeature & CPUIDECX_EST)
 			setperf_setup = est_init;
 #endif
 
@@ -722,7 +733,7 @@ identifycpu(struct cpu_info *ci)
 	}
 
 #ifndef SMALL_KERNEL
-	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags & TPM_SENSOR)) {
+	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags_eax & TPM_SENSOR)) {
 		strlcpy(ci->ci_sensordev.xname, ci->ci_dev->dv_xname,
 		    sizeof(ci->ci_sensordev.xname));
 		ci->ci_sensor.type = SENSOR_TEMP;

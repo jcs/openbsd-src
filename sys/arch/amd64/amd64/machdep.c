@@ -548,6 +548,9 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 #endif
 	case CPU_TSCFREQ:
 		return (sysctl_rdquad(oldp, oldlenp, newp, tsc_frequency));
+	case CPU_HWP:
+		return (pstate_hwp_sysctl(name + 1, namelen - 1, oldp, oldlenp,
+		    newp, newlen, p));
 	default:
 		return (sysctl_bounded_arr(cpuctl_vars, nitems(cpuctl_vars),
 		    name, namelen, oldp, oldlenp, newp, newlen));
