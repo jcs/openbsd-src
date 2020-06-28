@@ -234,7 +234,17 @@
  * Thermal and Power Management (CPUID function 0x6) EAX bits
  */
 #define	TPM_SENSOR	0x00000001	 /* Digital temp sensor */
+#define	TPM_TURBO	0x00000002	 /* Turbo Boost available */
 #define	TPM_ARAT	0x00000004	 /* APIC Timer Always Running */
+#define	TPM_HWP		0x00000080	 /* Hardware P-States supported */
+#define	TPM_HWP_NOTIFY	0x00000100	 /* HWP Notification */
+#define	TPM_HWP_ACT_WIN	0x00000200	 /* HWP Activity Window */
+#define	TPM_HWP_EPP	0x00000400	 /* HWP Energy Perf. Preference */
+
+/*
+ * Thermal and Power Management (CPUID function 0x6) ECX bits
+ */
+#define	TPM_EPB		0x00000008	 /* IA32_ENERGY_PERF_BIAS supported */
 
  /*
   * "Architectural Performance Monitoring" bits (CPUID function 0x0a):
@@ -369,6 +379,7 @@
 #define MSR_PERFCTR0		0x0c1
 #define MSR_PERFCTR1		0x0c2
 #define MSR_FSB_FREQ		0x0cd	/* Core Duo/Solo only */
+#define MSR_PLATFORM_INFO	0x0ce
 #define MSR_MTRRcap		0x0fe
 #define MTRRcap_FIXED		0x100	/* bit 8 - fixed MTRRs supported */
 #define MTRRcap_WC		0x400	/* bit 10 - WC type supported */
@@ -926,11 +937,28 @@
 #define	C3_CRYPT_CWLO_KEY192		0x0000040c	/* 192bit, 12 rds */
 #define	C3_CRYPT_CWLO_KEY256		0x0000080e	/* 256bit, 15 rds */
 
+/* Hardware-Controlled Performance States (HWP) */
+#define IA32_ENERGY_PERF_BIAS		0x1b0
+#define IA32_PM_ENABLE			0x770
+#define IA32_HWP_CAPABILITIES		0x771
+#define IA32_HWP_REQUEST_PKG		0x772
+#define IA32_HWP_INTERRUPT		0x773
+#define IA32_HWP_REQUEST		0x774
+#define IA32_HWP_STATUS			0x777
+#define MSR_PPERF			0x64e
+
 /* Intel Silicon Debug */
 #define IA32_DEBUG_INTERFACE		0xc80
 #define IA32_DEBUG_INTERFACE_ENABLE	0x00000001
 #define IA32_DEBUG_INTERFACE_LOCK	0x40000000
 #define IA32_DEBUG_INTERFACE_MASK	0x80000000
+
+/* Config TDP MSRs */
+#define MSR_CONFIG_TDP_NOMINAL		0x00000648
+#define MSR_CONFIG_TDP_LEVEL_1		0x00000649
+#define MSR_CONFIG_TDP_LEVEL_2		0x0000064A
+#define MSR_CONFIG_TDP_CONTROL		0x0000064B
+#define MSR_TURBO_ACTIVATION_RATIO	0x0000064C
 
 /*
  * VMX
