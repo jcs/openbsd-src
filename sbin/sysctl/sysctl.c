@@ -223,6 +223,7 @@ int sysctl_chipset(char *, char **, int *, int, int *);
 int sysctl_audio(char *, char **, int *, int, int *);
 int sysctl_video(char *, char **, int *, int, int *);
 int sysctl_witness(char *, char **, int *, int, int *);
+int sysctl_hwp(char *, char **, int *, int, int *);
 void vfsinit(void);
 
 char *equ = "=";
@@ -766,6 +767,14 @@ parse(char *string, int flags)
 #ifdef CPU_CHIPSET
 		if (mib[1] == CPU_CHIPSET) {
 			len = sysctl_chipset(string, &bufp, mib, flags, &type);
+			if (len < 0)
+				return;
+			break;
+		}
+#endif
+#ifdef CPU_HWP
+		if (mib[1] == CPU_HWP) {
+			len = sysctl_hwp(string, &bufp, mib, flags, &type);
 			if (len < 0)
 				return;
 			break;
@@ -2910,6 +2919,30 @@ sysctl_witness(char *string, char **bufpp, int mib[], int flags, int *typep)
 	*typep = witnesslist.list[indx].ctl_type;
 	return (3);
 }
+
+#ifdef CPU_HWP
+/*
+ * handle machdep.hwp requests
+ */
+struct ctlname hwpname[] = CTL_HWP_NAMES;
+struct list hwplist = { hwpname, HWP_MAXID };
+
+int
+sysctl_hwp(char *string, char **bufpp, int mib[], int flags, int *typep)
+{
+	int indx;
+
+	if (*bufpp == NULL) {
+		listall(string, &hwplist);
+		return (-1);
+	}
+	if ((indx = findname(string, "third", bufpp, &hwplist)) == -1)
+		return (-1);
+	mib[2] = indx;
+	*typep = hwplist.list[indx].ctl_type;
+	return (3);
+}
+#endif
 
 /*
  * Scan a list of names searching for a particular name.

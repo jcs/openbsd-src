@@ -134,7 +134,8 @@ struct cpu_info {
 	u_int32_t	ci_feature_sefflags_ebx;/* more CPUID feature bits */
 	u_int32_t	ci_feature_sefflags_ecx;/* more CPUID feature bits */
 	u_int32_t	ci_feature_sefflags_edx;/* more CPUID feature bits */
-	u_int32_t	ci_feature_tpmflags;	/* thermal & power bits */
+	u_int32_t	ci_feature_tpmflags_eax;
+	u_int32_t	ci_feature_tpmflags_ecx;
 	u_int32_t	cpu_class;		/* CPU class */
 	u_int32_t	ci_cflushsz;		/* clflush cache-line size */
 	u_int32_t	ci_amdcacheinfo[4];	/* AMD cache info */
