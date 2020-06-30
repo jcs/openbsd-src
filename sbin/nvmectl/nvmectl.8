@@ -1,0 +1,139 @@
+.\" $NetBSD: nvmectl.8,v 1.4 2017/04/30 15:59:18 wiz Exp $
+.\"
+.\" Copyright (c) 2012 Intel Corporation
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions, and the following disclaimer,
+.\"    without modification.
+.\" 2. Redistributions in binary form must reproduce at minimum a disclaimer
+.\"    substantially similar to the "NO WARRANTY" disclaimer below
+.\"    ("Disclaimer") and any redistribution must be conditioned upon
+.\"    including a substantially similar Disclaimer requirement for further
+.\"    binary redistribution.
+.\"
+.\" NO WARRANTY
+.\" THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+.\" "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+.\" LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR
+.\" A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+.\" HOLDERS OR CONTRIBUTORS BE LIABLE FOR SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+.\" STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+.\" IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGES.
+.\"
+.\" nvmecontrol man page.
+.\"
+.\" Author: Jim Harris <jimharris@FreeBSD.org>
+.\"
+.\" $FreeBSD: head/sbin/nvmecontrol/nvmecontrol.8 314230 2017-02-25 00:09:16Z imp $
+.\"
+.Dd May 19, 2016
+.Dt NVMECTL 8
+.Os
+.Sh NAME
+.Nm nvmectl
+.Nd NVM Express control utility
+.Sh SYNOPSIS
+.Nm
+.Ic identify
+.Op Fl x Op Fl v
+.Ar device
+.Nm
+.Ic logpage
+.Op Fl x
+.Op Fl p Ar page_id
+.Op Fl v Ar vendor-string
+.Op Fl b
+.Ar device Ns
+.Nm
+.Ic power
+.Op Fl l
+.Op Fl p Ar power_state
+.Op Fl w Ar workload_hint
+.Ar device
+.Sh DESCRIPTION
+NVM Express (NVMe) is a storage protocol standard, for SSDs and other
+high-speed storage devices over PCI Express.
+.Ss logpage
+The logpage command knows how to print log pages of various types.
+It also knows about vendor specific log pages from hgst/wdc and intel.
+Page 0xc1 for hgst/wdc contains the advanced smart information about
+the drive.
+Page 0xc1 is read latency stats for intel.
+Page 0xc2 is write latency stats for intel.
+Page 0xc5 is temperature stats for intel.
+Page 0xca is advanced smart information for intel.
+.Pp
+Specifying
+.Fl p
+.Ic help
+will list all valid vendors and pages.
+.Fl x
+will print the page as hex.
+.Fl b
+will print the binary data for the page.
+.Sh EXAMPLES
+.Pp
+.Dl nvmectl identify /dev/sd0c
+.Pp
+Display a human-readable summary of the IDENTIFY_CONTROLLER data of the
+NVMe controller hosting sd0.
+.Pp
+.Dl nvmectl identify -x -v sd0c
+.Pp
+Display an hexadecimal dump of the sd0c
+.Dv IDENTIFY_NAMESPACE
+data for namespace 1.
+.Pp
+.Dl nvmectl logpage -p 1 /dev/sd0c
+.Pp
+Display a human-readable summary of the NVMe controller's Error Information Log.
+Log pages defined by the NVMe specification include
+Error Information Log (ID=1),
+SMART/Health Information Log (ID=2),
+and
+Firmware Slot Log (ID=3).
+.Pp
+.Dl nvmectl logpage -p 0xc1 -v wdc /dev/sd0c
+.Pp
+Display a human-readable summary of the nvme0's wdc-specific advanced
+SMART data.
+.Pp
+.Dl nvmectl logpage -p 1 -x /dev/sd0c
+.Pp
+Display a hexadecimal dump of the NVMe controller's Error Information Log.
+.Pp
+.Dl nvmectl logpage -p 0xcb -b /dev/sd0c > /tmp/page-cb.bin
+.Pp
+Print the contents of vendor specific page 0xcb as binary data on
+standard out.
+Redirect it to a temporary file.
+.Pp
+.Dl nvmectl power -l /dev/sd0c
+.Pp
+List all the current power modes.
+.Pp
+.Dl nvmectl power -p 3 /dev/sd0c
+.Pp
+Set the current power mode.
+.Pp
+.Dl nvmectl power /dev/sd0c
+.Pp
+Get the current power mode.
+.Sh HISTORY
+The nvmectl utility appeared as nvmecontrol in
+.Fx 9.2 .
+.Sh AUTHORS
+.An -nosplit
+nvmecontrol was developed by Intel and originally written by
+.An Jim Harris Aq Mt jimharris@FreeBSD.org .
+.Pp
+This man page was written by
+.An Jim Harris Aq Mt jimharris@FreeBSD.org .
