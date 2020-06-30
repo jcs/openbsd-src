@@ -19,12 +19,14 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/buf.h>
+#include <sys/conf.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/device.h>
 #include <sys/queue.h>
 #include <sys/mutex.h>
 #include <sys/pool.h>
+#include <sys/proc.h>
 
 #include <sys/atomic.h>
 
@@ -36,6 +38,7 @@
 
 #include <dev/ic/nvmereg.h>
 #include <dev/ic/nvmevar.h>
+#include <dev/ic/nvmeio.h>
 
 struct cfdriver nvme_cd = {
 	NULL,
@@ -83,6 +86,7 @@ void	nvme_scsi_cmd(struct scsi_xfer *);
 void	nvme_minphys(struct buf *, struct scsi_link *);
 int	nvme_scsi_probe(struct scsi_link *);
 void	nvme_scsi_free(struct scsi_link *);
+int	nvme_scsi_ioctl(struct scsi_link *, u_long, caddr_t, int);
 
 #ifdef HIBERNATE
 #include <uvm/uvm_extern.h>
@@ -94,7 +98,8 @@ int	nvme_hibernate_io(dev_t, daddr_t, vaddr_t, size_t, int, void *);
 #endif
 
 struct scsi_adapter nvme_switch = {
-	nvme_scsi_cmd, nvme_minphys, nvme_scsi_probe, nvme_scsi_free, NULL
+	nvme_scsi_cmd, nvme_minphys, nvme_scsi_probe, nvme_scsi_free,
+	nvme_scsi_ioctl
 };
 
 void	nvme_scsi_io(struct scsi_xfer *, int);
@@ -123,6 +128,11 @@ void		nvme_op_sq_leave_locked(struct nvme_softc *,
 
 void		nvme_op_cq_done(struct nvme_softc *,
 		    struct nvme_queue *, struct nvme_ccb *);
+
+void	nvme_pt_fill(struct nvme_softc *, struct nvme_ccb *, void *);
+void	nvme_pt_done(struct nvme_softc *, struct nvme_ccb *, struct nvme_cqe *);
+int	nvme_command_passthrough(struct nvme_softc *, struct nvme_pt_command *,
+	    uint16_t, int);
 
 static const struct nvme_ops nvme_ops = {
 	.op_sq_enter		= nvme_op_sq_enter,
@@ -313,7 +323,7 @@ nvme_attach(struct nvme_softc *sc)
 		return (1);
 	}
 
-	sc->sc_admin_q = nvme_q_alloc(sc, NVME_ADMIN_Q, 128, sc->sc_dstrd);
+	sc->sc_admin_q = nvme_q_alloc(sc, NVME_ADMIN_Q, 32, sc->sc_dstrd);
 	if (sc->sc_admin_q == NULL) {
 		printf("%s: unable to allocate admin queue\n", DEVNAME(sc));
 		return (1);
@@ -917,6 +927,159 @@ nvme_op_sq_leave(struct nvme_softc *sc,
 {
 	nvme_op_sq_leave_locked(sc, q, ccb);
 	mtx_leave(&q->q_sq_mtx);
+}
+
+int
+nvme_scsi_ioctl(struct scsi_link *link, u_long cmd, caddr_t addr, int flag)
+{
+	struct nvme_softc *sc = link->bus->sb_adapter_softc;
+	struct nvme_pt_command *pt;
+
+	switch (cmd) {
+	case NVME_PASSTHROUGH_CMD:
+		pt = (struct nvme_pt_command *)addr;
+		return nvme_command_passthrough(sc, pt, pt->cmd.nsid, 1);
+	}
+
+	return ENOTTY;
+}
+
+struct nvme_pt_state {
+	struct nvme_pt_command *pt;
+	struct nvme_dmamem *mem;
+	int finished;
+};
+
+void
+nvme_pt_fill(struct nvme_softc *sc, struct nvme_ccb *ccb, void *slot)
+{
+	struct nvme_sqe *sqe = slot;
+	struct nvme_pt_state *state = ccb->ccb_cookie;
+	struct nvme_pt_command *pt = state->pt;
+	bus_dmamap_t dmap;
+	int i;
+
+	sqe->opcode = pt->cmd.opcode;
+	htolem32(&sqe->nsid, pt->cmd.nsid);
+
+	if (pt->buf != NULL && pt->len > 0) {
+		dmap = NVME_DMA_MAP(state->mem);
+		htolem64(&sqe->entry.prp[0], dmap->dm_segs[0].ds_addr);
+		switch (dmap->dm_nsegs) {
+		case 1:
+			break;
+		case 2:
+			htolem64(&sqe->entry.prp[1], dmap->dm_segs[1].ds_addr);
+			break;
+		default:
+			for (i = 1; i < dmap->dm_nsegs; i++) {
+				htolem64(&ccb->ccb_prpl[i - 1],
+				    dmap->dm_segs[i].ds_addr);
+			}
+			bus_dmamap_sync(sc->sc_dmat,
+		    	    NVME_DMA_MAP(sc->sc_ccb_prpls),
+		    	    ccb->ccb_prpl_off,
+		    	    sizeof(*ccb->ccb_prpl) * dmap->dm_nsegs - 1,
+			    BUS_DMASYNC_PREWRITE);
+			htolem64(&sqe->entry.prp[1], ccb->ccb_prpl_dva);
+			break;
+		}
+	}
+
+	htolem32(&sqe->cdw10, pt->cmd.cdw10);
+	htolem32(&sqe->cdw11, pt->cmd.cdw11);
+	htolem32(&sqe->cdw12, pt->cmd.cdw12);
+	htolem32(&sqe->cdw13, pt->cmd.cdw13);
+	htolem32(&sqe->cdw14, pt->cmd.cdw14);
+	htolem32(&sqe->cdw15, pt->cmd.cdw15);
+}
+
+void
+nvme_pt_done(struct nvme_softc *sc, struct nvme_ccb *ccb, struct nvme_cqe *cqe)
+{
+	struct nvme_pt_state *state = ccb->ccb_cookie;
+	struct nvme_pt_command *pt = state->pt;
+	bus_dmamap_t dmap;
+
+	if (pt->buf != NULL && pt->len > 0) {
+		dmap = NVME_DMA_MAP(state->mem);
+		if (dmap->dm_nsegs > 2) {
+			bus_dmamap_sync(sc->sc_dmat,
+			    NVME_DMA_MAP(sc->sc_ccb_prpls),
+			    ccb->ccb_prpl_off,
+			    sizeof(*ccb->ccb_prpl) * dmap->dm_nsegs - 1,
+			    BUS_DMASYNC_POSTWRITE);
+		}
+
+		bus_dmamap_sync(sc->sc_dmat, dmap, 0, dmap->dm_mapsize,
+		    pt->is_read ? BUS_DMASYNC_POSTREAD : BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_unload(sc->sc_dmat, dmap);
+	}
+
+	pt->cpl.cdw0 = cqe->cdw0;
+	pt->cpl.flags = cqe->flags & ~NVME_CQE_PHASE;
+}
+
+int
+nvme_command_passthrough(struct nvme_softc *sc, struct nvme_pt_command *pt,
+    uint16_t nsid, int is_adminq)
+{
+	struct nvme_pt_state state;
+	struct nvme_queue *q;
+	struct nvme_ccb *ccb;
+	struct nvme_dmamem *mem = NULL;
+	void *buf = NULL;
+	int error;
+
+	if ((pt->buf == NULL && pt->len > 0) ||
+	    (pt->buf != NULL && (pt->len == 0 || pt->len > sc->sc_mdts)))
+		return EINVAL;
+
+	ccb = nvme_ccb_get(sc);
+	if (ccb == NULL)
+		return EBUSY;
+
+	if (pt->buf != NULL) {
+		mem = nvme_dmamem_alloc(sc, pt->len);
+		if (mem == NULL) {
+			error = ENOMEM;
+			goto ccb_put;
+		}
+		if (!pt->is_read) {
+			buf = (void *)(NVME_DMA_DVA(mem));
+			error = copyin(pt->buf, buf, pt->len);
+			if (error)
+				goto kmem_free;
+		}
+		nvme_dmamem_sync(sc, mem, pt->is_read ? BUS_DMASYNC_PREREAD :
+		    BUS_DMASYNC_PREWRITE);
+	}
+
+	state.pt = pt;
+	state.mem = mem;
+
+	ccb->ccb_done = nvme_pt_done;
+	ccb->ccb_cookie = &state;
+
+	pt->cmd.nsid = nsid;
+	q = is_adminq ? sc->sc_admin_q : sc->sc_q;
+	if (nvme_poll(sc, q, ccb, nvme_pt_fill)) {
+		error = EIO;
+		goto out;
+	}
+
+	error = 0;
+out:
+	if (pt->buf != NULL) {
+		if (error == 0 && pt->is_read)
+			error = copyout((void *)NVME_DMA_KVA(mem), pt->buf,
+			    pt->len);
+kmem_free:
+		nvme_dmamem_free(sc, mem);
+	}
+ccb_put:
+	nvme_ccb_put(sc, ccb);
+	return error;
 }
 
 void
