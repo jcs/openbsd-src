@@ -467,11 +467,9 @@ struct vm_exit {
 
 struct vm_create_params {
 	/* Input parameters to VMM_IOC_CREATE */
-	size_t			vcp_nmemranges;
 	size_t			vcp_ncpus;
 	size_t			vcp_ndisks;
 	size_t			vcp_nnics;
-	struct vm_mem_range	vcp_memranges[VMM_MAX_MEM_RANGES];
 	char			vcp_disks[VMM_MAX_DISKS_PER_VM][VMM_MAX_PATH_DISK];
 	char			vcp_cdrom[VMM_MAX_PATH_CDROM];
 	char			vcp_name[VMM_MAX_NAME_LEN];
@@ -578,6 +576,12 @@ struct vm_mprotect_ept_params {
 	int			vmep_prot;
 };
 
+struct vm_addmemrange_params {
+	/* Input parameters to VMM_IOC_ADDMEMRANGE */
+	uint32_t		vap_vm_id;
+	struct vm_mem_range	vap_range;
+};
+
 /* IOCTL definitions */
 #define VMM_IOC_CREATE _IOWR('V', 1, struct vm_create_params) /* Create VM */
 #define VMM_IOC_RUN _IOWR('V', 2, struct vm_run_params) /* Run VCPU */
@@ -593,6 +597,8 @@ struct vm_mprotect_ept_params {
 #define VMM_IOC_WRITEVMPARAMS _IOW('V', 10, struct vm_rwvmparams_params)
 /* Control the protection of ept pages*/
 #define VMM_IOC_MPROTECT_EPT _IOW('V', 11, struct vm_mprotect_ept_params)
+/* Add memory range */
+#define VMM_IOC_ADDMEMRANGE _IOW('V', 12, struct vm_addmemrange_params)
 
 /* CPUID masks */
 /*

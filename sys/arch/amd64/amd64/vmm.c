@@ -116,7 +116,7 @@ int vmmioctl(dev_t, u_long, caddr_t, int, struct proc *);
 int vmmclose(dev_t, int, int, struct proc *);
 int vmm_start(void);
 int vmm_stop(void);
-size_t vm_create_check_mem_ranges(struct vm_create_params *);
+size_t vm_check_mem_range(struct vm *, struct vm_mem_range *);
 int vm_create(struct vm_create_params *, struct proc *);
 int vm_run(struct vm_run_params *);
 int vm_terminate(struct vm_terminate_params *);
@@ -126,6 +126,7 @@ int vm_intr_pending(struct vm_intr_params *);
 int vm_rwregs(struct vm_rwregs_params *, int);
 int vm_mprotect_ept(struct vm_mprotect_ept_params *);
 int vm_rwvmparams(struct vm_rwvmparams_params *, int);
+int vm_addmemrange(struct vm_addmemrange_params *);
 int vm_find(uint32_t, struct vm **);
 int vcpu_readregs_vmx(struct vcpu *, uint64_t, struct vcpu_reg_state *);
 int vcpu_readregs_svm(struct vcpu *, uint64_t, struct vcpu_reg_state *);
@@ -505,6 +506,9 @@ vmmioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 		break;
 	case VMM_IOC_WRITEVMPARAMS:
 		ret = vm_rwvmparams((struct vm_rwvmparams_params *)data, 1);
+		break;
+	case VMM_IOC_ADDMEMRANGE:
+		ret = vm_addmemrange((struct vm_addmemrange_params *)data);
 		break;
 
 	default:
@@ -1099,6 +1103,52 @@ vmx_pmap_find_pte_ept(pmap_t pmap, paddr_t addr)
 }
 
 /*
+ * vm_addmemrange
+ *
+ * Parameters:
+ *  vap: information structure identifying the memory range to add
+ *
+ * Return values:
+ *  0: the operation succeeded
+ *  EBUSY: VM is already running
+ *  EFAULT: error copying data to user process
+ */
+int
+vm_addmemrange(struct vm_addmemrange_params *vap)
+{
+	struct vm *vm;
+	size_t memsize;
+	int error = 0;
+
+	rw_enter_write(&vmm_softc->vm_lock);
+
+	error = vm_find(vap->vap_vm_id, &vm);
+	if (error != 0)
+		goto out;
+
+	if (vm->vm_vcpus_running) {
+		error = EBUSY;
+		goto out;
+	}
+
+	memsize = vm_check_mem_range(vm, &(vap->vap_range));
+	if (memsize == 0) {
+		error = EINVAL;
+		goto out;
+	}
+
+	memcpy(&vm->vm_memranges[vm->vm_nmemranges], &vap->vap_range,
+	    sizeof(struct vm_mem_range));
+	vm->vm_memory_size += memsize;
+	vm->vm_nmemranges++;
+
+out:
+	rw_exit_write(&vmm_softc->vm_lock);
+
+	return error;
+}
+
+/*
  * vm_find
  *
  * Function to find an existing VM by its identifier.
@@ -1338,85 +1388,99 @@ stop_vmm_on_cpu(struct cpu_info *ci)
 }
 
 /*
- * vm_create_check_mem_ranges
+ * vm_check_mem_range
  *
- * Make sure that the guest physical memory ranges given by the user process
- * do not overlap and are in ascending order.
+ * Make sure that the guest physical memory range given by the user process
+ * does not overlap and is in ascending order.
  *
  * The last physical address may not exceed VMM_MAX_VM_MEM_SIZE.
  *
  * Return Values:
- *   The total memory size in MB if the checks were successful
- *   0: One of the memory ranges was invalid, or VMM_MAX_VM_MEM_SIZE was
- *   exceeded
+ *   The memory size in MB if the checks were successful
+ *   0: The memory range was invalid, or VMM_MAX_VM_MEM_SIZE was exceeded
  */
 size_t
-vm_create_check_mem_ranges(struct vm_create_params *vcp)
+vm_check_mem_range(struct vm *vm, struct vm_mem_range *vmr)
 {
-	size_t i, memsize = 0;
-	struct vm_mem_range *vmr, *pvmr;
 	const paddr_t maxgpa = (uint64_t)VMM_MAX_VM_MEM_SIZE * 1024 * 1024;
 
-	if (vcp->vcp_nmemranges == 0 ||
-	    vcp->vcp_nmemranges > VMM_MAX_MEM_RANGES)
+	if (vm->vm_nmemranges > VMM_MAX_MEM_RANGES) {
+		printf("%s: invalid: too many ranges\n", __func__);
 		return (0);
-
-	for (i = 0; i < vcp->vcp_nmemranges; i++) {
-		vmr = &vcp->vcp_memranges[i];
-
-		/* Only page-aligned addresses and sizes are permitted */
-		if ((vmr->vmr_gpa & PAGE_MASK) || (vmr->vmr_va & PAGE_MASK) ||
-		    (vmr->vmr_size & PAGE_MASK) || vmr->vmr_size == 0)
-			return (0);
-
-		/* Make sure that VMM_MAX_VM_MEM_SIZE is not exceeded */
-		if (vmr->vmr_gpa >= maxgpa ||
-		    vmr->vmr_size > maxgpa - vmr->vmr_gpa)
-			return (0);
-
-		/*
-		 * Make sure that all virtual addresses are within the address
-		 * space of the process and that they do not wrap around.
-		 * Calling uvm_share() when creating the VM will take care of
-		 * further checks.
-		 */
-		if (vmr->vmr_va < VM_MIN_ADDRESS ||
-		    vmr->vmr_va >= VM_MAXUSER_ADDRESS ||
-		    vmr->vmr_size >= VM_MAXUSER_ADDRESS - vmr->vmr_va)
-			return (0);
-
-		/*
-		 * Specifying ranges within the PCI MMIO space is forbidden.
-		 * Disallow ranges that start inside the MMIO space:
-		 * [VMM_PCI_MMIO_BAR_BASE .. VMM_PCI_MMIO_BAR_END]
-		 */
-		if (vmr->vmr_gpa >= VMM_PCI_MMIO_BAR_BASE &&
-		    vmr->vmr_gpa <= VMM_PCI_MMIO_BAR_END)
-			return (0);
-
-		/*
-		 * ... and disallow ranges that end inside the MMIO space:
-		 * (VMM_PCI_MMIO_BAR_BASE .. VMM_PCI_MMIO_BAR_END]
-		 */
-		if (vmr->vmr_gpa + vmr->vmr_size > VMM_PCI_MMIO_BAR_BASE &&
-		    vmr->vmr_gpa + vmr->vmr_size <= VMM_PCI_MMIO_BAR_END)
-			return (0);
-
-		/*
-		 * Make sure that guest physcal memory ranges do not overlap
-		 * and that they are ascending.
-		 */
-		if (i > 0 && pvmr->vmr_gpa + pvmr->vmr_size > vmr->vmr_gpa)
-			return (0);
-
-		memsize += vmr->vmr_size;
-		pvmr = vmr;
 	}
 
-	if (memsize % (1024 * 1024) != 0)
+	/* Only page-aligned addresses and sizes are permitted */
+	if ((vmr->vmr_gpa & PAGE_MASK) || (vmr->vmr_va & PAGE_MASK) ||
+	    (vmr->vmr_size & PAGE_MASK)) {
+		printf("%s: invalid: not page-aligned\n", __func__);
 		return (0);
-	memsize /= 1024 * 1024;
-	return (memsize);
+	}
+
+	if (vmr->vmr_size == 0) {
+		printf("%s: invalid: zero size\n", __func__);
+		return (0);
+	}
+
+	/* Make sure that VMM_MAX_VM_MEM_SIZE is not exceeded */
+	if (vmr->vmr_gpa >= maxgpa ||
+	    vmr->vmr_size > maxgpa - vmr->vmr_gpa) {
+		printf("%s: invalid: size too large\n", __func__);
+		return (0);
+	}
+
+	/*
+	 * Make sure that all virtual addresses are within the address
+	 * space of the process and that they do not wrap around.
+	 * Calling uvm_share() when creating the VM will take care of
+	 * further checks.
+	 */
+	if (vmr->vmr_va < VM_MIN_ADDRESS ||
+	    vmr->vmr_va >= VM_MAXUSER_ADDRESS ||
+	    vmr->vmr_size >= VM_MAXUSER_ADDRESS - vmr->vmr_va) {
+		printf("%s: invalid: virtual address outside of process space\n",
+		    __func__);
+		return (0);
+	}
+
+	/*
+	 * Specifying ranges within the PCI MMIO space is forbidden.
+	 * Disallow ranges that start inside the MMIO space:
+	 * [VMM_PCI_MMIO_BAR_BASE .. VMM_PCI_MMIO_BAR_END]
+	 */
+	if (vmr->vmr_gpa >= VMM_PCI_MMIO_BAR_BASE &&
+	    vmr->vmr_gpa <= VMM_PCI_MMIO_BAR_END) {
+		printf("%s: invalid: inside PCI MMIO space\n", __func__);
+		return (0);
+	}
+
+	/*
+	 * ... and disallow ranges that end inside the MMIO space:
+	 * (VMM_PCI_MMIO_BAR_BASE .. VMM_PCI_MMIO_BAR_END]
+	 */
+	if (vmr->vmr_gpa + vmr->vmr_size > VMM_PCI_MMIO_BAR_BASE &&
+	    vmr->vmr_gpa + vmr->vmr_size <= VMM_PCI_MMIO_BAR_END) {
+		printf("%s: invalid: start+size inside PCI MMIO space\n",
+		    __func__);
+		return (0);
+	}
+
+	/*
+	 * Make sure that guest physcal memory ranges do not overlap
+	 * and that they are ascending.
+	 */
+	if (vm->vm_nmemranges > 0 &&
+	    vm->vm_memranges[vm->vm_nmemranges - 1].vmr_gpa +
+	    vm->vm_memranges[vm->vm_nmemranges - 1].vmr_size > vmr->vmr_gpa) {
+		printf("%s: invalid: overlapping\n", __func__);
+		return (0);
+	}
+
+	if (vmr->vmr_size % (1024 * 1024) != 0) {
+		printf("%s: invalid: size not in megabytes\n", __func__);
+		return (0);
+	}
+
+	return (vmr->vmr_size / 1024 * 1024);
 }
 
 /*
@@ -1435,15 +1499,10 @@ int
 vm_create(struct vm_create_params *vcp, struct proc *p)
 {
 	int i, ret;
-	size_t memsize;
 	struct vm *vm;
 	struct vcpu *vcpu;
 
 	if (!(curcpu()->ci_flags & CPUF_VMM))
-		return (EINVAL);
-
-	memsize = vm_create_check_mem_ranges(vcp);
-	if (memsize == 0)
 		return (EINVAL);
 
 	/* XXX - support UP only (for now) */
@@ -1455,10 +1514,8 @@ vm_create(struct vm_create_params *vcp, struct proc *p)
 	rw_init(&vm->vm_vcpu_lock, "vcpulock");
 
 	vm->vm_creator_pid = p->p_p->ps_pid;
-	vm->vm_nmemranges = vcp->vcp_nmemranges;
-	memcpy(vm->vm_memranges, vcp->vcp_memranges,
-	    vm->vm_nmemranges * sizeof(vm->vm_memranges[0]));
-	vm->vm_memory_size = memsize;
+	vm->vm_nmemranges = 0;
+	vm->vm_memory_size = 0;
 	strncpy(vm->vm_name, vcp->vcp_name, VMM_MAX_NAME_LEN - 1);
 
 	rw_enter_write(&vmm_softc->vm_lock);
