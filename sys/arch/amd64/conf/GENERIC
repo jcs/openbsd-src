@@ -72,6 +72,7 @@ acpicbkbd*	at acpi?
 acpials*	at acpi?
 abl*		at acpi?	# Apple Backlight
 asmc*		at acpi?	# Apple SMC
+fan*		at asmc?	# Fan Management Framework
 tpm*		at acpi?
 acpihve*	at acpi?
 acpisurface*	at acpi?

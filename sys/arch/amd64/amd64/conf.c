@@ -173,6 +173,7 @@ cdev_decl(pci);
 #include "pvbus.h"
 #include "ipmi.h"
 #include "switch.h"
+#include "fan.h"
 
 struct cdevsw	cdevsw[] =
 {
@@ -229,7 +230,7 @@ struct cdevsw	cdevsw[] =
 	cdev_random_init(1,random),	/* 45: random data source */
 	cdev_ocis_init(NPCTR,pctr),	/* 46: performance counters */
 	cdev_disk_init(NRD,rd),		/* 47: ram disk driver */
-	cdev_notdef(),			/* 48 */
+	cdev_fan_init(NFAN,fan),	/* 48: Fan Management */
 	cdev_bktr_init(NBKTR,bktr),     /* 49: Bt848 video capture device */
 	cdev_ksyms_init(NKSYMS,ksyms),	/* 50: Kernel symbols device */
 	cdev_kstat_init(NKSTAT,kstat),	/* 51: Kernel statistics */

@@ -26,6 +26,7 @@
 #include <sys/rwlock.h>
 #include <sys/task.h>
 #include <sys/sensors.h>
+#include <sys/fanio.h>
 
 #include <machine/bus.h>
 
@@ -35,6 +36,7 @@
 #include <dev/acpi/dsdt.h>
 
 #include <dev/wscons/wsconsio.h>
+#include <dev/fan_if.h>
 
 #define ASMC_DATA	0x00	/* SMC data port offset */
 #define ASMC_COMMAND	0x04	/* SMC command port offset */
@@ -68,6 +70,7 @@ struct asmc_prod {
 
 struct asmc_softc {
 	struct device		 sc_dev;
+	struct device		*sc_fandev;
 
 	struct acpi_softc       *sc_acpi;
 	struct aml_node         *sc_devnode;
@@ -107,12 +110,40 @@ int	asmc_set_backlight(struct wskbd_backlight *);
 extern int (*wskbd_get_backlight)(struct wskbd_backlight *);
 extern int (*wskbd_set_backlight)(struct wskbd_backlight *);
 
+int	asmc_open(void *);
+int	asmc_close(void *);
+int	asmc_query_drv(void *, struct fan_query_drv *);
+int	asmc_query_fan(void *, struct fan_query_fan *);
+int	asmc_g_act(void *, struct fan_g_act *);
+int	asmc_g_min(void *, struct fan_g_min *);
+int	asmc_g_max(void *, struct fan_g_max *);
+int	asmc_g_saf(void *, struct fan_g_saf *);
+int	asmc_g_tgt(void *, struct fan_g_tgt *);
+int	asmc_s_min(void *, struct fan_s_min *);
+int	asmc_s_max(void *, struct fan_s_max *);
+int	asmc_s_tgt(void *, struct fan_s_tgt *);
+
 const struct cfattach asmc_ca = {
 	sizeof(struct asmc_softc), asmc_match, asmc_attach, NULL, asmc_activate
 };
 
 struct cfdriver asmc_cd = {
 	NULL, "asmc", DV_DULL
+};
+
+struct fan_hw_if asmc_hw_if = {
+	asmc_open,
+	asmc_close,
+	asmc_query_drv,
+	asmc_query_fan,
+	asmc_g_act,
+	asmc_g_min,
+	asmc_g_max,
+	asmc_g_saf,
+	asmc_g_tgt,
+	asmc_s_min,
+	asmc_s_max,
+	asmc_s_tgt
 };
 
 const char *asmc_hids[] = {
@@ -350,6 +381,8 @@ asmc_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 	sensordev_install(&sc->sc_sensor_dev);
+
+	sc->sc_fandev = fan_attach_mi(&asmc_hw_if, sc, &sc->sc_dev);
 }
 
 int
@@ -745,4 +778,223 @@ asmc_update(void *arg)
 		if (!(sc->sc_sensor_motion[i].flags & SENSOR_FINVALID))
 			asmc_motion(sc, i, 0);
 #endif
+}
+
+/*
+ * ASMC_KEY_FANCOUNT		"FNum"  RO; 1 byte
+ * ASMC_KEY_FANMANUAL		"FS! "  RW; 2 bytes
+ * ASMC_KEY_FANID		"F%dID" RO; 16 bytes
+ * ASMC_KEY_FANSPEED		"F%dAc" RO; 2 bytes
+ * ASMC_KEY_FANMINSPEED		"F%dMn" RO; 2 bytes
+ * ASMC_KEY_FANMAXSPEED		"F%dMx" RO; 2 bytes
+ * ASMC_KEY_FANSAFESPEED	"F%dSf" RO; 2 bytes
+ * ASMC_KEY_FANTARGETSPEED	"F%dTg" RW; 2 bytes
+ */
+int
+asmc_open(void *addr)
+{
+	struct asmc_softc *sc = addr;
+
+	printf("asmc_open\n");
+
+	if (sc->sc_nfans <= 0)
+		return ENOTSUP;
+
+        return 0;
+}
+
+int
+asmc_close(void *addr)
+{
+	printf("asmc_close\n");
+
+	return 0;
+}
+
+int
+asmc_query_drv(void *v, struct fan_query_drv *qd)
+{
+	struct asmc_softc *sc = v;
+
+	printf("asmc_nfans\n");
+
+	strlcpy(qd->id, sc->sc_dev.dv_xname, sizeof(qd->id));
+	qd->nfans = sc->sc_nfans;
+
+	return 0;
+}
+
+int
+asmc_query_fan(void *v, struct fan_query_fan *qfan)
+{
+	struct asmc_softc *sc = v;
+	char key[5];
+	uint8_t buf[17];
+
+	printf("asmc_query\n");
+
+	strlcpy(qfan->id, sc->sc_sensor_fan[qfan->idx].desc,
+	    sizeof(qfan->id));
+
+	qfan->rpm_act = sc->sc_sensor_fan[qfan->idx].value;
+
+	snprintf(key, sizeof(key), "F%dMn", qfan->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		qfan->rpm_min = 0;
+	else
+		qfan->rpm_min = asmc_rpm(buf);
+
+	snprintf(key, sizeof(key), "F%dMx", qfan->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		qfan->rpm_max = 0;
+	else
+		qfan->rpm_max = asmc_rpm(buf);
+
+	snprintf(key, sizeof(key), "F%dSf", qfan->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		qfan->rpm_saf = 0;
+	else
+		qfan->rpm_saf = asmc_rpm(buf);
+
+	snprintf(key, sizeof(key), "F%dTg", qfan->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		qfan->rpm_tgt = 0;
+	else
+		qfan->rpm_tgt = asmc_rpm(buf);
+
+	return 0;
+}
+
+int
+asmc_g_act(void *v, struct fan_g_act *g_act)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+
+	snprintf(key, sizeof(key), "F%dAc", g_act->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		g_act->rpm = 0;
+	else
+		g_act->rpm = asmc_rpm(buf);
+
+	return 0;
+}
+
+int
+asmc_g_min(void *v, struct fan_g_min *g_min)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+
+	snprintf(key, sizeof(key), "F%dMn", g_min->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		g_min->rpm = 0;
+	else
+		g_min->rpm = asmc_rpm(buf);
+
+	return 0;
+}
+
+int
+asmc_g_max(void *v, struct fan_g_max *g_max)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+
+	snprintf(key, sizeof(key), "F%dMx", g_max->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		g_max->rpm = 0;
+	else
+		g_max->rpm = asmc_rpm(buf);
+
+	return 0;
+}
+
+int
+asmc_g_saf(void *v, struct fan_g_saf *g_saf)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+
+	snprintf(key, sizeof(key), "F%dSf", g_saf->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		g_saf->rpm = 0;
+	else
+		g_saf->rpm = asmc_rpm(buf);
+
+	return 0;
+}
+
+int
+asmc_g_tgt(void *v, struct fan_g_tgt *g_tgt)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+
+	snprintf(key, sizeof(key), "F%dTg", g_tgt->idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		g_tgt->rpm = 0;
+	else
+		g_tgt->rpm = asmc_rpm(buf);
+
+	return 0;
+}
+
+int
+asmc_s_min(void *v, struct fan_s_min *s_min)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+	int rpm, r;
+
+	rpm = s_min->rpm * 4;
+	buf[0] = rpm >> 8;
+	buf[1] = rpm;
+	snprintf(key, sizeof(key), "F%dMn", s_min->idx);
+	if ((r = asmc_try(sc, ASMC_WRITE, key, buf, 2)))
+		return r;
+
+	return 0;
+}
+
+int
+asmc_s_max(void *v, struct fan_s_max *s_max)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+	int rpm, r;
+
+	rpm = s_max->rpm * 4;
+	buf[0] = rpm >> 8;
+	buf[1] = rpm;
+	snprintf(key, sizeof(key), "F%dMx", s_max->idx);
+	if ((r = asmc_try(sc, ASMC_WRITE, key, buf, 2)))
+		return r;
+
+	return 0;
+}
+
+int
+asmc_s_tgt(void *v, struct fan_s_tgt *s_tgt)
+{
+	struct asmc_softc *sc = v;
+	char buf[2];
+	char key[5];
+	int rpm, r;
+
+	rpm = s_tgt->rpm * 4;
+	buf[0] = rpm >> 8;
+	buf[1] = rpm;
+	snprintf(key, sizeof(key), "F%dTg", s_tgt->idx);
+	if ((r = asmc_try(sc, ASMC_WRITE, key, buf, 2)))
+		return r;
+
+	return 0;
 }

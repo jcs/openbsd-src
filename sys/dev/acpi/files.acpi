@@ -91,7 +91,7 @@ attach	abl at acpi
 file	dev/acpi/abl.c			abl
 
 # Apple System Management Controller (SMC)
-device	asmc
+device	asmc: fan
 attach	asmc at acpi
 file	dev/acpi/asmc.c			asmc
 

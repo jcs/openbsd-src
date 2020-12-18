@@ -100,6 +100,7 @@
 #	pvbus*	paravirtual device tree root
 #	switch*	Switch driver
 #	kstat	Kernel Statistics
+#	fan*	Fan Management Framework
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 T=$0
 
@@ -249,6 +250,11 @@ std)
 ttyc*)
 	M ttyc$U c 38 $U 660 dialer root
 	M cuac$U c 38 $(($U+128)) 660 dialer root
+	;;
+
+fan*)
+	M fan$U c 48 $U 600
+	MKlist[${#MKlist[*]}]=";[ -e fan ] || ln -s fan$U fan"
 	;;
 
 kstat)
@@ -589,9 +595,9 @@ all)
 	R sd5 sd6 sd7 sd8 sd9 cd0 cd1 rd0 tap0 tap1 tap2 tap3 tun0
 	R tun1 tun2 tun3 bio pty0 fd1 fd1B fd1C fd1D fd1E fd1F fd1G
 	R fd1H fd0 fd0B fd0C fd0D fd0E fd0F fd0G fd0H diskmap vscsi0
-	R ch0 audio0 audio1 audio2 audio3 kstat dt kcov bpf pvbus0
-	R pvbus1 vmm fuse pppac pppx hotplug ptm local wscons pci0
-	R pci1 pci2 pci3 uall rmidi0 rmidi1 rmidi2 rmidi3 rmidi4
+	R ch0 audio0 audio1 audio2 audio3 fan0 kstat dt kcov bpf
+	R pvbus0 pvbus1 vmm fuse pppac pppx hotplug ptm local wscons
+	R pci0 pci1 pci2 pci3 uall rmidi0 rmidi1 rmidi2 rmidi3 rmidi4
 	R rmidi5 rmidi6 rmidi7 tuner0 radio0 speaker video0 video1 uk0
 	R random lpa0 lpa1 lpa2 lpt0 lpt1 lpt2 tty00 tty01 tty02 tty03
 	R tty04 tty05 tty06 tty07 tty08 tty09 tty0a tty0b ttyc0 ttyc1

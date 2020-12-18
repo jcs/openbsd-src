@@ -21,6 +21,7 @@ define	gpiobus {}
 define	onewirebus {}
 define	video {}
 define	intrmap {}
+define	fan {}
 
 # filesystem firmware loading attribute
 define firmload
@@ -33,6 +34,9 @@ define pt2254a
 
 device	video
 attach	video at video
+
+device	fan
+attach	fan at fan
 
 # audio and midi devices, attaches to audio hardware driver
 device	audio
@@ -664,6 +668,7 @@ file dev/mulaw.c			audio			needs-flag
 file dev/vnd.c				vnd			needs-flag
 file dev/rnd.c
 file dev/video.c			video			needs-flag
+file dev/fan.c				fan			needs-flag
 file isofs/cd9660/cd9660_bmap.c		cd9660
 file isofs/cd9660/cd9660_lookup.c	cd9660
 file isofs/cd9660/cd9660_node.c		cd9660

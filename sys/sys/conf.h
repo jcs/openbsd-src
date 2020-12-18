@@ -499,6 +499,13 @@ extern struct cdevsw cdevsw[];
 
 #endif
 
+/* open, close, ioctl */
+#define cdev_fan_init(c,n) { \
+	dev_init(c,n,open), dev_init(c,n,close), (dev_type_read((*))) enodev, \
+	(dev_type_write((*))) enodev, dev_init(c,n,ioctl), \
+	(dev_type_stop((*))) enodev, 0, selfalse, \
+	(dev_type_mmap((*))) enodev }
+
 /*
  * Line discipline switch table
  */
@@ -635,6 +642,7 @@ cdev_decl(fuse);
 cdev_decl(pvbus);
 cdev_decl(ipmi);
 cdev_decl(kcov);
+cdev_decl(fan);
 
 #endif
 
