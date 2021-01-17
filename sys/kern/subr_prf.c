@@ -51,6 +51,7 @@
 #include <sys/malloc.h>
 #include <sys/pool.h>
 #include <sys/mutex.h>
+#include <sys/timetc.h>
 
 #include <dev/cons.h>
 
@@ -77,6 +78,7 @@
 #define TOBUFONLY	0x08	/* to the buffer (only) [for snprintf] */
 #define TODDB		0x10	/* to ddb console */
 #define TOCOUNT		0x20	/* act like [v]snprintf */
+#define WITHTIME	0x40	/* with timestamp */
 
 /* max size buffer kprintf needs to print quad_t [size in base 8 + \0] */
 #define KPRINTF_BUFSIZE		(sizeof(quad_t) * NBBY / 3 + 2)
@@ -128,6 +130,11 @@ int splassert_ctl = 3;
 #else
 int splassert_ctl = 1;
 #endif
+
+/*
+ * timestamp kernel lines
+ */
+int kprintf_timestamps = 0;
 
 /*
  * v_putc: routine to putc on virtual console
@@ -269,13 +276,13 @@ log(int level, const char *fmt, ...)
 	s = splhigh();
 	logpri(level);		/* log the level first */
 	va_start(ap, fmt);
-	kprintf(fmt, TOLOG, NULL, NULL, ap);
+	kprintf(fmt, TOLOG | WITHTIME, NULL, NULL, ap);
 	va_end(ap);
 	splx(s);
 	if (!log_open) {
 		va_start(ap, fmt);
 		mtx_enter(&kprintf_mutex);
-		kprintf(fmt, TOCONS, NULL, NULL, ap);
+		kprintf(fmt, TOCONS | WITHTIME, NULL, NULL, ap);
 		mtx_leave(&kprintf_mutex);
 		va_end(ap);
 	}
@@ -311,13 +318,13 @@ addlog(const char *fmt, ...)
 
 	s = splhigh();
 	va_start(ap, fmt);
-	kprintf(fmt, TOLOG, NULL, NULL, ap);
+	kprintf(fmt, TOLOG | WITHTIME, NULL, NULL, ap);
 	va_end(ap);
 	splx(s);
 	if (!log_open) {
 		va_start(ap, fmt);
 		mtx_enter(&kprintf_mutex);
-		kprintf(fmt, TOCONS, NULL, NULL, ap);
+		kprintf(fmt, TOCONS | WITHTIME, NULL, NULL, ap);
 		mtx_leave(&kprintf_mutex);
 		va_end(ap);
 	}
@@ -502,6 +509,24 @@ db_vprintf(const char *fmt, va_list ap)
  * normal kernel printf functions: printf, vprintf, snprintf
  */
 
+int printf_newline = 1;
+struct timeval printf_tv;
+char printf_time_buf[KPRINTF_BUFSIZE] = { '\0' };
+
+void
+update_printf_time(void)
+{
+	char msecs[5];
+
+	tc_ticktock();
+	getmicrouptime(&printf_tv);
+
+	/* truncate msecs which the format won't handle */
+	snprintf(msecs, sizeof(msecs), "%04lld", (long long)printf_tv.tv_usec);
+	snprintf(printf_time_buf, sizeof printf_time_buf,
+	   "[%6lld.%s] ", (long long)printf_tv.tv_sec, msecs);
+}
+
 /*
  * printf: print a message to the console and the log
  */
@@ -513,7 +538,7 @@ printf(const char *fmt, ...)
 
 	va_start(ap, fmt);
 	mtx_enter(&kprintf_mutex);
-	retval = kprintf(fmt, printf_flags, NULL, NULL, ap);
+	retval = kprintf(fmt, printf_flags | WITHTIME, NULL, NULL, ap);
 	mtx_leave(&kprintf_mutex);
 	va_end(ap);
 	if (!panicstr)
@@ -534,7 +559,7 @@ vprintf(const char *fmt, va_list ap)
 	int retval;
 
 	mtx_enter(&kprintf_mutex);
-	retval = kprintf(fmt, TOCONS | TOLOG, NULL, NULL, ap);
+	retval = kprintf(fmt, TOCONS | TOLOG | WITHTIME, NULL, NULL, ap);
 	mtx_leave(&kprintf_mutex);
 	if (!panicstr)
 		logwakeup();
@@ -668,7 +693,14 @@ vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
 		} else						\
 			*sbuf++ = chr;				\
 	} else {						\
+		if (kprintf_timestamps && (oflags & WITHTIME) && printf_newline) { \
+			char *_zz = printf_time_buf;		\
+			while (*_zz)				\
+				kputchar(*_zz++, oflags, (struct tty *)vp); \
+		}						\
 		kputchar(chr, oflags, (struct tty *)vp);	\
+		if (kprintf_timestamps)				\
+			printf_newline = (chr == '\n');		\
 	}							\
 } while(0)
 
@@ -702,6 +734,9 @@ kprintf(const char *fmt0, int oflags, void *vp, char *sbuf, va_list ap)
 
 	fmt = (char *)fmt0;
 	ret = 0;
+
+	if (kprintf_timestamps && (oflags & WITHTIME))
+		update_printf_time();
 
 	/*
 	 * Scan the format for conversions (`%' character).
