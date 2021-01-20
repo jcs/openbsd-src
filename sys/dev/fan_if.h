@@ -31,14 +31,9 @@ struct fan_hw_if {
 	/* ioctl */
 	int (*query_drv)(void *, struct fan_query_drv *);
 	int (*query_fan)(void *, struct fan_query_fan *);
-	int (*g_act)(void *, struct fan_g_act *);
-	int (*g_min)(void *, struct fan_g_min *);
-	int (*g_max)(void *, struct fan_g_max *);
-	int (*g_saf)(void *, struct fan_g_saf *);
-	int (*g_tgt)(void *, struct fan_g_tgt *);
-	int (*s_min)(void *, struct fan_s_min *);
-	int (*s_max)(void *, struct fan_s_max *);
-	int (*s_tgt)(void *, struct fan_s_tgt *);
+	int (*set_min)(void *, struct fan_set_rpm *);
+	int (*set_max)(void *, struct fan_set_rpm *);
+	int (*set_target)(void *, struct fan_set_rpm *);
 };
 
 struct fan_attach_args {

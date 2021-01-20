@@ -40,13 +40,10 @@ struct fan_softc {
 
 int	fan_match(struct device *, void *, void *);
 void	fan_attach(struct device*, struct device *, void *);
-int	fan_detach(struct device *, int);
-int	fan_activate(struct device *, int);
 int	fan_print(void *, const char *);
 
 const struct cfattach fan_ca = {
-	sizeof(struct fan_softc), fan_match, fan_attach, fan_detach,
-	fan_activate
+	sizeof(struct fan_softc), fan_match, fan_attach, NULL, NULL,
 };
 
 struct cfdriver fan_cd = {
@@ -68,20 +65,6 @@ fan_attach(struct device *parent, struct device *self, void *aux)
 	printf("\n");
 	sc->hw_if = sa->hwif;
 	sc->hw_hdl = sa->hdl;
-}
-
-int
-fan_detach(struct device *self, int flags)
-{
-	return 0;
-}
-
-int
-fan_activate(struct device *self, int act)
-{
-        //struct fan_softc *sc = (struct fan_softc *)self;
-
-        return 0;
 }
 
 int
@@ -117,8 +100,6 @@ fanopen(dev_t dev, int flags, int fmt, struct proc *p)
 	struct fan_softc *sc;
 	int unit;
 
-	printf("fanopen\n");
-
 	unit = FAN_UNIT(dev);
 	sc = fan_cd.cd_devs[unit];
 	if (unit >= fan_cd.cd_ndevs || sc == NULL || sc->hw_if == NULL)
@@ -141,8 +122,6 @@ fanclose(dev_t dev, int flags, int fmt, struct proc *p)
 	struct fan_softc *sc;
 	int unit, r;
 
-	printf("fanclose\n");
-
 	unit = FAN_UNIT(dev);
 	sc = fan_cd.cd_devs[unit];
 	if (sc == NULL)
@@ -162,8 +141,6 @@ fanioctl(dev_t dev, u_long cmd, caddr_t data, int flags, struct proc *p)
 	struct fan_softc *sc;
 	int unit, error;
 
-	printf("fanioctl\n");
-
 	unit = FAN_UNIT(dev);
 	sc = fan_cd.cd_devs[unit];
 	if (sc == NULL)
@@ -181,45 +158,20 @@ fanioctl(dev_t dev, u_long cmd, caddr_t data, int flags, struct proc *p)
 			error = sc->hw_if->query_fan(sc->hw_hdl,
 			    (struct fan_query_fan *)data);
 		break;
-	case FANIOC_G_ACT:
-		if (sc->hw_if->g_act)
-			error = sc->hw_if->g_act(sc->hw_hdl,
-			    (struct fan_g_act *)data);
+	case FANIOC_SET_MIN:
+		if (sc->hw_if->set_min)
+			error = sc->hw_if->set_min(sc->hw_hdl,
+			    (struct fan_set_rpm *)data);
 		break;
-	case FANIOC_G_MIN:
-		if (sc->hw_if->g_min)
-			error = sc->hw_if->g_min(sc->hw_hdl,
-			    (struct fan_g_min *)data);
+	case FANIOC_SET_MAX:
+		if (sc->hw_if->set_max)
+			error = sc->hw_if->set_max(sc->hw_hdl,
+			    (struct fan_set_rpm *)data);
 		break;
-	case FANIOC_G_MAX:
-		if (sc->hw_if->g_max)
-			error = sc->hw_if->g_max(sc->hw_hdl,
-			    (struct fan_g_max *)data);
-		break;
-	case FANIOC_G_SAF:
-		if (sc->hw_if->g_saf)
-			error = sc->hw_if->g_saf(sc->hw_hdl,
-			    (struct fan_g_saf *)data);
-		break;
-	case FANIOC_G_TGT:
-		if (sc->hw_if->g_tgt)
-			error = sc->hw_if->g_tgt(sc->hw_hdl,
-			    (struct fan_g_tgt *)data);
-		break;
-	case FANIOC_S_MIN:
-		if (sc->hw_if->s_min)
-			error = sc->hw_if->s_min(sc->hw_hdl,
-			    (struct fan_s_min *)data);
-		break;
-	case FANIOC_S_MAX:
-		if (sc->hw_if->s_max)
-			error = sc->hw_if->s_max(sc->hw_hdl,
-			    (struct fan_s_max *)data);
-		break;
-	case FANIOC_S_TGT:
-		if (sc->hw_if->s_tgt)
-			error = sc->hw_if->s_tgt(sc->hw_hdl,
-			    (struct fan_s_tgt *)data);
+	case FANIOC_SET_TARGET:
+		if (sc->hw_if->set_target)
+			error = sc->hw_if->set_target(sc->hw_hdl,
+			    (struct fan_set_rpm *)data);
 		break;
 	default:
 		error = ENOTTY;

@@ -68,6 +68,14 @@ struct asmc_prod {
 	const char	*pr_temp[ASMC_MAXTEMP];
 };
 
+struct asmc_fan {
+	uint16_t	actual;
+	uint16_t	min;
+	uint16_t	max;
+	uint16_t	safe;
+	uint16_t	target;
+};
+
 struct asmc_softc {
 	struct device		 sc_dev;
 	struct device		*sc_fandev;
@@ -79,12 +87,14 @@ struct asmc_softc {
 	bus_space_handle_t	 sc_ioh;
 
 	struct asmc_prod	*sc_prod;
-	uint8_t			 sc_nfans;	/* number of fans */
 	uint8_t			 sc_lightlen;	/* light data len */
 	uint8_t			 sc_backlight;	/* keyboard backlight value */
 
 	struct rwlock		 sc_lock;
 	struct task		 sc_task_backlight;
+
+	uint8_t			 sc_nfans;	/* number of fans */
+	struct asmc_fan		 sc_fans[ASMC_MAXFAN];
 
 	struct ksensor		 sc_sensor_temp[ASMC_MAXTEMP];
 	struct ksensor		 sc_sensor_fan[ASMC_MAXFAN];
@@ -110,18 +120,12 @@ int	asmc_set_backlight(struct wskbd_backlight *);
 extern int (*wskbd_get_backlight)(struct wskbd_backlight *);
 extern int (*wskbd_set_backlight)(struct wskbd_backlight *);
 
-int	asmc_open(void *);
-int	asmc_close(void *);
-int	asmc_query_drv(void *, struct fan_query_drv *);
-int	asmc_query_fan(void *, struct fan_query_fan *);
-int	asmc_g_act(void *, struct fan_g_act *);
-int	asmc_g_min(void *, struct fan_g_min *);
-int	asmc_g_max(void *, struct fan_g_max *);
-int	asmc_g_saf(void *, struct fan_g_saf *);
-int	asmc_g_tgt(void *, struct fan_g_tgt *);
-int	asmc_s_min(void *, struct fan_s_min *);
-int	asmc_s_max(void *, struct fan_s_max *);
-int	asmc_s_tgt(void *, struct fan_s_tgt *);
+int	asmc_fan_open(void *);
+int	asmc_fan_query_drv(void *, struct fan_query_drv *);
+int	asmc_fan_query_fan(void *, struct fan_query_fan *);
+int	asmc_fan_set_min(void *, struct fan_set_rpm *);
+int	asmc_fan_set_max(void *, struct fan_set_rpm *);
+int	asmc_fan_set_target(void *, struct fan_set_rpm *);
 
 const struct cfattach asmc_ca = {
 	sizeof(struct asmc_softc), asmc_match, asmc_attach, NULL, asmc_activate
@@ -132,18 +136,13 @@ struct cfdriver asmc_cd = {
 };
 
 struct fan_hw_if asmc_hw_if = {
-	asmc_open,
-	asmc_close,
-	asmc_query_drv,
-	asmc_query_fan,
-	asmc_g_act,
-	asmc_g_min,
-	asmc_g_max,
-	asmc_g_saf,
-	asmc_g_tgt,
-	asmc_s_min,
-	asmc_s_max,
-	asmc_s_tgt
+	asmc_fan_open,
+	NULL,
+	asmc_fan_query_drv,
+	asmc_fan_query_fan,
+	asmc_fan_set_min,
+	asmc_fan_set_max,
+	asmc_fan_set_target,
 };
 
 const char *asmc_hids[] = {
@@ -618,17 +617,45 @@ asmc_temp(struct asmc_softc *sc, uint8_t idx, int init)
 }
 
 static int
-asmc_fan(struct asmc_softc *sc, uint8_t idx, int init)
+asmc_update_fan(struct asmc_softc *sc, uint8_t idx, int init)
 {
 	char key[5];
 	uint8_t buf[17], *end;
 	int r;
 
 	snprintf(key, sizeof(key), "F%dAc", idx);
-	if ((r = asmc_try(sc, ASMC_READ, key, buf, 2)))
-		return r;
-	sc->sc_sensor_fan[idx].value = asmc_rpm(buf);
-	sc->sc_sensor_fan[idx].flags &= ~SENSOR_FUNKNOWN;
+	if (asmc_try(sc, ASMC_READ, key, buf, 2)) {
+		sc->sc_fans[idx].actual = 0;
+		sc->sc_sensor_fan[idx].flags |= SENSOR_FINVALID;
+	} else {
+		sc->sc_fans[idx].actual = asmc_rpm(buf);
+		sc->sc_sensor_fan[idx].value = asmc_rpm(buf);
+		sc->sc_sensor_fan[idx].flags &= ~SENSOR_FUNKNOWN;
+	}
+
+	snprintf(key, sizeof(key), "F%dMn", idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		sc->sc_fans[idx].min = 0;
+	else
+		sc->sc_fans[idx].min = asmc_rpm(buf);
+
+	snprintf(key, sizeof(key), "F%dMx", idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		sc->sc_fans[idx].max = 0;
+	else
+		sc->sc_fans[idx].max = asmc_rpm(buf);
+
+	snprintf(key, sizeof(key), "F%dSf", idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		sc->sc_fans[idx].safe = 0;
+	else
+		sc->sc_fans[idx].safe = asmc_rpm(buf);
+
+	snprintf(key, sizeof(key), "F%dTg", idx);
+	if (asmc_try(sc, ASMC_READ, key, buf, 2))
+		sc->sc_fans[idx].target = 0;
+	else
+		sc->sc_fans[idx].target = asmc_rpm(buf);
 
 	if (!init)
 		return 0;
@@ -733,7 +760,7 @@ asmc_init(struct asmc_softc *sc)
 	else
 		sc->sc_nfans = buf[0];
 	for (i = 0; i < sc->sc_nfans && i < ASMC_MAXFAN; i++)
-		if ((r = asmc_fan(sc, i, 1)) && r != ASMC_NOTFOUND)
+		if ((r = asmc_update_fan(sc, i, 1)) && r != ASMC_NOTFOUND)
 			printf("%s: read fan %d failed (0x%x)\n",
 			    sc->sc_dev.dv_xname, i, r);
 	/* left and right light sensors are optional */
@@ -769,7 +796,7 @@ asmc_update(void *arg)
 			asmc_temp(sc, i, 0);
 	for (i = 0; i < sc->sc_nfans && i < ASMC_MAXFAN; i++)
 		if (!(sc->sc_sensor_fan[i].flags & SENSOR_FINVALID))
-			asmc_fan(sc, i, 0);
+			asmc_update_fan(sc, i, 0);
 	for (i = 0; i < ASMC_MAXLIGHT; i++)
 		if (!(sc->sc_sensor_light[i].flags & SENSOR_FINVALID))
 			asmc_light(sc, i, 0);
@@ -791,11 +818,9 @@ asmc_update(void *arg)
  * ASMC_KEY_FANTARGETSPEED	"F%dTg" RW; 2 bytes
  */
 int
-asmc_open(void *addr)
+asmc_fan_open(void *addr)
 {
 	struct asmc_softc *sc = addr;
-
-	printf("asmc_open\n");
 
 	if (sc->sc_nfans <= 0)
 		return ENOTSUP;
@@ -804,19 +829,9 @@ asmc_open(void *addr)
 }
 
 int
-asmc_close(void *addr)
-{
-	printf("asmc_close\n");
-
-	return 0;
-}
-
-int
-asmc_query_drv(void *v, struct fan_query_drv *qd)
+asmc_fan_query_drv(void *v, struct fan_query_drv *qd)
 {
 	struct asmc_softc *sc = v;
-
-	printf("asmc_nfans\n");
 
 	strlcpy(qd->id, sc->sc_dev.dv_xname, sizeof(qd->id));
 	qd->nfans = sc->sc_nfans;
@@ -825,133 +840,34 @@ asmc_query_drv(void *v, struct fan_query_drv *qd)
 }
 
 int
-asmc_query_fan(void *v, struct fan_query_fan *qfan)
+asmc_fan_query_fan(void *v, struct fan_query_fan *qfan)
 {
 	struct asmc_softc *sc = v;
-	char key[5];
-	uint8_t buf[17];
 
-	printf("asmc_query\n");
+	if (qfan->idx >= sc->sc_nfans)
+		return (ENOENT);
 
 	strlcpy(qfan->id, sc->sc_sensor_fan[qfan->idx].desc,
 	    sizeof(qfan->id));
 
-	qfan->rpm_act = sc->sc_sensor_fan[qfan->idx].value;
-
-	snprintf(key, sizeof(key), "F%dMn", qfan->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		qfan->rpm_min = 0;
-	else
-		qfan->rpm_min = asmc_rpm(buf);
-
-	snprintf(key, sizeof(key), "F%dMx", qfan->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		qfan->rpm_max = 0;
-	else
-		qfan->rpm_max = asmc_rpm(buf);
-
-	snprintf(key, sizeof(key), "F%dSf", qfan->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		qfan->rpm_saf = 0;
-	else
-		qfan->rpm_saf = asmc_rpm(buf);
-
-	snprintf(key, sizeof(key), "F%dTg", qfan->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		qfan->rpm_tgt = 0;
-	else
-		qfan->rpm_tgt = asmc_rpm(buf);
+	qfan->rpm_actual = sc->sc_fans[qfan->idx].actual;
+	qfan->rpm_min = sc->sc_fans[qfan->idx].min;
+	qfan->rpm_max = sc->sc_fans[qfan->idx].max;
+	qfan->rpm_target = sc->sc_fans[qfan->idx].target;
 
 	return 0;
 }
 
 int
-asmc_g_act(void *v, struct fan_g_act *g_act)
-{
-	struct asmc_softc *sc = v;
-	char buf[2];
-	char key[5];
-
-	snprintf(key, sizeof(key), "F%dAc", g_act->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		g_act->rpm = 0;
-	else
-		g_act->rpm = asmc_rpm(buf);
-
-	return 0;
-}
-
-int
-asmc_g_min(void *v, struct fan_g_min *g_min)
-{
-	struct asmc_softc *sc = v;
-	char buf[2];
-	char key[5];
-
-	snprintf(key, sizeof(key), "F%dMn", g_min->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		g_min->rpm = 0;
-	else
-		g_min->rpm = asmc_rpm(buf);
-
-	return 0;
-}
-
-int
-asmc_g_max(void *v, struct fan_g_max *g_max)
-{
-	struct asmc_softc *sc = v;
-	char buf[2];
-	char key[5];
-
-	snprintf(key, sizeof(key), "F%dMx", g_max->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		g_max->rpm = 0;
-	else
-		g_max->rpm = asmc_rpm(buf);
-
-	return 0;
-}
-
-int
-asmc_g_saf(void *v, struct fan_g_saf *g_saf)
-{
-	struct asmc_softc *sc = v;
-	char buf[2];
-	char key[5];
-
-	snprintf(key, sizeof(key), "F%dSf", g_saf->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		g_saf->rpm = 0;
-	else
-		g_saf->rpm = asmc_rpm(buf);
-
-	return 0;
-}
-
-int
-asmc_g_tgt(void *v, struct fan_g_tgt *g_tgt)
-{
-	struct asmc_softc *sc = v;
-	char buf[2];
-	char key[5];
-
-	snprintf(key, sizeof(key), "F%dTg", g_tgt->idx);
-	if (asmc_try(sc, ASMC_READ, key, buf, 2))
-		g_tgt->rpm = 0;
-	else
-		g_tgt->rpm = asmc_rpm(buf);
-
-	return 0;
-}
-
-int
-asmc_s_min(void *v, struct fan_s_min *s_min)
+asmc_fan_set_min(void *v, struct fan_set_rpm *s_min)
 {
 	struct asmc_softc *sc = v;
 	char buf[2];
 	char key[5];
 	int rpm, r;
+
+	if (s_min->idx >= sc->sc_nfans)
+		return (ENOENT);
 
 	rpm = s_min->rpm * 4;
 	buf[0] = rpm >> 8;
@@ -964,12 +880,15 @@ asmc_s_min(void *v, struct fan_s_min *s_min)
 }
 
 int
-asmc_s_max(void *v, struct fan_s_max *s_max)
+asmc_fan_set_max(void *v, struct fan_set_rpm *s_max)
 {
 	struct asmc_softc *sc = v;
 	char buf[2];
 	char key[5];
 	int rpm, r;
+
+	if (s_max->idx >= sc->sc_nfans)
+		return (ENOENT);
 
 	rpm = s_max->rpm * 4;
 	buf[0] = rpm >> 8;
@@ -982,17 +901,20 @@ asmc_s_max(void *v, struct fan_s_max *s_max)
 }
 
 int
-asmc_s_tgt(void *v, struct fan_s_tgt *s_tgt)
+asmc_fan_set_target(void *v, struct fan_set_rpm *s_target)
 {
 	struct asmc_softc *sc = v;
 	char buf[2];
 	char key[5];
 	int rpm, r;
 
-	rpm = s_tgt->rpm * 4;
+	if (s_target->idx >= sc->sc_nfans)
+		return (ENOENT);
+
+	rpm = s_target->rpm * 4;
 	buf[0] = rpm >> 8;
 	buf[1] = rpm;
-	snprintf(key, sizeof(key), "F%dTg", s_tgt->idx);
+	snprintf(key, sizeof(key), "F%dTg", s_target->idx);
 	if ((r = asmc_try(sc, ASMC_WRITE, key, buf, 2)))
 		return r;
 

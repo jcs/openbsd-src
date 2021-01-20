@@ -30,7 +30,7 @@
 
 void	usage(void);
 int	printall(int);
-void	parse(char *);
+int	parse(char *);
 void	getvalue0(char *);
 void	getvalue1(char *);
 void	setvalue(char *, int);
@@ -75,7 +75,8 @@ main(int argc, char *argv[])
 	}
 
 	for (; *argv != NULL; ++argv)
-		parse(*argv);
+		if ((r = parse(*argv)) != 0)
+			break;
 
 	close(fd);
 	return r;
@@ -110,17 +111,17 @@ printall(int fd)
 		if (r == -1)
 			return -1;
 		printf("fan%d.id=%s\n", i, qf.id);
-		printf("fan%d.act=%d RPM\n", i, qf.rpm_act);
+		printf("fan%d.actual=%d RPM\n", i, qf.rpm_actual);
 		printf("fan%d.min=%d RPM\n", i, qf.rpm_min);
 		printf("fan%d.max=%d RPM\n", i, qf.rpm_max);
-		printf("fan%d.saf=%d RPM\n", i, qf.rpm_saf);
-		printf("fan%d.tgt=%d RPM\n", i, qf.rpm_tgt);
+		printf("fan%d.safe=%d RPM\n", i, qf.rpm_safe);
+		printf("fan%d.target=%d RPM\n", i, qf.rpm_target);
 	}
 
 	return 0;
 }
 
-void
+int
 parse(char *string)
 {
 	char *key, *val;
@@ -134,7 +135,7 @@ parse(char *string)
 			getvalue0(key);
 		else
 			getvalue1(key);
-		return;
+		return 0;
 	}
 	*val = '\0';
 	val++;
@@ -143,12 +144,13 @@ parse(char *string)
 	if (errstr != NULL) {
 		warnx("%s: %s", key, errstr);
 		free(key);
-		return;
+		return 1;
 	}
 
 	setvalue(key, valn);
 
 	free(key);
+	return 0;
 }
 
 void
@@ -158,7 +160,8 @@ getvalue0(char *key)
 	char val[32];
 
 	if (!strcmp(key, "driver")) {
-		ioctl(fd, FANIOC_QUERY_DRV, &qd);
+		if (ioctl(fd, FANIOC_QUERY_DRV, &qd) == -1)
+			err(1, "FANIOC_QUERY_DRV");
 		strlcpy(val, qd.id, sizeof(val));
 	}
 
@@ -169,11 +172,6 @@ void
 getvalue1(char *key)
 {
 	struct fan_query_fan qf;
-	struct fan_g_act gact;
-	struct fan_g_min gmin;
-	struct fan_g_max gmax;
-	struct fan_g_saf gsaf;
-	struct fan_g_tgt gtgt;
 	char *fan, *type;
 	char fanno[3];
 	const char *errstr;
@@ -191,53 +189,41 @@ getvalue1(char *key)
 	strlcpy(fanno, fan+3, sizeof(fanno));
 	fann = strtonum(fanno, 0, 99, &errstr);
 
+	qf.idx = fann;
+	if (ioctl(fd, FANIOC_QUERY_FAN, &qf) == -1)
+		err(1, "FANIOC_QUERY_FAN");
+
 	if (!strcmp(type, "id")) {
-		qf.idx = fann;
-		ioctl(fd, FANIOC_QUERY_FAN, &qf);
 		printf("%s=%s\n", key, qf.id);
 		free(fan);
 		return;
-	} else if (!strcmp(type, "act")) {
-		gact.idx = fann;
-		gact.rpm = 0;
-		ioctl(fd, FANIOC_G_ACT, &gact);
-		val = gact.rpm;	
-	} else if (!strcmp(type, "min")) {
-		gmin.idx = fann;
-		gmin.rpm = 0;
-		ioctl(fd, FANIOC_G_MIN, &gmin);
-		val = gmin.rpm;
-	} else if (!strcmp(type, "max")) {
-		gmax.idx = fann;
-		gmax.rpm = 0;
-		ioctl(fd, FANIOC_G_MAX, &gmax);
-		val = gmax.rpm;
-	} else if (!strcmp(type, "saf")) {
-		gsaf.idx = fann;
-		gsaf.rpm = 0;
-		ioctl(fd, FANIOC_G_SAF, &gsaf);
-		val = gsaf.rpm;
-	} else if (!strcmp(type, "tgt")) {
-		gtgt.idx = fann;
-		gtgt.rpm = 0;
-		ioctl(fd, FANIOC_G_TGT, &gtgt);
-		val = gtgt.rpm;
-	} else {
-		printf("fanctl: %s: unknown fan speed\n", type);
+	}
+
+	if (!strcmp(type, "act"))
+		val = qf.rpm_actual;
+	else if (!strcmp(type, "min"))
+		val = qf.rpm_min;
+	else if (!strcmp(type, "max"))
+		val = qf.rpm_max;
+	else if (!strcmp(type, "safe"))
+		val = qf.rpm_safe;
+	else if (!strcmp(type, "target"))
+		val = qf.rpm_target;
+	else {
+		warnx("%s: unknown fan speed", type);
 		free(fan);
 		return;
 	}
 
 	printf("%s=%d\n", key, val);
-
 	free(fan);
 }
 
 void
 setvalue(char *key, int val)
 {
-	struct fan_s_max sm;
-	struct fan_g_max gm;
+	struct fan_query_fan qf;
+	struct fan_set_rpm set_max, set_min;
 	char *fan, *type;
 	char fanno[3];
 	const char *errstr;
@@ -255,15 +241,24 @@ setvalue(char *key, int val)
 	strlcpy(fanno, fan+3, sizeof(fanno));
 	fann = strtonum(fanno, 0, 99, &errstr);
 
-	if (!strcmp(type, "max")) {
-		gm.idx = fann;
-		gm.rpm = 0;
-		ioctl(fd, FANIOC_G_MAX, &gm);
+	qf.idx = fann;
+	if (ioctl(fd, FANIOC_QUERY_FAN, &qf) == -1)
+		err(1, "FANIOC_QUERY_FAN");
 
-		sm.idx = fann;
-		sm.rpm = val;
-		ioctl(fd, FANIOC_S_MAX, &sm);
-		printf("%s: %d -> %d\n", key, gm.rpm, val);
+	if (!strcmp(type, "min")) {
+		set_min.idx = fann;
+		set_min.rpm = val;
+		if (ioctl(fd, FANIOC_SET_MIN, &set_min) == -1)
+			err(1, "FANIOC_SET_MIN");
+		printf("%s: %d -> %d\n", key, qf.rpm_min, val);
+	} else if (!strcmp(type, "max")) {
+		set_max.idx = fann;
+		set_max.rpm = val;
+		if (ioctl(fd, FANIOC_SET_MAX, &set_max) == -1)
+			err(1, "FANIOC_SET_MAX");
+		printf("%s: %d -> %d\n", key, qf.rpm_max, val);
+	} else {
+		warnx("%s: unknown fan speed", type);
 	}
 
 	free(fan);
