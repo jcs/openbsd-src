@@ -194,6 +194,7 @@ void config_pending_incr(void);
 void config_pending_decr(void);
 void config_mountroot(struct device *, void (*)(struct device *));
 void config_process_deferred_mountroot(void);
+int config_any_children(struct device *, int);
 
 struct device *device_mainbus(void);
 struct device *device_mpath(void);

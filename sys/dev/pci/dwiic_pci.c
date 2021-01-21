@@ -148,6 +148,7 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 #if NACPI > 0
 	struct aml_node *node;
 #endif
+	struct device *iicbus;
 	bus_size_t iosize;
 	pci_intr_handle_t ih;
 	const char *intrstr = NULL;
@@ -230,7 +231,10 @@ dwiic_pci_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_iba.iba_bus_scan = dwiic_pci_bus_scan;
 	sc->sc_iba.iba_bus_scan_arg = sc;
 
-	config_found((struct device *)sc, &sc->sc_iba, iicbus_print);
+	iicbus = config_found((struct device *)sc, &sc->sc_iba, iicbus_print);
+
+	if (!iicbus || !config_any_children(iicbus, 1))
+		pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D3);
 
 #if NACPI > 0 && !defined(SMALL_KERNEL)
 	if (sc->sc_devnode) {
