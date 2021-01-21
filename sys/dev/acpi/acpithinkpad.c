@@ -112,16 +112,21 @@
 #define	THINKPAD_TABLET_SCREEN_CHANGED	0x60c0
 #define	THINKPAD_SWITCH_WIRELESS	0x7000
 
-#define THINKPAD_NSENSORS 10
+#define THINKPAD_NSENSORS 11
 #define THINKPAD_NTEMPSENSORS 8
 
 #define THINKPAD_SENSOR_FANRPM		THINKPAD_NTEMPSENSORS
-#define THINKPAD_SENSOR_PORTREPL	THINKPAD_NTEMPSENSORS + 1
+#define THINKPAD_SENSOR_FANLEVEL	THINKPAD_NTEMPSENSORS + 1
+#define THINKPAD_SENSOR_PORTREPL	THINKPAD_NTEMPSENSORS + 2
 
 #define THINKPAD_ECOFFSET_VOLUME	0x30
 #define THINKPAD_ECOFFSET_VOLUME_MUTE_MASK 0x40
 #define THINKPAD_ECOFFSET_FANLO		0x84
 #define THINKPAD_ECOFFSET_FANHI		0x85
+#define THINKPAD_ECOFFSET_FANLEVEL	0x2f
+#define THINKPAD_ECOFFSET_FANLEVEL_OFF	0
+#define THINKPAD_ECOFFSET_FANLEVEL_MAX	7
+#define THINKPAD_ECOFFSET_FANLEVEL_AUTO 128
 
 #define	THINKPAD_ADAPTIVE_MODE_HOME	1
 #define	THINKPAD_ADAPTIVE_MODE_FUNCTION	3
@@ -148,6 +153,7 @@ struct acpithinkpad_softc {
 	const char		*sc_thinklight_set;
 
 	uint64_t		 sc_brightness;
+	uint8_t			 sc_fanlevel;
 };
 
 extern void acpiec_read(struct acpiec_softc *, uint8_t, int, uint8_t *);
@@ -246,6 +252,13 @@ thinkpad_sensor_attach(struct acpithinkpad_softc *sc)
 	sc->sc_sens[THINKPAD_SENSOR_FANRPM].type = SENSOR_FANRPM;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[THINKPAD_SENSOR_FANRPM]);
 
+	sc->sc_sens[THINKPAD_SENSOR_FANLEVEL].type = SENSOR_INTEGER;
+	sc->sc_sens[THINKPAD_SENSOR_FANLEVEL].status = SENSOR_S_UNKNOWN;
+	sc->sc_sens[THINKPAD_SENSOR_FANLEVEL].flags = SENSOR_FCONTROLLABLE;
+	strlcpy(sc->sc_sens[THINKPAD_SENSOR_FANLEVEL].desc, "fan level",
+	        sizeof(sc->sc_sens[THINKPAD_SENSOR_FANLEVEL].desc));
+	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[THINKPAD_SENSOR_FANLEVEL]);
+
 	/* Add port replicator indicator */
 	sc->sc_sens[THINKPAD_SENSOR_PORTREPL].type = SENSOR_INDICATOR;
 	sc->sc_sens[THINKPAD_SENSOR_PORTREPL].status = SENSOR_S_UNKNOWN;
@@ -260,6 +273,7 @@ void
 thinkpad_sensor_refresh(void *arg)
 {
 	struct acpithinkpad_softc *sc = arg;
+	struct ksensor *fanlevel;
 	uint8_t lo, hi, i;
 	int64_t tmp;
 	char sname[5];
@@ -278,6 +292,22 @@ thinkpad_sensor_refresh(void *arg)
 	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLO, 1, &lo);
 	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANHI, 1, &hi);
 	sc->sc_sens[THINKPAD_SENSOR_FANRPM].value = ((hi << 8L) + lo);
+
+	/* Write new fan level if changed, then read */
+	fanlevel = &sc->sc_sens[THINKPAD_SENSOR_FANLEVEL];
+	if (fanlevel->flags & SENSOR_FNEWVALUE) {
+		fanlevel->flags &= ~SENSOR_FNEWVALUE;
+		lo = fanlevel->upvalue;
+		if ((lo < THINKPAD_ECOFFSET_FANLEVEL_OFF ||
+		    lo > THINKPAD_ECOFFSET_FANLEVEL_MAX) &&
+		    lo != THINKPAD_ECOFFSET_FANLEVEL_AUTO)
+		    	/* fail safe */
+			lo = THINKPAD_ECOFFSET_FANLEVEL_AUTO;
+		acpiec_write(sc->sc_ec, THINKPAD_ECOFFSET_FANLEVEL, 1, &lo);
+	}
+	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLEVEL, 1, &sc->sc_fanlevel);
+	fanlevel->value = SENSOR_S_OK;
+	fanlevel->value = sc->sc_fanlevel;
 }
 
 void

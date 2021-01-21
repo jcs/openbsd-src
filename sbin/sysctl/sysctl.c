@@ -557,6 +557,9 @@ parse(char *string, int flags)
 			len = sysctl_sensors(string, &bufp, mib, flags, &type);
 			if (len < 0)
 				return;
+			if (newsize > 0)
+				/* XXX: make this more intelligent */
+				type = CTLTYPE_INT;
 			break;
 		case HW_PHYSMEM:
 		case HW_USERMEM:
