@@ -2347,7 +2347,7 @@ sysctl_sensors(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 	struct sensor *us;
 	struct ksensordev *ksd;
 	struct sensordev *usd;
-	int dev, numt, ret;
+	int dev, numt, ret, error;
 	enum sensor_type type;
 
 	if (namelen != 1 && namelen != 3)
@@ -2380,6 +2380,17 @@ sysctl_sensors(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 	if (ret)
 		return (ret);
 
+	if (newp && newlen != sizeof(int))
+		return (EINVAL);
+	if (newp && !(ks->flags & SENSOR_FCONTROLLABLE))
+		return (EPERM);
+	if (newp) {
+		error = copyin(newp, &ks->upvalue, sizeof(int));
+		if (error)
+			return (error);
+		ks->flags |= SENSOR_FNEWVALUE;
+	}
+
 	/* Grab a copy, to clear the kernel pointers */
 	us = malloc(sizeof(*us), M_TEMP, M_WAITOK|M_ZERO);
 	memcpy(us->desc, ks->desc, sizeof(us->desc));
@@ -2389,8 +2400,9 @@ sysctl_sensors(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 	us->status = ks->status;
 	us->numt = ks->numt;
 	us->flags = ks->flags;
+	/* us->upvalue = ks->upvalue; */
 
-	ret = sysctl_rdstruct(oldp, oldlenp, newp, us,
+	ret = sysctl_rdstruct(oldp, oldlenp, NULL, us,
 	    sizeof(struct sensor));
 	free(us, M_TEMP, sizeof(*us));
 	return (ret);

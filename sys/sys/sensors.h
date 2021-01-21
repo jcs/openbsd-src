@@ -117,8 +117,11 @@ struct sensor {
 	enum sensor_status status;	/* sensor status */
 	int numt;			/* sensor number of .type type */
 	int flags;			/* sensor flags */
+	/* uint64_t upvalue; */		/* TODO: move this from struct ksensor */
 #define SENSOR_FINVALID		0x0001	/* sensor is invalid */
 #define SENSOR_FUNKNOWN		0x0002	/* sensor value is unknown */
+#define SENSOR_FCONTROLLABLE	0x0004	/* sensor value could be altered */
+#define SENSOR_FNEWVALUE	0x0008	/* upvalue contains update info */
 };
 
 /* Sensor device data:
@@ -143,6 +146,7 @@ struct ksensor {
 	enum sensor_status status;	/* sensor status */
 	int numt;			/* sensor number of .type type */
 	int flags;			/* sensor flags, ie. SENSOR_FINVALID */
+	uint64_t upvalue;		/* TODO: move this to struct sensor */
 };
 SLIST_HEAD(ksensors_head, ksensor);
 
