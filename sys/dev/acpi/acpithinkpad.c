@@ -18,6 +18,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/sensors.h>
+#include <sys/fanio.h>
 
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
@@ -26,6 +27,7 @@
 #include <dev/acpi/dsdt.h>
 #include <dev/wscons/wsconsio.h>
 #include <dev/wscons/wsdisplayvar.h>
+#include <dev/fan_if.h>
 
 #include <machine/apmvar.h>
 
@@ -122,6 +124,9 @@
 #define THINKPAD_ECOFFSET_VOLUME_MUTE_MASK 0x40
 #define THINKPAD_ECOFFSET_FANLO		0x84
 #define THINKPAD_ECOFFSET_FANHI		0x85
+#define THINKPAD_ECOFFSET_FAN_LEVEL	0x2f
+#define THINKPAD_ECOFFSET_FAN_LEVEL_OFF	0
+#define THINKPAD_ECOFFSET_FAN_LEVEL_AUTO 7
 
 #define	THINKPAD_ADAPTIVE_MODE_HOME	1
 #define	THINKPAD_ADAPTIVE_MODE_FUNCTION	3
@@ -137,6 +142,12 @@ struct acpithinkpad_softc {
 	struct acpiec_softc     *sc_ec;
 	struct acpi_softc	*sc_acpi;
 	struct aml_node		*sc_devnode;
+
+	struct device		*sc_fandev;
+	struct {
+		uint16_t	fan_rpm;
+		uint8_t		fan_level;
+	} sc_fan;
 
 	struct ksensor		 sc_sens[THINKPAD_NSENSORS];
 	struct ksensordev	 sc_sensdev;
@@ -182,6 +193,10 @@ int	thinkpad_set_param(struct wsdisplay_param *);
 void    thinkpad_sensor_attach(struct acpithinkpad_softc *sc);
 void    thinkpad_sensor_refresh(void *);
 
+int	thinkpad_fan_query_drv(void *, struct fan_query_drv *);
+int	thinkpad_fan_query_fan(void *, struct fan_query_fan *);
+int	thinkpad_fan_set_target(void *, struct fan_set_rpm *);
+
 #if NAUDIO > 0 && NWSKBD > 0
 void thinkpad_attach_deferred(void *);
 int thinkpad_get_volume_mute(struct acpithinkpad_softc *);
@@ -203,6 +218,16 @@ const char *acpithinkpad_hids[] = {
 	"LEN0068",
 	"LEN0268",
 	NULL
+};
+
+struct fan_hw_if thinkpad_fan_hw_if = {
+	NULL, /* open */
+	NULL, /* close */
+	thinkpad_fan_query_drv,
+	thinkpad_fan_query_fan,
+	NULL, /* set_min */
+	NULL, /* set_max */
+	thinkpad_fan_set_target,
 };
 
 int
@@ -230,9 +255,8 @@ thinkpad_sensor_attach(struct acpithinkpad_softc *sc)
 {
 	int i;
 
-	if (sc->sc_acpi->sc_ec == NULL)
+	if (sc->sc_ec == NULL)
 		return;
-	sc->sc_ec = sc->sc_acpi->sc_ec;
 
 	/* Add temperature probes */
 	strlcpy(sc->sc_sensdev.xname, DEVNAME(sc),
@@ -277,7 +301,11 @@ thinkpad_sensor_refresh(void *arg)
 	/* Read fan RPM */
 	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLO, 1, &lo);
 	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANHI, 1, &hi);
-	sc->sc_sens[THINKPAD_SENSOR_FANRPM].value = ((hi << 8L) + lo);
+	sc->sc_fan.fan_rpm = ((hi << 8L) + lo);
+	sc->sc_sens[THINKPAD_SENSOR_FANRPM].value = sc->sc_fan.fan_rpm;
+
+	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FAN_LEVEL, 1,
+	    &sc->sc_fan.fan_level);
 }
 
 void
@@ -288,6 +316,7 @@ thinkpad_attach(struct device *parent, struct device *self, void *aux)
 
 	sc->sc_acpi = (struct acpi_softc *)parent;
 	sc->sc_devnode = aa->aaa_node;
+	sc->sc_ec = sc->sc_acpi->sc_ec;
 
 	if (aml_evalinteger(sc->sc_acpi, sc->sc_devnode, "MHKV", 0, NULL,
 	    &sc->sc_hkey_version))
@@ -332,6 +361,8 @@ thinkpad_attach(struct device *parent, struct device *self, void *aux)
 	/* Run thinkpad_hotkey on button presses */
 	aml_register_notify(sc->sc_devnode, aa->aaa_dev,
 	    thinkpad_hotkey, sc, ACPIDEV_POLL);
+
+	sc->sc_fandev = fan_attach_mi(&thinkpad_fan_hw_if, sc, &sc->sc_dev);
 }
 
 int
@@ -799,11 +830,55 @@ thinkpad_get_volume_mute(struct acpithinkpad_softc *sc)
 {
 	uint8_t vol = 0;
 
-	if (sc->sc_acpi->sc_ec == NULL)
+	if (sc->sc_ec == NULL)
 		return (-1);
 
-	acpiec_read(sc->sc_acpi->sc_ec, THINKPAD_ECOFFSET_VOLUME, 1, &vol);
+	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_VOLUME, 1, &vol);
 	return ((vol & THINKPAD_ECOFFSET_VOLUME_MUTE_MASK) ==
 	    THINKPAD_ECOFFSET_VOLUME_MUTE_MASK);
 }
 #endif
+
+int
+thinkpad_fan_query_drv(void *v, struct fan_query_drv *qd)
+{
+	struct acpithinkpad_softc *sc = v;
+
+	strlcpy(qd->id, sc->sc_dev.dv_xname, sizeof(qd->id));
+	qd->nfans = 1;
+
+	return 0;
+}
+
+int
+thinkpad_fan_query_fan(void *v, struct fan_query_fan *qfan)
+{
+	struct acpithinkpad_softc *sc = v;
+
+	if (qfan->idx != 0)
+		return (ENOENT);
+
+	qfan->rpm_actual = sc->sc_fan.fan_rpm;
+	qfan->rpm_min = 0;
+	qfan->rpm_max = 0;
+	qfan->rpm_safe = 0;
+	qfan->rpm_target = sc->sc_fan.fan_level;
+
+	return 0;
+}
+
+int
+thinkpad_fan_set_target(void *v, struct fan_set_rpm *set_target)
+{
+	struct acpithinkpad_softc *sc = v;
+
+	if (set_target->idx != 0)
+		return (ENOENT);
+
+	acpiec_write(sc->sc_ec, THINKPAD_ECOFFSET_FAN_LEVEL, 1,
+	    (u_int8_t *)&set_target->rpm);
+
+	sc->sc_fan.fan_level = set_target->rpm;
+
+	return 0;
+}

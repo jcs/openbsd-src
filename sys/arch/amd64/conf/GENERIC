@@ -56,6 +56,7 @@ acpimcfg*	at acpi?
 acpiasus*	at acpi?
 acpisony*	at acpi?
 acpithinkpad*	at acpi?
+fan*		at acpithinkpad?	# Fan Management Framework
 acpitoshiba*	at acpi?
 acpivideo*	at acpi?
 acpivout*	at acpivideo?
