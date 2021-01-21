@@ -353,6 +353,9 @@ ppbattach(struct device *parent, struct device *self, void *aux)
 	pba.pba_intrtag = pa->pa_intrtag;
 
 	sc->sc_psc = config_found(self, &pba, ppbprint);
+
+	if (!sc->sc_psc || !config_any_children(sc->sc_psc, 1))
+		pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D3);
 }
 
 int
