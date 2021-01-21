@@ -575,6 +575,9 @@ pci_probe_device(struct pci_softc *sc, pcitag_t tag,
 		    pcisubmatch);
 		if (pd->pd_dev)
 			pci_dev_postattach(pd->pd_dev, &pa);
+		else
+			pci_set_powerstate(pa.pa_pc, pa.pa_tag,
+			    PCI_PMCSR_STATE_D3);
 	}
 
 	return (ret);

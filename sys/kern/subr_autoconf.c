@@ -912,6 +912,25 @@ config_activate_children(struct device *parent, int act)
 	return (rv);
 }
 
+int
+config_any_children(struct device *parent, int active)
+{
+	struct device *d;
+
+	for (d = TAILQ_NEXT(parent, dv_list); d != NULL;
+	    d = TAILQ_NEXT(d, dv_list)) {
+		if (d->dv_parent != parent)
+			continue;
+
+		if (active && !(d->dv_flags & DVF_ACTIVE))
+			continue;
+
+		return 1;
+	}
+
+	return 0;
+}
+
 /* 
  * Lookup a device in the cfdriver device array.  Does not return a
  * device if it is not active.

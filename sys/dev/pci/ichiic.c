@@ -149,6 +149,7 @@ ichiic_attach(struct device *parent, struct device *self, void *aux)
 	struct ichiic_softc *sc = (struct ichiic_softc *)self;
 	struct pci_attach_args *pa = aux;
 	struct i2cbus_attach_args iba;
+	struct device *iicbus;
 	pcireg_t conf;
 	bus_size_t iosize;
 	pci_intr_handle_t ih;
@@ -201,7 +202,10 @@ ichiic_attach(struct device *parent, struct device *self, void *aux)
 	bzero(&iba, sizeof(iba));
 	iba.iba_name = "iic";
 	iba.iba_tag = &sc->sc_i2c_tag;
-	config_found(self, &iba, iicbus_print);
+	iicbus = config_found(self, &iba, iicbus_print);
+
+	if (!iicbus || !config_any_children(iicbus, 1))
+		pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D3);
 
 	return;
 }
