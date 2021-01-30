@@ -57,7 +57,7 @@ void		acpiec_get_events(struct acpiec_softc *);
 
 int		acpiec_gpehandler(struct acpi_softc *, int, void *);
 
-void		acpiec_lock(struct acpiec_softc *);
+int		acpiec_lock(struct acpiec_softc *);
 void		acpiec_unlock(struct acpiec_softc *);
 
 /* EC Status bits */
@@ -218,39 +218,31 @@ acpiec_burst_disable(struct acpiec_softc *sc)
 void
 acpiec_read(struct acpiec_softc *sc, uint8_t addr, int len, uint8_t *buffer)
 {
-	int			reg;
+	int			reg, locked;
 
-	/*
-	 * this works because everything runs in the acpi thread context.
-	 * at some point add a lock to deal with concurrency so that a
-	 * transaction does not get interrupted.
-	 */
 	dnprintf(20, "%s: read %d, %d\n", DEVNAME(sc), (int)addr, len);
-	sc->sc_ecbusy = 1;
+	locked = acpiec_lock(sc);
 	acpiec_burst_enable(sc);
 	for (reg = 0; reg < len; reg++)
 		buffer[reg] = acpiec_read_1(sc, addr + reg);
 	acpiec_burst_disable(sc);
-	sc->sc_ecbusy = 0;
+	if (locked)
+		acpiec_unlock(sc);
 }
 
 void
 acpiec_write(struct acpiec_softc *sc, uint8_t addr, int len, uint8_t *buffer)
 {
-	int			reg;
+	int			reg, locked;
 
-	/*
-	 * this works because everything runs in the acpi thread context.
-	 * at some point add a lock to deal with concurrency so that a
-	 * transaction does not get interrupted.
-	 */
 	dnprintf(20, "%s: write %d, %d\n", DEVNAME(sc), (int)addr, len);
-	sc->sc_ecbusy = 1;
+	locked = acpiec_lock(sc);
 	acpiec_burst_enable(sc);
 	for (reg = 0; reg < len; reg++)
 		acpiec_write_1(sc, addr + reg, buffer[reg]);
 	acpiec_burst_disable(sc);
-	sc->sc_ecbusy = 0;
+	if (locked)
+		acpiec_unlock(sc);
 }
 
 int
@@ -283,6 +275,7 @@ acpiec_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_acpi = (struct acpi_softc *)parent;
 	sc->sc_devnode = aa->aaa_node;
 	sc->sc_cantburst = 0;
+	rw_init(&sc->sc_rwlock, "acpiec");
 
 	if (aml_evalinteger(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL, &st))
 		st = STA_PRESENT | STA_ENABLED | STA_DEV_OK;
@@ -351,10 +344,11 @@ acpiec_gpehandler(struct acpi_softc *acpi_sc, int gpe, void *arg)
 {
 	struct acpiec_softc	*sc = arg;
 	uint8_t			mask, stat, en;
-	int			s;
+	int			s, locked;
 
-	KASSERT(sc->sc_ecbusy == 0);
 	dnprintf(10, "ACPIEC: got gpe\n");
+
+	locked = acpiec_lock(sc);
 
 	do {
 		if (sc->sc_gotsci)
@@ -377,6 +371,9 @@ acpiec_gpehandler(struct acpi_softc *acpi_sc, int gpe, void *arg)
 	en = acpi_read_pmreg(acpi_sc, ACPIREG_GPE_EN, gpe>>3);
 	acpi_write_pmreg(acpi_sc, ACPIREG_GPE_EN, gpe>>3, en | mask);
 	splx(s);
+
+	if (locked)
+		acpiec_unlock(sc);
 
 	return (0);
 }
@@ -526,26 +523,28 @@ acpiec_reg(struct acpiec_softc *sc)
 	return (0);
 }
 
-void
+int
 acpiec_lock(struct acpiec_softc *sc)
 {
-	KASSERT(sc->sc_ecbusy == 0);
+	if (rw_status(&sc->sc_rwlock) == RW_WRITE)
+		/* already locked by us earlier, which recursed back into us */
+		return 0;
 
-	sc->sc_ecbusy = 1;
+	rw_enter_write(&sc->sc_rwlock);
 
 	if (sc->sc_glk) {
 		acpi_glk_enter();
 	}
+
+	return 1;
 }
 
 void
 acpiec_unlock(struct acpiec_softc *sc)
 {
-	KASSERT(sc->sc_ecbusy == 1);
-
 	if (sc->sc_glk) {
 		acpi_glk_leave();
 	}
 
-	sc->sc_ecbusy = 0;
+	rw_exit_write(&sc->sc_rwlock);
 }
