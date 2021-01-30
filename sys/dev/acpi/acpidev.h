@@ -356,7 +356,7 @@ struct acpiec_event {
 struct acpiec_softc {
 	struct device		sc_dev;
 
-	int			sc_ecbusy;
+	struct rwlock		sc_rwlock;
 
 	/* command/status register */
 	bus_size_t		sc_ec_sc;
