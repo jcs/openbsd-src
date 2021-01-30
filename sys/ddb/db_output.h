@@ -41,6 +41,7 @@ int db_printf(const char *, ...)
 int db_vprintf(const char *, va_list)
     __attribute__((__format__(__kprintf__,1,0)));
 void db_end_line(int);
+void db_resize(int, int);
 
 /*
  * This is a replacement for the non-standard %z, %n and %r printf formats

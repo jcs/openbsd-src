@@ -65,6 +65,10 @@
 #include <dev/wscons/wsmuxvar.h>
 #endif
 
+#ifdef DDB
+#include <ddb/db_output.h>
+#endif
+
 #include "wsmoused.h"
 
 struct wsscreen_internal {
@@ -836,6 +840,10 @@ wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie, int ccol,
 		cn_tab = &wsdisplay_cons;
 
 	wsdisplay_console_initted = 1;
+
+#ifdef DDB
+	db_resize(type->ncols, type->nrows);
+#endif
 }
 
 /*

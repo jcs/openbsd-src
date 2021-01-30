@@ -252,3 +252,10 @@ stacktrace_print(struct stacktrace *st, int (*pr)(const char *, ...))
 	if (st->st_count == 0)
 		(*pr)("<empty stack trace>\n");
 }
+
+void
+db_resize(int cols, int rows)
+{
+	db_max_width = cols;
+	db_max_line = rows;
+}
