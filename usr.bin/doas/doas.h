@@ -43,3 +43,7 @@ char **prepenv(const struct rule *, const struct passwd *,
 #define KEEPENV		0x2
 #define PERSIST		0x4
 #define NOLOG		0x8
+
+#define AUTH_FAILED	-1
+#define AUTH_OK		1
+#define AUTH_RETRIES	3
