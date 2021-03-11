@@ -40,6 +40,11 @@
 #include "isa.h"
 #include "ioapic.h"
 #include "lapic.h"
+#include "voltage.h"
+
+#if NVOLTAGE > 0
+#include <machine/voltagevar.h>
+#endif
 
 #if NIOAPIC > 0
 #include <machine/i82093reg.h>
@@ -551,6 +556,10 @@ resume_mp(void)
 		cpu_start_secondary(ci);
 	}
 	cpu_boot_secondary_processors();
+
+#if NVOLTAGE > 0
+	voltage_restore();
+#endif
 }
 #endif /* MULTIPROCESSOR */
 
