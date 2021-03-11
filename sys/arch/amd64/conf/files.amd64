@@ -210,6 +210,9 @@ file	arch/amd64/amd64/pctr.c		pctr needs-flag
 pseudo-device	nvram
 file	arch/amd64/amd64/nvram.c	nvram needs-flag
 
+pseudo-device	voltage
+file	arch/amd64/amd64/voltage.c	voltage needs-flag
+
 #
 # Machine-independent HID support
 #
