@@ -686,6 +686,7 @@ pseudo-device	pctr		1
 pseudo-device	nvram		1
 pseudo-device	hotplug		1	# devices hot plugging
 pseudo-device	dt
+pseudo-device	voltage		1
 
 # mouse & keyboard multiplexor pseudo-devices
 pseudo-device	wsmux		2

@@ -467,7 +467,8 @@ void mp_setperf_init(void);
 #define CPU_INVARIANTTSC	17	/* has invariant TSC */
 #define CPU_PWRACTION		18	/* action caused by power button */
 #define CPU_HWP			19	/* hardware p-state knobs */
-#define CPU_MAXID		20	/* number of valid machdep ids */
+#define CPU_VOLTAGE		20	/* BIOS variables */
+#define CPU_MAXID		21	/* number of valid machdep ids */
 
 #define	CTL_MACHDEP_NAMES { \
 	{ 0, 0 }, \
@@ -490,6 +491,7 @@ void mp_setperf_init(void);
 	{ "invarianttsc", CTLTYPE_INT }, \
 	{ "pwraction", CTLTYPE_INT }, \
 	{ "hwp", CTLTYPE_INT }, \
+	{ "voltage", CTLTYPE_INT }, \
 }
 
 /*
