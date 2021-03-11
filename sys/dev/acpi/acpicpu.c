@@ -157,6 +157,9 @@ struct acpicpu_softc {
 	 * one listener
 	 */
 	void			(*sc_notify)(struct acpicpu_pss *, int);
+
+	struct ksensor		 sc_sensors[nitems(cst_stats)];
+	struct ksensordev	 sc_sensdev;
 };
 
 void	acpicpu_add_cstatepkg(struct aml_value *, void *);
@@ -172,6 +175,7 @@ void	acpicpu_add_cstate(struct acpicpu_softc *_sc, int _state, int _method,
 	    int _flags, int _latency, int _power, uint64_t _address);
 void	acpicpu_set_pdc(struct acpicpu_softc *);
 void	acpicpu_idle(void);
+int	acpicpu_sensor_update(struct aml_node *, int, void *);
 
 #if 0
 void    acpicpu_set_throttle(struct acpicpu_softc *, int);
@@ -838,6 +842,30 @@ acpicpu_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	printf("\n");
+
+	if (sc->sc_dev.dv_unit == 0) {
+		struct acpi_cstate *cx;
+
+		strlcpy(sc->sc_sensdev.xname, DEVNAME(sc),
+		    sizeof(sc->sc_sensdev.xname));
+		memset(&sc->sc_sensors, 0, sizeof(sc->sc_sensors));
+		SLIST_FOREACH(cx, &sc->sc_cstates, link) {
+			sc->sc_sensors[cx->state].type = SENSOR_INTEGER;
+			snprintf(sc->sc_sensors[cx->state].desc,
+			    sizeof(sc->sc_sensors[i].desc), "C%d", cx->state);
+		}
+
+		/* attach in numerical order, since sc_cstates is backwards */
+		for (i = 0; i < nitems(sc->sc_sensors); i++) {
+			if (sc->sc_sensors[i].type)
+				sensor_attach(&sc->sc_sensdev,
+				    &sc->sc_sensors[i]);
+		}
+
+		sensordev_install(&sc->sc_sensdev);
+		aml_register_notify(sc->sc_devnode, aa->aaa_dev,
+		    acpicpu_sensor_update, sc, ACPIDEV_POLL);
+	}
 }
 
 int
@@ -1276,4 +1304,21 @@ acpicpu_idle(void)
 	itime >>= 1;
 	sc->sc_prev_sleep = (sc->sc_prev_sleep + (sc->sc_prev_sleep >> 1)
 	    + itime) >> 1;
+}
+
+int
+acpicpu_sensor_update(struct aml_node *node, int notify_type, void *arg)
+{
+	struct acpicpu_softc *sc = arg;
+	struct acpi_cstate *cx;
+
+	if (notify_type != 0x00)
+		return 0;
+
+	SLIST_FOREACH(cx, &sc->sc_cstates, link) {
+		if (cx->state < nitems(sc->sc_sensors))
+			sc->sc_sensors[cx->state].value = cst_stats[cx->state];
+	}
+
+	return 0;
 }
