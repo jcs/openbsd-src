@@ -488,3 +488,8 @@ file	dev/usb/umstc.c			umstc
 device	uhidpp: hid
 attach	uhidpp at uhidbus
 file	dev/usb/uhidpp.c		uhidpp
+
+# LG UltraFine monitor control
+device	ulguf: hid
+attach	ulguf at uhub
+file	dev/usb/ulguf.c			ulguf

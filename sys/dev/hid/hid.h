@@ -93,6 +93,7 @@ int	hid_locate(const void *, int, int32_t, uint8_t, enum hid_kind,
 int32_t	hid_get_data(const uint8_t *buf, int, struct hid_location *);
 uint32_t hid_get_udata(const uint8_t *buf, int, struct hid_location *);
 int	hid_is_collection(const void *, int, uint8_t, int32_t);
+int8_t	hid_unit_exp(int8_t);
 
 #endif /* _KERNEL */
 
@@ -129,6 +130,9 @@ int	hid_is_collection(const void *, int, uint8_t, int32_t);
 /* XXX compat */
 #define HUP_APPLE		0x00ff
 #define HUP_WACOM		0xff00
+
+/* Usages, VESA Virtual Control */
+#define HUV_BRIGHTNESS		0x0010
 
 /* Usages, Power Device */
 #define HUP_INAME		0x0001
