@@ -86,6 +86,8 @@
 #define EDID_QUIRK_FORCE_10BPC			(1 << 11)
 /* Non desktop display (i.e. HMD) */
 #define EDID_QUIRK_NON_DESKTOP			(1 << 12)
+/* Prefer the largest mode at 48 Hz */
+#define EDID_QUIRK_PREFER_LARGE_48		(1 << 13)
 
 struct detailed_mode_closure {
 	struct drm_connector *connector;
@@ -137,6 +139,9 @@ static const struct edid_quirk {
 	/* Funai Electronics PM36B */
 	{ "FCM", 13600, EDID_QUIRK_PREFER_LARGE_75 |
 	  EDID_QUIRK_DETAILED_IN_CM },
+
+	/* LG UltraFine 21.5" */
+	{ "GSM", 0x5b10, EDID_QUIRK_PREFER_LARGE_48 },
 
 	/* LGD panel of HP zBook 17 G2, eDP 10 bpc, but reports unknown bpc */
 	{ "LGD", 764, EDID_QUIRK_FORCE_10BPC },
@@ -2190,6 +2195,8 @@ static void edid_fixup_preferred(struct drm_connector *connector,
 		target_refresh = 60;
 	if (quirks & EDID_QUIRK_PREFER_LARGE_75)
 		target_refresh = 75;
+	if (quirks & EDID_QUIRK_PREFER_LARGE_48)
+		target_refresh = 48;
 
 	preferred_mode = list_first_entry(&connector->probed_modes,
 					  struct drm_display_mode, head);
@@ -5417,7 +5424,8 @@ int drm_add_edid_modes(struct drm_connector *connector, struct edid *edid)
 	if (edid->features & DRM_EDID_FEATURE_DEFAULT_GTF)
 		num_modes += add_inferred_modes(connector, edid);
 
-	if (quirks & (EDID_QUIRK_PREFER_LARGE_60 | EDID_QUIRK_PREFER_LARGE_75))
+	if (quirks & (EDID_QUIRK_PREFER_LARGE_60 | EDID_QUIRK_PREFER_LARGE_75 |
+	    EDID_QUIRK_PREFER_LARGE_48))
 		edid_fixup_preferred(connector, quirks);
 
 	if (quirks & EDID_QUIRK_FORCE_6BPC)
