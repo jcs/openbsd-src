@@ -657,3 +657,17 @@ hid_is_collection(const void *desc, int size, uint8_t id, int32_t usage)
 	hid_end_parse(hd);
 	return (0);
 }
+
+int8_t
+hid_unit_exp(int8_t exp)
+{
+	static int8_t mults[] = {
+		0, 1, 2, 3, 4, 5, 6, 7,
+		-8, -7, -6, -5, -4, -3, -2, -1,
+	};
+
+	if (exp >= sizeof(mults))
+		return 0;
+
+	return mults[exp];
+}

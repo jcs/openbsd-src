@@ -352,6 +352,7 @@ audio*	at utvfu?
 udl*	at uhub?		# DisplayLink USB displays
 wsdisplay* at udl?
 bwfm*	at uhub?		# Broadcom FullMAC
+ulguf*	at uhub?		# LG UltraFine monitor control
 
 puc*	at pci?			# PCI "universal" communication device
 com*	at cardbus?

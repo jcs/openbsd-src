@@ -5862,6 +5862,10 @@ const struct usb_known_product usb_known_products[] = {
 	    "RTL8153",
 	},
 	{
+	    USB_VENDOR_LG, USB_PRODUCT_LG_UF21_CONTROL,
+	    "UltraFine Controls",
+	},
+	{
 	    USB_VENDOR_LIEBERT, USB_PRODUCT_LIEBERT_UPS,
 	    "UPS",
 	},

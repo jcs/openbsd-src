@@ -2647,6 +2647,7 @@ product LEXMARK S2450		0x0009	Optra S 2450
 /* LG products */
 product LG RTL8153		0x9819	RTL8153
 product LG RTL8153B		0x9820	RTL8153
+product LG UF21_CONTROL		0x9a40	UltraFine Controls
 
 /* Liebert products */
 product LIEBERT UPS		0xffff	UPS
