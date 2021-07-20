@@ -1883,6 +1883,9 @@ amdgpu_wsioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 		wdf->cmsize = 0;
 		return 0;
 	case WSDISPLAYIO_GETPARAM:
+		if (ws_get_param && ws_get_param(dp) == 0)
+			return 0;
+
 		if (bd == NULL)
 			return -1;
 
@@ -1895,6 +1898,9 @@ amdgpu_wsioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 		}
 		break;
 	case WSDISPLAYIO_SETPARAM:
+		if (ws_set_param && ws_set_param(dp) == 0)
+			return 0;
+
 		if (bd == NULL || dp->curval > bd->props.max_brightness)
 			return -1;
 
