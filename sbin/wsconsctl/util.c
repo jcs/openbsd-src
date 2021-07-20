@@ -172,7 +172,8 @@ static const struct nameint dpytype_tab[] = {
 	{ WSDISPLAY_TYPE_RADEONDRM,	"radeondrm" },
 	{ WSDISPLAY_TYPE_EFIFB,		"efifb" },
 	{ WSDISPLAY_TYPE_RKDRM,		"rkdrm" },
-	{ WSDISPLAY_TYPE_ASTFB,		"astfb" }
+	{ WSDISPLAY_TYPE_ASTFB,		"astfb" },
+	{ WSDISPLAY_TYPE_AMDGPU,	"amdgpu" },
 };
 
 static const struct nameint kbdenc_tab[] = {
