@@ -666,7 +666,7 @@ hid_unit_exp(int8_t exp)
 		-8, -7, -6, -5, -4, -3, -2, -1,
 	};
 
-	if (exp > sizeof(mults))
+	if (exp >= sizeof(mults))
 		return 0;
 
 	return mults[exp];
