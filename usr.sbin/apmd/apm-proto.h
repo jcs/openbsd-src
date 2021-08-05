@@ -56,6 +56,7 @@ enum apm_perfmode {
 struct apm_command {
 	int vno;
 	enum apm_action action;
+	int setperfmin, setperfmax;
 };
 
 struct apm_reply {
@@ -65,6 +66,7 @@ struct apm_reply {
 	int cpuspeed;
 	struct apm_power_info batterystate;
 	int error;
+	int setperfmin, setperfmax;
 };
 
 #define APMD_VNO	4

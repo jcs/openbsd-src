@@ -60,7 +60,7 @@ static __dead void	zzusage(void);
 static __dead void
 usage(void)
 {
-	fprintf(stderr,"usage: %s [-AabHLlmPSvZz] [-f sockname]\n",
+	fprintf(stderr,"usage: %s [-abHLlmPSvZz] [-A [min-max]] [-f sockname]\n",
 	    __progname);
 	exit(1);
 }
@@ -149,6 +149,7 @@ int
 main(int argc, char *argv[])
 {
 	const char *sockname = _PATH_APM_SOCKET;
+	const char *errstr;
 	int doac = FALSE;
 	int dopct = FALSE;
 	int dobstate = FALSE;
@@ -193,6 +194,36 @@ main(int argc, char *argv[])
 			if (action != NONE)
 				usage();
 			action = SETPERF_AUTO;
+
+			if (argv[optind] != NULL && argv[optind][0] != '-') {
+				char *sep, *min;
+				optarg = argv[optind];
+				optind++;
+
+				if ((sep = strchr(optarg, '-')) == NULL) {
+					/* only setting max */
+					command.setperfmin = -1;
+					command.setperfmax = strtonum(optarg,
+					    0, 100, &errstr);
+					if (errstr != NULL)
+						errx(1, "max value: %s: %s",
+						    errstr, optarg);
+				} else {
+					sep[0] = '\0';
+					sep++;
+					command.setperfmin = strtonum(optarg,
+					    0, 100, &errstr);
+					if (errstr != NULL)
+						errx(1, "min value: %s: %s",
+						    errstr, optarg);
+					command.setperfmax = strtonum(sep, 0,
+					    100, &errstr);
+					if (errstr != NULL)
+						errx(1, "max value: %s: %s",
+						    errstr, sep);
+				}
+			}
+
 			break;
 		case 'H':
 			if (action != NONE)
@@ -272,6 +303,8 @@ main(int argc, char *argv[])
 	reply.batterystate.ac_state = APM_AC_UNKNOWN;
 	reply.perfmode = PERF_MANUAL;
 	reply.cpuspeed = cpuspeed;
+	reply.setperfmin = 0;
+	reply.setperfmax = 100;
 
 	switch (action) {
 	case SETPERF_LOW:
@@ -401,9 +434,14 @@ balony:
 			printf("A/C adapter state: %s\n",
 			    ac_state(reply.batterystate.ac_state));
 
-		if (doperf)
-			printf("Performance adjustment mode: %s (%d MHz)\n",
-			    perf_mode(reply.perfmode), reply.cpuspeed);
+		if (doperf) {
+			printf("Performance adjustment mode: %s",
+			    perf_mode(reply.perfmode));
+			if (reply.perfmode == PERF_AUTO)
+				printf(", %d%%-%d%%", reply.setperfmin,
+				    reply.setperfmax);
+			printf(" (%d MHz)\n", reply.cpuspeed);
+		}
 		break;
 	default:
 		break;

@@ -34,7 +34,8 @@
 .Nd Advanced Power Management daemon
 .Sh SYNOPSIS
 .Nm apmd
-.Op Fl AadHLs
+.Op Fl adHLs
+.Op Fl A Ar min-max
 .Op Fl f Ar devname
 .Op Fl S Ar sockname
 .Op Fl t Ar seconds
@@ -67,10 +68,14 @@ with logging facility
 .Pp
 The options are as follows:
 .Bl -tag -width Ds
-.It Fl A
+.It Fl A Ar min-max
 Start
 .Nm
-in automatic performance adjustment mode.
+in automatic performance adjustment mode, optionally with minimum
+performance set to
+.Ar min
+and maximum to
+.Ar max .
 .It Fl a
 BIOS-initiated suspend or standby requests are
 ignored if the system is connected to line current and not running from

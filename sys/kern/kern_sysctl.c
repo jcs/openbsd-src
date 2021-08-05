@@ -719,6 +719,10 @@ hw_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		    newp, newlen));
 	case HW_SETPERF:
 		return (sysctl_hwsetperf(oldp, oldlenp, newp, newlen));
+	case HW_SETPERFMIN:
+		return (sysctl_hwsetperfmin(oldp, oldlenp, newp, newlen));
+	case HW_SETPERFMAX:
+		return (sysctl_hwsetperfmax(oldp, oldlenp, newp, newlen));
 	case HW_PERFPOLICY:
 		return (sysctl_hwperfpolicy(oldp, oldlenp, newp, newlen));
 #endif /* !SMALL_KERNEL */

@@ -928,7 +928,9 @@ struct kinfo_file {
 #define	HW_PERFPOLICY		23	/* set performance policy */
 #define	HW_SMT			24	/* int: enable SMT/HT/CMT */
 #define	HW_NCPUONLINE		25	/* int: number of cpus being used */
-#define	HW_MAXID		26	/* number of valid hw ids */
+#define	HW_SETPERFMIN		26	/* set min auto CPU performance % */
+#define	HW_SETPERFMAX		27	/* set min auto CPU performance % */
+#define	HW_MAXID		28	/* number of valid hw ids */
 
 #define	CTL_HW_NAMES { \
 	{ 0, 0 }, \
@@ -957,6 +959,8 @@ struct kinfo_file {
 	{ "perfpolicy", CTLTYPE_STRING }, \
 	{ "smt", CTLTYPE_INT }, \
 	{ "ncpuonline", CTLTYPE_INT }, \
+	{ "setperfmin", CTLTYPE_INT }, \
+	{ "setperfmax", CTLTYPE_INT }, \
 }
 
 /*

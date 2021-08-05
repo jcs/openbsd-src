@@ -532,6 +532,8 @@ void (*cpu_setperf)(int);
 #define PERFPOL_AUTO 1
 #define PERFPOL_HIGH 2
 int perflevel = 100;
+int minperflevel = 0;
+int maxperflevel = 100;
 int perfpolicy = PERFPOL_MANUAL;
 
 #ifndef SMALL_KERNEL
@@ -595,11 +597,11 @@ setperf_auto(void *v)
 	if (speedup)
 		downbeats = 5;
 
-	if (speedup && perflevel != 100) {
-		perflevel = 100;
+	if (speedup && perflevel != maxperflevel) {
+		perflevel = maxperflevel;
 		cpu_setperf(perflevel);
-	} else if (!speedup && perflevel != 0 && --downbeats <= 0) {
-		perflevel = 0;
+	} else if (!speedup && perflevel != minperflevel && --downbeats <= 0) {
+		perflevel = minperflevel;
 		cpu_setperf(perflevel);
 	}
 
@@ -618,12 +620,44 @@ sysctl_hwsetperf(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 		return sysctl_rdint(oldp, oldlenp, newp, perflevel);
 
 	err = sysctl_int_bounded(oldp, oldlenp, newp, newlen,
-	    &perflevel, 0, 100);
+	    &perflevel, 0, maxperflevel);
 	if (err)
 		return err;
 
 	if (newp != NULL)
 		cpu_setperf(perflevel);
+
+	return 0;
+}
+
+int
+sysctl_hwsetperfmin(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
+{
+	int err;
+
+	if (!cpu_setperf)
+		return EOPNOTSUPP;
+
+	err = sysctl_int_bounded(oldp, oldlenp, newp, newlen, &minperflevel,
+	    0, maxperflevel);
+	if (err)
+		return err;
+
+	return 0;
+}
+
+int
+sysctl_hwsetperfmax(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
+{
+	int err;
+
+	if (!cpu_setperf)
+		return EOPNOTSUPP;
+
+	err = sysctl_int_bounded(oldp, oldlenp, newp, newlen, &maxperflevel,
+	    minperflevel, 100);
+	if (err)
+		return err;
 
 	return 0;
 }
@@ -670,7 +704,7 @@ sysctl_hwperfpolicy(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 	if (perfpolicy == PERFPOL_AUTO) {
 		timeout_add_msec(&setperf_to, 200);
 	} else if (perfpolicy == PERFPOL_HIGH) {
-		perflevel = 100;
+		perflevel = maxperflevel;
 		cpu_setperf(perflevel);
 	}
 	return 0;

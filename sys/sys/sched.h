@@ -167,6 +167,8 @@ void sched_peg_curproc(struct cpu_info *ci);
 void sched_barrier(struct cpu_info *ci);
 
 int sysctl_hwsetperf(void *, size_t *, void *, size_t);
+int sysctl_hwsetperfmin(void *, size_t *, void *, size_t);
+int sysctl_hwsetperfmax(void *, size_t *, void *, size_t);
 int sysctl_hwperfpolicy(void *, size_t *, void *, size_t);
 int sysctl_hwsmt(void *, size_t *, void *, size_t);
 int sysctl_hwncpuonline(void);

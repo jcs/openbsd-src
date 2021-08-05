@@ -69,7 +69,7 @@ int suspend(int ctl_fd);
 int stand_by(int ctl_fd);
 int hibernate(int ctl_fd);
 void resumed(int ctl_fd);
-void setperfpolicy(char *policy);
+void setperfpolicy(char *policy, int min, int max);
 void sigexit(int signo);
 void do_etc_file(const char *file);
 void error(const char *fmt, const char *arg);
@@ -101,8 +101,9 @@ void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s [-AadHLs] [-f devname] [-S sockname] [-t seconds] "
-		"[-Z percent] [-z percent]\n", __progname);
+	    "usage: %s [-adHLs] [-A [min-max]] [-f devname] [-S sockname] "
+	        "[-t seconds]\n"
+		"\t[-Z percent] [-z percent]\n", __progname);
 	exit(1);
 }
 
@@ -244,8 +245,12 @@ handle_client(int sock_fd, int ctl_fd)
 	char perfpol[32];
 	size_t perfpol_sz = sizeof(perfpol);
 	int cpuspeed_mib[] = { CTL_HW, HW_CPUSPEED };
-	int cpuspeed = 0;
+	int minperf_mib[] = { CTL_HW, HW_SETPERFMIN };
+	int maxperf_mib[] = { CTL_HW, HW_SETPERFMAX };
+	int cpuspeed = 0, setperfmin = 0, setperfmax = 0;
 	size_t cpuspeed_sz = sizeof(cpuspeed);
+	size_t minperf_sz = sizeof(setperfmin);
+	size_t maxperf_sz = sizeof(setperfmax);
 
 	fromlen = sizeof(from);
 	cli_fd = accept(sock_fd, (struct sockaddr *)&from, &fromlen);
@@ -284,17 +289,17 @@ handle_client(int sock_fd, int ctl_fd)
 	case SETPERF_LOW:
 		reply.newstate = NORMAL;
 		logmsg(LOG_NOTICE, "setting hw.perfpolicy to low");
-		setperfpolicy("low");
+		setperfpolicy("low", 0, 0);
 		break;
 	case SETPERF_HIGH:
 		reply.newstate = NORMAL;
 		logmsg(LOG_NOTICE, "setting hw.perfpolicy to high");
-		setperfpolicy("high");
+		setperfpolicy("high", 0, 0);
 		break;
 	case SETPERF_AUTO:
 		reply.newstate = NORMAL;
 		logmsg(LOG_NOTICE, "setting hw.perfpolicy to auto");
-		setperfpolicy("auto");
+		setperfpolicy("auto", cmd.setperfmin, cmd.setperfmax);
 		break;
 	default:
 		reply.newstate = NORMAL;
@@ -317,6 +322,18 @@ handle_client(int sock_fd, int ctl_fd)
 		cpuspeed = 0;
 	}
 	reply.cpuspeed = cpuspeed;
+
+	if (sysctl(minperf_mib, 2, &setperfmin, &minperf_sz, NULL, 0) == -1) {
+		logmsg(LOG_INFO, "cannot read hw.setperfmin");
+		setperfmin = 0;
+	}
+	reply.setperfmin = setperfmin;
+	if (sysctl(maxperf_mib, 2, &setperfmax, &maxperf_sz, NULL, 0) == -1) {
+		logmsg(LOG_INFO, "cannot read hw.setperfmax");
+		setperfmax = 100;
+	}
+	reply.setperfmax = setperfmax;
+
 	reply.vno = APMD_VNO;
 	if (send(cli_fd, &reply, sizeof(reply), 0) != sizeof(reply))
 		logmsg(LOG_INFO, "reply to client botched");
@@ -409,8 +426,9 @@ main(int argc, char *argv[])
 	int kq, nchanges;
 	struct kevent ev[2];
 	int doperf = PERF_NONE;
+	int amin = 0, amax = 100;
 
-	while ((ch = getopt(argc, argv, "aACdHLsf:t:S:z:Z:")) != -1)
+	while ((ch = getopt(argc, argv, "aA::CdHLsf:t:S:z:Z:")) != -1)
 		switch(ch) {
 		case 'a':
 			noacsleep = 1;
@@ -438,19 +456,47 @@ main(int argc, char *argv[])
 			if (doperf != PERF_NONE)
 				usage();
 			doperf = PERF_AUTO;
-			setperfpolicy("auto");
+
+			if (argv[optind] != NULL && argv[optind][0] != '-') {
+				char *sep, *min;
+				optarg = argv[optind];
+				optind++;
+
+				if ((sep = strchr(optarg, '-')) == NULL) {
+					/* only setting max */
+					amin = -1;
+					amax = strtonum(optarg, 0, 100, &errstr);
+					if (errstr != NULL)
+						errx(1, "max value: %s: %s",
+						    errstr, optarg);
+				} else {
+					sep[0] = '\0';
+					sep++;
+					amin = strtonum(optarg, 0, 100, &errstr);
+					if (errstr != NULL)
+						errx(1, "min value: %s: %s",
+						    errstr, optarg);
+					amax = strtonum(sep, 0, 100, &errstr);
+					if (errstr != NULL)
+						errx(1, "max value: %s: %s",
+						    errstr, sep);
+				}
+			}
+
+			doperf = PERF_AUTO;
+			setperfpolicy("auto", amin, amax);
 			break;
 		case 'L':
 			if (doperf != PERF_NONE)
 				usage();
 			doperf = PERF_MANUAL;
-			setperfpolicy("low");
+			setperfpolicy("low", 0, 0);
 			break;
 		case 'H':
 			if (doperf != PERF_NONE)
 				usage();
 			doperf = PERF_MANUAL;
-			setperfpolicy("high");
+			setperfpolicy("high", 0, 0);
 			break;
 		case 'Z':
 			autoaction = AUTO_HIBERNATE;
@@ -595,7 +641,7 @@ main(int argc, char *argv[])
 			}
 
 			if (!powerstatus && autoaction &&
-			    autolimit > (int)pinfo.battery_life) {
+			    autolimit >= (int)pinfo.battery_life) {
 				struct timespec graceperiod, now;
 
 				graceperiod = last_resume;
@@ -653,10 +699,12 @@ main(int argc, char *argv[])
 }
 
 void
-setperfpolicy(char *policy)
+setperfpolicy(char *policy, int min, int max)
 {
 	int hw_perfpol_mib[] = { CTL_HW, HW_PERFPOLICY };
 	int hw_perf_mib[] = { CTL_HW, HW_SETPERF };
+	int hw_minperf_mib[] = { CTL_HW, HW_SETPERFMIN };
+	int hw_maxperf_mib[] = { CTL_HW, HW_SETPERFMAX };
 	int new_perf = -1;
 
 	if (strcmp(policy, "low") == 0) {
@@ -671,8 +719,17 @@ setperfpolicy(char *policy)
 	    policy, strlen(policy) + 1) == -1)
 		logmsg(LOG_INFO, "cannot set hw.perfpolicy");
 
-	if (new_perf == -1)
+	if (new_perf == -1) {
+		if (min != -1 && sysctl(hw_minperf_mib, 2, NULL, NULL, &min,
+		    sizeof(min)) == -1)
+			logmsg(LOG_INFO, "cannot set hw.setperfmin");
+
+		if (max != -1 && sysctl(hw_maxperf_mib, 2, NULL, NULL, &max,
+		    sizeof(max)) == -1)
+			logmsg(LOG_INFO, "cannot set hw.setperfmax");
+
 		return;
+	}
 
 	if (sysctl(hw_perf_mib, 2, NULL, NULL,
 	    &new_perf, sizeof(new_perf)) == -1)
