@@ -319,6 +319,7 @@ void			aml_foreachpkg(struct aml_value *, int,
 			    void (*fn)(struct aml_value *, void *), void *);
 
 const char		*aml_val_to_string(const struct aml_value *);
+const char		*aml_utf16_to_string(const struct aml_value *);
 
 void			aml_disasm(struct aml_scope *scope, int lvl,
 			    void (*dbprintf)(void *, const char *, ...),

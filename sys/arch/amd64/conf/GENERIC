@@ -90,6 +90,7 @@ tipmic*		at iic?
 intelpmc*	at acpi?
 amdpmc*		at acpi?
 pckbc*		at acpi?
+acpidptfs*	at acpi?
 
 efi0		at bios0
 mpbios0		at bios0
