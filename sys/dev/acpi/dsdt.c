@@ -1759,6 +1759,28 @@ aml_val_to_string(const struct aml_value *val)
 
 	return (buffer);
 }
+
+const char *
+aml_utf16_to_string(const struct aml_value *val)
+{
+	static char buffer[256];
+	int len, i, ui;
+
+	if (val->type != AML_OBJTYPE_BUFFER)
+		return aml_val_to_string(val);
+
+	len = val->length / 2;
+	if (len >= sizeof(buffer))
+		len = sizeof(buffer) - 1;
+	for (i = 0, ui = 0; i < len; i++, ui += 2) {
+		if (val->v_buffer[ui] == 255)
+			buffer[i] = '?';
+		else
+			buffer[i] = val->v_buffer[ui];
+	}
+	buffer[len] = 0;
+	return (buffer);
+}
 #endif /* SMALL_KERNEL */
 
 int aml_error;

@@ -319,3 +319,8 @@ file	dev/acpi/acpiwmi.c		acpiwmi
 # PS/2 Keyboard Controller
 attach	pckbc at acpi with pckbc_acpi
 file	dev/acpi/pckbc_acpi.c		pckbc_acpi
+
+# Dynamic Platform and Thermal Framework Sensor
+device	acpidptfs
+attach	acpidptfs at acpi
+file	dev/acpi/acpidptfs.c		acpidptfs
