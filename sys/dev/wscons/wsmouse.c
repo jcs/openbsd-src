@@ -352,7 +352,8 @@ wsmouseclose(dev_t dev, int flags, int mode, struct proc *p)
 	wsevent_fini(evar);
 
 #if NWSMUX > 0
-	if (sc->sc_base.me_parent == NULL) {
+	if (sc->sc_base.me_parent == NULL &&
+	    sc->sc_input.hw.type != WSMOUSE_TYPE_TPANEL) {
 		int mux, error;
 
 		DPRINTF(("%s: attach\n", __func__));
