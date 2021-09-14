@@ -60,7 +60,7 @@
 #define IEEE80211_RSSI_THRES_2GHZ		(-60)	/* in dBm */
 #define IEEE80211_RSSI_THRES_5GHZ		(-70)	/* in dBm */
 #define IEEE80211_RSSI_THRES_RATIO_2GHZ		60	/* in percent */
-#define IEEE80211_RSSI_THRES_RATIO_5GHZ		50	/* in percent */
+#define IEEE80211_RSSI_THRES_RATIO_5GHZ		30	/* in percent */
 
 #define IEEE80211_BGSCAN_FAIL_MAX		512	/* units of 500 msec */
 
