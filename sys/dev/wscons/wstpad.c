@@ -1663,7 +1663,7 @@ wstpad_configure(struct wsmouseinput *input)
 	tp->edge.top = (offset ? input->hw.y_max - offset : INT_MAX);
 
 	offset = width * abs(tp->params.center_width) / 8192;
-	tp->edge.center = input->hw.x_min + width / 2;
+	tp->edge.center = (input->hw.x_min + width / 4) * 3;
 	tp->edge.center_left = tp->edge.center - offset;
 	tp->edge.center_right = tp->edge.center + offset;
 
