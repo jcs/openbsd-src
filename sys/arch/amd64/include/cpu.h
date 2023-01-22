@@ -175,7 +175,8 @@ struct cpu_info {
 	u_int32_t	ci_feature_amdsev_ebx;	/* [I] */
 	u_int32_t	ci_feature_amdsev_ecx;	/* [I] */
 	u_int32_t	ci_feature_amdsev_edx;	/* [I] */
-	u_int32_t	ci_feature_tpmflags;	/* [I] */
+	u_int32_t	ci_feature_tpmflags_eax;/* [I] */
+	u_int32_t	ci_feature_tpmflags_ecx;/* [I] */
 	u_int32_t	ci_pnfeatset;		/* [I] */
 	u_int32_t	ci_efeature_eax;	/* [I] */
 	u_int32_t	ci_efeature_ecx;	/* [I] */
@@ -480,8 +481,15 @@ void k8_powernow_setperf(int);
 void k1x_init(struct cpu_info *);
 void k1x_setperf(int);
 
+/* est.c */
 void est_init(struct cpu_info *);
 void est_setperf(int);
+
+/* pstate.c */
+void pstate_init(struct cpu_info *);
+void pstate_resume(struct cpu_info *);
+int pstate_hwp_sysctl(int *, u_int, void *, size_t *, void *, size_t,
+    struct proc *);
 
 #ifdef MULTIPROCESSOR
 /* mp_setperf.c */
@@ -511,7 +519,8 @@ void mp_setperf_init(void);
 #define CPU_PWRACTION		18	/* action caused by power button */
 #define CPU_RETPOLINE		19	/* cpu requires retpoline pattern */
 #define CPU_VMMODE		20	/* virtualization mode */
-#define CPU_MAXID		21	/* number of valid machdep ids */
+#define CPU_HWP			21	/* hardware p-state knobs */
+#define CPU_MAXID		22	/* number of valid machdep ids */
 
 #define	CTL_MACHDEP_NAMES { \
 	{ 0, 0 }, \
@@ -535,6 +544,28 @@ void mp_setperf_init(void);
 	{ "pwraction", CTLTYPE_INT }, \
 	{ "retpoline", CTLTYPE_INT }, \
 	{ "vmmode", CTLTYPE_STRING }, \
+	{ "hwp", CTLTYPE_INT }, \
+}
+
+/*
+ * CTL_HWP definitions.
+ */
+#define HWP_MIN_PERF		1
+#define HWP_MIN_PERF_NAME	"min_perf"
+#define HWP_MAX_PERF		2
+#define HWP_MAX_PERF_NAME	"max_perf"
+#define HWP_DESIRED_PERF	3
+#define HWP_DESIRED_PERF_NAME	"desired_perf"
+#define HWP_EPP			4
+#define HWP_EPP_NAME		"epp_bias"
+#define HWP_MAXID		5
+
+#define CTL_HWP_NAMES { \
+	{ 0, 0 }, \
+	{ HWP_MIN_PERF_NAME, CTLTYPE_INT }, \
+	{ HWP_MAX_PERF_NAME, CTLTYPE_INT }, \
+	{ HWP_DESIRED_PERF_NAME, CTLTYPE_INT }, \
+	{ HWP_EPP_NAME, CTLTYPE_STRING }, \
 }
 
 #endif /* !_MACHINE_CPU_H_ */

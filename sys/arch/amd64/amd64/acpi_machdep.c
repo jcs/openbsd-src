@@ -56,6 +56,7 @@ extern u_char acpi_real_mode_resume[], acpi_resume_end[];
 extern u_char acpi_tramp_data_start[], acpi_tramp_data_end[];
 extern u_int32_t acpi_pdirpa;
 extern paddr_t tramp_pdirpa;
+extern int pstate_hwp;
 
 extern int acpi_savecpu(void) __returns_twice;
 
@@ -517,6 +518,9 @@ rtc_check:
 			sc->sc_wakegpe = WAKEGPE_RTC;
 	}
 	rtcalarm_resume();
+
+	if (pstate_hwp)
+		pstate_resume(&cpu_info_primary);
 }
 
 #ifdef MULTIPROCESSOR

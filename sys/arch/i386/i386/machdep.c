@@ -1457,7 +1457,8 @@ intelcore_update_sensor(void *args)
 void
 intel686_cpusensors_setup(struct cpu_info *ci)
 {
-	if (!CPU_IS_PRIMARY(ci) || (ci->ci_feature_tpmflags & TPM_SENSOR) == 0)
+	if (!CPU_IS_PRIMARY(ci) ||
+	    (ci->ci_feature_tpmflags_eax & TPM_SENSOR) == 0)
 		return;
 
 	/* Setup the sensors structures */
@@ -1976,11 +1977,11 @@ identifycpu(struct cpu_info *ci)
 		    cpuid_level >= 0x06 ) {
 			u_int dummy;
 
-			CPUID(0x06, ci->ci_feature_tpmflags, dummy,
+			CPUID(0x06, ci->ci_feature_tpmflags_eax, dummy,
 			    dummy, dummy);
 			max = nitems(cpu_tpm_eaxfeatures);
 			for (i = 0; i < max; i++)
-				if (ci->ci_feature_tpmflags &
+				if (ci->ci_feature_tpmflags_eax &
 				    cpu_tpm_eaxfeatures[i].feature_bit)
 					printf(",%s", cpu_tpm_eaxfeatures[i].feature_name);
 		}

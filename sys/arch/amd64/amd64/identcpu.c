@@ -642,10 +642,10 @@ identifycpu(struct cpu_info *ci)
 	}
 
 	if (ci->ci_cpuid_level >= 0x06)
-		CPUID(0x06, ci->ci_feature_tpmflags, dummy,
+		CPUID(0x06, ci->ci_feature_tpmflags_eax, dummy,
 		    curcpu_tpm_ecxflags, dummy);
 	if (ci->ci_vendor == CPUV_AMD && ci->ci_family >= 0x12)
-		ci->ci_feature_tpmflags |= TPM_ARAT;
+		ci->ci_feature_tpmflags_eax |= TPM_ARAT;
 
 	/* xsave subfeatures */
 	if (ci->ci_cpuid_level >= 0xd)
@@ -653,8 +653,9 @@ identifycpu(struct cpu_info *ci)
 
 	pcpuid2(ci, "1", 'd', CPUID_MEMBER(ci_feature_flags), CPUID_EDX_BITS,
 	    'c', curcpu_1_ecx, prevcpu_1_ecx, CPUID_ECX_BITS);
-	pcpuid2(ci, "6", 'a', CPUID_MEMBER(ci_feature_tpmflags), TPM_EAX_BITS,
-	    'c', curcpu_tpm_ecxflags, prevcpu_tpm_ecxflags, TPM_ECX_BITS);
+	pcpuid2(ci, "6", 'a', CPUID_MEMBER(ci_feature_tpmflags_eax),
+	    TPM_EAX_BITS, 'c', curcpu_tpm_ecxflags, prevcpu_tpm_ecxflags,
+	    TPM_ECX_BITS);
 	pcpuid3(ci, "7.0",
 	    'b', CPUID_MEMBER(ci_feature_sefflags_ebx), SEFF0_EBX_BITS,
 	    'c', CPUID_MEMBER(ci_feature_sefflags_ecx), SEFF0_ECX_BITS,
@@ -738,7 +739,9 @@ identifycpu(struct cpu_info *ci)
 				setperf_setup = k1x_init;
 		}
 
-		if (cpu_ecxfeature & CPUIDECX_EST)
+		if (ci->ci_feature_tpmflags_eax & TPM_HWP)
+			setperf_setup = pstate_init;
+		else if (cpu_ecxfeature & CPUIDECX_EST)
 			setperf_setup = est_init;
 #endif
 
@@ -753,8 +756,10 @@ identifycpu(struct cpu_info *ci)
 	}
 
 #ifndef SMALL_KERNEL
-	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags & TPM_SENSOR) &&
+	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags_eax & TPM_SENSOR) &&
 	    ci->ci_vendor == CPUV_INTEL) {
+		strlcpy(ci->ci_sensordev.xname, ci->ci_dev->dv_xname,
+		    sizeof(ci->ci_sensordev.xname));
 		ci->ci_sensor.type = SENSOR_TEMP;
 		sensor_task_register(ci, intelcore_update_sensor, 5);
 		sensor_attach(&ci->ci_sensordev, &ci->ci_sensor);
