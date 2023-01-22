@@ -299,6 +299,14 @@
 #define TPM_ECX_BITS \
     ("\20" "\01EFFFREQ" )
 
+#define	TPM_HWP		0x00000080	 /* Hardware P-States supported */
+#define	TPM_HWP_NOTIFY	0x00000100	 /* HWP Notification */
+#define	TPM_HWP_ACT_WIN	0x00000200	 /* HWP Activity Window */
+#define	TPM_HWP_EPP	0x00000400	 /* HWP Energy Perf. Preference */
+#define	TPM_HWP_PKG	0x00000800	 /* HWP IA32_HWP_REQUEST_PKG MSR */
+
+#define	TPM_EPB		0x00000008	 /* IA32_ENERGY_PERF_BIAS supported */
+
  /*
   * "Architectural Performance Monitoring" bits (CPUID function 0x0a):
   * EAX bits, EBX bits, EDX bits.
@@ -1113,6 +1121,15 @@
 #define	C3_CRYPT_CWLO_KEY128		0x0000000a	/* 128bit, 10 rds */
 #define	C3_CRYPT_CWLO_KEY192		0x0000040c	/* 192bit, 12 rds */
 #define	C3_CRYPT_CWLO_KEY256		0x0000080e	/* 256bit, 15 rds */
+
+/* Hardware-Controlled Performance States (HWP) */
+#define IA32_ENERGY_PERF_BIAS		0x1b0
+#define IA32_PM_ENABLE			0x770
+#define IA32_HWP_CAPABILITIES		0x771
+#define IA32_HWP_REQUEST_PKG		0x772
+#define IA32_HWP_INTERRUPT		0x773
+#define IA32_HWP_REQUEST		0x774
+#define IA32_HWP_STATUS			0x777
 
 /* Intel Silicon Debug */
 #define IA32_DEBUG_INTERFACE		0xc80

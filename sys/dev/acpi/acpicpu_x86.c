@@ -543,7 +543,7 @@ acpicpu_getcst(struct acpicpu_softc *sc)
 	use_nonmwait = 0;
 	while ((next_cx = SLIST_NEXT(cx, link)) != NULL) {
 		if (cx->state > 1 &&
-		    (sc->sc_ci->ci_feature_tpmflags & TPM_ARAT) == 0)
+		    (sc->sc_ci->ci_feature_tpmflags_eax & TPM_ARAT) == 0)
 			cx->flags |= CST_FLAG_SKIP;
 		else if (cx->method != CST_METH_MWAIT)
 			use_nonmwait = 1;
@@ -577,7 +577,7 @@ acpicpu_getcst_from_fadt(struct acpicpu_softc *sc)
 		return;
 
 	/* skip these C2 and C3 states if the CPU doesn't have ARAT */
-	flags = (sc->sc_ci->ci_feature_tpmflags & TPM_ARAT)
+	flags = (sc->sc_ci->ci_feature_tpmflags_eax & TPM_ARAT)
 	    ? 0 : CST_FLAG_SKIP;
 
 	/* Some systems don't export a full PBLK; reduce functionality */
@@ -821,7 +821,8 @@ acpicpu_attach(struct device *parent, struct device *self, void *aux)
 			    (sc->sc_pss_len - status);
 			dnprintf(20, "%s: cpu index %d, percentage %d\n",
 			    DEVNAME(sc), status, sc->sc_level);
-			if (setperf_prio < 30) {
+			if (setperf_prio < 30 &&
+			    !(sc->sc_ci->ci_feature_tpmflags_eax & TPM_HWP)) {
 				cpu_setperf = acpicpu_setperf;
 				acpicpu_set_notify(acpicpu_setperf_ppc_change);
 				setperf_prio = 30;

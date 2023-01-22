@@ -488,13 +488,13 @@ print_perf_cpuid(struct cpu_info *ci, uint32_t cpu_perf_eax,
 void
 identifycpu(struct cpu_info *ci)
 {
-	static uint32_t prevcpu_1_ecx, prevcpu_tpm_ecxflags, prevcpu_d_1_eax;
+	static uint32_t prevcpu_1_ecx, prevcpu_d_1_eax;
 	static uint32_t prevcpu_apmi_edx, prevcpu_arch_capa;
 	static struct cpu_info *prevci = &cpu_info_primary;
 #define CPUID_MEMBER(member)	ci->member, prevci->member
 	uint32_t cflushsz, curcpu_1_ecx, curcpu_apmi_edx = 0;
 	uint32_t curcpu_perf_eax = 0, curcpu_perf_edx = 0;
-	uint32_t curcpu_tpm_ecxflags = 0, curcpu_d_1_eax = 0;
+	uint32_t curcpu_d_1_eax = 0;
 	uint32_t sefflags_max = 0;
 	uint64_t freq = 0;
 	u_int32_t dummy;
@@ -648,10 +648,10 @@ identifycpu(struct cpu_info *ci)
 	}
 
 	if (ci->ci_cpuid_level >= 0x06)
-		CPUID(0x06, ci->ci_feature_tpmflags, dummy,
-		    curcpu_tpm_ecxflags, dummy);
+		CPUID(0x06, ci->ci_feature_tpmflags_eax, dummy,
+		    ci->ci_feature_tpmflags_ecx, dummy);
 	if (ci->ci_vendor == CPUV_AMD && ci->ci_family >= 0x12)
-		ci->ci_feature_tpmflags |= TPM_ARAT;
+		ci->ci_feature_tpmflags_eax |= TPM_ARAT;
 
 	/* xsave subfeatures */
 	if (ci->ci_cpuid_level >= 0xd)
@@ -659,8 +659,9 @@ identifycpu(struct cpu_info *ci)
 
 	pcpuid2(ci, "1", 'd', CPUID_MEMBER(ci_feature_flags), CPUID_EDX_BITS,
 	    'c', curcpu_1_ecx, prevcpu_1_ecx, CPUID_ECX_BITS);
-	pcpuid2(ci, "6", 'a', CPUID_MEMBER(ci_feature_tpmflags), TPM_EAX_BITS,
-	    'c', curcpu_tpm_ecxflags, prevcpu_tpm_ecxflags, TPM_ECX_BITS);
+	pcpuid2(ci, "6", 'a', CPUID_MEMBER(ci_feature_tpmflags_eax),
+	    TPM_EAX_BITS, 'c', CPUID_MEMBER(ci_feature_tpmflags_ecx),
+	    TPM_ECX_BITS);
 	pcpuid3(ci, "7.0",
 	    'b', CPUID_MEMBER(ci_feature_sefflags_ebx), SEFF0_EBX_BITS,
 	    'c', CPUID_MEMBER(ci_feature_sefflags_ecx), SEFF0_ECX_BITS,
@@ -676,7 +677,6 @@ identifycpu(struct cpu_info *ci)
 	    CPUID_APMI_EDX_BITS);
 #ifdef MULTIPROCESSOR
 	prevcpu_1_ecx = curcpu_1_ecx;
-	prevcpu_tpm_ecxflags = curcpu_tpm_ecxflags;
 	prevcpu_d_1_eax = curcpu_d_1_eax;
 	prevcpu_apmi_edx = curcpu_apmi_edx;
 #endif
@@ -749,7 +749,9 @@ identifycpu(struct cpu_info *ci)
 				setperf_setup = k1x_init;
 		}
 
-		if (cpu_ecxfeature & CPUIDECX_EST)
+		if (ci->ci_feature_tpmflags_eax & TPM_HWP)
+			setperf_setup = pstate_init;
+		else if (cpu_ecxfeature & CPUIDECX_EST)
 			setperf_setup = est_init;
 #endif
 
@@ -764,7 +766,7 @@ identifycpu(struct cpu_info *ci)
 	}
 
 #ifndef SMALL_KERNEL
-	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags & TPM_SENSOR) &&
+	if (CPU_IS_PRIMARY(ci) && (ci->ci_feature_tpmflags_eax & TPM_SENSOR) &&
 	    ci->ci_vendor == CPUV_INTEL) {
 		ci->ci_sensor.type = SENSOR_TEMP;
 		sensor_task_register(ci, intelcore_update_sensor, 5);
@@ -789,7 +791,8 @@ identifycpu(struct cpu_info *ci)
 #endif /* NVMM > 0 */
 
 	/* Check for effective frequency via MPERF, APERF */
-	if ((curcpu_tpm_ecxflags & TPM_EFFFREQ) && ci->ci_smt_id == 0) {
+	if ((ci->ci_feature_tpmflags_ecx & TPM_EFFFREQ) &&
+	    ci->ci_smt_id == 0) {
 #ifndef SMALL_KERNEL
 		ci->ci_hz_sensor.type = SENSOR_FREQ;
 		sensor_task_register(ci, cpu_hz_update_sensor, 1);
