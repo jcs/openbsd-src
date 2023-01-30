@@ -117,13 +117,20 @@
 #define THINKPAD_SENSOR_TMP0		2
 #define THINKPAD_NSENSORS		10
 
+#define THINKPAD_ECOFFSET_FANLEVEL	0x2f
 #define THINKPAD_ECOFFSET_VOLUME	0x30
 #define THINKPAD_ECOFFSET_VOLUME_MUTE_MASK 0x40
-#define THINKPAD_ECOFFSET_FANLO		0x84
-#define THINKPAD_ECOFFSET_FANHI		0x85
+#define THINKPAD_ECOFFSET_FAN_RPM_LO	0x84
+#define THINKPAD_ECOFFSET_FAN_RPM_HI	0x85
 
 #define	THINKPAD_ADAPTIVE_MODE_HOME	1
 #define	THINKPAD_ADAPTIVE_MODE_FUNCTION	3
+
+#define THINKPAD_FANLEVEL_OFF		0
+#define THINKPAD_FANLEVEL_MAX		7
+#define THINKPAD_FANLEVEL_AUTO		128
+#define THINKPAD_MAX_CPU_TEMP_NO_FAN	53
+#define THINKPAD_MIN_CPU_TEMP_WITH_FAN	50
 
 #define THINKPAD_MASK_MIC_MUTE		(1 << 14)
 #define THINKPAD_MASK_BRIGHTNESS_UP	(1 << 15)
@@ -164,6 +171,9 @@ int	thinkpad_volume_up(struct acpithinkpad_softc *);
 int	thinkpad_volume_mute(struct acpithinkpad_softc *);
 int	thinkpad_brightness_up(struct acpithinkpad_softc *);
 int	thinkpad_brightness_down(struct acpithinkpad_softc *);
+uint8_t thinkpad_get_fan(struct acpithinkpad_softc *);
+void	thinkpad_set_fan(struct acpithinkpad_softc *, uint8_t);
+void	thinkpad_fan(struct acpithinkpad_softc *, int);
 int	thinkpad_adaptive_change(struct acpithinkpad_softc *);
 int	thinkpad_activate(struct device *, int);
 
@@ -189,6 +199,8 @@ int thinkpad_get_volume_mute(struct acpithinkpad_softc *);
 extern int wskbd_set_mixermute(long, long);
 extern int wskbd_set_mixervolume(long, long);
 #endif
+
+extern int cpu_temp;
 
 const struct cfattach acpithinkpad_ca = {
 	sizeof(struct acpithinkpad_softc), thinkpad_match, thinkpad_attach,
@@ -268,8 +280,8 @@ void
 thinkpad_sensor_refresh(void *arg)
 {
 	struct acpithinkpad_softc *sc = arg;
-	uint8_t lo, hi, i;
 	int64_t tmp;
+	uint8_t lo, hi, i, fanlevel;
 
 	/* Refresh sensor readings */
 	for (i = 0; i < sc->sc_ntempsens; i++) {
@@ -285,9 +297,31 @@ thinkpad_sensor_refresh(void *arg)
  	}
 
 	/* Read fan RPM */
-	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLO, 1, &lo);
-	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANHI, 1, &hi);
+	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FAN_RPM_LO, 1, &lo);
+	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FAN_RPM_HI, 1, &hi);
 	sc->sc_sens[THINKPAD_SENSOR_FANRPM].value = ((hi << 8L) + lo);
+
+	/* Turn fan off if it's cool enough */
+	fanlevel = thinkpad_get_fan(sc);
+	if (cpu_temp < 1) {
+		if (fanlevel != THINKPAD_FANLEVEL_AUTO) {
+			printf("%s: bogus cpu temp, enabling auto fan\n",
+			    sc->sc_dev.dv_xname);
+			thinkpad_set_fan(sc, THINKPAD_FANLEVEL_AUTO);
+		}
+	} else if (cpu_temp > THINKPAD_MAX_CPU_TEMP_NO_FAN) {
+		if (fanlevel == THINKPAD_FANLEVEL_OFF) {
+			DPRINTF(("%s: cpu temp too hot (%d), enabling "
+			    "auto fan\n", sc->sc_dev.dv_xname, cpu_temp));
+			thinkpad_set_fan(sc, THINKPAD_FANLEVEL_AUTO);
+		}
+	} else if (cpu_temp < THINKPAD_MIN_CPU_TEMP_WITH_FAN) {
+		if (fanlevel == THINKPAD_FANLEVEL_AUTO) {
+			DPRINTF(("%s: cpu temp cool (%d), stopping fan\n",
+			    sc->sc_dev.dv_xname, cpu_temp));
+			thinkpad_set_fan(sc, THINKPAD_FANLEVEL_OFF);
+		}
+	}
 }
 
 void
@@ -598,6 +632,26 @@ thinkpad_brightness_down(struct acpithinkpad_softc *sc)
 		return (0);
 	} else
 		return (thinkpad_cmos(sc, THINKPAD_CMOS_BRIGHTNESS_DOWN));
+}
+
+uint8_t
+thinkpad_get_fan(struct acpithinkpad_softc *sc)
+{
+	uint8_t val = 0;
+
+	acpiec_read(sc->sc_ec, THINKPAD_ECOFFSET_FANLEVEL, 1, &val);
+	return val;
+}
+
+void
+thinkpad_set_fan(struct acpithinkpad_softc *sc, uint8_t level)
+{
+	if ((level < THINKPAD_FANLEVEL_OFF || level > THINKPAD_FANLEVEL_MAX) &&
+	    level != THINKPAD_FANLEVEL_AUTO)
+		/* fail safe */
+		level = THINKPAD_FANLEVEL_AUTO;
+
+	acpiec_write(sc->sc_ec, THINKPAD_ECOFFSET_FANLEVEL, 1, &level);
 }
 
 int

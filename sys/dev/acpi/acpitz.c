@@ -90,6 +90,7 @@ void		(*acpitz_cpu_setperf)(int);
 int		acpitz_perflevel = -1;
 extern void	(*cpu_setperf)(int);
 extern int	perflevel;
+extern int	cpu_temp;
 #define PERFSTEP 10
 
 #define ACPITZ_TRIPS	(1L << 0)
@@ -359,8 +360,11 @@ acpitz_refresh(void *arg)
 	if ((sc->sc_tmp = acpitz_gettempreading(sc, "_TMP")) == -1) {
 		printf("%s: %s: failed to read temp\n", DEVNAME(sc),
 		    sc->sc_devnode->name);
+		cpu_temp = -1;
 		return;
 	}
+	cpu_temp = KTOC(sc->sc_tmp);
+
 	/* critical trip points */
 	if (sc->sc_crt != -1 && sc->sc_crt <= sc->sc_tmp) {
 		/* do critical shutdown */
