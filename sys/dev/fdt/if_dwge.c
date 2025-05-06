@@ -378,6 +378,7 @@ dwge_match(struct device *parent, void *cfdata, void *aux)
 	return (OF_is_compatible(faa->fa_node, "allwinner,sun7i-a20-gmac") ||
 	    OF_is_compatible(faa->fa_node, "amlogic,meson-axg-dwmac") ||
 	    OF_is_compatible(faa->fa_node, "amlogic,meson-g12a-dwmac") ||
+	    OF_is_compatible(faa->fa_node, "rockchip,rk3128-gmac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3288-gmac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3308-mac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3328-gmac") ||
@@ -423,7 +424,8 @@ dwge_attach(struct device *parent, struct device *self, void *aux)
 	clock_set_assigned(faa->fa_node);
 	clock_enable(faa->fa_node, "stmmaceth");
 	reset_deassert(faa->fa_node, "stmmaceth");
-	if (OF_is_compatible(faa->fa_node, "rockchip,rk3288-gmac") ||
+	if (OF_is_compatible(faa->fa_node, "rockchip,rk3128-gmac") ||
+	    OF_is_compatible(faa->fa_node, "rockchip,rk3288-gmac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3308-mac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3328-gmac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3399-gmac")) {
@@ -530,7 +532,8 @@ dwge_attach(struct device *parent, struct device *self, void *aux)
 	/* Do hardware specific initializations. */
 	if (OF_is_compatible(faa->fa_node, "allwinner,sun7i-a20-gmac"))
 		dwge_setup_allwinner(sc);
-	if (OF_is_compatible(faa->fa_node, "rockchip,rk3288-gmac") ||
+	if (OF_is_compatible(faa->fa_node, "rockchip,rk3128-gmac") ||
+	    OF_is_compatible(faa->fa_node, "rockchip,rk3288-gmac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3308-mac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3328-gmac") ||
 	    OF_is_compatible(faa->fa_node, "rockchip,rk3399-gmac"))
@@ -1583,8 +1586,25 @@ dwge_setup_allwinner(struct dwge_softc *sc)
 }
 
 /*
- * Rockchip RK3288/RK3399.
+ * Rockchip RK3128/RK3288/RK3399.
  */
+
+/* RK3128 registers */
+#define RK3128_GRF_MAC_CON0	0x0168
+#define  RK3128_GMAC_TXCLK_DLY_ENA	(1 << 14 << 16 | 1 << 14)
+#define  RK3128_GMAC_RXCLK_DLY_ENA	(1 << 15 << 16 | 1 << 15)
+#define  RK3128_GMAC_CLK_RX_DL_CFG(val)	(0x7f << 7 << 16 | (val) << 7)
+#define  RK3128_GMAC_CLK_TX_DL_CFG(val)	(0x7f << 0 << 16 | (val) << 0)
+
+#define RK3128_GRF_MAC_CON1	0x016c
+#define  RK3128_GMAC_PHY_INTF_SEL_RGMII	((0x7 << 6) << 16 | (0x1 << 6))
+#define  RK3128_GMAC_PHY_INTF_SEL_RMII	((0x7 << 6) << 16 | (0x4 << 6))
+#define  RK3128_GMAC_SPEED_10M		(1 << 10 << 16)
+#define  RK3128_GMAC_SPEED_100M		(1 << 10 << 16 | 1 << 10)
+#define  RK3128_GMAC_RMII_CLK_25M	(1 << 11 << 16 | 1 << 11)
+#define  RK3128_GMAC_RMII_CLK_2_5M	(1 << 11 << 16)
+#define  RK3128_GMAC_RMII_MODE_RMII	(1 << 14 << 16 | 1 << 14)
+#define  RK3128_GMAC_RMII_MODE_MII	(1 << 14 << 16)
 
 /* RK3308 registers */
 #define RK3308_GRF_MAC_CON0	0x04a0
@@ -1657,7 +1677,15 @@ dwge_setup_rockchip(struct dwge_softc *sc)
 	tx_delay = OF_getpropint(sc->sc_node, "tx_delay", 0x30);
 	rx_delay = OF_getpropint(sc->sc_node, "rx_delay", 0x10);
 
-	if (OF_is_compatible(sc->sc_node, "rockchip,rk3288-gmac")) {
+	if (OF_is_compatible(sc->sc_node, "rockchip,rk3128-gmac")) {
+		/* Use RMII interface. */
+		regmap_write_4(rm, RK3128_GRF_MAC_CON1,
+		    RK3128_GMAC_PHY_INTF_SEL_RMII | RK3128_GMAC_SPEED_100M);
+
+		sc->sc_clk_sel = RK3128_GRF_MAC_CON1;
+		sc->sc_clk_sel_2_5 = RK3128_GMAC_RMII_CLK_2_5M;
+		sc->sc_clk_sel_25 = RK3128_GMAC_RMII_CLK_25M;
+	} else if (OF_is_compatible(sc->sc_node, "rockchip,rk3288-gmac")) {
 		/* Use RGMII interface. */
 		regmap_write_4(rm, RK3288_GRF_SOC_CON1,
 		    RK3288_GMAC_PHY_INTF_SEL_RGMII | RK3288_RMII_MODE_MII);
