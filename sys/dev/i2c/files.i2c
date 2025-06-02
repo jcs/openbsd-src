@@ -293,3 +293,8 @@ file	dev/i2c/icc.c				icc
 device	iasuskbd: wskbddev
 attach	iasuskbd at ihidbus
 file	dev/i2c/iasuskbd.c			iasuskbd
+
+# Toshiba TC3589x MFDs
+device	tcmfd: wskbddev
+attach	tcmfd at i2c
+file	dev/i2c/tcmfd.c				tcmfd
