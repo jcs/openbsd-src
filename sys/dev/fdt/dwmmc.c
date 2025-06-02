@@ -114,6 +114,7 @@
 #define SDMMC_VERID		0x006c
 #define SDMMC_HCON		0x0070
 #define  SDMMC_HCON_DATA_WIDTH(x)	(((x) >> 7) & 0x7)
+#define  SDMMC_HCON_DMA_INTERFACE(x)	(((x) >> 16) & 0x3)
 #define  SDMMC_HCON_DMA64		(1 << 27)
 #define SDMMC_UHS_REG		0x0074
 #define SDMMC_RST_n		0x0078
@@ -426,7 +427,10 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	saa.sch = sc;
 	saa.dmat = sc->sc_dmat;
 	saa.dmap = sc->sc_dmap;
-	saa.caps |= SMC_CAPS_DMA;
+
+	/* only enable DMA if the hardware has an internal IDMAC */
+	if (SDMMC_HCON_DMA_INTERFACE(hcon) == 0x0)
+		saa.caps |= SMC_CAPS_DMA;
 
 	if (OF_getproplen(sc->sc_node, "cap-mmc-highspeed") == 0)
 		saa.caps |= SMC_CAPS_MMC_HIGHSPEED;
