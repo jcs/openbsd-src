@@ -241,6 +241,8 @@ pcxrtc*		at iic?			# PCF8563 RTC
 rkpmic*		at iic?			# RK808 PMIC
 tpspmic*	at iic?
 pcagpio*	at iic?
+tcmfd*		at iic?			# TC3589x MFD
+wskbd*		at tcmfd? mux 1
 
 # virtio devices
 vioblk*		at virtio?
