@@ -384,6 +384,10 @@ device	rkcomphy
 attach	rkcomphy at fdt
 file	dev/fdt/rkcomphy.c		rkcomphy
 
+device	rklvdsphy
+attach	rklvdsphy at fdt
+file	dev/fdt/rklvdsphy.c		rklvdsphy
+
 device	rkusbdpphy
 attach	rkusbdpphy at fdt
 file	dev/fdt/rkusbdpphy.c		rkusbdpphy
@@ -427,6 +431,10 @@ file	dev/fdt/rkiis.c			rkiis
 device	rkiovd
 attach	rkiovd at fdt
 file	dev/fdt/rkiovd.c		rkiovd
+
+device	rklvds
+attach	rklvds at fdt
+file	dev/fdt/rklvds.c		rklvds
 
 device	rkotp
 attach	rkotp at fdt

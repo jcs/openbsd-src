@@ -215,11 +215,13 @@ rkclock*	at fdt? early 1
 rkgrf*		at fdt? early 1
 rkpinctrl*	at fdt? early 1
 rkusbphy*	at fdt? early 1
+rklvdsphy*	at fdt?
 rkgpio*		at fdt?
 rkiic*		at fdt?
 iic*		at rkiic?
 rktemp*		at fdt?
 dwdog*		at fdt?
+rklvds*		at fdt?
 
 # Xilinx Zynq-7000
 cad*		at fdt?			# Ethernet controller
