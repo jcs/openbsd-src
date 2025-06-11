@@ -298,3 +298,8 @@ file	dev/i2c/iasuskbd.c			iasuskbd
 device	tcmfd: wskbddev
 attach	tcmfd at i2c
 file	dev/i2c/tcmfd.c				tcmfd
+
+# BQ27XXX Battery Monitor
+device	bqbat
+attach	bqbat at i2c
+file	dev/i2c/bq27xxx.c			bqbat

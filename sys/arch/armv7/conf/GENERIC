@@ -245,6 +245,7 @@ tpspmic*	at iic?
 pcagpio*	at iic?
 tcmfd*		at iic?			# TC3589x MFD
 wskbd*		at tcmfd? mux 1
+bqbat*		at iic?
 
 # virtio devices
 vioblk*		at virtio?
