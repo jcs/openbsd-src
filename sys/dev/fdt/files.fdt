@@ -175,8 +175,8 @@ attach	bse at fdt with bse_fdt
 file	dev/fdt/if_bse_fdt.c		bse_fdt
 
 include	"dev/usb/dwc2/files.dwc2"
-attach	dwctwo at fdt with bcmdwctwo
-file	dev/fdt/bcm2835_dwctwo.c	bcmdwctwo	needs-flag
+attach	dwctwo at fdt with dwctwo_fdt
+file	dev/fdt/dwctwo_fdt.c		dwctwo_fdt
 
 device	exrtc
 attach	exrtc at fdt
