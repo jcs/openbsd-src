@@ -55,39 +55,6 @@
 #include <dev/usb/dwc2/dwc2_core.h>
 #include <dev/usb/dwc2/dwc2_hcd.h>
 
-STATIC void dwc2_set_dwctwo_params(struct dwc2_hsotg *hsotg)
-{
-	struct dwc2_core_params *p = &hsotg->params;
-	struct dwc2_softc *sc = hsotg->hsotg_sc;
-
-	p->otg_caps.hnp_support = sc->sc_params->otg_caps.hnp_support;
-	p->otg_caps.srp_support = sc->sc_params->otg_caps.srp_support;
-	p->host_dma = sc->sc_params->host_dma;
-	p->dma_desc_enable = sc->sc_params->dma_desc_enable;
-	p->speed = sc->sc_params->speed;
-	p->enable_dynamic_fifo = sc->sc_params->enable_dynamic_fifo;
-	p->en_multiple_tx_fifo = sc->sc_params->en_multiple_tx_fifo;
-	p->host_rx_fifo_size = sc->sc_params->host_rx_fifo_size;
-	p->host_nperio_tx_fifo_size = sc->sc_params->host_nperio_tx_fifo_size;
-	p->host_perio_tx_fifo_size = sc->sc_params->host_perio_tx_fifo_size;
-	p->max_transfer_size = sc->sc_params->max_transfer_size;
-	p->max_packet_count = sc->sc_params->max_packet_count;
-	p->host_channels = sc->sc_params->host_channels;
-	p->phy_type = sc->sc_params->phy_type;
-	p->phy_utmi_width = sc->sc_params->phy_utmi_width;
-	p->phy_ulpi_ddr = sc->sc_params->phy_ulpi_ddr;
-	p->phy_ulpi_ext_vbus = sc->sc_params->phy_ulpi_ext_vbus;
-	p->i2c_enable = sc->sc_params->i2c_enable;
-	p->ulpi_fs_ls = sc->sc_params->ulpi_fs_ls;
-	p->host_support_fs_ls_low_power = sc->sc_params->host_support_fs_ls_low_power;
-	p->host_ls_low_power_phy_clk = sc->sc_params->host_ls_low_power_phy_clk;
-	p->ts_dline = sc->sc_params->ts_dline;
-	p->reload_ctl = sc->sc_params->reload_ctl;
-	p->ahbcfg = sc->sc_params->ahbcfg;
-	p->uframe_sched = sc->sc_params->uframe_sched;
-	p->external_id_pin_ctl = sc->sc_params->external_id_pin_ctl;
-}
-
 #if 0
 static void dwc2_set_bcm_params(struct dwc2_hsotg *hsotg)
 {
@@ -1005,7 +972,9 @@ int dwc2_init_params(struct dwc2_hsotg *hsotg)
 #endif
 
 	dwc2_set_default_params(hsotg);
-	dwc2_set_dwctwo_params(hsotg);
+	if (hsotg->hsotg_sc->sc_set_params)
+		(hsotg->hsotg_sc->sc_set_params)(hsotg);
+
 #if 0
 	dwc2_get_device_properties(hsotg);
 
