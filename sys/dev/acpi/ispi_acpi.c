@@ -92,6 +92,7 @@ int
 ispi_acpi_found_hid(struct aml_node *node, void *arg)
 {
 	struct ispi_softc *sc = (struct ispi_softc *)arg;
+	struct spi_attach_args sa;
 	int64_t sta;
 	char cdev[32], dev[32];
 
@@ -110,7 +111,17 @@ ispi_acpi_found_hid(struct aml_node *node, void *arg)
 
 	acpi_attach_deps(acpi_softc, node->parent);
 
-	/* TODO */
+	if (strcmp(cdev, "apple-spi-topcase") == 0) {
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_tag = &sc->sc_spi_tag;
+		sa.sa_name = cdev;
+		sa.sa_cookie = node->parent;
+
+		if (config_found(&sc->sc_dev, &sa, ispi_spi_print)) {
+			node->attached = 1;
+			return 1;
+		}
+	}
 
 	return 0;
 }

@@ -282,6 +282,17 @@ include "dev/onewire/files.onewire"
 attach	ipmi at mainbus
 
 #
+# SPI
+#
+device	aplhidev {}
+attach	aplhidev at spi
+device	aplkbd: hid, hidkbd, wskbddev
+attach	aplkbd at aplhidev
+device	aplms: hid, hidms, wsmousedev
+attach	aplms at aplhidev
+file	dev/spi/aplhidev.c			aplhidev | aplkbd | aplms needs-flag
+
+#
 # device major numbers
 #
 
