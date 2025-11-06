@@ -25,13 +25,23 @@
 
 #include <lib/libkern/crc16.h>
 
-#include <machine/fdt.h>
-
 #include <dev/spi/spivar.h>
 
+#ifdef __HAVE_FDT
+#include <machine/fdt.h>
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_gpio.h>
 #include <dev/ofw/ofw_pinctrl.h>
+#endif
+
+#include "acpi.h"
+#if NACPI > 0
+#include <dev/acpi/acpireg.h>
+#include <dev/acpi/acpivar.h>
+#include <dev/acpi/acpidev.h>
+#include <dev/acpi/amltypes.h>
+#include <dev/acpi/dsdt.h>
+#endif
 
 #include <dev/usb/usbdevs.h>
 
@@ -45,6 +55,14 @@
 #include <dev/hid/hidmsvar.h>
 
 #include "aplhidev.h"
+
+/* #define APLHIDEV_DEBUG 1 */
+
+#ifdef APLHIDEV_DEBUG
+#define DPRINTF(x) printf x
+#else
+#define DPRINTF(x)
+#endif
 
 #define APLHIDEV_READ_PACKET	0x20
 #define APLHIDEV_WRITE_PACKET	0x40
@@ -133,7 +151,9 @@ struct aplhidev_set_mode {
 
 struct aplhidev_softc {
 	struct device		sc_dev;
-	int			sc_node;
+#if NACPI > 0
+	struct aml_node		*sc_dev_node;
+#endif
 
 	spi_tag_t		sc_spi_tag;
 	struct spi_config	sc_spi_conf;
@@ -166,6 +186,13 @@ struct aplhidev_softc {
 
 int	 aplhidev_match(struct device *, void *, void *);
 void	 aplhidev_attach(struct device *, struct device *, void *);
+#ifdef __HAVE_FDT
+void	 aplhidev_fdt_init(struct aplhidev_softc *, void *);
+#elif NACPI > 0
+int	 aplhidev_acpi_init(struct aplhidev_softc *);
+int	 aplhidev_enable_spi(struct aplhidev_softc *);
+int	 aplhidev_gpe_intr(struct aml_node *, int, void *);
+#endif
 
 const struct cfattach aplhidev_ca = {
 	sizeof(struct aplhidev_softc), aplhidev_match, aplhidev_attach
@@ -189,9 +216,25 @@ int
 aplhidev_match(struct device *parent, void *match, void *aux)
 {
 	struct spi_attach_args *sa = aux;
+#if NACPI > 0
+	struct aml_node *node = (struct aml_node *)sa->sa_cookie;
+	uint64_t val;
+#endif
 
+#if defined(__HAVE_FDT)
 	if (strcmp(sa->sa_name, "apple,spi-hid-transport") == 0)
 		return 1;
+
+#elif NACPI > 0
+	if (strcmp(sa->sa_name, "apple-spi-topcase") == 0) {
+		/* don't attach if USB interface is present */
+		if (aml_evalinteger(acpi_softc, node, "UIST", 0, NULL,
+		    &val) == 0 && val)
+			return 0;
+
+		return 1;
+	}
+#endif
 
 	return 0;
 }
@@ -206,34 +249,15 @@ aplhidev_attach(struct device *parent, struct device *self, void *aux)
 	int retry;
 
 	sc->sc_spi_tag = sa->sa_tag;
-	sc->sc_node = *(int *)sa->sa_cookie;
 
-	sc->sc_gpiolen = OF_getproplen(sc->sc_node, "spien-gpios");
-	if (sc->sc_gpiolen > 0) {
-		sc->sc_gpio = malloc(sc->sc_gpiolen, M_TEMP, M_WAITOK);
-		OF_getpropintarray(sc->sc_node, "spien-gpios",
-		    sc->sc_gpio, sc->sc_gpiolen);
-		gpio_controller_config_pin(sc->sc_gpio, GPIO_CONFIG_OUTPUT);
+#ifdef __HAVE_FDT
+	aplhidev_fdt_init(sc, sa->sa_cookie);
 
-		/* Reset */
-		gpio_controller_set_pin(sc->sc_gpio, 1);
-		delay(5000);
-		gpio_controller_set_pin(sc->sc_gpio, 0);
-		delay(5000);
-
-		/* Enable. */
-		gpio_controller_set_pin(sc->sc_gpio, 1);
-		delay(50000);
-	}
-
-	sc->sc_spi_conf.sc_bpw = 8;
-	sc->sc_spi_conf.sc_freq = OF_getpropint(sc->sc_node,
-	    "spi-max-frequency", 0);
-	sc->sc_spi_conf.sc_cs = OF_getpropint(sc->sc_node, "reg", 0);
-	sc->sc_spi_conf.sc_cs_delay = 100;
-
-	fdt_intr_establish(sc->sc_node, IPL_TTY,
-	    aplhidev_intr, sc, sc->sc_dev.dv_xname);
+#elif NACPI > 0
+	sc->sc_dev_node = (struct aml_node *)sa->sa_cookie;
+	if (aplhidev_acpi_init(sc) != 0)
+		return;
+#endif
 
 	aplhidev_get_info(sc);
 	for (retry = 10; retry > 0; retry--) {
@@ -302,6 +326,179 @@ aplhidev_attach(struct device *parent, struct device *self, void *aux)
 		sc->sc_ms = config_found(self, &aa, NULL);
 	}
 }
+
+#ifdef __HAVE_FDT
+void
+aplhidev_fdt_init(struct aplhidev_softc *sc, void *cookie)
+{
+	int node = *(int *)cookie;
+
+	sc->sc_gpiolen = OF_getproplen(inode, "spien-gpios");
+	if (sc->sc_gpiolen > 0) {
+		sc->sc_gpio = malloc(sc->sc_gpiolen, M_TEMP, M_WAITOK);
+		OF_getpropintarray(node, "spien-gpios",
+		    sc->sc_gpio, sc->sc_gpiolen);
+		gpio_controller_config_pin(sc->sc_gpio, GPIO_CONFIG_OUTPUT);
+
+		/* Reset */
+		gpio_controller_set_pin(sc->sc_gpio, 1);
+		delay(5000);
+		gpio_controller_set_pin(sc->sc_gpio, 0);
+		delay(5000);
+
+		/* Enable. */
+		gpio_controller_set_pin(sc->sc_gpio, 1);
+		delay(50000);
+	}
+
+	sc->sc_spi_conf.sc_bpw = 8;
+	sc->sc_spi_conf.sc_freq = OF_getpropint(node, "spi-max-frequency", 0);
+	sc->sc_spi_conf.sc_cs = OF_getpropint(node, "reg", 0);
+	sc->sc_spi_conf.sc_cs_delay = 100;
+
+	fdt_intr_establish(sc->sc_node, IPL_TTY,
+	    aplhidev_intr, sc, sc->sc_dev.dv_xname);
+}
+#endif
+
+#if NACPI > 0
+int
+aplhidev_acpi_init(struct aplhidev_softc *sc)
+{
+	/* a0b5b7c6-1318-441c-b0c9-fe695eaf949b */
+	static uint8_t guid[] = {
+		0xC6, 0xB7, 0xB5, 0xA0, 0x18, 0x13, 0x1C, 0x44,
+		0xB0, 0xC9, 0xFE, 0x69, 0x5E, 0xAF, 0x94, 0x9B,
+	};
+	struct aml_value cmd[4], res;
+	struct aml_node *node;
+	uint64_t val;
+	int i;
+
+	/*
+	 * On newer Apple hardware where we claim an OSI of Darwin, _CRS
+	 * doesn't return a useful SpiSerialBusV2 object but instead returns
+	 * parameters from a _DSM method when called with a particular UUID
+	 * which macOS does.
+	 */
+	if (!aml_searchname(sc->sc_dev_node, "_DSM")) {
+		printf("%s: couldn't find _DSM at %s\n", sc->sc_dev.dv_xname,
+		    aml_nodename(sc->sc_dev_node));
+		return 1;
+	}
+
+	bzero(&cmd, sizeof(cmd));
+	cmd[0].type = AML_OBJTYPE_BUFFER;
+	cmd[0].v_buffer = (uint8_t *)&guid;
+	cmd[0].length = sizeof(guid);
+	cmd[1].type = AML_OBJTYPE_INTEGER;
+	cmd[1].v_integer = 1;
+	cmd[1].length = 1;
+	cmd[2].type = AML_OBJTYPE_INTEGER;
+	cmd[2].v_integer = 1;
+	cmd[2].length = 1;
+	cmd[3].type = AML_OBJTYPE_BUFFER;
+	cmd[3].length = 0;
+
+	if (aml_evalname(acpi_softc, sc->sc_dev_node, "_DSM", 4, cmd, &res)) {
+		printf("%s: eval of _DSM at %s failed\n",
+		    sc->sc_dev.dv_xname, aml_nodename(sc->sc_dev_node));
+		return 1;
+	}
+
+	if (res.type != AML_OBJTYPE_PACKAGE) {
+		printf("%s: bad _DSM result at %s: %d\n",
+		    sc->sc_dev.dv_xname, aml_nodename(sc->sc_dev_node),
+		    res.type);
+		aml_freevalue(&res);
+		return 1;
+	}
+
+	if (res.length % 2 != 0) {
+		printf("%s: _DSM length %d not even\n", sc->sc_dev.dv_xname,
+		    res.length);
+		aml_freevalue(&res);
+		return 1;
+	}
+
+	for (i = 0; i < res.length; i += 2) {
+		char *k;
+
+		if (res.v_package[i]->type != AML_OBJTYPE_STRING ||
+		    res.v_package[i + 1]->type != AML_OBJTYPE_BUFFER) {
+			printf("%s: expected string+buffer, got %d+%d\n",
+			    sc->sc_dev.dv_xname, res.v_package[i]->type,
+			    res.v_package[i + 1]->type);
+			aml_freevalue(&res);
+			return 1;
+		}
+
+		k = res.v_package[i]->v_string;
+		val = aml_val2int(res.v_package[i + 1]);
+
+		DPRINTF(("%s: %s = %lld\n", sc->sc_dev.dv_xname, k, val));
+
+		if (strcmp(k, "spiSclkPeriod") == 0) {
+			sc->sc_spi_conf.sc_freq = 1000000000 / val;
+		} else if (strcmp(k, "spiWordSize") == 0) {
+			sc->sc_spi_conf.sc_bpw = val;
+		} else if (strcmp(k, "spiSPO") == 0) {
+			if (val)
+				sc->sc_spi_conf.sc_flags |= SPI_CONFIG_CPOL;
+		} else if (strcmp(k, "spiSPH") == 0) {
+			if (val)
+				sc->sc_spi_conf.sc_flags |= SPI_CONFIG_CPHA;
+		} else if (strcmp(k, "spiCSDelay") == 0) {
+			sc->sc_spi_conf.sc_cs_delay = val;
+		} else {
+			DPRINTF(("%s: unused _DSM key %s\n",
+			    sc->sc_dev.dv_xname, k));
+		}
+	}
+	aml_freevalue(&res);
+
+	if (aplhidev_enable_spi(sc) != 0)
+		return 1;
+
+	node = aml_searchname(sc->sc_dev_node, "_GPE");
+	if (node)
+		aml_register_notify(sc->sc_dev_node, NULL, aplhidev_gpe_intr,
+		    sc, ACPIDEV_NOPOLL);
+
+	return 0;
+}
+
+int
+aplhidev_enable_spi(struct aplhidev_softc *sc)
+{
+	struct aml_value arg;
+	uint64_t val;
+
+	/* if SPI is not enabled, enable it */
+	if (aml_evalinteger(acpi_softc, sc->sc_dev_node, "SIST", 0, NULL,
+	    &val) == 0 && !val) {
+	    	DPRINTF(("%s: SIST is %lld\n", sc->sc_dev.dv_xname, val));
+
+		bzero(&arg, sizeof(arg));
+		arg.type = AML_OBJTYPE_INTEGER;
+		arg.v_integer = 1;
+		arg.length = 1;
+
+		if (aml_evalname(acpi_softc, sc->sc_dev_node, "SIEN", 1, &arg,
+		    NULL) != 0) {
+			DPRINTF(("%s: couldn't enable SPI mode\n", __func__));
+			return 1;
+		}
+
+		DELAY(500);
+	} else {
+	    	DPRINTF(("%s: SIST is already %lld\n", sc->sc_dev.dv_xname,
+		    val));
+	}
+
+	return 0;
+}
+#endif
 
 void
 aplhidev_get_info(struct aplhidev_softc *sc)
@@ -476,6 +673,16 @@ aplhidev_get_dimensions(struct aplhidev_softc *sc)
 
 	delay(1000);
 }
+
+#if NACPI > 0
+int
+aplhidev_gpe_intr(struct aml_node *node, int gpe, void *arg)
+{
+	struct aplhidev_softc *sc = arg;
+
+	return aplhidev_intr(sc);
+}
+#endif
 
 int
 aplhidev_intr(void *arg)

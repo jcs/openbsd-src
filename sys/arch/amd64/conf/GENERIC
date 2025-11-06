@@ -211,6 +211,11 @@ gpio* at skgpio?
 
 ispi*	at acpi?		# Intel LPSS SPI controller
 ispi*	at pci?
+aplhidev* at spi?		# Apple SPI HID
+aplkbd* at aplhidev?
+wskbd*	at aplkbd? mux 1
+aplms*	at aplhidev?
+wsmouse* at aplms? mux 0
 
 #option PCMCIAVERBOSE
 
