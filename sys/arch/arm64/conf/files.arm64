@@ -189,7 +189,7 @@ device	aplkbd: hid, hidkbd, wskbddev
 attach	aplkbd at aplhidev
 device	aplms: hid, hidms, wsmousedev
 attach	aplms at aplhidev
-file	arch/arm64/dev/aplhidev.c		aplhidev | aplkbd | aplms needs-flag
+file	dev/spi/aplhidev.c			aplhidev | aplkbd | aplms needs-flag
 
 device	aplmbox
 attach	aplmbox at fdt
