@@ -798,78 +798,80 @@ aml_showvalue(struct aml_value *val)
 		return;
 
 	if (val->node)
-		printf(" [%s]", aml_nodename(val->node));
-	printf(" %p cnt:%.2x stk:%.2x", val, val->refcnt, val->stack);
+		dnprintf(1, " [%s]", aml_nodename(val->node));
+	dnprintf(1, " %p cnt:%.2x stk:%.2x", val, val->refcnt, val->stack);
 	switch (val->type) {
 	case AML_OBJTYPE_INTEGER:
-		printf(" integer: %llx\n", val->v_integer);
+		dnprintf(1, " integer: %llx\n", val->v_integer);
 		break;
 	case AML_OBJTYPE_STRING:
-		printf(" string: %s\n", val->v_string);
+		dnprintf(1, " string: %s\n", val->v_string);
 		break;
 	case AML_OBJTYPE_METHOD:
-		printf(" method: %.2x\n", val->v_method.flags);
+		dnprintf(1, " method: %.2x\n", val->v_method.flags);
 		break;
 	case AML_OBJTYPE_PACKAGE:
-		printf(" package: %.2x\n", val->length);
+		dnprintf(1, " package: %.2x\n", val->length);
 		for (idx = 0; idx < val->length; idx++)
 			aml_showvalue(val->v_package[idx]);
 		break;
 	case AML_OBJTYPE_BUFFER:
-		printf(" buffer: %.2x {", val->length);
+		dnprintf(1, " buffer: %.2x {", val->length);
 		for (idx = 0; idx < val->length; idx++)
-			printf("%s%.2x", idx ? ", " : "", val->v_buffer[idx]);
-		printf("}\n");
+			dnprintf(1, "%s%.2x", idx ? ", " : "", val->v_buffer[idx]);
+		dnprintf(1, "}\n");
 		break;
 	case AML_OBJTYPE_FIELDUNIT:
 	case AML_OBJTYPE_BUFFERFIELD:
-		printf(" field: bitpos=%.4x bitlen=%.4x ref1:%p ref2:%p [%s]\n",
+		dnprintf(1, " field: bitpos=%.4x bitlen=%.4x ref1:%p ref2:%p [%s]\n",
 		    val->v_field.bitpos, val->v_field.bitlen,
 		    val->v_field.ref1, val->v_field.ref2,
 		    aml_mnem(val->v_field.type, NULL));
 		if (val->v_field.ref1)
-			printf("  ref1: %s\n", aml_nodename(val->v_field.ref1->node));
+			dnprintf(1, "  ref1: %s\n",
+			    aml_nodename(val->v_field.ref1->node));
 		if (val->v_field.ref2)
-			printf("  ref2: %s\n", aml_nodename(val->v_field.ref2->node));
+			dnprintf(1, "  ref2: %s\n",
+			    aml_nodename(val->v_field.ref2->node));
 		break;
 	case AML_OBJTYPE_MUTEX:
-		printf(" mutex: %s ref: %d\n",
+		dnprintf(1, " mutex: %s ref: %d\n",
 		    val->v_mutex ?  val->v_mutex->amt_name : "",
 		    val->v_mutex ?  val->v_mutex->amt_ref_count : 0);
 		break;
 	case AML_OBJTYPE_EVENT:
-		printf(" event:\n");
+		dnprintf(1, " event:\n");
 		break;
 	case AML_OBJTYPE_OPREGION:
-		printf(" opregion: %.2x,%.8llx,%x\n",
+		dnprintf(1, " opregion: %.2x,%.8llx,%x\n",
 		    val->v_opregion.iospace, val->v_opregion.iobase,
 		    val->v_opregion.iolen);
 		break;
 	case AML_OBJTYPE_NAMEREF:
-		printf(" nameref: %s\n", aml_getname(val->v_nameref));
+		dnprintf(1, " nameref: %s\n", aml_getname(val->v_nameref));
 		break;
 	case AML_OBJTYPE_DEVICE:
-		printf(" device:\n");
+		dnprintf(1, " device:\n");
 		break;
 	case AML_OBJTYPE_PROCESSOR:
-		printf(" cpu: %.2x,%.4x,%.2x\n",
+		dnprintf(1, " cpu: %.2x,%.4x,%.2x\n",
 		    val->v_processor.proc_id, val->v_processor.proc_addr,
 		    val->v_processor.proc_len);
 		break;
 	case AML_OBJTYPE_THERMZONE:
-		printf(" thermzone:\n");
+		dnprintf(1, " thermzone:\n");
 		break;
 	case AML_OBJTYPE_POWERRSRC:
-		printf(" pwrrsrc: %.2x,%.2x\n",
+		dnprintf(1, " pwrrsrc: %.2x,%.2x\n",
 		    val->v_powerrsrc.pwr_level, val->v_powerrsrc.pwr_order);
 		break;
 	case AML_OBJTYPE_OBJREF:
-		printf(" objref: %p index:%x opcode:%s\n", val->v_objref.ref,
+		dnprintf(1, " objref: %p index:%x opcode:%s\n", val->v_objref.ref,
 		    val->v_objref.index, aml_mnem(val->v_objref.type, 0));
 		aml_showvalue(val->v_objref.ref);
 		break;
 	default:
-		printf(" !!type: %x\n", val->type);
+		dnprintf(1, " !!type: %x\n", val->type);
 	}
 }
 #endif /* SMALL_KERNEL */
@@ -1001,7 +1003,7 @@ aml_copyvalue(struct aml_value *lhs, struct aml_value *rhs)
 		lhs->node = rhs->node;
 		break;
 	default:
-		printf("copyvalue: %x", rhs->type);
+		dnprintf(1, "copyvalue: %x", rhs->type);
 		break;
 	}
 }
@@ -1590,50 +1592,50 @@ aml_print_resource(union acpi_resource *crs, void *arg)
 
 	switch (typ) {
 	case LR_EXTIRQ:
-		printf("extirq\tflags:%.2x len:%.2x irq:%.4x\n",
+		dnprintf(1, "extirq\tflags:%.2x len:%.2x irq:%.4x\n",
 		    crs->lr_extirq.flags, crs->lr_extirq.irq_count,
 		    letoh32(crs->lr_extirq.irq[0]));
 		break;
 	case SR_IRQ:
-		printf("irq\t%.4x %.2x\n", letoh16(crs->sr_irq.irq_mask),
+		dnprintf(1, "irq\t%.4x %.2x\n", letoh16(crs->sr_irq.irq_mask),
 		    crs->sr_irq.irq_flags);
 		break;
 	case SR_DMA:
-		printf("dma\t%.2x %.2x\n", crs->sr_dma.channel,
+		dnprintf(1, "dma\t%.2x %.2x\n", crs->sr_dma.channel,
 		    crs->sr_dma.flags);
 		break;
 	case SR_IOPORT:
-		printf("ioport\tflags:%.2x _min:%.4x _max:%.4x _aln:%.2x _len:%.2x\n",
+		dnprintf(1, "ioport\tflags:%.2x _min:%.4x _max:%.4x _aln:%.2x _len:%.2x\n",
 		    crs->sr_ioport.flags, crs->sr_ioport._min,
 		    crs->sr_ioport._max, crs->sr_ioport._aln,
 		    crs->sr_ioport._len);
 		break;
 	case SR_STARTDEP:
-		printf("startdep\n");
+		dnprintf(1, "startdep\n");
 		break;
 	case SR_ENDDEP:
-		printf("enddep\n");
+		dnprintf(1, "enddep\n");
 		break;
 	case LR_WORD:
-		printf("word\ttype:%.2x flags:%.2x tflag:%.2x gra:%.4x min:%.4x max:%.4x tra:%.4x len:%.4x\n",
+		dnprintf(1, "word\ttype:%.2x flags:%.2x tflag:%.2x gra:%.4x min:%.4x max:%.4x tra:%.4x len:%.4x\n",
 			crs->lr_word.type, crs->lr_word.flags, crs->lr_word.tflags,
 			crs->lr_word._gra, crs->lr_word._min, crs->lr_word._max,
 			crs->lr_word._tra, crs->lr_word._len);
 		break;
 	case LR_DWORD:
-		printf("dword\ttype:%.2x flags:%.2x tflag:%.2x gra:%.8x min:%.8x max:%.8x tra:%.8x len:%.8x\n",
+		dnprintf(1, "dword\ttype:%.2x flags:%.2x tflag:%.2x gra:%.8x min:%.8x max:%.8x tra:%.8x len:%.8x\n",
 			crs->lr_dword.type, crs->lr_dword.flags, crs->lr_dword.tflags,
 			crs->lr_dword._gra, crs->lr_dword._min, crs->lr_dword._max,
 			crs->lr_dword._tra, crs->lr_dword._len);
 		break;
 	case LR_QWORD:
-		printf("dword\ttype:%.2x flags:%.2x tflag:%.2x gra:%.16llx min:%.16llx max:%.16llx tra:%.16llx len:%.16llx\n",
+		dnprintf(1, "dword\ttype:%.2x flags:%.2x tflag:%.2x gra:%.16llx min:%.16llx max:%.16llx tra:%.16llx len:%.16llx\n",
 			crs->lr_qword.type, crs->lr_qword.flags, crs->lr_qword.tflags,
 			crs->lr_qword._gra, crs->lr_qword._min, crs->lr_qword._max,
 			crs->lr_qword._tra, crs->lr_qword._len);
 		break;
 	default:
-		printf("unknown type: %x\n", typ);
+		dnprintf(1, "unknown type: %x\n", typ);
 		break;
 	}
 	return (0);
