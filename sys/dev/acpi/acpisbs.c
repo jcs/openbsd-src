@@ -52,11 +52,11 @@
 /* number of polls for reading data */
 #define SMBUS_TIMEOUT		50
 
-#define CHECK(kind, cmd, val, senst, sens) { \
+#define CHECK(kind, cmd, val, senst, per, sens) { \
 	SMBUS_READ_##kind, SMBATT_CMD_##cmd, \
 	offsetof(struct acpisbs_battery, val), \
 	(SMBUS_READ_##kind == SMBUS_READ_BLOCK ? SMBUS_DATA_SIZE : 2), \
-	#val, senst, sens }
+	#val, senst, per, sens }
 
 const struct acpisbs_battery_check {
 	uint8_t	mode;
@@ -65,60 +65,60 @@ const struct acpisbs_battery_check {
 	int	len;
 	char	*name;
 	int	sensor_type;
+	int	periodic;
 	char	*sensor_desc;
 } acpisbs_battery_checks[] = {
 	/* mode must be checked first */
-	CHECK(WORD, BATTERY_MODE, mode, -1,
+	CHECK(WORD, BATTERY_MODE, mode, -1, 1,
 	    "mode flags"),
-	CHECK(WORD, TEMPERATURE, temperature, SENSOR_TEMP,
+	CHECK(WORD, TEMPERATURE, temperature, SENSOR_TEMP, 1,
 	    "internal temperature"),
-	CHECK(WORD, VOLTAGE, voltage, SENSOR_VOLTS_DC,
+	CHECK(WORD, VOLTAGE, voltage, SENSOR_VOLTS_DC, 1,
 	    "voltage"),
-	CHECK(WORD, CURRENT, current, SENSOR_AMPS,
+	CHECK(WORD, CURRENT, current, SENSOR_AMPS, 1,
 	    "current being supplied"),
-	CHECK(WORD, AVERAGE_CURRENT, avg_current, SENSOR_AMPS,
+	CHECK(WORD, AVERAGE_CURRENT, avg_current, SENSOR_AMPS, 1,
 	    "average current supplied"),
-	CHECK(WORD, RELATIVE_STATE_OF_CHARGE, rel_charge, SENSOR_PERCENT,
+	CHECK(WORD, RELATIVE_STATE_OF_CHARGE, rel_charge, SENSOR_PERCENT, 1,
 	    "remaining capacity"),
-	CHECK(WORD, ABSOLUTE_STATE_OF_CHARGE, abs_charge, SENSOR_PERCENT,
+	CHECK(WORD, ABSOLUTE_STATE_OF_CHARGE, abs_charge, SENSOR_PERCENT, 1,
 	    "remaining of design capacity"),
-	CHECK(WORD, REMAINING_CAPACITY, capacity, SENSOR_AMPHOUR,
+	CHECK(WORD, REMAINING_CAPACITY, capacity, SENSOR_AMPHOUR, 1,
 	    "remaining capacity"),
-	CHECK(WORD, FULL_CHARGE_CAPACITY, full_capacity, SENSOR_AMPHOUR,
+	CHECK(WORD, FULL_CHARGE_CAPACITY, full_capacity, SENSOR_AMPHOUR, 1,
 	    "capacity when fully charged"),
-	CHECK(WORD, RUN_TIME_TO_EMPTY, run_time, SENSOR_INTEGER,
-	    "remaining run time minutes"),
-	CHECK(WORD, AVERAGE_TIME_TO_EMPTY, avg_empty_time, SENSOR_INTEGER,
-	    "avg remaining minutes"),
-	CHECK(WORD, AVERAGE_TIME_TO_FULL, avg_full_time, SENSOR_INTEGER,
-	    "avg minutes until full charge"),
-	CHECK(WORD, CHARGING_CURRENT, charge_current, SENSOR_AMPS,
+	CHECK(WORD, CHARGING_CURRENT, charge_current, SENSOR_AMPS, 1,
 	    "desired charging rate"),
-	CHECK(WORD, CHARGING_VOLTAGE, charge_voltage, SENSOR_VOLTS_DC,
+	CHECK(WORD, CHARGING_VOLTAGE, charge_voltage, SENSOR_VOLTS_DC, 1,
 	    "desired charging voltage"),
-	CHECK(WORD, BATTERY_STATUS, status, -1,
+	CHECK(WORD, BATTERY_STATUS, status, -1, 1,
 	    "status"),
-	CHECK(WORD, CYCLE_COUNT, cycle_count, SENSOR_INTEGER,
+	CHECK(WORD, CYCLE_COUNT, cycle_count, SENSOR_INTEGER, 1,
 	    "charge and discharge cycles"),
-	CHECK(WORD, DESIGN_CAPACITY, design_capacity, SENSOR_AMPHOUR,
+	CHECK(WORD, DESIGN_CAPACITY, design_capacity, SENSOR_AMPHOUR, 0,
 	    "capacity of new battery"),
-	CHECK(WORD, DESIGN_VOLTAGE, design_voltage, SENSOR_VOLTS_DC,
+	CHECK(WORD, DESIGN_VOLTAGE, design_voltage, SENSOR_VOLTS_DC, 0,
 	    "voltage of new battery"),
-	CHECK(WORD, SERIAL_NUMBER, serial, -1,
+	CHECK(WORD, SERIAL_NUMBER, serial, -1, 0,
 	    "serial number"),
-
-	CHECK(BLOCK, MANUFACTURER_NAME, manufacturer, -1,
+	CHECK(BLOCK, MANUFACTURER_NAME, manufacturer, -1, 0,
 	    "manufacturer name"),
-	CHECK(BLOCK, DEVICE_NAME, device_name, -1,
+	CHECK(BLOCK, DEVICE_NAME, device_name, -1, 0,
 	    "battery model number"),
-	CHECK(BLOCK, DEVICE_CHEMISTRY, device_chemistry, -1,
+	CHECK(BLOCK, DEVICE_CHEMISTRY, device_chemistry, -1, 0,
 	    "battery chemistry"),
 #if 0
-	CHECK(WORD, SPECIFICATION_INFO, spec, -1,
+	CHECK(WORD, RUN_TIME_TO_EMPTY, run_time, SENSOR_INTEGER, 1,
+	    "remaining run time minutes"),
+	CHECK(WORD, AVERAGE_TIME_TO_EMPTY, avg_empty_time, SENSOR_INTEGER, 1,
+	    "avg remaining minutes"),
+	CHECK(WORD, AVERAGE_TIME_TO_FULL, avg_full_time, SENSOR_INTEGER, 1,
+	    "avg minutes until full charge"),
+	CHECK(WORD, SPECIFICATION_INFO, spec, -1, 0,
 	    NULL),
-	CHECK(WORD, MANUFACTURE_DATE, manufacture_date, -1,
+	CHECK(WORD, MANUFACTURE_DATE, manufacture_date, -1, 0,
 	    "date battery was manufactured"),
-	CHECK(BLOCK, MANUFACTURER_DATA, oem_data, -1,
+	CHECK(BLOCK, MANUFACTURER_DATA, oem_data, -1, 0,
 	    "manufacturer-specific data"),
 #endif
 };
@@ -131,7 +131,7 @@ void	acpisbs_attach(struct device *, struct device *, void *);
 int	acpisbs_activate(struct device *, int);
 void	acpisbs_setup_sensors(struct acpisbs_softc *);
 void	acpisbs_refresh_sensors(struct acpisbs_softc *);
-void	acpisbs_read(struct acpisbs_softc *);
+void	acpisbs_read(struct acpisbs_softc *, int);
 int	acpisbs_notify(struct aml_node *, int, void *);
 
 int	acpi_smbus_read(struct acpisbs_softc *, uint8_t, uint8_t, int, void *);
@@ -196,7 +196,7 @@ acpisbs_attach(struct device *parent, struct device *self, void *aux)
 	printf(": %s", sc->sc_devnode->name);
 
 	if (sbs > 0)
-		acpisbs_read(sc);
+		acpisbs_read(sc, 0);
 
 	if (sc->sc_batteries_present) {
 		if (sc->sc_battery.device_name[0])
@@ -225,7 +225,7 @@ acpisbs_attach(struct device *parent, struct device *self, void *aux)
 }
 
 void
-acpisbs_read(struct acpisbs_softc *sc)
+acpisbs_read(struct acpisbs_softc *sc, int periodic)
 {
 	int i;
 
@@ -233,6 +233,12 @@ acpisbs_read(struct acpisbs_softc *sc)
 		const struct acpisbs_battery_check check =
 		    acpisbs_battery_checks[i];
 		void *p = (void *)&sc->sc_battery + check.offset;
+
+		if (periodic && !check.periodic) {
+			DPRINTF(("%s: %s: skipping !periodic\n",
+			    sc->sc_dev.dv_xname, check.name));
+			continue;
+		}
 
 		acpi_smbus_read(sc, check.mode, check.command, check.len, p);
 
@@ -370,7 +376,7 @@ acpisbs_activate(struct device *self, int act)
 
 	switch (act) {
 	case DVACT_WAKEUP:
-		acpisbs_read(sc);
+		acpisbs_read(sc, 1);
 		acpisbs_refresh_sensors(sc);
 		break;
 	}
@@ -398,7 +404,7 @@ acpisbs_notify(struct aml_node *node, int notify_type, void *arg)
 		 */
 		timersub(&now, &sc->sc_lastpoll, &diff);
 		if (diff.tv_sec > ACPISBS_POLL_FREQ) {
-			acpisbs_read(sc);
+			acpisbs_read(sc, 1);
 			acpisbs_refresh_sensors(sc);
 			acpi_record_event(sc->sc_acpi, APM_POWER_CHANGE);
 			getmicrouptime(&sc->sc_lastpoll);
