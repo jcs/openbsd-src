@@ -335,6 +335,12 @@ ipgphy*		at mii?			# IC Plus IP1000A PHYs
 atphy*		at mii?			# Attansic F1 PHYs
 ukphy*		at mii?			# "unknown" PHYs
 
+ispi*	at acpi?			# Intel LPSS SPI controller
+ispi*	at pci?
+aplhidev* at spi?			# Apple SPI HID
+aplkbd* at aplhidev?
+wskbd*	at aplkbd? mux 1
+
 virtio*		at pci?			# Virtio PCI device
 vioblk*		at virtio?		# Virtio block device
 vio*		at virtio?		# Virtio network device
