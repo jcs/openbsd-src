@@ -81,6 +81,12 @@
 #define  APLHIDEV_MODE_HID	0x00
 #define  APLHIDEV_MODE_RAW	0x01
 #define APLHIDEV_GET_DIMENSIONS	0xd932
+#define APLHIDEV_SET_BACKLIGHT	0xb051
+#define  APLHIDEV_BACKLIGHT_MAGIC 0x01b0
+#define  APLHIDEV_BACKLIGHT_MIN	32
+#define  APLHIDEV_BACKLIGHT_MAX	255
+#define  APLHIDEV_BACKLIGHT_ON	0x01f4
+#define  APLHIDEV_BACKLIGHT_OFF	0x0001
 
 struct aplhidev_dim {
 	uint32_t width;
@@ -149,6 +155,14 @@ struct aplhidev_set_mode {
 	uint16_t		crc;
 };
 
+struct aplhidev_set_backlight {
+	struct aplhidev_msghdr	hdr;
+	uint16_t		magic;
+	uint16_t		level;
+	uint16_t		on_off;
+	uint16_t		crc;
+};
+
 struct aplhidev_softc {
 	struct device		sc_dev;
 #if NACPI > 0
@@ -205,8 +219,15 @@ struct cfdriver aplhidev_cd = {
 void	aplhidev_get_info(struct aplhidev_softc *);
 void	aplhidev_get_descriptor(struct aplhidev_softc *, uint8_t);
 void	aplhidev_set_leds(struct aplhidev_softc *, uint8_t);
+void	aplhidev_set_backlight(struct aplhidev_softc *, uint8_t);
 void	aplhidev_set_mode(struct aplhidev_softc *, uint8_t);
 void	aplhidev_get_dimensions(struct aplhidev_softc *);
+
+void	aplkbd_set_backlight(void *);
+extern int (*wskbd_get_backlight)(struct wskbd_backlight *);
+extern int (*wskbd_set_backlight)(struct wskbd_backlight *);
+int	aplkbd_wskbd_get_backlight(struct wskbd_backlight *);
+int	aplkbd_wskbd_set_backlight(struct wskbd_backlight *);
 
 int	aplhidev_intr(void *);
 void	aplkbd_intr(struct device *, uint8_t *, size_t);
@@ -607,6 +628,45 @@ aplhidev_set_leds(struct aplhidev_softc *sc, uint8_t leds)
 }
 
 void
+aplhidev_set_backlight(struct aplhidev_softc *sc, uint8_t level)
+{
+	struct aplhidev_spi_packet packet;
+	struct aplhidev_set_backlight *msg;
+	struct aplhidev_spi_status status;
+
+	memset(&packet, 0, sizeof(packet));
+	packet.flags = APLHIDEV_WRITE_PACKET;
+	packet.device = APLHIDEV_KBD_DEVICE;
+	packet.len = sizeof(*msg);
+
+	msg = (void *)&packet.data[0];
+	msg->hdr.type = APLHIDEV_SET_BACKLIGHT;
+	msg->hdr.device = APLHIDEV_KBD_DEVICE;
+	msg->hdr.msgid = sc->sc_msgid++;
+	msg->hdr.cmdlen = sizeof(*msg) - sizeof(struct aplhidev_msghdr) - 2;
+	msg->hdr.rsplen = msg->hdr.cmdlen;
+	msg->magic = htole16(APLHIDEV_BACKLIGHT_MAGIC);
+	if (level <= APLHIDEV_BACKLIGHT_MIN) {
+		msg->level = 0;
+		msg->on_off = htole16(APLHIDEV_BACKLIGHT_OFF);
+	} else {
+		msg->level = htole16(level);
+		msg->on_off = htole16(APLHIDEV_BACKLIGHT_ON);
+	}
+	msg->crc = crc16(0, (void *)msg, sizeof(*msg) - 2);
+
+	packet.crc = crc16(0, (void *)&packet, sizeof(packet) - 2);
+
+	spi_acquire_bus(sc->sc_spi_tag, 0);
+	spi_config(sc->sc_spi_tag, &sc->sc_spi_conf);
+	spi_transfer(sc->sc_spi_tag, (char *)&packet, NULL, sizeof(packet),
+	    SPI_KEEP_CS);
+	delay(100);
+	spi_read(sc->sc_spi_tag, (char *)&status, sizeof(status));
+	spi_release_bus(sc->sc_spi_tag, 0);
+}
+
+void
 aplhidev_set_mode(struct aplhidev_softc *sc, uint8_t mode)
 {
 	struct aplhidev_spi_packet packet;
@@ -773,6 +833,7 @@ struct aplkbd_softc {
 	struct aplhidev_softc	*sc_hidev;
 	struct hidkbd		sc_kbd;
 	int			sc_spl;
+	int			sc_backlight;
 };
 
 void	aplkbd_cngetc(void *, u_int *, int *);
@@ -848,7 +909,12 @@ aplkbd_attach(struct device *parent, struct device *self, void *aux)
 		aplkbd_enable(sc, 1);
 	}
 
+
 	hidkbd_attach_wskbd(kbd, KB_US | KB_DEFAULT, &aplkbd_accessops);
+
+	sc->sc_backlight = APLHIDEV_BACKLIGHT_MIN;
+	wskbd_get_backlight = aplkbd_wskbd_get_backlight;
+	wskbd_set_backlight = aplkbd_wskbd_set_backlight;
 }
 
 void
@@ -898,6 +964,43 @@ aplkbd_set_leds(void *v, int leds)
 
 	if (hidkbd_set_leds(kbd, leds, &res))
 		aplhidev_set_leds(sc->sc_hidev, res);
+}
+
+int
+aplkbd_wskbd_get_backlight(struct wskbd_backlight *kbl)
+{
+	struct aplkbd_softc *sc = aplkbd_cd.cd_devs[0];
+
+	if (sc == NULL)
+		return 0;
+
+	kbl->min = APLHIDEV_BACKLIGHT_MIN;
+	kbl->max = APLHIDEV_BACKLIGHT_MAX;
+	kbl->curval = sc->sc_backlight;
+
+	return 0;
+}
+
+int
+aplkbd_wskbd_set_backlight(struct wskbd_backlight *kbl)
+{
+	struct aplkbd_softc *sc = aplkbd_cd.cd_devs[0];
+	int val;
+
+	if (sc == NULL)
+		return -1;
+
+	val = kbl->curval;
+	if (val < APLHIDEV_BACKLIGHT_MIN)
+		val = APLHIDEV_BACKLIGHT_MIN;
+	if (val > APLHIDEV_BACKLIGHT_MAX)
+		val = APLHIDEV_BACKLIGHT_MAX;
+
+	sc->sc_backlight = val;
+	aplhidev_set_backlight((struct aplhidev_softc *)sc->sc_dev.dv_parent,
+	    sc->sc_backlight);
+
+	return 0;
 }
 
 /* Console interface. */
