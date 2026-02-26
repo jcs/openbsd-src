@@ -221,6 +221,8 @@ rkiic*		at fdt?
 iic*		at rkiic?
 rktemp*		at fdt?
 dwdog*		at fdt?
+rkpwm*		at fdt?
+pwmbl*		at fdt?
 rklvds*		at fdt?
 
 # Xilinx Zynq-7000
