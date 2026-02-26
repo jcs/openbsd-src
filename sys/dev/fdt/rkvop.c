@@ -37,6 +37,7 @@
 #include <dev/ofw/ofw_clock.h>
 #include <dev/ofw/ofw_gpio.h>
 #include <dev/ofw/ofw_misc.h>
+#include <dev/ofw/ofw_power.h>
 #include <dev/ofw/fdt.h>
 
 #include <drm/drm_atomic.h>
@@ -48,6 +49,7 @@
 
 #include <dev/fdt/rkdrm.h>
 
+/* RK3399 VOP registers */
 #define	VOP_REG_CFG_DONE		0x0000
 #define	 REG_LOAD_EN			(1 << 0)
 #define	VOP_SYS_CTRL			0x0008
@@ -105,6 +107,38 @@
 #define	 DSP_VACT_ST(x)			(((x) & 0x1fff) << 16)
 #define	 DSP_VACT_END(x)		(((x) & 0x1fff) << 0)
 
+/* RK3036/RK3126 VOP registers */
+#define	RK3036_SYS_CTRL			0x00
+#define	 RK3036_STANDBY_EN		(1 << 30)
+#define	RK3036_DSP_CTRL0		0x04
+#define	RK3036_DSP_CTRL1		0x08
+#define	 RK3036_DSP_BLANK_EN		(1 << 24)
+#define	 RK3036_DSP_BLACK_EN		(1 << 25)
+#define	 RK3036_DSP_OUT_ZERO		(1 << 31)
+#define	RK3036_DSP_BG			0x0c
+#define	RK3036_INT_STATUS		0x10
+#define	RK3036_ALPHA_CTRL		0x14
+#define	RK3036_WIN0_COLOR_KEY		0x18
+#define	RK3036_WIN0_YRGB_MST		0x20
+#define	RK3036_AXI_BUS_CTRL		0x2c
+#define	 RK3036_HDMI_DCLK_EN		(1 << 22)
+#define	 RK3036_RGB_DCLK_EN		(1 << 24)
+#define	 RK3036_LVDS_DCLK_EN		(1 << 26)	/* rk312x */
+#define	 RK3036_LVDS_DCLK_INVERT	(1 << 27)	/* rk312x */
+#define	 RK3036_MIPI_DCLK_EN		(1 << 28)
+#define	 RK3036_HDMI_OUT_EN		RK3036_HDMI_DCLK_EN
+#define	 RK3036_RGB_OUT_EN		RK3036_RGB_DCLK_EN
+#define	 RK3036_MIPI_OUT_EN		RK3036_MIPI_DCLK_EN
+#define	RK3036_WIN0_VIR			0x30
+#define	RK3036_WIN0_ACT_INFO		0x34
+#define	RK3036_WIN0_DSP_INFO		0x38
+#define	RK3036_WIN0_DSP_ST		0x3c
+#define	RK3036_DSP_HTOTAL_HS_END	0x6c
+#define	RK3036_DSP_HACT_ST_END		0x70
+#define	RK3036_DSP_VTOTAL_VS_END	0x74
+#define	RK3036_DSP_VACT_ST_END		0x78
+#define	RK3036_REG_CFG_DONE		0x90
+
 /*
  * Polarity fields are in different locations depending on SoC and output type,
  * but always in the same order.
@@ -120,7 +154,14 @@ enum vop_ep_type {
 	VOP_EP_HDMI,
 	VOP_EP_MIPI1,
 	VOP_EP_DP,
+	VOP_EP_LVDS,
+	VOP_EP_RGB,
 	VOP_NEP
+};
+
+enum rkvop_type {
+	VOP_RK3399,
+	VOP_RK3126,
 };
 
 struct rkvop_softc;
@@ -152,6 +193,7 @@ struct rkvop_softc {
 
 struct rkvop_config {
 	char		*descr;
+	enum rkvop_type	type;
 	u_int		out_mode;
 	void		(*init)(struct rkvop_softc *);
 	void		(*set_polarity)(struct rkvop_softc *,
@@ -167,12 +209,15 @@ bool rkvop_mode_fixup(struct drm_crtc *, const struct drm_display_mode *,
 
 void rk3399_vop_init(struct rkvop_softc *);
 void rk3399_vop_set_polarity(struct rkvop_softc *, enum vop_ep_type, uint32_t);
+void rk3126_vop_init(struct rkvop_softc *);
+void rk3126_vop_set_polarity(struct rkvop_softc *, enum vop_ep_type, uint32_t);
 
 int rkvop_ep_activate(void *, struct endpoint *, void *);
 void *rkvop_ep_get_cookie(void *, struct endpoint *);
 
 struct rkvop_config rk3399_vop_big_config = {
 	.descr = "RK3399 VOPB",
+	.type = VOP_RK3399,
 	.out_mode = DSP_OUT_MODE_RGBaaa,
 	.init = rk3399_vop_init,
 	.set_polarity = rk3399_vop_set_polarity,
@@ -180,9 +225,18 @@ struct rkvop_config rk3399_vop_big_config = {
 
 struct rkvop_config rk3399_vop_lit_config = {
 	.descr = "RK3399 VOPL",
+	.type = VOP_RK3399,
 	.out_mode = DSP_OUT_MODE_RGB888,
 	.init = rk3399_vop_init,
 	.set_polarity = rk3399_vop_set_polarity,
+};
+
+struct rkvop_config rk3126_vop_config = {
+	.descr = "RK3126 VOP",
+	.type = VOP_RK3126,
+	.out_mode = DSP_OUT_MODE_RGB888,
+	.init = rk3126_vop_init,
+	.set_polarity = rk3126_vop_set_polarity,
 };
 
 const struct cfattach rkvop_ca = {
@@ -199,7 +253,8 @@ rkvop_match(struct device *parent, void *match, void *aux)
 	struct fdt_attach_args *faa = aux;
 
 	return (OF_is_compatible(faa->fa_node, "rockchip,rk3399-vop-big") ||
-	    OF_is_compatible(faa->fa_node, "rockchip,rk3399-vop-lit"));
+	    OF_is_compatible(faa->fa_node, "rockchip,rk3399-vop-lit") ||
+	    OF_is_compatible(faa->fa_node, "rockchip,rk3126-vop"));
 }
 
 void
@@ -212,6 +267,7 @@ rkvop_attach(struct device *parent, struct device *self, void *aux)
 	if (faa->fa_nreg < 1)
 		return;
 
+	power_domain_enable(faa->fa_node);
 	clock_set_assigned(faa->fa_node);
 
 	reset_deassert(faa->fa_node, "axi");
@@ -232,8 +288,10 @@ rkvop_attach(struct device *parent, struct device *self, void *aux)
 
 	if (OF_is_compatible(faa->fa_node, "rockchip,rk3399-vop-big"))
 		sc->sc_conf = &rk3399_vop_big_config;
-	if (OF_is_compatible(faa->fa_node, "rockchip,rk3399-vop-lit"))
+	else if (OF_is_compatible(faa->fa_node, "rockchip,rk3399-vop-lit"))
 		sc->sc_conf = &rk3399_vop_lit_config;
+	else if (OF_is_compatible(faa->fa_node, "rockchip,rk3126-vop"))
+		sc->sc_conf = &rk3126_vop_config;
 
 	printf(": %s\n", sc->sc_conf->descr);
 
@@ -246,13 +304,29 @@ rkvop_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_ports.dp_ep_get_cookie = rkvop_ep_get_cookie;
 	device_ports_register(&sc->sc_ports, EP_DRM_CRTC);
 
-	paddr = HREAD4(sc, VOP_WIN0_YRGB_MST);
-	if (paddr != 0) {
-		uint32_t stride, height;
+	switch (sc->sc_conf->type) {
+	case VOP_RK3126:
+		paddr = HREAD4(sc, RK3036_WIN0_YRGB_MST);
+		if (paddr != 0) {
+			uint32_t stride, height;
 
-		stride = HREAD4(sc, VOP_WIN0_VIR) & 0xffff;
-		height = (HREAD4(sc, VOP_WIN0_DSP_INFO) >> 16) + 1;
-		rasops_claim_framebuffer(paddr, height * stride * 4, self);
+			stride = HREAD4(sc, RK3036_WIN0_VIR) & 0xffff;
+			height = (HREAD4(sc, RK3036_WIN0_DSP_INFO) >> 16) + 1;
+			rasops_claim_framebuffer(paddr, height * stride * 4,
+			    self);
+		}
+		break;
+	case VOP_RK3399:
+		paddr = HREAD4(sc, VOP_WIN0_YRGB_MST);
+		if (paddr != 0) {
+			uint32_t stride, height;
+
+			stride = HREAD4(sc, VOP_WIN0_VIR) & 0xffff;
+			height = (HREAD4(sc, VOP_WIN0_DSP_INFO) >> 16) + 1;
+			rasops_claim_framebuffer(paddr, height * stride * 4,
+			    self);
+		}
+		break;
 	}
 }
 
@@ -296,43 +370,76 @@ rkvop_plane_update(struct drm_plane *plane, struct drm_atomic_state *das)
 	u_int lb_mode;
 	uint32_t val;
 
-	val = WIN0_ACT_WIDTH(act_width - 1) |
-	      WIN0_ACT_HEIGHT(act_height - 1);
-	HWRITE4(sc, VOP_WIN0_ACT_INFO, val);
+	switch (sc->sc_conf->type) {
+	case VOP_RK3126:
+		val = WIN0_ACT_WIDTH(act_width - 1) |
+		      WIN0_ACT_HEIGHT(act_height - 1);
+		HWRITE4(sc, RK3036_WIN0_ACT_INFO, val);
 
-	val = WIN0_DSP_WIDTH(drm_rect_width(dst) - 1) |
-	      WIN0_DSP_HEIGHT(drm_rect_height(dst) - 1);
-	HWRITE4(sc, VOP_WIN0_DSP_INFO, val);
+		val = WIN0_DSP_WIDTH(drm_rect_width(dst) - 1) |
+		      WIN0_DSP_HEIGHT(drm_rect_height(dst) - 1);
+		HWRITE4(sc, RK3036_WIN0_DSP_INFO, val);
 
-	val = WIN0_DSP_XST(dst->x1 + htotal - hsync_start) |
-	      WIN0_DSP_YST(dst->y1 + vtotal - vsync_start);
-	HWRITE4(sc, VOP_WIN0_DSP_ST, val);
+		val = WIN0_DSP_XST(dst->x1 + htotal - hsync_start) |
+		      WIN0_DSP_YST(dst->y1 + vtotal - vsync_start);
+		HWRITE4(sc, RK3036_WIN0_DSP_ST, val);
 
-	HWRITE4(sc, VOP_WIN0_COLOR_KEY, 0);
+		HWRITE4(sc, RK3036_WIN0_COLOR_KEY, 0);
 
-	if (act_width > 2560)
-		lb_mode = WIN0_LB_MODE_RGB_3840X2;
-	else if (act_width > 1920)
-		lb_mode = WIN0_LB_MODE_RGB_2560X4;
-	else if (act_width > 1280)
-		lb_mode = WIN0_LB_MODE_RGB_1920X5;
-	else
-		lb_mode = WIN0_LB_MODE_RGB_1280X8;
+		HWRITE4(sc, RK3036_SYS_CTRL,
+		    (1 << 0) |				/* win0 enable */
+		    (WIN0_DATA_FMT_ARGB888 << 3));	/* win0 format */
 
-	val = WIN0_LB_MODE(lb_mode) |
-	      WIN0_DATA_FMT(WIN0_DATA_FMT_ARGB888) |
-	      WIN0_EN;
-	HWRITE4(sc, VOP_WIN0_CTRL, val);
+		val = WIN0_VIR_STRIDE(fb->pitches[0] / 4);
+		HWRITE4(sc, RK3036_WIN0_VIR, val);
 
-	val = WIN0_VIR_STRIDE(fb->pitches[0] / 4);
-	HWRITE4(sc, VOP_WIN0_VIR, val);
+		/* Framebuffer start address */
+		paddr = (uint64_t)rkfb->obj->dmamap->dm_segs[0].ds_addr;
+		paddr += (src->y1 >> 16) * fb->pitches[0];
+		paddr += (src->x1 >> 16) * fb->format->cpp[0];
+		KASSERT((paddr & ~0xffffffff) == 0);
+		HWRITE4(sc, RK3036_WIN0_YRGB_MST, (uint32_t)paddr);
+		break;
+	case VOP_RK3399:
+		val = WIN0_ACT_WIDTH(act_width - 1) |
+		      WIN0_ACT_HEIGHT(act_height - 1);
+		HWRITE4(sc, VOP_WIN0_ACT_INFO, val);
 
-	/* Framebuffer start address */
-	paddr = (uint64_t)rkfb->obj->dmamap->dm_segs[0].ds_addr;
-	paddr += (src->y1 >> 16) * fb->pitches[0];
-	paddr += (src->x1 >> 16) * fb->format->cpp[0];
-	KASSERT((paddr & ~0xffffffff) == 0);
-	HWRITE4(sc, VOP_WIN0_YRGB_MST, (uint32_t)paddr);
+		val = WIN0_DSP_WIDTH(drm_rect_width(dst) - 1) |
+		      WIN0_DSP_HEIGHT(drm_rect_height(dst) - 1);
+		HWRITE4(sc, VOP_WIN0_DSP_INFO, val);
+
+		val = WIN0_DSP_XST(dst->x1 + htotal - hsync_start) |
+		      WIN0_DSP_YST(dst->y1 + vtotal - vsync_start);
+		HWRITE4(sc, VOP_WIN0_DSP_ST, val);
+
+		HWRITE4(sc, VOP_WIN0_COLOR_KEY, 0);
+
+		if (act_width > 2560)
+			lb_mode = WIN0_LB_MODE_RGB_3840X2;
+		else if (act_width > 1920)
+			lb_mode = WIN0_LB_MODE_RGB_2560X4;
+		else if (act_width > 1280)
+			lb_mode = WIN0_LB_MODE_RGB_1920X5;
+		else
+			lb_mode = WIN0_LB_MODE_RGB_1280X8;
+
+		val = WIN0_LB_MODE(lb_mode) |
+		      WIN0_DATA_FMT(WIN0_DATA_FMT_ARGB888) |
+		      WIN0_EN;
+		HWRITE4(sc, VOP_WIN0_CTRL, val);
+
+		val = WIN0_VIR_STRIDE(fb->pitches[0] / 4);
+		HWRITE4(sc, VOP_WIN0_VIR, val);
+
+		/* Framebuffer start address */
+		paddr = (uint64_t)rkfb->obj->dmamap->dm_segs[0].ds_addr;
+		paddr += (src->y1 >> 16) * fb->pitches[0];
+		paddr += (src->x1 >> 16) * fb->format->cpp[0];
+		KASSERT((paddr & ~0xffffffff) == 0);
+		HWRITE4(sc, VOP_WIN0_YRGB_MST, (uint32_t)paddr);
+		break;
+	}
 }
 
 struct drm_plane_helper_funcs rkvop_plane_helper_funcs = {
@@ -356,23 +463,41 @@ rkvop_dpms(struct drm_crtc *crtc, int mode)
 	struct rkvop_softc *sc = rkcrtc->sc;
 	uint32_t val;
 
-	val = HREAD4(sc, VOP_SYS_CTRL);
-
-	switch (mode) {
-	case DRM_MODE_DPMS_ON:
-		val &= ~VOP_STANDBY_EN;
+	switch (sc->sc_conf->type) {
+	case VOP_RK3126:
+		/*
+		 * Shadow register - can't use read-modify-write.
+		 * Standby ON clears everything, standby OFF restores
+		 * win0 enable which will be re-set by plane_update.
+		 */
+		switch (mode) {
+		case DRM_MODE_DPMS_ON:
+			HWRITE4(sc, RK3036_SYS_CTRL, 0);
+			break;
+		case DRM_MODE_DPMS_STANDBY:
+		case DRM_MODE_DPMS_SUSPEND:
+		case DRM_MODE_DPMS_OFF:
+			HWRITE4(sc, RK3036_SYS_CTRL, RK3036_STANDBY_EN);
+			break;
+		}
+		HWRITE4(sc, RK3036_REG_CFG_DONE, REG_LOAD_EN);
 		break;
-	case DRM_MODE_DPMS_STANDBY:
-	case DRM_MODE_DPMS_SUSPEND:
-	case DRM_MODE_DPMS_OFF:
-		val |= VOP_STANDBY_EN;
+	case VOP_RK3399:
+		val = HREAD4(sc, VOP_SYS_CTRL);
+		switch (mode) {
+		case DRM_MODE_DPMS_ON:
+			val &= ~VOP_STANDBY_EN;
+			break;
+		case DRM_MODE_DPMS_STANDBY:
+		case DRM_MODE_DPMS_SUSPEND:
+		case DRM_MODE_DPMS_OFF:
+			val |= VOP_STANDBY_EN;
+			break;
+		}
+		HWRITE4(sc, VOP_SYS_CTRL, val);
+		HWRITE4(sc, VOP_REG_CFG_DONE, REG_LOAD_EN);
 		break;
 	}
-
-	HWRITE4(sc, VOP_SYS_CTRL, val);
-
-	/* Commit settings */
-	HWRITE4(sc, VOP_REG_CFG_DONE, REG_LOAD_EN);
 }
 
 bool
@@ -410,14 +535,17 @@ rkvop_crtc_enable(struct drm_crtc *crtc, struct drm_atomic_state *das)
 	u_int hactive = adjusted_mode->hdisplay;
 	u_int hsync_len = adjusted_mode->hsync_end - adjusted_mode->hsync_start;
 	u_int hback_porch = adjusted_mode->htotal - adjusted_mode->hsync_end;
-	u_int hfront_porch = adjusted_mode->hsync_start - adjusted_mode->hdisplay;
+	u_int hfront_porch = adjusted_mode->hsync_start -
+	    adjusted_mode->hdisplay;
 
 	u_int vactive = adjusted_mode->vdisplay;
 	u_int vsync_len = adjusted_mode->vsync_end - adjusted_mode->vsync_start;
 	u_int vback_porch = adjusted_mode->vtotal - adjusted_mode->vsync_end;
-	u_int vfront_porch = adjusted_mode->vsync_start - adjusted_mode->vdisplay;
+	u_int vfront_porch = adjusted_mode->vsync_start -
+	    adjusted_mode->vdisplay;
 
-	clock_set_frequency(sc->sc_node, "dclk_vop", adjusted_mode->clock * 1000);
+	clock_set_frequency(sc->sc_node, "dclk_vop",
+	    adjusted_mode->clock * 1000);
 
 	pol = DSP_DCLK_POL;
 	if ((adjusted_mode->flags & DRM_MODE_FLAG_PHSYNC) != 0)
@@ -435,57 +563,118 @@ rkvop_crtc_enable(struct drm_crtc *crtc, struct drm_atomic_state *das)
 		}
 	}
 
-	switch (connector_type) {
-	case DRM_MODE_CONNECTOR_HDMIA:
-		sc->sc_conf->set_polarity(sc, VOP_EP_HDMI, pol);
+	switch (sc->sc_conf->type) {
+	case VOP_RK3126:
+		/* RK3126 VOP uses shadow registers so use full writes */
+
+		/* SYS_CTRL: clear standby */
+		HWRITE4(sc, RK3036_SYS_CTRL, 0);
+		HWRITE4(sc, RK3036_REG_CFG_DONE, REG_LOAD_EN);
+		delay(1000);
+
+		/*
+		 * DSP_CTRL0: output mode, no polarity bits.
+		 * RK code sets DSP_CTRL0=0 for LVDS (no DCLK invert).
+		 */
+		HWRITE4(sc, RK3036_DSP_CTRL0,
+		    DSP_OUT_MODE(sc->sc_conf->out_mode));
+
+		/* DSP_CTRL1: clear BLANK_EN (set by default after reset) */
+		HWRITE4(sc, RK3036_DSP_CTRL1, 0);
+
+		/*
+		 * AXI_BUS_CTRL: enable display clock for the output type.
+		 * RK code writes 0x0c000000 for LVDS (DCLK_EN+INVERT).
+		 */
+		switch (connector_type) {
+		case DRM_MODE_CONNECTOR_HDMIA:
+			HWRITE4(sc, RK3036_AXI_BUS_CTRL, RK3036_HDMI_DCLK_EN);
+			break;
+		case DRM_MODE_CONNECTOR_LVDS:
+			HWRITE4(sc, RK3036_AXI_BUS_CTRL,
+			    RK3036_LVDS_DCLK_EN | RK3036_LVDS_DCLK_INVERT);
+			break;
+		}
+
+		/*
+		 * RK3036/RK3126 timing registers have fields swapped compared
+		 * to RK3399: total/period in upper 16 bits, sync width in
+		 * lower 16 bits.
+		 */
+		val = DSP_HS_END(hsync_len + hback_porch + hactive +
+		    hfront_porch) | DSP_HTOTAL(hsync_len);
+		HWRITE4(sc, RK3036_DSP_HTOTAL_HS_END, val);
+
+		val = DSP_HACT_ST(hsync_len + hback_porch) |
+		      DSP_HACT_END(hsync_len + hback_porch + hactive);
+		HWRITE4(sc, RK3036_DSP_HACT_ST_END, val);
+
+		val = DSP_VS_END(vsync_len + vback_porch + vactive +
+		    vfront_porch) | DSP_VTOTAL(vsync_len);
+		HWRITE4(sc, RK3036_DSP_VTOTAL_VS_END, val);
+
+		val = DSP_VACT_ST(vsync_len + vback_porch) |
+		      DSP_VACT_END(vsync_len + vback_porch + vactive);
+		HWRITE4(sc, RK3036_DSP_VACT_ST_END, val);
+
+		HWRITE4(sc, RK3036_REG_CFG_DONE, REG_LOAD_EN);
 		break;
-	case DRM_MODE_CONNECTOR_eDP:
-		sc->sc_conf->set_polarity(sc, VOP_EP_EDP, pol);
+	case VOP_RK3399:
+		switch (connector_type) {
+		case DRM_MODE_CONNECTOR_HDMIA:
+			sc->sc_conf->set_polarity(sc, VOP_EP_HDMI, pol);
+			break;
+		case DRM_MODE_CONNECTOR_eDP:
+			sc->sc_conf->set_polarity(sc, VOP_EP_EDP, pol);
+			break;
+		}
+
+		val = HREAD4(sc, VOP_SYS_CTRL);
+		val &= ~VOP_STANDBY_EN;
+		val &= ~(MIPI_OUT_EN|EDP_OUT_EN|HDMI_OUT_EN|RGB_OUT_EN);
+
+		switch (connector_type) {
+		case DRM_MODE_CONNECTOR_HDMIA:
+			val |= HDMI_OUT_EN;
+			break;
+		case DRM_MODE_CONNECTOR_eDP:
+			val |= EDP_OUT_EN;
+			break;
+		}
+		HWRITE4(sc, VOP_SYS_CTRL, val);
+
+		val = HREAD4(sc, VOP_DSP_CTRL0);
+		val &= ~DSP_OUT_MODE(DSP_OUT_MODE_MASK);
+		val |= DSP_OUT_MODE(sc->sc_conf->out_mode);
+		HWRITE4(sc, VOP_DSP_CTRL0, val);
+
+		val = DSP_HACT_ST_POST(hsync_len + hback_porch) |
+		      DSP_HACT_END_POST(hsync_len + hback_porch + hactive);
+		HWRITE4(sc, VOP_POST_DSP_HACT_INFO, val);
+
+		val = DSP_HACT_ST(hsync_len + hback_porch) |
+		      DSP_HACT_END(hsync_len + hback_porch + hactive);
+		HWRITE4(sc, VOP_DSP_HACT_ST_END, val);
+
+		val = DSP_HTOTAL(hsync_len) |
+		      DSP_HS_END(hsync_len + hback_porch + hactive +
+		      hfront_porch);
+		HWRITE4(sc, VOP_DSP_HTOTAL_HS_END, val);
+
+		val = DSP_VACT_ST_POST(vsync_len + vback_porch) |
+		      DSP_VACT_END_POST(vsync_len + vback_porch + vactive);
+		HWRITE4(sc, VOP_POST_DSP_VACT_INFO, val);
+
+		val = DSP_VACT_ST(vsync_len + vback_porch) |
+		      DSP_VACT_END(vsync_len + vback_porch + vactive);
+		HWRITE4(sc, VOP_DSP_VACT_ST_END, val);
+
+		val = DSP_VTOTAL(vsync_len) |
+		      DSP_VS_END(vsync_len + vback_porch + vactive +
+		      vfront_porch);
+		HWRITE4(sc, VOP_DSP_VTOTAL_VS_END, val);
 		break;
 	}
-
-	val = HREAD4(sc, VOP_SYS_CTRL);
-	val &= ~VOP_STANDBY_EN;
-	val &= ~(MIPI_OUT_EN|EDP_OUT_EN|HDMI_OUT_EN|RGB_OUT_EN);
-
-	switch (connector_type) {
-	case DRM_MODE_CONNECTOR_HDMIA:
-		val |= HDMI_OUT_EN;
-		break;
-	case DRM_MODE_CONNECTOR_eDP:
-		val |= EDP_OUT_EN;
-		break;
-	}
-	HWRITE4(sc, VOP_SYS_CTRL, val);
-
-	val = HREAD4(sc, VOP_DSP_CTRL0);
-	val &= ~DSP_OUT_MODE(DSP_OUT_MODE_MASK);
-	val |= DSP_OUT_MODE(sc->sc_conf->out_mode);
-	HWRITE4(sc, VOP_DSP_CTRL0, val);
-
-	val = DSP_HACT_ST_POST(hsync_len + hback_porch) |
-	      DSP_HACT_END_POST(hsync_len + hback_porch + hactive);
-	HWRITE4(sc, VOP_POST_DSP_HACT_INFO, val);
-
-	val = DSP_HACT_ST(hsync_len + hback_porch) |
-	      DSP_HACT_END(hsync_len + hback_porch + hactive);
-	HWRITE4(sc, VOP_DSP_HACT_ST_END, val);
-
-	val = DSP_HTOTAL(hsync_len) |
-	      DSP_HS_END(hsync_len + hback_porch + hactive + hfront_porch);
-	HWRITE4(sc, VOP_DSP_HTOTAL_HS_END, val);
-
-	val = DSP_VACT_ST_POST(vsync_len + vback_porch) |
-	      DSP_VACT_END_POST(vsync_len + vback_porch + vactive);
-	HWRITE4(sc, VOP_POST_DSP_VACT_INFO, val);
-
-	val = DSP_VACT_ST(vsync_len + vback_porch) |
-	      DSP_VACT_END(vsync_len + vback_porch + vactive);
-	HWRITE4(sc, VOP_DSP_VACT_ST_END, val);
-
-	val = DSP_VTOTAL(vsync_len) |
-	      DSP_VS_END(vsync_len + vback_porch + vactive + vfront_porch);
-	HWRITE4(sc, VOP_DSP_VTOTAL_VS_END, val);
 }
 
 void
@@ -495,7 +684,14 @@ rkvop_crtc_flush(struct drm_crtc *crtc, struct drm_atomic_state *das)
 	struct rkvop_softc *sc = rkcrtc->sc;
 
 	/* Commit settings */
-	HWRITE4(sc, VOP_REG_CFG_DONE, REG_LOAD_EN);
+	switch (sc->sc_conf->type) {
+	case VOP_RK3126:
+		HWRITE4(sc, RK3036_REG_CFG_DONE, REG_LOAD_EN);
+		break;
+	case VOP_RK3399:
+		HWRITE4(sc, VOP_REG_CFG_DONE, REG_LOAD_EN);
+		break;
+	}
 }
 
 struct drm_crtc_helper_funcs rkvop_crtc_helper_funcs = {
@@ -540,9 +736,6 @@ rkvop_ep_activate(void *cookie, struct endpoint *ep, void *arg)
 	if (error)
 		return -error;
 
-	printf("%s: using CRTC %d for %s\n", sc->sc_dev.dv_xname,
-	    drm_crtc_index(&sc->sc_crtc.base), sc->sc_conf->descr);
-
 	sc->sc_crtc.sc = sc;
 	return 0;
 }
@@ -576,7 +769,8 @@ rk3399_vop_init(struct rkvop_softc *sc)
 }
 
 void
-rk3399_vop_set_polarity(struct rkvop_softc *sc, enum vop_ep_type ep_type, uint32_t pol)
+rk3399_vop_set_polarity(struct rkvop_softc *sc, enum vop_ep_type ep_type,
+    uint32_t pol)
 {
 	uint32_t mask, val;
 
@@ -606,4 +800,37 @@ rk3399_vop_set_polarity(struct rkvop_softc *sc, enum vop_ep_type ep_type, uint32
 	val &= ~mask;
 	val |= pol;
 	HWRITE4(sc, VOP_DSP_CTRL1, val);
+}
+
+/*
+ * RK3126 VOP
+ */
+void
+rk3126_vop_init(struct rkvop_softc *sc)
+{
+	/* clear standby (shadow regs) */
+	HWRITE4(sc, RK3036_SYS_CTRL, 0);
+	HWRITE4(sc, RK3036_REG_CFG_DONE, REG_LOAD_EN);
+}
+
+void
+rk3126_vop_set_polarity(struct rkvop_softc *sc, enum vop_ep_type ep_type,
+    uint32_t pol)
+{
+	uint32_t val;
+
+	/*
+	 * Polarity is in DSP_CTRL0 bits 4-7 for RK3036/RK3126.
+	 * RK code does not set any polarity bits for LVDS output
+	 * (DSP_CTRL0 polarity field = 0x00), so clear all polarity bits
+	 * for LVDS. Only apply polarity for non-LVDS outputs.
+	 */
+	val = HREAD4(sc, RK3036_DSP_CTRL0);
+	val &= ~(0xf << 4);
+	if (ep_type != VOP_EP_LVDS)
+		val |= (pol << 4);
+	HWRITE4(sc, RK3036_DSP_CTRL0, val);
+
+	/* commit register changes */
+	HWRITE4(sc, RK3036_REG_CFG_DONE, REG_LOAD_EN);
 }
