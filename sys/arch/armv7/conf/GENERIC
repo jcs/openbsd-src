@@ -243,6 +243,8 @@ mcprtc*		at iic?			# MCP794XX RTC
 pcfrtc*		at iic?			# PCF8523 RTC
 pcxrtc*		at iic?			# PCF8563 RTC
 rkpmic*		at iic?			# RK808 PMIC
+rkcharger*	at rkpmic?		# RK818 battery charger
+simplebat*	at rkcharger?	# battery sensors
 tpspmic*	at iic?
 pcagpio*	at iic?
 tcmfd*		at iic?			# TC3589x MFD
