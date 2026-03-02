@@ -485,6 +485,7 @@ void
 rkpmic_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct rkpmic_softc *sc = (struct rkpmic_softc *)self;
+	struct fdt_attach_args fa;
 	const char *chip;
 	uint8_t val;
 	int node;
@@ -579,6 +580,16 @@ rkpmic_attach(struct device *parent, struct device *self, void *aux)
 	    OF_getpropbool(sc->sc_node, "rockchip,system-power-controller")) {
 		rkpmic_sc = sc;
 		powerdownfn = rkpmic_powerdown;
+	}
+
+	if (OF_is_compatible(sc->sc_node, "rockchip,rk818")) {
+		for (node = OF_child(sc->sc_node); node; node = OF_peer(node)) {
+			if (OF_is_compatible(node, "rockchip,rk818-charger")) {
+				memset(&fa, 0, sizeof(fa));
+				fa.fa_node = node;
+				config_found(&sc->sc_dev, &fa, NULL);
+			}
+		}
 	}
 }
 
