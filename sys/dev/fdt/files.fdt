@@ -452,10 +452,18 @@ device	rkpinctrl: fdt
 attach	rkpinctrl at fdt
 file	dev/fdt/rkpinctrl.c		rkpinctrl
 
-device	rkpmic
+device	rkpmic {}
 attach	rkpmic at spi with rkpmic_spi
 attach	rkpmic at i2c with rkpmic_i2c
 file	dev/fdt/rkpmic.c		rkpmic
+
+device	rkcharger {}
+attach	rkcharger at rkpmic
+file	dev/fdt/rkcharger.c		rkcharger
+
+device	simplebat
+attach	simplebat at rkcharger
+file	dev/fdt/simplebat.c		simplebat
 
 device	rkpwm
 attach	rkpwm at fdt
