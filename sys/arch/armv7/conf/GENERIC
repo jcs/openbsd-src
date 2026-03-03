@@ -223,7 +223,12 @@ rktemp*		at fdt?
 dwdog*		at fdt?
 rkpwm*		at fdt?
 pwmbl*		at fdt?
+simplepanel* at fdt?
 rklvds*		at fdt?
+rkvop*		at fdt?
+rkdrm*		at fdt?
+drm*		at rkdrm?
+wsdisplay*	at rkdrm?
 
 # Xilinx Zynq-7000
 cad*		at fdt?			# Ethernet controller
