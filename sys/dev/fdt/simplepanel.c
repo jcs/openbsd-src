@@ -51,6 +51,9 @@ struct simplepanel_softc {
 	struct device_ports	sc_ports;
 	struct drm_panel	sc_panel;
 	const struct drm_display_mode *sc_mode;
+	struct drm_display_mode	sc_dts_mode;
+	int			sc_width_mm;
+	int			sc_height_mm;
 };
 
 const struct cfattach	simplepanel_ca = {
@@ -75,6 +78,7 @@ simplepanel_match(struct device *parent, void *match, void *aux)
 	struct fdt_attach_args *faa = aux;
 
 	return (OF_is_compatible(faa->fa_node, "simple-panel") ||
+	    OF_is_compatible(faa->fa_node, "panel-lvds") ||
 	    OF_is_compatible(faa->fa_node, "boe,nv140fhmn49"));
 }
 
@@ -83,10 +87,12 @@ simplepanel_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct simplepanel_softc *sc = (struct simplepanel_softc *)self;
 	struct fdt_attach_args *faa = aux;
+	struct drm_display_mode *mode = &sc->sc_dts_mode;
+	uint32_t hfront, hback, hsync, vfront, vback, vsync;
 	uint32_t power_supply;
 	uint32_t *gpios;
 	int connector_type = DRM_MODE_CONNECTOR_Unknown;
-	int len;
+	int timing_node, len;
 
 	pinctrl_byname(faa->fa_node, "default");
 
@@ -106,6 +112,51 @@ simplepanel_attach(struct device *parent, struct device *self, void *aux)
 	if (OF_is_compatible(faa->fa_node, "boe,nv140fhmn49")) {
 		sc->sc_mode = &boe_nv140fhmn49_mode;
 		connector_type = DRM_MODE_CONNECTOR_eDP;
+	} else if (OF_is_compatible(faa->fa_node, "panel-lvds")) {
+		timing_node = OF_getnodebyname(faa->fa_node, "panel-timing");
+		if (timing_node == 0) {
+			printf(": no panel-timing\n");
+			return;
+		}
+
+		/* clock-frequency is in Hz, drm uses kHz */
+		mode->clock = OF_getpropint(timing_node,
+		    "clock-frequency", 0) / 1000;
+		mode->hdisplay = OF_getpropint(timing_node, "hactive", 0);
+		mode->vdisplay = OF_getpropint(timing_node, "vactive", 0);
+
+		hfront = OF_getpropint(timing_node, "hfront-porch", 0);
+		hback = OF_getpropint(timing_node, "hback-porch", 0);
+		hsync = OF_getpropint(timing_node, "hsync-len", 0);
+
+		vfront = OF_getpropint(timing_node, "vfront-porch", 0);
+		vback = OF_getpropint(timing_node, "vback-porch", 0);
+		vsync = OF_getpropint(timing_node, "vsync-len", 0);
+
+		mode->hsync_start = mode->hdisplay + hfront;
+		mode->hsync_end = mode->hsync_start + hsync;
+		mode->htotal = mode->hsync_end + hback;
+
+		mode->vsync_start = mode->vdisplay + vfront;
+		mode->vsync_end = mode->vsync_start + vsync;
+		mode->vtotal = mode->vsync_end + vback;
+
+		if (OF_getpropint(timing_node, "hsync-active", 0))
+			mode->flags |= DRM_MODE_FLAG_PHSYNC;
+		else
+			mode->flags |= DRM_MODE_FLAG_NHSYNC;
+		if (OF_getpropint(timing_node, "vsync-active", 0))
+			mode->flags |= DRM_MODE_FLAG_PVSYNC;
+		else
+			mode->flags |= DRM_MODE_FLAG_NVSYNC;
+
+		sc->sc_width_mm = OF_getpropint(faa->fa_node, "width-mm", 0);
+		sc->sc_height_mm = OF_getpropint(faa->fa_node, "height-mm", 0);
+
+		sc->sc_mode = mode;
+		connector_type = DRM_MODE_CONNECTOR_LVDS;
+
+		printf(": %dx%d", mode->hdisplay, mode->vdisplay);
 	}
 
 	drm_panel_init(&sc->sc_panel, self, &simplepanel_funcs,
@@ -146,6 +197,11 @@ simplepanel_get_modes(struct drm_panel *panel, struct drm_connector *connector)
 	if (mode == NULL)
 		return 0;
 	mode->type |= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+
+	if (sc->sc_width_mm > 0)
+		mode->width_mm = sc->sc_width_mm;
+	if (sc->sc_height_mm > 0)
+		mode->height_mm = sc->sc_height_mm;
 
 	drm_mode_set_name(mode);
 	drm_mode_probed_add(connector, mode);
