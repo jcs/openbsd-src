@@ -73,6 +73,7 @@ _DEV(bktr, 75)
 _DEV(bpf, 22)
 _DEV(dt, 30)
 _DEV(diskmap, 102)
+_DEV(dri, 87)
 _DEV(fdesc, 7)
 _DEV(fuse, 77)
 _DEV(gpio, 13)
@@ -120,3 +121,4 @@ target(all, cd, 0, 1)dnl
 target(all, sd, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9)dnl
 target(all, vnd, 0, 1, 2, 3)dnl
 target(all, gpio, 0, 1, 2, 3, 4, 5, 6, 7, 8)dnl
+target(all, dri)dnl

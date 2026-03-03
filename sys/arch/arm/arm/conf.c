@@ -142,6 +142,8 @@ cdev_decl(wsmouse);
 #include "radio.h"
 cdev_decl(radio);
 
+#include "drm.h"
+
 #include <arm/conf.h>
 
 /* Block devices */
@@ -352,7 +354,7 @@ struct cdevsw cdevsw[] = {
 	cdev_notdef(),                          /* 84: removed device */
 	cdev_notdef(),                          /* 85: removed device */
 	cdev_notdef(),                          /* 86: removed device */
-	cdev_notdef(),                          /* 87: removed device */
+	cdev_drm_init(NDRM,drm),                /* 87: drm */
 #ifdef USER_PCICONF
 	cdev_pci_init(NPCI,pci),		/* 88: PCI user */
 #else
