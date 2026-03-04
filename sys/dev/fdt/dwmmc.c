@@ -237,6 +237,7 @@ int	dwmmc_intr(void *);
 int	dwmmc_host_reset(sdmmc_chipset_handle_t);
 uint32_t dwmmc_host_ocr(sdmmc_chipset_handle_t);
 int	dwmmc_host_maxblklen(sdmmc_chipset_handle_t);
+int	dwmmc_card_detect_intr(void *);
 int	dwmmc_card_detect(sdmmc_chipset_handle_t);
 int	dwmmc_bus_power(sdmmc_chipset_handle_t, uint32_t);
 int	dwmmc_bus_clock(sdmmc_chipset_handle_t, int, int);
@@ -382,8 +383,11 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 
 	OF_getpropintarray(faa->fa_node, "cd-gpios", sc->sc_gpio,
 	    sizeof(sc->sc_gpio));
-	if (sc->sc_gpio[0])
+	if (sc->sc_gpio[0]) {
 		gpio_controller_config_pin(sc->sc_gpio, GPIO_CONFIG_INPUT);
+		gpio_controller_intr_establish(sc->sc_gpio, IPL_SDMMC,
+		    NULL, dwmmc_card_detect_intr, sc, DEVNAME(sc));
+	}
 
 	sc->sc_sdio_irq = (OF_getproplen(sc->sc_node, "cap-sdio-irq") == 0);
 	sc->sc_vqmmc = OF_getpropint(sc->sc_node, "vqmmc-supply", 0);
@@ -444,6 +448,14 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 		saa.caps |= SMC_CAPS_4BIT_MODE;
 
 	sc->sc_sdmmc = config_found(self, &saa, NULL);
+
+	if (OF_getproplen(sc->sc_node, "non-removable") == -1 &&
+	    OF_getproplen(sc->sc_node, "broken-cd") == -1) {
+		/* removable devices with non-broken CD lines, enable CD intr */
+		HWRITE4(sc, SDMMC_RINTSTS, SDMMC_RINTSTS_CDT);
+		HSET4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_CDT);
+	}
+
 	return;
 
 unmap:
@@ -564,6 +576,11 @@ dwmmc_intr(void *arg)
 	}
 
 	stat = HREAD4(sc, SDMMC_MINTSTS);
+	if (stat & SDMMC_RINTSTS_CDT) {
+		HWRITE4(sc, SDMMC_RINTSTS, SDMMC_RINTSTS_CDT);
+		sdmmc_needs_discover(sc->sc_sdmmc);
+		handled = 1;
+	}
 	if (stat & SDMMC_RINTSTS_SDIO) {
 		HWRITE4(sc, SDMMC_RINTSTS, SDMMC_RINTSTS_SDIO);
 		HCLR4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_SDIO);
@@ -610,6 +627,15 @@ int
 dwmmc_host_maxblklen(sdmmc_chipset_handle_t sch)
 {
 	return 512;
+}
+
+int
+dwmmc_card_detect_intr(void *arg)
+{
+	struct dwmmc_softc *sc = arg;
+
+	sdmmc_needs_discover(sc->sc_sdmmc);
+	return 1;
 }
 
 int
