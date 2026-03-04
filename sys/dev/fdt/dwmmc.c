@@ -214,6 +214,7 @@ struct dwmmc_softc {
 
 	uint32_t		sc_gpio[4];
 	int			sc_sdio_irq;
+	uint32_t		sc_vmmc;
 	uint32_t		sc_vqmmc;
 	uint32_t		sc_pwrseq;
 	uint32_t		sc_vdd;
@@ -390,6 +391,7 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	sc->sc_sdio_irq = (OF_getproplen(sc->sc_node, "cap-sdio-irq") == 0);
+	sc->sc_vmmc = OF_getpropint(sc->sc_node, "vmmc-supply", 0);
 	sc->sc_vqmmc = OF_getpropint(sc->sc_node, "vqmmc-supply", 0);
 	sc->sc_pwrseq = OF_getpropint(sc->sc_node, "mmc-pwrseq", 0);
 
@@ -671,8 +673,11 @@ dwmmc_bus_power(sdmmc_chipset_handle_t sch, uint32_t ocr)
 	if (ISSET(ocr, MMC_OCR_3_2V_3_3V|MMC_OCR_3_3V_3_4V))
 		vdd = 3300000;
 
-	if (sc->sc_vdd == 0 && vdd > 0)
+	if (sc->sc_vdd == 0 && vdd > 0) {
+		if (sc->sc_vmmc)
+			regulator_enable(sc->sc_vmmc);
 		dwmmc_pwrseq_pre(sc->sc_pwrseq);
+	}
 
 	if (ISSET(ocr, MMC_OCR_3_2V_3_3V|MMC_OCR_3_3V_3_4V))
 		HSET4(sc, SDMMC_PWREN, 1);
@@ -681,6 +686,9 @@ dwmmc_bus_power(sdmmc_chipset_handle_t sch, uint32_t ocr)
 
 	if (sc->sc_vdd == 0 && vdd > 0)
 		dwmmc_pwrseq_post(sc->sc_pwrseq);
+
+	if (sc->sc_vdd > 0 && vdd == 0 && sc->sc_vmmc)
+		regulator_disable(sc->sc_vmmc);
 
 	sc->sc_vdd = vdd;
 	return 0;
