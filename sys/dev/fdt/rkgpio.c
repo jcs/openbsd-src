@@ -118,6 +118,8 @@ struct cfdriver rkgpio_cd = {
 void	rkgpio_config_pin(void *, uint32_t *, int);
 int	rkgpio_get_pin(void *, uint32_t *);
 void	rkgpio_set_pin(void *, uint32_t *, int);
+void	*rkgpio_gpio_intr_establish(void *, uint32_t *, int,
+	    struct cpu_info *, int (*)(void *), void *, char *);
 
 int	rkgpio_intr(void *);
 void	*rkgpio_intr_establish(void *, int *, int, struct cpu_info *,
@@ -177,6 +179,7 @@ rkgpio_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_gc.gc_config_pin = rkgpio_config_pin;
 	sc->sc_gc.gc_get_pin = rkgpio_get_pin;
 	sc->sc_gc.gc_set_pin = rkgpio_set_pin;
+	sc->sc_gc.gc_intr_establish = rkgpio_gpio_intr_establish;
 	gpio_controller_register(&sc->sc_gc);
 
 	sc->sc_ipl = IPL_NONE;
@@ -273,12 +276,25 @@ rkgpio_set_pin(void *cookie, uint32_t *cells, int val)
 	}
 }
 
+void *
+rkgpio_gpio_intr_establish(void *cookie, uint32_t *cells, int ipl,
+    struct cpu_info *ci, int (*func)(void *), void *arg, char *name)
+{
+	int icells[2];
+
+	icells[0] = cells[0];
+	icells[1] = 3; /* both edges */
+
+	return rkgpio_intr_establish(cookie, icells, ipl, ci, func, arg, name);
+}
+
 int
 rkgpio_intr(void *cookie)
 {
 	struct rkgpio_softc	*sc = (struct rkgpio_softc *)cookie;
 	struct intrhand		*ih;
-	uint32_t		 status, pending;
+	bus_size_t		 off;
+	uint32_t		 status, pending, bit, mask;
 	int			 pin, s;
 
 	if (sc->sc_version == 2)
@@ -295,6 +311,33 @@ rkgpio_intr(void *cookie)
 			if (ih->ih_func(ih->ih_arg))
 				ih->ih_count.ec_count++;
 			splx(s);
+
+			if (ih->ih_level == 3) {
+				/* toggle polarity for both-edge emulation */
+				if (sc->sc_version == 2) {
+					bit = (1 << (pin % 16));
+					mask = bit << 16;
+					off = (pin / 16) * 4;
+
+					if (HREAD4(sc, GPIO_EXT_PORT) &
+					    (1 << pin))
+						HWRITE4(sc,
+						    GPIO_INT_POLARITY_L +
+						    off * 4, mask);
+					else
+						HWRITE4(sc,
+						    GPIO_INT_POLARITY_L +
+						    off * 4, mask | bit);
+				} else {
+					if (HREAD4(sc, GPIO_EXT_PORTA) &
+					    (1 << pin))
+						HCLR4(sc, GPIO_INT_POLARITY,
+						    1 << pin);
+					else
+						HSET4(sc, GPIO_INT_POLARITY,
+						    1 << pin);
+				}
+			}
 		}
 
 		pending &= ~(1 << pin);
@@ -369,6 +412,15 @@ rkgpio_intr_establish(void *cookie, int *cells, int ipl,
 			HWRITE4(sc, GPIO_INT_TYPE_L + off * 4, mask | bit);
 			HWRITE4(sc, GPIO_INT_POLARITY_L + off * 4, mask);
 			break;
+		case 3: /* both */
+			HWRITE4(sc, GPIO_INT_TYPE_L + off * 4, mask | bit);
+			if (HREAD4(sc, GPIO_EXT_PORT) & (1 << irqno))
+				HWRITE4(sc, GPIO_INT_POLARITY_L + off * 4,
+				    mask);
+			else
+				HWRITE4(sc, GPIO_INT_POLARITY_L + off * 4,
+				    mask | bit);
+			break;
 		case 4: /* high */
 			HWRITE4(sc, GPIO_INT_TYPE_L + off * 4, mask);
 			HWRITE4(sc, GPIO_INT_POLARITY_L + off * 4, mask | bit);
@@ -392,6 +444,13 @@ rkgpio_intr_establish(void *cookie, int *cells, int ipl,
 		case 2: /* falling */
 			HSET4(sc, GPIO_INTTYPE_LEVEL, 1 << irqno);
 			HCLR4(sc, GPIO_INT_POLARITY, 1 << irqno);
+			break;
+		case 3: /* both */
+			HSET4(sc, GPIO_INTTYPE_LEVEL, 1 << irqno);
+			if (HREAD4(sc, GPIO_EXT_PORTA) & (1 << irqno))
+				HCLR4(sc, GPIO_INT_POLARITY, 1 << irqno);
+			else
+				HSET4(sc, GPIO_INT_POLARITY, 1 << irqno);
 			break;
 		case 4: /* high */
 			HCLR4(sc, GPIO_INTTYPE_LEVEL, 1 << irqno);
