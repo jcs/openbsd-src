@@ -71,6 +71,8 @@ struct vm_map *exec_map = NULL;
 struct vm_map *phys_map = NULL;
 
 extern int physmem;
+int lid_action = 1;
+int pwr_action = 1;
 
 struct uvm_constraint_range  dma_constraint = { 0x0, (paddr_t)-1 };
 struct uvm_constraint_range *uvm_md_constraints[] = { NULL };
@@ -291,6 +293,11 @@ cpu_startup(void)
         curpcb->pcb_tf = (struct trapframe *)curpcb->pcb_un.un_32.pcb32_sp - 1;
 }
 
+const struct sysctl_bounded_args cpuctl_vars[] = {
+	{ CPU_LIDACTION, &lid_action, 0, 2 },
+	{ CPU_PWRACTION, &pwr_action, 0, 2 },
+};
+
 /*
  * machine dependent system variables.
  */
@@ -342,7 +349,8 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return error;
 
 	default:
-		return (EOPNOTSUPP);
+		return (sysctl_bounded_arr(cpuctl_vars, nitems(cpuctl_vars),
+		    name, namelen, oldp, oldlenp, newp, newlen));
 	}
 	/* NOTREACHED */
 }
