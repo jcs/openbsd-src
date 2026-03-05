@@ -65,7 +65,7 @@
 		/*		9	   formerly int: CPU_ZTSRAWMODE */
 		/*		10	   formerly struct: CPU_ZTSSCALE */
 #define	CPU_MAXSPEED		11	/* int: number of valid machdep ids */
-		/*		12	   formerly int: CPU_LIDSUSPEND */
+#define CPU_PWRACTION		12	/* int: action caused by power button */
 #define CPU_LIDACTION		13	/* action caused by lid close */
 #define	CPU_COMPATIBLE		14	/* compatible property */
 #define	CPU_MAXID		15	/* number of valid machdep ids */
@@ -83,7 +83,7 @@
 	{ 0, 0 }, \
 	{ 0, 0 }, \
 	{ "maxspeed", CTLTYPE_INT }, \
-	{ 0, 0 }, \
+	{ "pwraction", CTLTYPE_INT }, \
 	{ "lidaction", CTLTYPE_INT }, \
 	{ "compatible", CTLTYPE_STRING }, \
 }
