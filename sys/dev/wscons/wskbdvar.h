@@ -103,3 +103,5 @@ void	wskbd_rawinput(struct device *, u_char *, int);
 int	wskbd_cngetc(dev_t dev);
 void	wskbd_cnpollc(dev_t dev, int poll);
 void	wskbd_cnbell(dev_t, u_int, u_int, u_int);
+
+struct device *wskbd_console_kbd(void);
