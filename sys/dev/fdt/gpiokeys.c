@@ -21,6 +21,7 @@
 #include <sys/gpio.h>
 #include <sys/malloc.h>
 #include <sys/queue.h>
+#include <sys/timeout.h>
 
 #include <machine/bus.h>
 #include <machine/fdt.h>
@@ -30,6 +31,9 @@
 #include <dev/ofw/ofw_pinctrl.h>
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/fdt.h>
+
+#include <dev/wscons/wsconsio.h>
+#include <dev/wscons/wskbdvar.h>
 
 #include <sys/sensors.h>
 
@@ -91,6 +95,7 @@ struct cfdriver gpiokeys_cd = {
 
 void	 gpiokeys_update_key(void *);
 void	 gpiokeys_power_button(void *);
+void	 gpiokeys_console_key(void *);
 int	 gpiokeys_intr(void *);
 
 int
@@ -160,6 +165,9 @@ gpiokeys_attach(struct device *parent, struct device *self, void *aux)
 			switch (key->key_code) {
 			case GPIOKEYS_KEY_POWER:
 				key->key_func = gpiokeys_power_button;
+				break;
+			default:
+				key->key_func = gpiokeys_console_key;
 				break;
 			}
 			break;
@@ -274,11 +282,39 @@ gpiokeys_power_button(void *arg)
 	}
 }
 
+void
+gpiokeys_console_key(void *arg)
+{
+	struct gpiokeys_key *key = arg;
+	struct device *console_kbd;
+	int down, s;
+
+	console_kbd = wskbd_console_kbd();
+	if (!console_kbd)
+		return;
+
+	down = gpio_controller_get_pin(key->key_pin);
+
+	s = spltty();
+	if (down) {
+		if (key->key_state != down)
+			wskbd_input(console_kbd, WSCONS_EVENT_KEY_DOWN,
+			    key->key_code);
+	} else {
+		wskbd_input(console_kbd, WSCONS_EVENT_KEY_UP, key->key_code);
+	}
+	splx(s);
+
+	key->key_state = down;
+}
+
 int
 gpiokeys_intr(void *arg)
 {
 	struct gpiokeys_key *key = arg;
 
-	key->key_func(key);
+	if (key && key->key_func)
+		key->key_func(key);
+
 	return 1;
 }
