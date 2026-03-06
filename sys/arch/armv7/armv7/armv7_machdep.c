@@ -767,10 +767,12 @@ initarm(void *arg0, void *arg1, void *arg2, paddr_t loadaddr)
 		 * EfiLoaderData so it won't be added again here.
 		 */
 		for (i = 0; i < mmap_size / mmap_desc_size; i++) {
+#ifdef VERBOSE_INIT_ARM
 			printf("type 0x%x pa 0x%llx va 0x%llx pages 0x%llx attr 0x%llx\n",
 			    desc->Type, desc->PhysicalStart,
 			    desc->VirtualStart, desc->NumberOfPages,
 			    desc->Attribute);
+#endif
 			if (desc->Type == EfiConventionalMemory &&
 			    desc->NumberOfPages >= 16) {
 				uvm_page_physload(atop(desc->PhysicalStart),
