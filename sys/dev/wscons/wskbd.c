@@ -570,6 +570,14 @@ wskbd_cndetach(void)
 	wskbd_console_initted = 0;
 }
 
+struct device *
+wskbd_console_kbd(void)
+{
+	if (wskbd_console_device != NULL)
+		return &wskbd_console_device->sc_base.me_dv;
+	return NULL;
+}
+
 #if NWSDISPLAY > 0
 void
 wskbd_repeat(void *v)
