@@ -61,6 +61,7 @@ extern void (*powerdownfn)(void);
 #define  RK806_SYS_CFG3_DEV_OFF	0x01
 
 #define RK808_DEVCTRL		0x4b
+#define  RK808_DEVCTRL_DEV_OFF		0x01
 #define  RK808_DEVCTRL_DEV_OFF_RST	0x08
 
 #define RK809_PMIC_SYS_CFG3	0xf4
@@ -519,7 +520,7 @@ rkpmic_attach(struct device *parent, struct device *self, void *aux)
 		sc->sc_rtc_ctrl_reg = RK808_RTC_CTRL;
 		sc->sc_rtc_status_reg = RK808_RTC_STATUS;
 		sc->sc_dev_ctrl_reg = RK808_DEVCTRL;
-		sc->sc_dev_off_val = RK808_DEVCTRL_DEV_OFF_RST;
+		sc->sc_dev_off_val = RK808_DEVCTRL_DEV_OFF;
 		sc->sc_regdata = rk818_regdata;
 	} else {
 		chip = "RK817";
