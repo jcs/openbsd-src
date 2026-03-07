@@ -78,7 +78,7 @@ pwmbl_attach(struct device *parent, struct device *self, void *aux)
 	struct fdt_attach_args *faa = aux;
 	uint32_t *gpios;
 	uint32_t nsteps;
-	int len;
+	int len, i;
 
 	len = OF_getproplen(faa->fa_node, "pwms");
 	if (len < 0) {
@@ -105,7 +105,10 @@ pwmbl_attach(struct device *parent, struct device *self, void *aux)
 		OF_getpropintarray(faa->fa_node, "brightness-levels",
 		    sc->sc_levels, len);
 		sc->sc_nlevels = len / sizeof(uint32_t);
-		sc->sc_max_level = sc->sc_levels[sc->sc_nlevels - 1];
+		sc->sc_max_level = sc->sc_levels[0];
+		for (i = 0; i < sc->sc_nlevels; i++)
+			if (sc->sc_levels[i] > sc->sc_max_level)
+				sc->sc_max_level = sc->sc_levels[i];
 		nsteps = OF_getpropint(faa->fa_node,
 		    "num-interpolated-steps", 0);
 		if (nsteps > 0)
@@ -134,7 +137,6 @@ int
 pwmbl_activate(struct device *self, int act)
 {
 	struct pwmbl_softc *sc = (struct pwmbl_softc *)self;
-	struct pwm_state ps;
 	int error;
 
 	switch (act) {
@@ -142,11 +144,7 @@ pwmbl_activate(struct device *self, int act)
 		error = pwm_get_state(sc->sc_pwm, &sc->sc_ps_saved);
 		if (error)
 			return error;
-
-		pwm_init_state(sc->sc_pwm, &ps);
-		ps.ps_pulse_width = 0;
-		ps.ps_enabled = 0;
-		return pwm_set_state(sc->sc_pwm, &ps);
+		return pwmbl_set_brightness(sc, 0);
 	case DVACT_WAKEUP:
 		return pwm_set_state(sc->sc_pwm, &sc->sc_ps_saved);
 	}
@@ -179,23 +177,23 @@ pwmbl_interpolate(struct pwmbl_softc *sc, uint32_t nsteps)
 uint32_t
 pwmbl_find_idx(struct pwmbl_softc *sc, uint32_t level)
 {
-	uint32_t mid;
-	int idx;
+	uint32_t diff, best_diff = 0;
+	int idx, best = 0;
 
 	if (sc->sc_levels == NULL)
 		return level < sc->sc_nlevels ? level : sc->sc_nlevels - 1;
 
-	for (idx = 0; idx < sc->sc_nlevels - 1; idx++) {
-		mid = (sc->sc_levels[idx] + sc->sc_levels[idx + 1]) / 2;
-		if (sc->sc_levels[idx] <= level && level <= mid)
-			return idx;
-		if (mid < level && level <= sc->sc_levels[idx + 1])
-			return idx + 1;
+	for (idx = 0; idx < sc->sc_nlevels; idx++) {
+		if (sc->sc_levels[idx] > level)
+			diff = sc->sc_levels[idx] - level;
+		else
+			diff = level - sc->sc_levels[idx];
+		if (idx == 0 || diff < best_diff) {
+			best_diff = diff;
+			best = idx;
+		}
 	}
-	if (level < sc->sc_levels[0])
-		return 0;
-	else
-		return idx;
+	return best;
 }
 
 int
