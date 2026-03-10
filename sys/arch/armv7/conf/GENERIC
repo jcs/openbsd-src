@@ -90,6 +90,7 @@ dmtimer*	at omap?		# am335x dual mode timers
 omusbtll*	at omap?
 cpsw*		at fdt?
 com*		at fdt?			# onboard uarts
+bcmbt*		at com?
 ommmc*		at fdt?			# SD/MMC card controller
 sdmmc*		at ommmc?		# SD/MMC bus
 

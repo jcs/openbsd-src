@@ -313,7 +313,8 @@ device	bse: ether, ifnet, ifmedia, mii
 file	dev/ic/bcmgenet.c		bse
 
 # 8250/16[45]50-based "com" ports
-device	com: tty
+define	combus {}
+device	com: combus, tty
 file	dev/ic/com.c			com & (com | com_cardbus | com_gsc |
 					       com_isapnp)	needs-flag
 

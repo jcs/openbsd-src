@@ -110,9 +110,10 @@ void
 com_fdt_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct com_softc *sc = (struct com_softc *)self;
-	struct fdt_attach_args *faa = aux;
+	struct fdt_attach_args *faa = aux, fa;
 	int (*intr)(void *) = comintr;
 	uint32_t freq, width, shift;
+	int node;
 
 	if (faa->fa_nreg < 1)
 		return;
@@ -180,6 +181,12 @@ com_fdt_attach(struct device *parent, struct device *self, void *aux)
 
 	fdt_intr_establish(faa->fa_node, IPL_TTY, intr,
 	    sc, sc->sc_dev.dv_xname);
+
+	for (node = OF_child(faa->fa_node); node; node = OF_peer(node)) {
+		memset(&fa, 0, sizeof(fa));
+		fa.fa_node = node;
+		config_found(self, &fa, NULL);
+	}
 }
 
 int

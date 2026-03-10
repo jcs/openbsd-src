@@ -667,6 +667,10 @@ file	dev/fdt/ccp_fdt.c		ccp_fdt
 attach	com at fdt with com_fdt
 file	dev/fdt/com_fdt.c		com_fdt
 
+device	bcmbt: firmload, combus
+attach	bcmbt at combus
+file	dev/fdt/bcmbt_fdt.c		bcmbt
+
 attach	ipmi at fdt with ipmi_fdt
 file	dev/fdt/ipmi_fdt.c		ipmi_fdt
 
