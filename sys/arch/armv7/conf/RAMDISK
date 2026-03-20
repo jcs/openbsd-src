@@ -199,10 +199,13 @@ mvortc*		at fdt?
 rkclock*	at fdt? early 1
 rkgrf*		at fdt? early 1
 rkpinctrl*	at fdt? early 1
+rkusbphy*	at fdt? early 1
 rkgpio*		at fdt?
 rkiic*		at fdt?
 iic*		at rkiic?
 dwdog*		at fdt?
+
+gpiokeys*	at fdt?
 
 # Xilinx Zynq-7000
 cad*		at fdt?			# Ethernet controller
@@ -216,8 +219,11 @@ wskbd*		at crosec? mux 1
 pcfrtc*		at iic?
 pcxrtc*		at iic?
 rkpmic*		at iic?			# RK808 PMIC
+rkcharger*	at rkpmic?		# RK818 battery charger
 tpspmic*	at iic?
 pcagpio*	at iic?
+tcmfd*		at iic?			# TC3589x MFD
+wskbd*		at tcmfd? mux 1
 
 # virtio devices
 vioblk*		at virtio?
