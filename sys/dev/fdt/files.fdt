@@ -416,7 +416,7 @@ device	rkgrf: fdt
 attach	rkgrf at fdt
 file	dev/fdt/rkgrf.c			rkgrf
 
-device	rkgpio
+device	rkgpio: gpiobus
 attach	rkgpio at fdt
 file	dev/fdt/rkgpio.c		rkgpio
 
