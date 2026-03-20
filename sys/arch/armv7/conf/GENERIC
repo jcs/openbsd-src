@@ -218,6 +218,7 @@ rkpinctrl*	at fdt? early 1
 rkusbphy*	at fdt? early 1
 rklvdsphy*	at fdt?
 rkgpio*		at fdt?
+gpio*		at rkgpio?
 rkiic*		at fdt?
 iic*		at rkiic?
 rktemp*		at fdt?

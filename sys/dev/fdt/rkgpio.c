@@ -21,6 +21,7 @@
 #include <sys/device.h>
 #include <sys/malloc.h>
 #include <sys/evcount.h>
+#include <sys/gpio.h>
 
 #include <machine/intr.h>
 #include <machine/bus.h>
@@ -29,6 +30,8 @@
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_gpio.h>
 #include <dev/ofw/fdt.h>
+
+#include <dev/gpio/gpiovar.h>
 
 /* Registers. */
 
@@ -102,6 +105,9 @@ struct rkgpio_softc {
 	struct interrupt_controller sc_ic;
 
 	struct gpio_controller	sc_gc;
+
+	struct gpio_chipset_tag	sc_gpio_gc;
+	gpio_pin_t		sc_gpio_pins[GPIO_NUM_PINS];
 };
 
 int rkgpio_match(struct device *, void *, void *);
@@ -130,6 +136,10 @@ void	rkgpio_intr_enable(void *);
 void	rkgpio_intr_disable(void *);
 void	rkgpio_intr_barrier(void *);
 
+int	rkgpio_gpio_read(void *, int);
+void	rkgpio_gpio_write(void *, int, int);
+void	rkgpio_gpio_ctl(void *, int, int);
+
 int
 rkgpio_match(struct device *parent, void *match, void *aux)
 {
@@ -143,7 +153,9 @@ rkgpio_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct rkgpio_softc *sc = (struct rkgpio_softc *)self;
 	struct fdt_attach_args *faa = aux;
+	struct gpiobus_attach_args gba;
 	uint32_t ver_id;
+	int i;
 
 	if (faa->fa_nreg < 1) {
 		printf(": no registers\n");
@@ -203,6 +215,24 @@ rkgpio_attach(struct device *parent, struct device *self, void *aux)
 	fdt_intr_register(&sc->sc_ic);
 
 	printf("\n");
+
+	sc->sc_gpio_gc.gp_cookie = sc;
+	sc->sc_gpio_gc.gp_pin_read = rkgpio_gpio_read;
+	sc->sc_gpio_gc.gp_pin_write = rkgpio_gpio_write;
+	sc->sc_gpio_gc.gp_pin_ctl = rkgpio_gpio_ctl;
+
+	for (i = 0; i < GPIO_NUM_PINS; i++) {
+		sc->sc_gpio_pins[i].pin_num = i;
+		sc->sc_gpio_pins[i].pin_caps =
+		    GPIO_PIN_INPUT | GPIO_PIN_OUTPUT |
+		    GPIO_PIN_PULLUP | GPIO_PIN_PULLDOWN;
+	}
+
+	gba.gba_name = "gpio";
+	gba.gba_gc = &sc->sc_gpio_gc;
+	gba.gba_pins = sc->sc_gpio_pins;
+	gba.gba_npins = GPIO_NUM_PINS;
+	(void)config_found(&sc->sc_dev, &gba, gpiobus_print);
 }
 
 void
@@ -582,4 +612,34 @@ rkgpio_intr_barrier(void *cookie)
 	struct rkgpio_softc *sc = ih->ih_sc;
 
 	intr_barrier(sc->sc_ih);
+}
+
+int
+rkgpio_gpio_read(void *cookie, int pin)
+{
+	uint32_t cells[2] = { pin, 0 };
+
+	return rkgpio_get_pin(cookie, (uint32_t *)cells);
+}
+
+void
+rkgpio_gpio_write(void *arg, int pin, int val)
+{
+	uint32_t cells[2] = { pin, 0 };
+
+	rkgpio_set_pin(arg, (uint32_t *)cells, val);
+}
+
+void
+rkgpio_gpio_ctl(void *arg, int pin, int flags)
+{
+	uint32_t cells[] = { pin, 0 };
+	int cflags = 0;
+
+	if (flags & GPIO_PIN_INPUT)
+		cflags |= GPIO_CONFIG_INPUT;
+	if (flags & GPIO_PIN_OUTPUT)
+		cflags |= GPIO_CONFIG_OUTPUT;
+
+	rkgpio_config_pin(arg, (uint32_t *)cells, cflags);
 }
