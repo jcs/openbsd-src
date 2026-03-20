@@ -296,7 +296,7 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 	uint32_t freq = 0, div = 0;
 	uint32_t hcon, width;
 	uint32_t fifoth;
-	int error, timeout;
+	int error;
 
 	if (faa->fa_nreg < 1) {
 		printf(": no registers\n");
@@ -397,28 +397,8 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 
 	printf(": %d MHz base clock\n", sc->sc_clkbase / 1000000);
 
-	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_ALL_RESET);
-	for (timeout = 5000; timeout > 0; timeout--) {
-		if ((HREAD4(sc, SDMMC_CTRL) & SDMMC_CTRL_ALL_RESET) == 0)
-			break;
-		delay(100);
-	}
-	if (timeout == 0)
-		printf("%s: reset failed\n", sc->sc_dev.dv_xname);
-
-	/* Enable interrupts, but mask them all. */
-	HWRITE4(sc, SDMMC_INTMASK, 0);
-	HWRITE4(sc, SDMMC_RINTSTS, 0xffffffff);
-	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_INT_ENABLE);
-
-	dwmmc_bus_width(sc, 1);
-
-	/* Start out in non-DMA mode. */
-	dwmmc_pio_mode(sc);
-
 	sc->sc_dmat = faa->fa_dmat;
 	dwmmc_alloc_descriptors(sc);
-	dwmmc_init_descriptors(sc);
 
 	error = bus_dmamap_create(sc->sc_dmat, MAXPHYS, DWMMC_NDESC,
 	    DWMMC_MAXSEGSZ, 0, BUS_DMA_WAITOK|BUS_DMA_ALLOCNOW, &sc->sc_dmap);
@@ -426,6 +406,8 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 		printf(": can't create DMA map\n");
 		goto unmap;
 	}
+
+	dwmmc_host_reset(sc);
 
 	memset(&saa, 0, sizeof(saa));
 	saa.saa_busname = "sdmmc";
@@ -450,14 +432,6 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 		saa.caps |= SMC_CAPS_4BIT_MODE;
 
 	sc->sc_sdmmc = config_found(self, &saa, NULL);
-
-	if (OF_getproplen(sc->sc_node, "non-removable") == -1 &&
-	    OF_getproplen(sc->sc_node, "broken-cd") == -1) {
-		/* removable devices with non-broken CD lines, enable CD intr */
-		HWRITE4(sc, SDMMC_RINTSTS, SDMMC_RINTSTS_CDT);
-		HSET4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_CDT);
-	}
-
 	return;
 
 unmap:
@@ -615,7 +589,35 @@ dwmmc_card_intr_ack(sdmmc_chipset_handle_t sch)
 int
 dwmmc_host_reset(sdmmc_chipset_handle_t sch)
 {
-	printf("%s\n", __func__);
+	struct dwmmc_softc *sc = sch;
+	int timeout;
+
+	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_ALL_RESET);
+	for (timeout = 5000; timeout > 0; timeout--) {
+		if ((HREAD4(sc, SDMMC_CTRL) & SDMMC_CTRL_ALL_RESET) == 0)
+			break;
+		delay(100);
+	}
+	if (timeout == 0)
+		printf("%s: reset failed\n", sc->sc_dev.dv_xname);
+
+	/* Enable interrupts, but mask them all. */
+	HWRITE4(sc, SDMMC_INTMASK, 0);
+	HWRITE4(sc, SDMMC_RINTSTS, 0xffffffff);
+	HSET4(sc, SDMMC_CTRL, SDMMC_CTRL_INT_ENABLE);
+
+	dwmmc_bus_width(sc, 1);
+	dwmmc_pio_mode(sc);
+
+	memset(sc->sc_desc, 0, PAGE_SIZE);
+	dwmmc_init_descriptors(sc);
+
+	if (OF_getproplen(sc->sc_node, "non-removable") == -1 &&
+	    OF_getproplen(sc->sc_node, "broken-cd") == -1) {
+		HWRITE4(sc, SDMMC_RINTSTS, SDMMC_RINTSTS_CDT);
+		HSET4(sc, SDMMC_INTMASK, SDMMC_RINTSTS_CDT);
+	}
+
 	return 0;
 }
 
@@ -687,8 +689,11 @@ dwmmc_bus_power(sdmmc_chipset_handle_t sch, uint32_t ocr)
 	if (sc->sc_vdd == 0 && vdd > 0)
 		dwmmc_pwrseq_post(sc->sc_pwrseq);
 
-	if (sc->sc_vdd > 0 && vdd == 0 && sc->sc_vmmc)
-		regulator_disable(sc->sc_vmmc);
+	if (sc->sc_vdd > 0 && vdd == 0) {
+		if (sc->sc_vmmc)
+			regulator_disable(sc->sc_vmmc);
+		dwmmc_host_reset(sc);
+	}
 
 	sc->sc_vdd = vdd;
 	return 0;
