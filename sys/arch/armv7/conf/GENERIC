@@ -21,8 +21,10 @@ option WSDISPLAY_COMPAT_USL		# VT handling
 option WSDISPLAY_COMPAT_RAWKBD		# can get raw scancodes
 option WSDISPLAY_DEFAULTSCREENS=6	# initial number of text consoles
 
+option		CONF_HAVE_APM
 option		CONF_HAVE_GPIO
 option		PCIVERBOSE
+option		SUSPEND
 option		USBVERBOSE
 option		USER_PCICONF	# user-space PCI configuration
 
@@ -32,6 +34,7 @@ config		bsd	swap generic
 mainbus0	at root
 simplebus*	at fdt?
 cpu0		at mainbus?
+apm0		at mainbus?
 
 # Cortex-A9
 cortex0		at mainbus?

@@ -132,6 +132,8 @@ extern struct arm_intr_func arm_intr_func;
 #define	splsched()	splhigh()
 
 void	intr_barrier(void *);
+void	intr_enable_wakeup(void);
+void	intr_disable_wakeup(void);
 
 void arm_init_smask(void); /* XXX */
 extern uint32_t arm_smask[NIPL];

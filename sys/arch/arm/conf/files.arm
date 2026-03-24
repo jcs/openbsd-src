@@ -69,6 +69,10 @@ file	arch/arm/arm/vfp.c			cpu_armv7
 pseudo-device	openprom
 file	arch/arm/arm/openprom.c			openprom needs-flag
 
+device	apm
+attach	apm at mainbus
+file	arch/arm/arm/apm.c			apm needs-flag
+
 # arm library functions
 file	arch/arm/arm/bcopy_page.S
 

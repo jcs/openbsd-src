@@ -119,4 +119,9 @@ struct apm_ctl {
 #define	APM_IOC_SUSPEND_REQ	_IO('A', 8)	/* request suspend */
 #define	APM_IOC_HIBERNATE	_IO('A', 9)	/* put system into hibernate */
 
+#ifdef _KERNEL
+void apm_setinfohook(int (*)(struct apm_power_info *));
+int apm_record_event(u_int);
+#endif
+
 #endif /* _ARM_APMVAR_H_ */
