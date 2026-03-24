@@ -906,6 +906,16 @@ intr_barrier(void *ih)
 	sched_barrier(NULL);
 }
 
+void
+intr_enable_wakeup(void)
+{
+}
+
+void
+intr_disable_wakeup(void)
+{
+}
+
 /*
  * IPI implementation
  */

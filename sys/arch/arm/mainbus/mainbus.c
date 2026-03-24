@@ -133,6 +133,8 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 		    sc->sc_rangeslen);
 	}
 
+	mainbus_legacy_found(self, "apm");
+
 	/* Scan the whole tree. */
 	sc->sc_early = 1;
 	for (node = OF_child(sc->sc_node); node != 0; node = OF_peer(node))
