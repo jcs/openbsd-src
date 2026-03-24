@@ -975,3 +975,21 @@ cpu_opp_set_cooling_level(void *cookie, uint32_t *cells, uint32_t level)
 		task_add(systq, &cpu_opp_task);
 	}
 }
+
+int cpu_suspended;
+int cpu_wakeups;
+
+#ifdef SUSPEND
+
+void
+cpu_suspend_cycle(void)
+{
+}
+
+int
+cpu_suspend_primary(void)
+{
+	return 0;
+}
+
+#endif
