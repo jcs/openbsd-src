@@ -1,10 +1,10 @@
 #	$OpenBSD: Makefile,v 1.20 2021/03/29 20:10:30 kn Exp $
 
 
-.if ((${MACHINE} == "arm64") || (${MACHINE} == "amd64") || \
-    (${MACHINE} == "i386") || (${MACHINE} == "loongson") || \
-    (${MACHINE} == "macppc") || (${MACHINE} == "sparc64")) || \
-    (${MACHINE} == "powerpc64")
+.if ((${MACHINE} == "arm64") || (${MACHINE} == "armv7") || \
+    (${MACHINE} == "amd64") || (${MACHINE} == "i386") || \
+    (${MACHINE} == "loongson") || (${MACHINE} == "macppc") || \
+    (${MACHINE} == "sparc64")) || (${MACHINE} == "powerpc64")
 
 SRCS=	apm.c apmsubr.c
 

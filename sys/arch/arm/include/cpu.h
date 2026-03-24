@@ -310,6 +310,11 @@ void swi_handler	(trapframe_t *);
 /* machine_machdep.c */
 void board_startup(void);
 
+static inline void
+intr_enable(void)
+{
+}
+
 static inline u_long
 intr_disable(void)
 {
@@ -326,6 +331,8 @@ intr_restore(u_long cpsr)
 {
 	__asm volatile ("msr cpsr_c, %0" :: "r"(cpsr));
 }
+
+int	cpu_suspend_primary(void);
 
 #endif /* _KERNEL */
 
