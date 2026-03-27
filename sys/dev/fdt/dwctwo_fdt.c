@@ -50,7 +50,11 @@ void	dwctwo_fdt_attach(struct device *, struct device *, void *);
 void	dwctwo_fdt_deferred(void *);
 
 const struct cfattach dwctwo_fdt_ca = {
-	sizeof(struct dwctwo_fdt_softc), dwctwo_fdt_match, dwctwo_fdt_attach,
+	sizeof(struct dwctwo_fdt_softc),
+	dwctwo_fdt_match,
+	dwctwo_fdt_attach,
+	NULL,
+	dwc2_activate
 };
 
 struct cfdriver dwctwo_cd = {

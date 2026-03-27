@@ -1303,6 +1303,21 @@ dwc2_interrupt(struct dwc2_softc *sc)
 }
 
 int
+dwc2_activate(struct device *self, int act)
+{
+	struct dwc2_softc *sc = (struct dwc2_softc *)self;
+
+	switch (act) {
+	case DVACT_RESUME:
+		sc->sc_addr = 0;
+		sc->sc_conf = 0;
+		break;
+	}
+
+	return config_activate_children(self, act);
+}
+
+int
 dwc2_detach(struct dwc2_softc *sc, int flags)
 {
 	int rv = 0;
