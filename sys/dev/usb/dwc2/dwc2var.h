@@ -107,6 +107,7 @@ typedef struct dwc2_softc {
 } dwc2_softc_t;
 
 int		dwc2_init(struct dwc2_softc *);
+int		dwc2_activate(struct device *, int);
 int		dwc2_intr(void *);
 int		dwc2_detach(dwc2_softc_t *, int);
 
