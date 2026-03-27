@@ -26,6 +26,7 @@
 #include <sys/device.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
+#include <sys/kthread.h>
 #include <sys/pool.h>
 
 #if defined(__HAVE_FDT)
@@ -114,6 +115,7 @@ struct bwfm_sdio_softc {
 
 int		 bwfm_sdio_match(struct device *, void *, void *);
 void		 bwfm_sdio_attach(struct device *, struct device *, void *);
+void		 bwfm_sdio_attachhook(void *);
 int		 bwfm_sdio_preinit(struct bwfm_softc *);
 int		 bwfm_sdio_detach(struct device *, int);
 
@@ -337,11 +339,23 @@ bwfm_sdio_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_sc.sc_bus_ops = &bwfm_sdio_bus_ops;
 	sc->sc_sc.sc_proto_ops = &bwfm_proto_bcdc_ops;
 	bwfm_attach(&sc->sc_sc);
-	config_mountroot(self, bwfm_attachhook);
+	if (rootvp == NULL) /* can't use cold */
+		config_mountroot(self, bwfm_attachhook);
+	else
+		kthread_create(bwfm_sdio_attachhook, sc, NULL, DEVNAME(sc));
 	return;
 
 err:
 	free(sc->sc_sf, M_DEVBUF, 0);
+}
+
+void
+bwfm_sdio_attachhook(void *arg)
+{
+	struct bwfm_sdio_softc *sc = arg;
+
+	bwfm_attachhook(&sc->sc_sc.sc_dev);
+	kthread_exit(0);
 }
 
 int
@@ -757,6 +771,17 @@ bwfm_sdio_detach(struct device *self, int flags)
 	struct bwfm_sdio_softc *sc = (struct bwfm_sdio_softc *)self;
 
 	bwfm_detach(&sc->sc_sc, flags);
+	task_del(systq, &sc->sc_task);
+
+	if (sc->sc_ih != NULL) {
+#if defined(__HAVE_FDT)
+		if (sc->sc_oob)
+			fdt_intr_disestablish(sc->sc_ih);
+		else
+#endif
+			sdmmc_intr_disestablish(sc->sc_ih);
+		sc->sc_ih = NULL;
+	}
 
 	dma_free(sc->sc_bounce_buf, sc->sc_bounce_size);
 	free(sc->sc_sf, M_DEVBUF, 0);
