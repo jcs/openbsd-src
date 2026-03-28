@@ -963,7 +963,7 @@ dwc2_device_intr_close(struct usbd_pipe *pipe)
 STATIC void
 dwc2_device_intr_done(struct usbd_xfer *xfer)
 {
-	if (xfer->pipe->repeat)
+	if (xfer->pipe->repeat && xfer->status == USBD_NORMAL_COMPLETION)
 		dwc2_device_start(xfer);
 }
 
