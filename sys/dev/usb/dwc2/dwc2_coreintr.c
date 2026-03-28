@@ -497,8 +497,10 @@ STATIC void dwc2_handle_disconnect_intr(struct dwc2_hsotg *hsotg)
 		dwc2_is_host_mode(hsotg) ? "Host" : "Device",
 		dwc2_op_state_str(hsotg));
 
-	if (hsotg->op_state == OTG_STATE_A_HOST)
-		dwc2_hcd_disconnect(hsotg, false);
+	if (hsotg->op_state == OTG_STATE_A_HOST) {
+		hsotg->flags.b.port_connect_status_change = 1;
+		dwc2_root_intr(hsotg->hsotg_sc);
+	}
 }
 
 /*
