@@ -49,6 +49,7 @@ struct device;
 #define	I2C_F_LAST		0x02	/* last byte of read */
 #define	I2C_F_STOP		0x04	/* send stop after byte */
 #define	I2C_F_POLL		0x08	/* poll, don't sleep */
+#define	I2C_F_TRYLOCK		0x10	/* non-blocking acquire_bus */
 
 /*
  * This structure provides the interface between the i2c framework
