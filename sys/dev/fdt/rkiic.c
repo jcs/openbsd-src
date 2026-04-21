@@ -79,6 +79,7 @@ struct rkiic_softc {
 	struct device		sc_dev;
 	bus_space_tag_t		sc_iot;
 	bus_space_handle_t	sc_ioh;
+	struct rwlock		sc_i2c_lock;
 
 	int			sc_node;
 	struct i2c_controller	sc_ic;
@@ -139,6 +140,8 @@ rkiic_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
+	rw_init(&sc->sc_i2c_lock, "iiclk");
+
 	printf("\n");
 
 	pinctrl_byname(sc->sc_node, "default");
@@ -182,6 +185,21 @@ int
 rkiic_acquire_bus(void *cookie, int flags)
 {
 	struct rkiic_softc *sc = cookie;
+	int error;
+
+	if (!cold) {
+		if (flags & I2C_F_TRYLOCK) {
+			if (rw_status(&sc->sc_i2c_lock) == RW_WRITE)
+				return EBUSY;
+			error = rw_enter(&sc->sc_i2c_lock,
+			    RW_WRITE | RW_NOSLEEP);
+		} else
+			error = rw_enter(&sc->sc_i2c_lock,
+			    RW_WRITE | RW_INTR);
+
+		if (error)
+			return error;
+	}
 
 	HSET4(sc, RKI2C_CON, RKI2C_CON_I2C_EN);
 	return 0;
@@ -191,8 +209,11 @@ void
 rkiic_release_bus(void *cookie, int flags)
 {
 	struct rkiic_softc *sc = cookie;
-	
+
 	HCLR4(sc, RKI2C_CON, RKI2C_CON_I2C_EN);
+
+	if (!cold)
+		rw_exit_write(&sc->sc_i2c_lock);
 }
 
 int
