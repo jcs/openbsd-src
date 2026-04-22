@@ -204,8 +204,8 @@ rkgpio*		at fdt?
 rkiic*		at fdt?
 iic*		at rkiic?
 dwdog*		at fdt?
-
 gpiokeys*	at fdt?
+bqcharger*	at iic?
 
 # Xilinx Zynq-7000
 cad*		at fdt?			# Ethernet controller
