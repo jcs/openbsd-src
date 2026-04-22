@@ -303,3 +303,8 @@ file	dev/i2c/tcmfd.c				tcmfd
 device	bqbat
 attach	bqbat at i2c
 file	dev/i2c/bq27xxx.c			bqbat
+
+# BQ256XX Battery Charger
+device	bqcharger
+attach	bqcharger at i2c
+file	dev/i2c/bq256xx.c			bqcharger
