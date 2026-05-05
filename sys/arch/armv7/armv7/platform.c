@@ -16,6 +16,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/systm.h>
 
 #include <machine/bus.h>
 
@@ -65,8 +66,10 @@ platform_init(void)
 	if (platform == NULL)
 		return;
 
-	cpuresetfn = platform_watchdog_reset;
-	powerdownfn = platform_powerdown;
+	if (platform->watchdog_reset)
+		cpuresetfn = platform_watchdog_reset;
+	if (platform->powerdown)
+		powerdownfn = platform_powerdown;
 	if (platform->board_init)
 		platform->board_init();
 }
@@ -126,4 +129,14 @@ platform_board_devs(void)
 		return (platform->devs);
 	else
 		return (no_devs);
+}
+
+int
+platform_cpu_suspend(void)
+{
+	if (platform && platform->cpu_suspend) {
+		platform->cpu_suspend();
+		return 0;
+	}
+	return EOPNOTSUPP;
 }

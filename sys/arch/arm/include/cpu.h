@@ -330,6 +330,7 @@ intr_restore(u_long cpsr)
 }
 
 int	cpu_suspend_primary(void);
+int	platform_cpu_suspend(void);
 
 #endif /* _KERNEL */
 

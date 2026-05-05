@@ -989,7 +989,7 @@ cpu_suspend_cycle(void)
 int
 cpu_suspend_primary(void)
 {
-	return 0;
+	return platform_cpu_suspend();
 }
 
 #endif

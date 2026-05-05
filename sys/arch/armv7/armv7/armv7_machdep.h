@@ -24,6 +24,7 @@ void platform_watchdog_reset(void);
 void platform_init_cons(void);
 void platform_init_mainbus(struct device *);
 struct board_dev *platform_board_devs(void);
+int platform_cpu_suspend(void);
 extern void (*cpuresetfn)(void);
 extern void (*powerdownfn)(void);
 
@@ -36,6 +37,7 @@ struct armv7_platform {
 	void (*watchdog_reset)(void);
 	void (*powerdown)(void);
 	void (*init_mainbus)(struct device *);
+	void (*cpu_suspend)(void);
 };
 
 #endif /* __PLATFORMVAR_H__ */
