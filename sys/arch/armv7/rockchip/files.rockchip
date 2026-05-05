@@ -1,0 +1,6 @@
+#	$OpenBSD$
+
+file	arch/armv7/rockchip/rockchip_machdep.c
+
+# RK3128 suspend
+file	arch/armv7/rockchip/rk3128_suspend.c		suspend
