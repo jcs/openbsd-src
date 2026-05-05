@@ -39,11 +39,13 @@ extern void	pluart_init_cons(void);
 extern void	simplefb_init_cons(bus_space_tag_t);
 
 struct armv7_platform *omap_platform_match(void);
+struct armv7_platform *rockchip_platform_match(void);
 
 struct armv7_platform * (*plat_match[])(void) = {
 #if NOMAP > 0
 	omap_platform_match,
 #endif
+	rockchip_platform_match,
 };
 
 struct board_dev no_devs[] = {
