@@ -193,6 +193,15 @@ void		 ampintc_intr_disable(int);
 void		 ampintc_intr_config(int, int);
 void		 ampintc_route(int, int, struct cpu_info *);
 void		 ampintc_route_irq(void *, int, struct cpu_info *);
+#ifdef SUSPEND
+void		 ampintc_enable_wakeup(void);
+void		 ampintc_disable_wakeup(void);
+void		 ampintc_intr_set_wakeup(void *);
+int		 ampintc_intr_pending(void);
+int		 ampintc_get_hpir(void);
+void		 ampintc_set_wakeup_pmr(void);
+void		 ampintc_restore_pmr(void);
+#endif
 
 int		 ampintc_ipi_combined(void *);
 int		 ampintc_ipi_nop(void *);
@@ -305,6 +314,11 @@ ampintc_attach(struct device *parent, struct device *self, void *aux)
 	    ampintc_setipl, ampintc_intr_establish_ext,
 	    ampintc_intr_disestablish, ampintc_intr_string, ampintc_irq_handler);
 
+#ifdef SUSPEND
+	arm_intr_func.enable_wakeup = ampintc_enable_wakeup;
+	arm_intr_func.disable_wakeup = ampintc_disable_wakeup;
+#endif
+
 #ifdef MULTIPROCESSOR
 	/* setup IPI interrupts */
 
@@ -376,6 +390,9 @@ ampintc_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_ic.ic_disestablish = ampintc_intr_disestablish;
 	sc->sc_ic.ic_route = ampintc_route_irq;
 	sc->sc_ic.ic_cpu_enable = ampintc_cpuinit;
+#ifdef SUSPEND
+	sc->sc_ic.ic_set_wakeup = ampintc_intr_set_wakeup;
+#endif
 	arm_intr_register_fdt(&sc->sc_ic);
 
 	/* attach GICv2M frame controller */
@@ -971,5 +988,138 @@ ampintc_send_ipi(struct cpu_info *ci, int id)
 	sendmask |= sc->sc_ipi_num[id];
 
 	bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, ICD_SGIR, sendmask);
+}
+#endif
+
+#ifdef SUSPEND
+/*
+ * Interfaces needed by platform drivers for suspend/resume.
+ */
+
+/*
+ * Disable all PPIs and SPIs, clear pending, then re-enable only IRQs
+ * that are not still asserted (level-triggered sources from suspended
+ * devices that would cause immediate WFI wakeup).
+ */
+static void
+ampintc_clear_pending(void)
+{
+	struct ampintc_softc *sc = ampintc;
+	int i, ngroups;
+	uint32_t enabled, pending, mask;
+
+	ngroups = (sc->sc_nintr + 31) / 32;
+
+	for (i = 0; i < ngroups; i++) {
+		/* bits 0-15 of group 0 are SGIs, leave alone */
+		mask = (i == 0) ? 0xffff0000 : 0xffffffff;
+
+		enabled = bus_space_read_4(sc->sc_iot, sc->sc_d_ioh,
+		    ICD_ISERn(i * 32));
+		bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, ICD_ICERn(i * 32),
+		    enabled & mask);
+		bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, ICD_ICPRn(i * 32),
+		    mask);
+		pending = bus_space_read_4(sc->sc_iot, sc->sc_d_ioh,
+		    ICD_ISPRn(i * 32));
+		bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, ICD_ISERn(i * 32),
+		    enabled & mask & ~pending);
+	}
+}
+
+void
+ampintc_enable_wakeup(void)
+{
+	struct ampintc_softc *sc = ampintc;
+	struct intrhand *ih;
+	int irq, wakeup;
+
+	for (irq = 0; irq < sc->sc_nintr; irq++) {
+		if (TAILQ_EMPTY(&sc->sc_handler[irq].iq_list))
+			continue;
+		wakeup = 0;
+		TAILQ_FOREACH(ih, &sc->sc_handler[irq].iq_list, ih_list) {
+			if (ih->ih_flags & IPL_WAKEUP) {
+				wakeup = 1;
+				break;
+			}
+		}
+		if (!wakeup)
+			ampintc_intr_disable(irq);
+	}
+
+	ampintc_clear_pending();
+}
+
+void
+ampintc_disable_wakeup(void)
+{
+	struct ampintc_softc *sc = ampintc;
+	struct cpu_info *ci = curcpu();
+	struct intrhand *ih;
+	int irq, wakeup;
+
+	for (irq = 0; irq < sc->sc_nintr; irq++) {
+		if (TAILQ_EMPTY(&sc->sc_handler[irq].iq_list))
+			continue;
+		wakeup = 0;
+		TAILQ_FOREACH(ih, &sc->sc_handler[irq].iq_list, ih_list) {
+			if (ih->ih_flags & IPL_WAKEUP) {
+				wakeup = 1;
+				break;
+			}
+		}
+		if (!wakeup)
+			ampintc_intr_enable(irq);
+	}
+
+	bus_space_write_4(sc->sc_iot, sc->sc_p_ioh, ICPIPMR,
+	    (IPL_HIGH - ci->ci_cpl) << ICMIPMR_SH);
+}
+
+void
+ampintc_intr_set_wakeup(void *cookie)
+{
+	struct intrhand *ih = cookie;
+
+	ih->ih_flags |= IPL_WAKEUP;
+}
+
+int
+ampintc_intr_pending(void)
+{
+	struct ampintc_softc *sc = ampintc;
+	uint32_t hpir;
+
+	hpir = bus_space_read_4(sc->sc_iot, sc->sc_p_ioh, ICPHPIR);
+	return (hpir & ICPIAR_IRQ_M) != ICPIAR_NO_PENDING_IRQ;
+}
+
+int
+ampintc_get_hpir(void)
+{
+	struct ampintc_softc *sc = ampintc;
+
+	return bus_space_read_4(sc->sc_iot, sc->sc_p_ioh, ICPHPIR) &
+	    ICPIAR_IRQ_M;
+}
+
+void
+ampintc_set_wakeup_pmr(void)
+{
+	struct ampintc_softc *sc = ampintc;
+
+	ampintc_clear_pending();
+	bus_space_write_4(sc->sc_iot, sc->sc_p_ioh, ICPIPMR, 0xff);
+}
+
+void
+ampintc_restore_pmr(void)
+{
+	struct ampintc_softc *sc = ampintc;
+	struct cpu_info *ci = curcpu();
+
+	bus_space_write_4(sc->sc_iot, sc->sc_p_ioh, ICPIPMR,
+	    (IPL_HIGH - ci->ci_cpl) << ICMIPMR_SH);
 }
 #endif
