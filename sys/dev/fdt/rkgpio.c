@@ -84,6 +84,7 @@ struct intrhand {
 	int (*ih_func)(void *);		/* handler */
 	void *ih_arg;			/* arg for handler */
 	int ih_ipl;			/* IPL_* */
+	int ih_flags;
 	int ih_irq;			/* IRQ number */
 	int ih_level;			/* GPIO level */
 	struct evcount	ih_count;
@@ -409,6 +410,7 @@ rkgpio_intr_establish(void *cookie, int *cells, int ipl,
 	ih->ih_func = func;
 	ih->ih_arg = arg;
 	ih->ih_ipl = ipl & IPL_IRQMASK;
+	ih->ih_flags = ipl & IPL_FLAGMASK;
 	ih->ih_irq = irqno;
 	ih->ih_name = name;
 	ih->ih_level = level;
@@ -540,6 +542,7 @@ rkgpio_recalc_ipl(struct rkgpio_softc *sc)
 	struct intrhand	*ih;
 	int max = IPL_NONE;
 	int min = IPL_HIGH;
+	int wakeup = 0;
 	int pin;
 
 	for (pin = 0; pin < GPIO_NUM_PINS; pin++) {
@@ -552,6 +555,9 @@ rkgpio_recalc_ipl(struct rkgpio_softc *sc)
 
 		if (ih->ih_ipl < min)
 			min = ih->ih_ipl;
+
+		if (ih->ih_flags & IPL_WAKEUP)
+			wakeup = IPL_WAKEUP;
 	}
 
 	if (max == IPL_NONE)
@@ -565,8 +571,12 @@ rkgpio_recalc_ipl(struct rkgpio_softc *sc)
 
 		if (sc->sc_ipl != IPL_NONE)
 			sc->sc_ih = fdt_intr_establish(sc->sc_node,
-			    sc->sc_ipl, rkgpio_intr, sc, sc->sc_dev.dv_xname);
+			    sc->sc_ipl, rkgpio_intr, sc,
+			    sc->sc_dev.dv_xname);
 	}
+
+	if (wakeup && sc->sc_ih != NULL)
+		intr_set_wakeup(sc->sc_ih);
 }
 
 void
