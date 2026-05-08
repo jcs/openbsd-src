@@ -55,6 +55,8 @@ struct arm_intr_func arm_intr_func = {
 	arm_dflt_spllower,
 	arm_dflt_splx,
 	arm_dflt_setipl,
+	NULL,
+	NULL,
 	arm_dflt_intr_establish,
 	arm_dflt_intr_disestablish,
 	arm_dflt_intr_string
@@ -909,11 +911,15 @@ intr_barrier(void *ih)
 void
 intr_enable_wakeup(void)
 {
+	if (arm_intr_func.enable_wakeup)
+		arm_intr_func.enable_wakeup();
 }
 
 void
 intr_disable_wakeup(void)
 {
+	if (arm_intr_func.disable_wakeup)
+		arm_intr_func.disable_wakeup();
 }
 
 /*
