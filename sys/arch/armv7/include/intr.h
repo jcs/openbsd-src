@@ -103,6 +103,8 @@ struct arm_intr_func {
 	int (*lower)(int);
 	void (*x)(int);
 	void (*setipl)(int);
+	void (*enable_wakeup)(void);
+	void (*disable_wakeup)(void);
 	void *(*intr_establish)(int irqno, int level, struct cpu_info *,
 	    int (*func)(void *), void *cookie, char *name);
 	void (*intr_disestablish)(void *cookie);
