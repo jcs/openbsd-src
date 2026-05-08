@@ -787,7 +787,7 @@ dwmmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, int timing)
 		return ETIMEDOUT;
 	}
 
-	delay(1000000);
+	delay(10000);
 
 	return 0;
 }
