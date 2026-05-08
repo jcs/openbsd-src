@@ -626,6 +626,16 @@ arm_intr_cpu_enable(void)
 			ic->ic_cpu_enable();
 }
 
+void
+intr_set_wakeup(void *cookie)
+{
+	struct arm_intr_handle *ih = cookie;
+	struct interrupt_controller *ic = ih->ih_ic;
+
+	if (ic->ic_set_wakeup)
+		ic->ic_set_wakeup(ih->ih_ih);
+}
+
 int
 arm_dflt_splraise(int newcpl)
 {

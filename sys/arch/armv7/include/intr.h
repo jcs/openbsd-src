@@ -63,6 +63,7 @@
 #define	IPL_IRQMASK	0xf	/* priority only */
 #define	IPL_FLAGMASK	0xf00	/* flags only*/
 #define	IPL_MPSAFE	0x100	/* 'mpsafe' interrupt, no kernel lock */
+#define	IPL_WAKEUP	0x200	/* 'wakeup' interrupt */
 
 /* Interrupt sharing types. */
 #define	IST_NONE	0	/* none */
@@ -136,6 +137,7 @@ extern struct arm_intr_func arm_intr_func;
 void	intr_barrier(void *);
 void	intr_enable_wakeup(void);
 void	intr_disable_wakeup(void);
+void	intr_set_wakeup(void *);
 
 void arm_init_smask(void); /* XXX */
 extern uint32_t arm_smask[NIPL];
@@ -165,6 +167,7 @@ struct interrupt_controller {
 	void	 (*ic_route)(void *, int, struct cpu_info *);
 	void	 (*ic_cpu_enable)(void);
 	void	 (*ic_barrier)(void *);
+	void	 (*ic_set_wakeup)(void *);
 
 	LIST_ENTRY(interrupt_controller) ic_list;
 	uint32_t ic_phandle;
