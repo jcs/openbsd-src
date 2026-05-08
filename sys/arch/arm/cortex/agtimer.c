@@ -62,6 +62,7 @@ struct agtimer_softc {
 
 int		agtimer_match(struct device *, void *, void *);
 void		agtimer_attach(struct device *, struct device *, void *);
+int		agtimer_activate(struct device *, int);
 uint64_t	agtimer_readcnt64(void);
 int		agtimer_intr(void *);
 void		agtimer_cpu_initclocks(void);
@@ -71,7 +72,8 @@ void		agtimer_set_clockrate(int32_t new_frequency);
 void		agtimer_startclock(void);
 
 const struct cfattach agtimer_ca = {
-	sizeof (struct agtimer_softc), agtimer_match, agtimer_attach
+	sizeof (struct agtimer_softc), agtimer_match, agtimer_attach,
+	NULL, agtimer_activate
 };
 
 struct cfdriver agtimer_cd = {
@@ -293,6 +295,29 @@ agtimer_startclock(void)
 	agtimer_set_ctrl(reg);
 
 	clockintr_trigger();
+}
+
+int
+agtimer_activate(struct device *self, int act)
+{
+	uint32_t reg;
+
+	switch (act) {
+	case DVACT_SUSPEND:
+		reg = agtimer_get_ctrl();
+		reg |= GTIMER_CNTP_CTL_IMASK;
+		reg &= ~GTIMER_CNTP_CTL_ENABLE;
+		agtimer_set_ctrl(reg);
+		break;
+	case DVACT_RESUME:
+		reg = agtimer_get_ctrl();
+		reg &= ~GTIMER_CNTP_CTL_IMASK;
+		reg |= GTIMER_CNTP_CTL_ENABLE;
+		agtimer_set_tval(INT32_MAX);
+		agtimer_set_ctrl(reg);
+		break;
+	}
+	return 0;
 }
 
 void
