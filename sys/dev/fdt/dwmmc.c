@@ -219,14 +219,20 @@ struct dwmmc_softc {
 	uint32_t		sc_pwrseq;
 	uint32_t		sc_vdd;
 
+	int			sc_bus_width;
+	int			sc_bus_freq;
+	int			sc_bus_timing;
+
 	struct device		*sc_sdmmc;
 };
 
 int	dwmmc_match(struct device *, void *, void *);
 void	dwmmc_attach(struct device *, struct device *, void *);
+int	dwmmc_activate(struct device *, int);
 
 const struct cfattach dwmmc_ca = {
-	sizeof(struct dwmmc_softc), dwmmc_match, dwmmc_attach
+	sizeof(struct dwmmc_softc), dwmmc_match, dwmmc_attach,
+	NULL, dwmmc_activate
 };
 
 struct cfdriver dwmmc_cd = {
@@ -436,6 +442,33 @@ dwmmc_attach(struct device *parent, struct device *self, void *aux)
 
 unmap:
 	bus_space_unmap(sc->sc_iot, sc->sc_ioh, sc->sc_size);
+}
+
+int
+dwmmc_activate(struct device *self, int act)
+{
+	struct dwmmc_softc *sc = (struct dwmmc_softc *)self;
+	int bus_width, bus_freq, bus_timing;
+
+	switch (act) {
+	case DVACT_RESUME:
+		/* dwmmc_host_reset will clobber these */
+		bus_width = sc->sc_bus_width;
+		bus_freq = sc->sc_bus_freq;
+		bus_timing = sc->sc_bus_timing;
+
+		clock_enable_all(sc->sc_node);
+		reset_deassert_all(sc->sc_node);
+		dwmmc_host_reset(sc);
+
+		if (bus_width)
+			dwmmc_bus_width(sc, bus_width);
+		if (bus_freq)
+			dwmmc_bus_clock(sc, bus_freq, bus_timing);
+		break;
+	}
+
+	return config_activate_children(self, act);
 }
 
 int
@@ -706,6 +739,9 @@ dwmmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, int timing)
 	int div = 0, timeout;
 	uint32_t clkena;
 
+	sc->sc_bus_freq = freq;
+	sc->sc_bus_timing = timing;
+
 	HWRITE4(sc, SDMMC_CLKENA, 0);
 	HWRITE4(sc, SDMMC_CLKSRC, 0);
 
@@ -760,7 +796,9 @@ int
 dwmmc_bus_width(sdmmc_chipset_handle_t sch, int width)
 {
 	struct dwmmc_softc *sc = sch;
-	
+
+	sc->sc_bus_width = width;
+
 	switch (width) {
 	case 1:
 		HCLR4(sc, SDMMC_CTYPE, SDMMC_CTYPE_8BIT|SDMMC_CTYPE_4BIT);
