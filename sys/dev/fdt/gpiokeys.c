@@ -146,6 +146,9 @@ gpiokeys_attach(struct device *parent, struct device *self, void *aux)
 		OF_getpropintarray(node, "gpios", key->key_pin, gpios_len);
 		gpio_controller_config_pin(key->key_pin, GPIO_CONFIG_INPUT);
 
+		if (OF_getpropbool(node, "wakeup-source"))
+			key->key_wakeup = 1;
+
 		switch (key->key_input_type) {
 		case GPIOKEYS_EV_SW:
 			switch (key->key_code) {
