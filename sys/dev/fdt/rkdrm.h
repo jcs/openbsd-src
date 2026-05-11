@@ -77,6 +77,12 @@ struct rkdrm_softc {
 	int			primary;
 
 	struct drm_fb_helper	helper;
+
+	int	(*sc_orig_putchar)(void *, int, int, u_int, uint32_t);
+	int	(*sc_orig_copyrows)(void *, int, int, int);
+	int	(*sc_orig_eraserows)(void *, int, int, uint32_t);
+	int	(*sc_orig_copycols)(void *, int, int, int, int);
+	int	(*sc_orig_erasecols)(void *, int, int, int, uint32_t);
 };
 
 struct rkdrm_framebuffer {
