@@ -34,6 +34,8 @@
 #include <machine/bus.h>
 #include <machine/fdt.h>
 
+#include <machine/cpufunc.h>
+
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_misc.h>
 
@@ -54,6 +56,11 @@ void	rkdrm_attachhook(struct device *);
 int	rkdrm_unload(struct drm_device *);
 int	rkdrm_fb_probe(struct drm_fb_helper *,
 	    struct drm_fb_helper_surface_size *);
+int	rkdrm_putchar(void *, int, int, u_int, uint32_t);
+int	rkdrm_copyrows(void *, int, int, int);
+int	rkdrm_eraserows(void *, int, int, uint32_t);
+int	rkdrm_copycols(void *, int, int, int, int);
+int	rkdrm_erasecols(void *, int, int, int, uint32_t);
 
 struct drm_driver rkdrm_driver = {
 	.driver_features = DRIVER_ATOMIC | DRIVER_MODESET | DRIVER_GEM,
@@ -358,6 +365,71 @@ rkdrm_enter_ddb(void *v, void *cookie)
 	drm_fb_helper_debug_enter(fb_helper->info);
 }
 
+int
+rkdrm_putchar(void *cookie, int row, int col, u_int uc, uint32_t attr)
+{
+	struct rasops_info *ri = cookie;
+	struct rkdrm_softc *sc = ri->ri_hw;
+	int r;
+
+	r = sc->sc_orig_putchar(cookie, row, col, uc, attr);
+	cpu_dcache_wb_range((vaddr_t)ri->ri_bits + ri->ri_yorigin +
+	    row * ri->ri_yscale, ri->ri_yscale);
+	return r;
+}
+
+int
+rkdrm_copyrows(void *cookie, int src, int dst, int num)
+{
+	struct rasops_info *ri = cookie;
+	struct rkdrm_softc *sc = ri->ri_hw;
+	int r;
+
+	r = sc->sc_orig_copyrows(cookie, src, dst, num);
+	cpu_dcache_wb_range((vaddr_t)ri->ri_bits + ri->ri_yorigin +
+	    dst * ri->ri_yscale, num * ri->ri_yscale);
+	return r;
+}
+
+int
+rkdrm_eraserows(void *cookie, int row, int num, uint32_t attr)
+{
+	struct rasops_info *ri = cookie;
+	struct rkdrm_softc *sc = ri->ri_hw;
+	int r;
+
+	r = sc->sc_orig_eraserows(cookie, row, num, attr);
+	cpu_dcache_wb_range((vaddr_t)ri->ri_bits + ri->ri_yorigin +
+	    row * ri->ri_yscale, num * ri->ri_yscale);
+	return r;
+}
+
+int
+rkdrm_copycols(void *cookie, int row, int src, int dst, int num)
+{
+	struct rasops_info *ri = cookie;
+	struct rkdrm_softc *sc = ri->ri_hw;
+	int r;
+
+	r = sc->sc_orig_copycols(cookie, row, src, dst, num);
+	cpu_dcache_wb_range((vaddr_t)ri->ri_bits + ri->ri_yorigin +
+	    row * ri->ri_yscale, ri->ri_yscale);
+	return r;
+}
+
+int
+rkdrm_erasecols(void *cookie, int row, int col, int num, uint32_t attr)
+{
+	struct rasops_info *ri = cookie;
+	struct rkdrm_softc *sc = ri->ri_hw;
+	int r;
+
+	r = sc->sc_orig_erasecols(cookie, row, col, num, attr);
+	cpu_dcache_wb_range((vaddr_t)ri->ri_bits + ri->ri_yorigin +
+	    row * ri->ri_yscale, ri->ri_yscale);
+	return r;
+}
+
 void
 rkdrm_attachhook(struct device *dev)
 {
@@ -443,6 +515,17 @@ rkdrm_attachhook(struct device *dev)
 	ri->ri_bpos = 0;
 	rasops_init(ri, 160, 160);
 	ri->ri_hw = sc;
+
+	sc->sc_orig_putchar = ri->ri_putchar;
+	sc->sc_orig_copyrows = ri->ri_copyrows;
+	sc->sc_orig_eraserows = ri->ri_eraserows;
+	sc->sc_orig_copycols = ri->ri_copycols;
+	sc->sc_orig_erasecols = ri->ri_erasecols;
+	ri->ri_putchar = rkdrm_putchar;
+	ri->ri_copyrows = rkdrm_copyrows;
+	ri->ri_eraserows = rkdrm_eraserows;
+	ri->ri_copycols = rkdrm_copycols;
+	ri->ri_erasecols = rkdrm_erasecols;
 
 	rkdrm_stdscreen.capabilities = ri->ri_caps;
 	rkdrm_stdscreen.nrows = ri->ri_rows;

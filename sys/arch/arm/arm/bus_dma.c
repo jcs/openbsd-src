@@ -816,7 +816,7 @@ _bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *segs, int nsegs,
 			segs[curseg]._ds_vaddr = va;
 			pmap_kenter_cache(va, addr,
 			    PROT_READ | PROT_WRITE,
-			    !(flags & BUS_DMA_COHERENT));
+			    !(flags & (BUS_DMA_COHERENT | BUS_DMA_NOCACHE)));
 
 #ifdef DEBUG_DMA
 			ptep = vtopte(va);
@@ -859,7 +859,10 @@ paddr_t
 _bus_dmamem_mmap(bus_dma_tag_t t, bus_dma_segment_t *segs, int nsegs,
     off_t off, int prot, int flags)
 {
-	int i;
+	int i, pmapflags = 0;
+
+	if (flags & BUS_DMA_NOCACHE)
+		pmapflags |= PMAP_NOCACHE;
 
 	for (i = 0; i < nsegs; i++) {
 #ifdef DIAGNOSTIC
@@ -876,7 +879,7 @@ _bus_dmamem_mmap(bus_dma_tag_t t, bus_dma_segment_t *segs, int nsegs,
 			continue;
 		}
 
-		return (segs[i].ds_addr + off);
+		return ((segs[i].ds_addr + off) | pmapflags);
 	}
 
 	/* Page not found. */
