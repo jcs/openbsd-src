@@ -46,6 +46,12 @@
 
 #include <dev/fdt/rkdrm.h>
 
+#include "simplefb.h"
+
+#if NSIMPLEFB > 0
+extern void simplefb_detach(void);
+#endif
+
 #define	RK_DRM_MAX_WIDTH	3840
 #define	RK_DRM_MAX_HEIGHT	2160
 
@@ -116,6 +122,10 @@ rkdrm_attach(struct device *parent, struct device *self, void *aux)
 	 */
 	if (OF_is_compatible(stdout_node, "simple-framebuffer"))
 		stdout_node = sc->sc_node;
+
+#if NSIMPLEFB > 0
+	simplefb_detach();
+#endif
 
 	drm_attach_platform(&rkdrm_driver, faa->fa_iot, faa->fa_dmat, self,
 	    &sc->sc_ddev);
