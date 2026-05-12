@@ -68,6 +68,7 @@ struct simplefb_softc {
 	struct wsscreen_descr	sc_wsd;
 	struct wsscreen_list	sc_wsl;
 	struct wsscreen_descr	*sc_scrlist[1];
+	int			sc_console;
 
 	struct simplefb_format	*sc_format;
 	paddr_t			sc_paddr;
@@ -80,8 +81,11 @@ struct rasops_info simplefb_ri;
 struct wsscreen_descr simplefb_wsd = { "std" };
 struct wsdisplay_charcell simplefb_bs[SIMPLEFB_WIDTH * SIMPLEFB_HEIGHT];
 
+int	simplefb_detached;
+
 int	simplefb_match(struct device *, void *, void *);
 void	simplefb_attach(struct device *, struct device *, void *);
+void	simplefb_attachhook(struct device *);
 
 const struct cfattach simplefb_ca = {
 	sizeof(struct simplefb_softc), simplefb_match, simplefb_attach
@@ -134,7 +138,6 @@ simplefb_attach(struct device *parent, struct device *self, void *aux)
 	struct simplefb_softc *sc = (struct simplefb_softc *)self;
 	struct fdt_attach_args *faa = aux;
 	struct rasops_info *ri = &sc->sc_ri;
-	struct wsemuldisplaydev_attach_args waa;
 	const char *format;
 	int console = 0;
 	uint32_t defattr;
@@ -182,6 +185,7 @@ simplefb_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_scrlist[0] = &sc->sc_wsd;
 	sc->sc_wsl.nscreens = 1;
 	sc->sc_wsl.screens = (const struct wsscreen_descr **)sc->sc_scrlist;
+	sc->sc_console = console;
 
 	if (console) {
 		ri->ri_ops.pack_attr(ri->ri_active, 0, 0, 0, &defattr);
@@ -189,14 +193,33 @@ simplefb_attach(struct device *parent, struct device *self, void *aux)
 		    simplefb_ri.ri_ccol, simplefb_ri.ri_crow, defattr);
 	}
 
+	config_mountroot(self, simplefb_attachhook);
+}
+
+void
+simplefb_attachhook(struct device *self)
+{
+	struct simplefb_softc *sc = (struct simplefb_softc *)self;
+	struct rasops_info *ri = &sc->sc_ri;
+	struct wsemuldisplaydev_attach_args waa;
+
+	if (simplefb_detached)
+		return;
+
 	memset(&waa, 0, sizeof(waa));
 	waa.scrdata = &sc->sc_wsl;
 	waa.accessops = &simplefb_accessops;
 	waa.accesscookie = ri;
-	waa.console = console;
+	waa.console = sc->sc_console;
 
 	config_found_sm(self, &waa, wsemuldisplaydevprint,
 	    wsemuldisplaydevsubmatch);
+}
+
+void
+simplefb_detach(void)
+{
+	simplefb_detached = 1;
 }
 
 const char *
