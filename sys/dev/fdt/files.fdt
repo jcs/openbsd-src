@@ -27,7 +27,7 @@ file	dev/fdt/simpleaudio.c		simpleaudio
 
 device	simplefb: wsemuldisplaydev, rasops15, rasops16, rasops24, rasops32
 attach	simplefb at fdt
-file	dev/fdt/simplefb.c		simplefb
+file	dev/fdt/simplefb.c		simplefb needs-flag
 
 device	simplepanel
 attach	simplepanel at fdt
