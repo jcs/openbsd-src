@@ -43,6 +43,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_modeset_helper.h>
 
 #include <dev/fdt/rkdrm.h>
 
@@ -57,6 +58,7 @@ extern void simplefb_detach(void);
 
 int	rkdrm_match(struct device *, void *, void *);
 void	rkdrm_attach(struct device *, struct device *, void *);
+int	rkdrm_activate(struct device *, int);
 void	rkdrm_attachhook(struct device *);
 
 int	rkdrm_unload(struct drm_device *);
@@ -89,7 +91,8 @@ const struct drm_gem_object_funcs rkdrm_gem_object_funcs = {
 };
 
 const struct cfattach rkdrm_ca = {
-	sizeof (struct rkdrm_softc), rkdrm_match, rkdrm_attach
+	sizeof (struct rkdrm_softc), rkdrm_match, rkdrm_attach, NULL,
+	rkdrm_activate
 };
 
 struct cfdriver rkdrm_cd = {
@@ -130,6 +133,31 @@ rkdrm_attach(struct device *parent, struct device *self, void *aux)
 	drm_attach_platform(&rkdrm_driver, faa->fa_iot, faa->fa_dmat, self,
 	    &sc->sc_ddev);
 	config_mountroot(self, rkdrm_attachhook);
+}
+
+int
+rkdrm_activate(struct device *self, int act)
+{
+	struct rkdrm_softc *sc = (struct rkdrm_softc *)self;
+	struct drm_device *ddev = &sc->sc_ddev;
+	int ret;
+
+	switch (act) {
+	case DVACT_QUIESCE:
+		ret = drm_mode_config_helper_suspend(ddev);
+		if (ret)
+			printf("%s: suspend failed: %d\n", sc->sc_dev.dv_xname,
+			    ret);
+		break;
+	case DVACT_WAKEUP:
+		ret = drm_mode_config_helper_resume(ddev);
+		if (ret)
+			printf("%s: resume failed: %d\n", sc->sc_dev.dv_xname,
+			    ret);
+		break;
+	}
+
+	return 0;
 }
 
 int
