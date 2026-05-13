@@ -353,6 +353,7 @@ rkvop_activate(struct device *self, int act)
 		clock_disable(sc->sc_node, "dclk_vop");
 		clock_disable(sc->sc_node, "hclk_vop");
 		clock_disable(sc->sc_node, "aclk_vop");
+		power_domain_disable(sc->sc_node);
 		break;
 	case DVACT_RESUME:
 		power_domain_enable(sc->sc_node);
