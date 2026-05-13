@@ -29,6 +29,7 @@
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_clock.h>
 #include <dev/ofw/ofw_misc.h>
+#include <dev/ofw/ofw_power.h>
 #include <dev/ofw/ofw_pinctrl.h>
 #include <dev/ofw/fdt.h>
 
@@ -82,15 +83,18 @@ struct rkiic_softc {
 	struct rwlock		sc_i2c_lock;
 
 	int			sc_node;
+	uint32_t		sc_clkdiv;
 	struct i2c_controller	sc_ic;
 	struct i2c_bus		sc_ib;
 };
 
 int rkiic_match(struct device *, void *, void *);
 void rkiic_attach(struct device *, struct device *, void *);
+int rkiic_activate(struct device *, int);
 
 const struct cfattach	rkiic_ca = {
-	sizeof (struct rkiic_softc), rkiic_match, rkiic_attach
+	sizeof (struct rkiic_softc), rkiic_match, rkiic_attach, NULL,
+	rkiic_activate
 };
 
 struct cfdriver rkiic_cd = {
@@ -160,7 +164,8 @@ rkiic_attach(struct device *parent, struct device *self, void *aux)
 	divh = div - divl;
 	clkdivl = (divl - 1) & 0xffff;
 	clkdivh = (divh - 1) & 0xffff;
-	HWRITE4(sc, RKI2C_CLKDIV, clkdivh << 16 | clkdivl);
+	sc->sc_clkdiv = clkdivh << 16 | clkdivl;
+	HWRITE4(sc, RKI2C_CLKDIV, sc->sc_clkdiv);
 
 	sc->sc_ic.ic_cookie = sc;
 	sc->sc_ic.ic_acquire_bus = rkiic_acquire_bus;
@@ -179,6 +184,34 @@ rkiic_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_ib.ib_node = sc->sc_node;
 	sc->sc_ib.ib_ic = &sc->sc_ic;
 	i2c_register(&sc->sc_ib);
+}
+
+int
+rkiic_activate(struct device *self, int act)
+{
+	struct rkiic_softc *sc = (struct rkiic_softc *)self;
+
+	switch (act) {
+	case DVACT_SUSPEND:
+		config_activate_children(self, act);
+		clock_disable(sc->sc_node, "pclk");
+		clock_disable(sc->sc_node, "i2c");
+		power_domain_disable(sc->sc_node);
+		break;
+	case DVACT_RESUME:
+		power_domain_enable(sc->sc_node);
+		clock_set_assigned(sc->sc_node);
+		clock_enable(sc->sc_node, "i2c");
+		clock_enable(sc->sc_node, "pclk");
+		HWRITE4(sc, RKI2C_CLKDIV, sc->sc_clkdiv);
+		config_activate_children(self, act);
+		break;
+	default:
+		config_activate_children(self, act);
+		break;
+	}
+
+	return 0;
 }
 
 int
