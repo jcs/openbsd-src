@@ -123,6 +123,7 @@ struct rklvds_softc {
 	struct regmap		*sc_grf;
 	struct regmap		*sc_phy;
 	uint32_t		sc_phy_phandle;
+	int			sc_phy_node;
 
 	int			sc_data_width;
 	int			sc_format;
@@ -140,6 +141,7 @@ struct rklvds_softc {
 
 int	rklvds_match(struct device *, void *, void *);
 void	rklvds_attach(struct device *, struct device *, void *);
+int	rklvds_activate(struct device *, int);
 
 void	rklvds_phy_power_on(struct rklvds_softc *);
 void	rklvds_phy_power_off(struct rklvds_softc *);
@@ -155,7 +157,8 @@ void	rklvds_connector_destroy(struct drm_connector *);
 int	rklvds_connector_get_modes(struct drm_connector *);
 
 const struct cfattach rklvds_ca = {
-	sizeof(struct rklvds_softc), rklvds_match, rklvds_attach
+	sizeof(struct rklvds_softc), rklvds_match, rklvds_attach, NULL,
+	rklvds_activate
 };
 
 struct cfdriver rklvds_cd = {
@@ -222,6 +225,7 @@ rklvds_attach(struct device *parent, struct device *self, void *aux)
 		printf(": can't find phy node\n");
 		return;
 	}
+	sc->sc_phy_node = phy_node;
 
 	power_domain_enable(phy_node);
 	clock_enable(phy_node, "ref");
@@ -269,6 +273,34 @@ rklvds_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_ports.dp_ep_activate = rklvds_ep_activate;
 	sc->sc_ports.dp_ep_get_cookie = rklvds_ep_get_cookie;
 	device_ports_register(&sc->sc_ports, EP_DRM_ENCODER);
+}
+
+int
+rklvds_activate(struct device *self, int act)
+{
+	struct rklvds_softc *sc = (struct rklvds_softc *)self;
+	int node = sc->sc_phy_node;
+
+	if (node == 0)
+		return 0;
+
+	switch (act) {
+	case DVACT_SUSPEND:
+		clock_disable(node, "pclk_host");
+		clock_disable(node, "pclk");
+		clock_disable(node, "ref");
+		power_domain_disable(node);
+		break;
+	case DVACT_RESUME:
+		power_domain_enable(node);
+		clock_enable(node, "ref");
+		clock_enable(node, "pclk");
+		clock_enable(node, "pclk_host");
+		reset_deassert(node, "apb");
+		break;
+	}
+
+	return 0;
 }
 
 void
@@ -321,6 +353,11 @@ rklvds_phy_power_on(struct rklvds_softc *sc)
 	val = PHY_READ(sc, MIPIPHY_REG1);
 	val &= ~(REG_DA_SYNCRST | REG_DA_LDOPD | REG_DA_PLLPD);
 	PHY_WRITE(sc, MIPIPHY_REG1, val);
+
+	/* enable analog lanes and bandgap */
+	PHY_WRITE(sc, MIPIPHY_REG0,
+	    LANE_EN_CK | LANE_EN_3 | LANE_EN_2 | LANE_EN_1 | LANE_EN_0 |
+	    POWER_WORK_ENABLE);
 
 	/* enable lanes, power PLL (clear PLL_PWR_OFF and BANDGAP_PWR_DOWN) */
 	PHY_WRITE(sc, MIPIPHY_REGEB,
