@@ -285,7 +285,7 @@ read_ttb(void)
   return (pd_entry_t *)(ttb & ~((1<<14)-1));
 }
 
-#define VERBOSE_INIT_ARM
+//#define VERBOSE_INIT_ARM
 
 /*
  * simple memory mapping function used in early bootstrap stage
