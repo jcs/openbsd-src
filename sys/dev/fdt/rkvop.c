@@ -202,6 +202,7 @@ struct rkvop_config {
 
 int rkvop_match(struct device *, void *, void *);
 void rkvop_attach(struct device *, struct device *, void *);
+int rkvop_activate(struct device *, int);
 
 void rkvop_dpms(struct drm_crtc *, int);
 bool rkvop_mode_fixup(struct drm_crtc *, const struct drm_display_mode *,
@@ -240,7 +241,8 @@ struct rkvop_config rk3126_vop_config = {
 };
 
 const struct cfattach rkvop_ca = {
-	sizeof (struct rkvop_softc), rkvop_match, rkvop_attach
+	sizeof (struct rkvop_softc), rkvop_match, rkvop_attach, NULL,
+	rkvop_activate
 };
 
 struct cfdriver rkvop_cd = {
@@ -328,6 +330,45 @@ rkvop_attach(struct device *parent, struct device *self, void *aux)
 		}
 		break;
 	}
+}
+
+int
+rkvop_activate(struct device *self, int act)
+{
+	struct rkvop_softc *sc = (struct rkvop_softc *)self;
+
+	switch (act) {
+	case DVACT_SUSPEND:
+		switch (sc->sc_conf->type) {
+		case VOP_RK3126:
+			HWRITE4(sc, RK3036_SYS_CTRL, RK3036_STANDBY_EN);
+			HWRITE4(sc, RK3036_REG_CFG_DONE, REG_LOAD_EN);
+			break;
+		case VOP_RK3399:
+			HWRITE4(sc, VOP_SYS_CTRL,
+			    HREAD4(sc, VOP_SYS_CTRL) | VOP_STANDBY_EN);
+			HWRITE4(sc, VOP_REG_CFG_DONE, REG_LOAD_EN);
+			break;
+		}
+		clock_disable(sc->sc_node, "dclk_vop");
+		clock_disable(sc->sc_node, "hclk_vop");
+		clock_disable(sc->sc_node, "aclk_vop");
+		break;
+	case DVACT_RESUME:
+		power_domain_enable(sc->sc_node);
+		clock_set_assigned(sc->sc_node);
+		clock_enable(sc->sc_node, "aclk_vop");
+		clock_enable(sc->sc_node, "hclk_vop");
+		clock_enable(sc->sc_node, "dclk_vop");
+		reset_deassert(sc->sc_node, "axi");
+		reset_deassert(sc->sc_node, "ahb");
+		reset_deassert(sc->sc_node, "dclk");
+		if (sc->sc_conf->init != NULL)
+			sc->sc_conf->init(sc);
+		break;
+	}
+
+	return 0;
 }
 
 int
