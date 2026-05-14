@@ -334,6 +334,19 @@ rkgpio_intr(void *cookie)
 		status = HREAD4(sc, GPIO_INT_STATUS);
 	pending = status;
 
+	/*
+	 * Clear edge latches before running handlers so new edges that arrive
+	 * during handling are captured by the now-clear latch rather than
+	 * being wiped by a post-handler EOI.
+	 */
+	if (sc->sc_version == 2) {
+		HWRITE4(sc, GPIO_PORT_EOI_L,
+		    (status & 0xffff) << 16 | (status & 0xffff));
+		HWRITE4(sc, GPIO_PORT_EOI_H,
+		    status >> 16 | (status & 0xffff0000));
+	} else
+		HWRITE4(sc, GPIO_PORTS_EOI, status);
+
 	while (pending) {
 		pin = ffs(pending) - 1;
 
@@ -373,14 +386,6 @@ rkgpio_intr(void *cookie)
 
 		pending &= ~(1 << pin);
 	}
-
-	if (sc->sc_version == 2) {
-		HWRITE4(sc, GPIO_PORT_EOI_L,
-		    (status & 0xffff) << 16 | (status & 0xffff));
-		HWRITE4(sc, GPIO_PORT_EOI_H,
-		    status >> 16 | (status & 0xffff0000));
-	} else
-		HWRITE4(sc, GPIO_PORTS_EOI, status);
 
 	return 1;
 }
