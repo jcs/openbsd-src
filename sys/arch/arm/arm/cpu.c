@@ -617,6 +617,7 @@ struct task cpu_opp_task;
 void	cpu_opp_mountroot(struct device *);
 void	cpu_opp_dotask(void *);
 void	cpu_opp_setperf(int);
+void	cpu_opp_setperf_dummy(int);
 
 uint32_t cpu_opp_get_cooling_level(void *, uint32_t *);
 void	cpu_opp_set_cooling_level(void *, uint32_t *, uint32_t);
@@ -771,9 +772,16 @@ cpu_opp_init(struct cpu_info *ci, uint32_t phandle)
 
 	/*
 	 * Do additional checks at mountroot when all the clocks and
-	 * regulators are available.
+	 * regulators are available, but provide a dummy cpu_setperf for now so
+	 * setperf_auto initializes.
 	 */
+	cpu_setperf = cpu_opp_setperf_dummy;
 	config_mountroot(ci->ci_dev, cpu_opp_mountroot);
+}
+
+void
+cpu_opp_setperf_dummy(int level)
+{
 }
 
 void
@@ -784,7 +792,7 @@ cpu_opp_mountroot(struct device *self)
 	int count = 0;
 	int level = 0;
 
-	if (cpu_setperf)
+	if (cpu_setperf && cpu_setperf != cpu_opp_setperf_dummy)
 		return;
 
 	CPU_INFO_FOREACH(cii, ci) {
