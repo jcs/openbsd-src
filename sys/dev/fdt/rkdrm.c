@@ -502,7 +502,7 @@ rkdrm_attachhook(struct device *dev)
 
 	sfb = to_rkdrm_framebuffer(helper->fb);
 	ri->ri_bits = sfb->obj->vaddr;
-	ri->ri_flg = RI_CENTER | RI_VCONS;
+	ri->ri_flg = RI_CENTER | RI_VCONS | RI_WRONLY;
 	ri->ri_depth = helper->fb->format->depth;
 	ri->ri_width = helper->fb->width;
 	ri->ri_height = helper->fb->height;
