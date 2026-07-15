@@ -295,7 +295,7 @@ amptimer_cpu_initclocks(void)
 
 	/* establish interrupts */
 	/* XXX - irq */
-	ampintc_intr_establish(29, IST_EDGE_RISING, IPL_CLOCK,
+	ampintc_intr_establish(29, IST_EDGE_RISING, IPL_CLOCK|IPL_MPSAFE,
 	    NULL, amptimer_intr, NULL, "tick");
 
 	/* Enable private timer counter and interrupt. */
