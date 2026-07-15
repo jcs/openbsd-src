@@ -46,6 +46,7 @@
 
 #include <machine/conf.h>
 #include <machine/cpu.h>
+#include <machine/intr.h>
 #include <machine/apmvar.h>
 
 #if defined(APMDEBUG)
@@ -383,5 +384,30 @@ suspend_finish(void *v)
 	apm_record_event(APM_NORMAL_RESUME);
 	return SLEEP_RESUME;
 }
+
+#ifdef MULTIPROCESSOR
+
+void
+sleep_mp(void)
+{
+	CPU_INFO_ITERATOR cii;
+	struct cpu_info *ci;
+
+	CPU_INFO_FOREACH(cii, ci) {
+		if (CPU_IS_PRIMARY(ci))
+			continue;
+		arm_send_ipi(ci, ARM_IPI_HALT);
+		while (ci->ci_flags & CPUF_RUNNING)
+			CPU_BUSY_CYCLE();
+	}
+}
+
+void
+resume_mp(void)
+{
+	cpu_boot_secondary_processors();
+}
+
+#endif /* MULTIPROCESSOR */
 
 #endif /* SUSPEND */

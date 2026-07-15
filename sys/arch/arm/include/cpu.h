@@ -254,6 +254,7 @@ void cpu_unidle(struct cpu_info *ci);
 extern struct cpu_info *cpu_info[MAXCPUS];
 
 void cpu_boot_secondary_processors(void);
+void cpu_halt(void);
 #endif /* !MULTIPROCESSOR */
 
 #define CPU_BUSY_CYCLE()	__asm volatile ("" ::: "memory")
