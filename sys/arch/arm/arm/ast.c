@@ -55,8 +55,7 @@
  * Prototypes
  */
 void ast(struct trapframe *);
- 
-int want_resched;
+
 extern int astpending;
 
 /*
@@ -74,6 +73,6 @@ ast(struct trapframe *tf)
 	p->p_addr->u_pcb.pcb_tf = tf;
 	refreshcreds(p);
 	atomic_inc_int(&uvmexp.softs);
-	mi_ast(p, want_resched);
+	mi_ast(p, curcpu()->ci_want_resched);
 	userret(p);
 }

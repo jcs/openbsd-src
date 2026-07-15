@@ -280,9 +280,8 @@ extern int astpending;
  * Preempt the current process if in interrupt from user mode,
  * or after the current trap/syscall if in system mode.
  */
-extern int want_resched;	/* resched() was called */
-#define	need_resched(ci)	(want_resched = 1, setsoftast())
-#define clear_resched(ci) 	want_resched = 0
+#define	need_resched(ci)	((ci)->ci_want_resched = 1, setsoftast())
+#define	clear_resched(ci)	((ci)->ci_want_resched = 0)
 
 /*
  * Give a profiling tick to the current process when the user profiling
