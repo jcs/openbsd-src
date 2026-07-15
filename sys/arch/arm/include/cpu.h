@@ -266,21 +266,25 @@ unsigned int cpu_rnd_messybits(void);
  * Scheduling glue
  */
 
-extern int astpending;
-#define setsoftast() (astpending = 1)
+#define aston(p)	((p)->p_md.md_astpending = 1)
 
 /*
  * Notify the current process (p) that it has a signal pending,
  * process as soon as possible.
  */
 
-#define signotify(p)            setsoftast()
+#define signotify(p)	do { aston(p); cpu_kick((p)->p_cpu); } while (0)
 
 /*
  * Preempt the current process if in interrupt from user mode,
  * or after the current trap/syscall if in system mode.
  */
-#define	need_resched(ci)	((ci)->ci_want_resched = 1, setsoftast())
+#define need_resched(ci) \
+do { \
+	(ci)->ci_want_resched = 1; \
+	if ((ci)->ci_curproc != NULL) \
+		aston((ci)->ci_curproc); \
+} while (0)
 #define	clear_resched(ci)	((ci)->ci_want_resched = 0)
 
 /*
@@ -288,7 +292,7 @@ extern int astpending;
  * buffer pages are invalid.  On the i386, request an ast to send us
  * through trap(), marking the proc as needing a profiling tick.
  */
-#define	need_proftick(p)	setsoftast()
+#define	need_proftick(p)	aston(p)
 
 /*
  * cpu device glue (belongs in cpuvar.h)

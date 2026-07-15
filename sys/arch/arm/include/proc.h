@@ -43,6 +43,7 @@
 struct trapframe;
 
 struct mdproc {
+	int	md_astpending;
 	int	pmc_enabled;		/* bitfield of enabled counters */
 	void	*pmc_state;		/* port-specific pmc state */
 };

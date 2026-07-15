@@ -171,25 +171,22 @@ struct frame {
 
 #else /* _LOCORE */
 
-#define	AST_LOCALS							 \
-.Laflt_astpending:							;\
-	.word	astpending
-
 #define	DO_AST								 \
 	ldr	r0, [sp]		/* Get the SPSR from stack */	;\
 	mrs	r4, cpsr		/* save CPSR */			;\
 	and	r0, r0, #(PSR_MODE)	/* Returning to USR mode? */	;\
 	teq	r0, #(PSR_USR32_MODE)					;\
-	ldreq	r5, .Laflt_astpending					;\
 	bne	2f			/* Nope, get out now */		;\
 	bic	r4, r4, #(PSR_I)					;\
 1:	orr	r0, r4, #(PSR_I)	/* Disable IRQs */		;\
 	msr	cpsr_c, r0						;\
-	ldr	r1, [r5]		/* Pending AST? */		;\
+	mrc	p15, 0, r5, c13, c0, 4	/* get curcpu */		;\
+	ldr	r5, [r5, #CI_CURPROC]					;\
+	ldr	r1, [r5, #P_ASTPENDING]	/* Pending AST? */		;\
 	teq	r1, #0x00000000						;\
 	beq	2f			/* Nope. Just bail */		;\
 	mov	r1, #0x00000000						;\
-	str	r1, [r5]		/* Clear astpending */		;\
+	str	r1, [r5, #P_ASTPENDING]	/* Clear astpending */		;\
 	msr	cpsr_c, r4		/* Restore interrupts */	;\
 	mov	r0, sp							;\
 	adr	lr, 1b							;\
