@@ -58,9 +58,16 @@
 #include <machine/fdt.h>
 #include <machine/frame.h>
 
+#include <arm/armreg.h>
 #include <arm/cpufunc.h>
 #include <arm/machdep.h>
 #include <arm/vfp.h>
+
+#ifdef MULTIPROCESSOR
+extern volatile uint32_t cpu_hatch_mpidr[MAXCPUS];
+extern paddr_t cpu_hatch_ci[MAXCPUS];
+extern paddr_t cpu_hatch_ttb;
+#endif
 
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_clock.h>
@@ -362,6 +369,11 @@ cpu_attach(struct device *parent, struct device *dev, void *aux)
 		struct cpu_info *ci_last;
 
 		ci = malloc(sizeof(*ci), M_DEVBUF, M_WAITOK | M_ZERO);
+		/*
+		 * The fault handlers call ci_flush_bp before this cpu
+		 * identifies itself and picks the right one.
+		 */
+		ci->ci_flush_bp = cpu_flush_bp_noop;
 		cpu_info[dev->dv_unit] = ci;
 		ci_last = cpu_info_list;
 		while (ci_last->ci_next != NULL)
@@ -393,6 +405,8 @@ cpu_attach(struct device *parent, struct device *dev, void *aux)
 
 		len = OF_getprop(ci->ci_node, "enable-method",
 		    buf, sizeof(buf));
+		if (len <= 0)
+			buf[0] = '\0';
 		if (strcmp(buf, "psci") == 0) {
 			spinup_method = 1;
 		} else if (strcmp(buf, "spin-table") == 0) {
@@ -478,7 +492,7 @@ cpu_boot_secondary_processors(void)
 int
 cpu_hatch_secondary(struct cpu_info *ci, int method, uint64_t data)
 {
-	extern paddr_t cpu_hatch_ci;
+	static paddr_t hatch_ttb;
 	paddr_t startaddr;
 	void *kstack;
 	uint32_t ttbr0;
@@ -494,15 +508,81 @@ cpu_hatch_secondary(struct cpu_info *ci, int method, uint64_t data)
 	kstack = km_alloc(PAGE_SIZE, &kv_any, &kp_zero, &kd_waitok);
 	ci->ci_und_stkend = (vaddr_t)kstack + PAGE_SIZE;
 
-	pmap_extract(pmap_kernel(), (vaddr_t)ci, &cpu_hatch_ci);
+	pmap_extract(pmap_kernel(), (vaddr_t)ci,
+	    &cpu_hatch_ci[ci->ci_cpuid]);
 
 	__asm volatile("mrc p15, 0, %0, c2, c0, 0" : "=r"(ttbr0));
 	ci->ci_ttbr0 = ttbr0;
 
-	cpu_dcache_wb_range((vaddr_t)&cpu_hatch_ci, sizeof(paddr_t));
+	cpu_dcache_wb_range((vaddr_t)cpu_hatch_ci, sizeof(cpu_hatch_ci));
 	cpu_dcache_wb_range((vaddr_t)ci, sizeof(*ci));
 
 	pmap_extract(pmap_kernel(), (vaddr_t)cpu_hatch, &startaddr);
+
+	/*
+	 * The bootstrap L1 table from early boot was reclaimed as free
+	 * memory long ago.  Build a permanent table for hatching: a
+	 * copy of the kernel L1 with an identity section added so the
+	 * mmu can be enabled while still running at the physical alias
+	 * of cpu_hatch.
+	 */
+	if (hatch_ttb == 0) {
+		struct pglist mlist;
+		struct vm_page *m;
+		pd_entry_t *pde;
+		vaddr_t hva, sva, va;
+		paddr_t pa, kl1pa;
+
+		TAILQ_INIT(&mlist);
+		if (uvm_pglistalloc(L1_TABLE_SIZE, 0, (paddr_t)-1,
+		    L1_TABLE_SIZE, 0, &mlist, 1, UVM_PLA_WAITOK) != 0)
+			panic("cpu_hatch_secondary: no memory for hatch ttb");
+		m = TAILQ_FIRST(&mlist);
+		pa = VM_PAGE_TO_PHYS(m);
+
+		hva = (vaddr_t)km_alloc(L1_TABLE_SIZE, &kv_any, &kp_none,
+		    &kd_waitok);
+		for (va = hva; va < hva + L1_TABLE_SIZE; va += PAGE_SIZE)
+			pmap_kenter_pa(va, pa + (va - hva),
+			    PROT_READ | PROT_WRITE);
+
+		/* the kernel L1 is whatever we are running on */
+		kl1pa = ttbr0 & ~(L1_TABLE_SIZE - 1);
+		sva = (vaddr_t)km_alloc(L1_TABLE_SIZE, &kv_any, &kp_none,
+		    &kd_waitok);
+		for (va = sva; va < sva + L1_TABLE_SIZE; va += PAGE_SIZE)
+			pmap_kenter_pa(va, kl1pa + (va - sva), PROT_READ);
+
+		memcpy((void *)hva, (void *)sva, L1_TABLE_SIZE);
+
+		pmap_kremove(sva, L1_TABLE_SIZE);
+		km_free((void *)sva, L1_TABLE_SIZE, &kv_any, &kp_none);
+
+		pde = (pd_entry_t *)hva;
+		pde[startaddr >> L1_S_SHIFT] = L1_TYPE_S | L1_S_C |
+		    L1_S_V7_AP(AP_KRW) | L1_S_V7_AF |
+		    (startaddr & L1_S_ADDR_MASK);
+
+		cpu_dcache_wb_range(hva, L1_TABLE_SIZE);
+
+		pmap_kremove(hva, L1_TABLE_SIZE);
+		km_free((void *)hva, L1_TABLE_SIZE, &kv_any, &kp_none);
+
+		hatch_ttb = pa;
+	}
+	cpu_hatch_ttb = hatch_ttb;
+	cpu_dcache_wb_range((vaddr_t)&cpu_hatch_ttb, sizeof(paddr_t));
+
+	/*
+	 * Publish this core's slot in the hatch table.  The sram
+	 * mailbox is shared, so a core parked in the bootrom also
+	 * grabs the next core's release; a core that does not find
+	 * its own mpidr in the table waits at the top of cpu_hatch,
+	 * inert.
+	 */
+	cpu_hatch_mpidr[ci->ci_cpuid] = ci->ci_mpidr & 0xffffff;
+	cpu_dcache_wb_range((vaddr_t)cpu_hatch_mpidr,
+	    sizeof(cpu_hatch_mpidr));
 
 	switch (method) {
 	case 1:
@@ -519,8 +599,11 @@ cpu_hatch_secondary(struct cpu_info *ci, int method, uint64_t data)
 		break;
 #endif
 	default:
-		/* no method to spin up CPU */
-		ci->ci_flags = 0;	/* mark cpu as not AP */
+		/* let the platform code have a go */
+		rc = platform_smp_spinup(ci, startaddr);
+		if (rc == 0)
+			ci->ci_flags = 0;	/* mark cpu as not AP */
+		break;
 	}
 
 	return rc;
@@ -552,14 +635,19 @@ cpu_start_secondary(struct cpu_info *ci)
 	set_stackptr(PSR_IRQ32_MODE, ci->ci_irq_stkend);
 	set_stackptr(PSR_ABT32_MODE, ci->ci_abt_stkend);
 	set_stackptr(PSR_UND32_MODE, ci->ci_und_stkend);
-	
-	ci->ci_flags |= CPUF_PRESENT;
+
+	/* cpacr is banked, every core has to allow vfp access itself */
+	vfp_init();
+
+	/* the primary sets bits in ci_flags concurrently */
+	atomic_setbits_int(&ci->ci_flags, CPUF_PRESENT);
 	__asm volatile("dsb sy");
 
 	while ((ci->ci_flags & CPUF_IDENTIFY) == 0)
 		__asm volatile("wfe");
 
 	cpu_identify(ci);
+
 	atomic_setbits_int(&ci->ci_flags, CPUF_IDENTIFIED);
 	__asm volatile("dsb sy");
 

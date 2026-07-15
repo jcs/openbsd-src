@@ -80,6 +80,18 @@ bootstrap_start:
 	 */
 	bl	drop_to_pl1
 
+#ifdef MULTIPROCESSOR
+	/*
+	 * Join the coherency domain now: the MP kernel marks memory
+	 * shareable and uses broadcast maintenance operations, which
+	 * are only valid once ACTLR.SMP is set.
+	 */
+	mrc	CP15_ACTLR(r0)
+	orr	r0, r0, #CORTEXA9_AUXCTL_SMP
+	mcr	CP15_ACTLR(r0)
+	isb
+#endif
+
 	/*
 	 * Now that we are in SVC, build up pagetables and start up.
 	 */
