@@ -584,6 +584,13 @@ cpu_hatch_secondary(struct cpu_info *ci, int method, uint64_t data)
 	cpu_dcache_wb_range((vaddr_t)cpu_hatch_mpidr,
 	    sizeof(cpu_hatch_mpidr));
 
+	/*
+	 * The secondary comes out of reset with its caches off and
+	 * reads early kernel state straight from memory; push
+	 * everything out, not just the words flushed above.
+	 */
+	cpu_dcache_wbinv_all();
+
 	switch (method) {
 	case 1:
 		/* psci  */
