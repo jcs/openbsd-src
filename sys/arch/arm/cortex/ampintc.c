@@ -1012,7 +1012,7 @@ ampintc_send_ipi(struct cpu_info *ci, int id)
 		sc->sc_ipi_reason[ci->ci_cpuid] = id;
 
 	/* currently will only send to one cpu */
-	sendmask = 1 << (16 + ci->ci_cpuid);
+	sendmask = sc->sc_cpu_mask[ci->ci_cpuid] << 16;
 	sendmask |= sc->sc_ipi_num[id];
 
 	bus_space_write_4(sc->sc_iot, sc->sc_d_ioh, ICD_SGIR, sendmask);
