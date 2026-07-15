@@ -241,6 +241,7 @@ u_int	armv7_periphbase	(void);
 void	armv7_icache_sync_all		(void);
 void	armv7_icache_sync_range		(vaddr_t, vsize_t);
 
+void	armv7_dcache_l1inv_all		(void);
 void	armv7_dcache_wbinv_all		(void);
 void	armv7_dcache_wbinv_range	(vaddr_t, vsize_t);
 void	armv7_dcache_inv_range		(vaddr_t, vsize_t);
