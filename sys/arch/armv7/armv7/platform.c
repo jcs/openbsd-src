@@ -19,6 +19,7 @@
 #include <sys/systm.h>
 
 #include <machine/bus.h>
+#include <machine/cpu.h>
 
 #include <arm/mainbus/mainbus.h>
 #include <armv7/armv7/armv7var.h>
@@ -142,3 +143,13 @@ platform_cpu_suspend(void)
 	}
 	return EOPNOTSUPP;
 }
+
+#ifdef MULTIPROCESSOR
+int
+platform_smp_spinup(struct cpu_info *ci, paddr_t entry)
+{
+	if (platform && platform->smp_spinup)
+		return platform->smp_spinup(ci, entry);
+	return 0;
+}
+#endif
