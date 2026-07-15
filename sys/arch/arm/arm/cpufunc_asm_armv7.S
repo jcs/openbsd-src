@@ -63,7 +63,11 @@ ENTRY(armv7_tlb_flushID_SE)
 #else
 	mcr	CP15_TLBIMVA(r0)	/* flush unified tlb single entry */
 #endif
+#ifdef MULTIPROCESSOR
+	mcr	CP15_BPIALLIS		/* branch predictor invalidate, IS */
+#else
 	mcr	CP15_BPIMVA		/* flush va from BP */
+#endif
 	dsb	sy
 	isb	sy
 	mov	pc, lr
@@ -71,10 +75,11 @@ ENTRY(armv7_tlb_flushID_SE)
 ENTRY(armv7_tlb_flushID)
 #ifdef MULTIPROCESSOR
 	mcr	CP15_TLBIALLIS		/* flush entire I+D tlb, IS */
+	mcr	CP15_BPIALLIS		/* branch predictor invalidate, IS */
 #else
 	mcr	CP15_TLBIALL(r0)	/* flush unified tlb */
-#endif
 	mcr	CP15_BPIALL		/* Flush BP cache */
+#endif
 	dsb	sy
 	isb	sy
 	mov	pc, lr
@@ -128,7 +133,11 @@ ENTRY(armv7_icache_sync_range)
 	add	r0, r0, ip
 	subs	r1, r1, ip
 	bhi	1b
+#ifdef MULTIPROCESSOR
+	mcr	CP15_BPIALLIS		/* branch predictor invalidate, IS */
+#else
 	mcr	CP15_BPIALL		/* Flush BP cache */
+#endif
 	dsb	sy
 	isb	sy
 	mov	pc, lr
@@ -140,7 +149,11 @@ ENTRY(armv7_icache_sync_all)
 	 * dcache, so that we can safely flush the Icache and fall through
 	 * into the Dcache cleaning code.
 	 */
+#ifdef MULTIPROCESSOR
+	mcr	CP15_ICIALLUIS		/* Flush I cache, IS */
+#else
 	mcr	CP15_ICIALLU		/* Flush I cache */
+#endif
 	isb	sy
 	mov	pc, lr
 
@@ -174,7 +187,11 @@ ENTRY(armv7_idcache_wbinv_range)
 	add	r0, r0, ip
 	subs	r1, r1, ip
 	bhi	1b
+#ifdef MULTIPROCESSOR
+	mcr	CP15_BPIALLIS		/* branch predictor invalidate, IS */
+#else
 	mcr	CP15_BPIALL		/* Flush BP cache */
+#endif
 	dsb	sy
 	isb	sy
 	mov	pc, lr
