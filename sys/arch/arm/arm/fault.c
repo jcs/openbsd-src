@@ -92,6 +92,7 @@
 #include <machine/db_machdep.h>
 #endif
 
+#include <arm/cpufunc.h>
 #include <arm/db_machdep.h>
 #include <arm/machdep.h>
 #include <arm/vfp.h>
@@ -392,6 +393,43 @@ dab_fatal(trapframe_t *tf, u_int fsr, u_int far, struct proc *p,
 {
 	const char *mode;
 	uint ftyp;
+
+#ifdef MULTIPROCESSOR
+	/*
+	 * A cpu that dies before it has identified must stay off the
+	 * console and out of ddb: it would garble the primary's output
+	 * and strand the ddb mutex.  Drop the kprintf mutex if the
+	 * fault hit while printing, then leave coherency the proper
+	 * way (dcache off, L1 discarded, SMP bit clear) so nothing is
+	 * stranded in the coherency domain, and park.  One asm block:
+	 * the stack is gone once the L1 is invalidated.
+	 */
+	if (!CPU_IS_PRIMARY(curcpu()) &&
+	    (curcpu()->ci_flags & CPUF_IDENTIFIED) == 0) {
+		extern struct mutex kprintf_mutex;
+
+		if (mtx_owner(&kprintf_mutex) == mtx_curcpu())
+			kprintf_mutex.mtx_owner = 0;
+		__asm volatile(
+		    "cpsid if\n\t"
+		    "mrc p15, 0, r0, c1, c0, 0\n\t"
+		    "bic r0, r0, #0x4\n\t"	/* dcache off */
+		    "mcr p15, 0, r0, c1, c0, 0\n\t"
+		    "dsb sy\n\t"
+		    "isb\n\t"
+		    "bl armv7_dcache_l1inv_all\n\t"
+		    "clrex\n\t"
+		    "mrc p15, 0, r0, c1, c0, 1\n\t"
+		    "bic r0, r0, #0x40\n\t"	/* smp off */
+		    "mcr p15, 0, r0, c1, c0, 1\n\t"
+		    "dsb sy\n\t"
+		    "isb\n\t"
+		    "1:\twfi\n\t"
+		    "b 1b"
+		    ::: "r0", "r1", "r2", "r3", "r4", "r5", "r6",
+		    "ip", "lr", "memory");
+	}
+#endif
 
 	mode = TRAP_USERMODE(tf) ? "user" : "kernel";
 

@@ -45,6 +45,7 @@ include <machine/frame.h>
 include <machine/vmparam.h>
 
 export	PAGE_SIZE
+export	MAXCPUS
 
 ifdef __ARM_FIQ_INDIRECT
 define	__ARM_FIQ_INDIRECT	1

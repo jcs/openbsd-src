@@ -155,22 +155,87 @@ cpu_hatch:
 	bl	drop_to_pl1
 
 	/* Convert virt -> phys */
-	mov r9, pc
-	and r9, r9, #0xf0000000
+	mov	r9, pc
+	and	r9, r9, #0xf0000000
 
-	/* Set up CPU info */
+	/*
+	 * Map our mpidr to a slot in the hatch table, like the
+	 * cpu_mpidr array in NetBSD's cpu_mpstart.  The sram mailbox
+	 * is shared, so a core parked in the bootrom also grabs the
+	 * next core's release; a core that does not find itself in
+	 * the table yet waits here with the mmu and caches off,
+	 * inert, until the primary publishes its slot.
+	 */
+	mrc	p15, 0, r0, c0, c0, 5	/* mpidr */
+	movw	r2, #0xffff
+	movt	r2, #0x00ff
+	and	r0, r0, r2
+1:	adr	r1, .Lcpu_hatch_mpidr
+	ldr	r1, [r1]
+	bic	r1, r1, #0xf0000000
+	orr	r1, r1, r9
+	mov	r2, #0			/* cpu index */
+2:	ldr	r3, [r1], #4
+	teq	r3, r0
+	beq	3f
+	add	r2, r2, #1
+	cmp	r2, #MAXCPUS
+	blt	2b
+	wfe
+	b	1b
+3:	mov	r10, r2			/* cpu index survives the flushes */
+
+	/*
+	 * Toss whatever the caches, branch predictor, and TLB held
+	 * before we were reset.  A core released from reset can still
+	 * hold stale valid and dirty lines from its previous life
+	 * which would be served, or worse written back, once the
+	 * cache is enabled.
+	 */
+	bl	armv7_dcache_l1inv_all
+	mov	r0, #0
+	mcr	CP15_ICIALLU		/* invalidate icache */
+	mcr	CP15_BPIALL		/* invalidate branch predictor */
+	mcr	CP15_TLBIALL(r0)	/* invalidate tlb */
+	clrex
+	dsb	sy
+	isb	sy
+
+	/*
+	 * Join the coherency domain before the MMU and caches come on.
+	 */
+	mrc	CP15_ACTLR(r0)
+	orr	r0, r0, #CORTEXA9_AUXCTL_SMP
+	mcr	CP15_ACTLR(r0)
+	isb
+
+	/* Set up CPU info from our slot in the hatch table */
 	adr	r0, .Lcpu_hatch_ci
 	ldr	r0, [r0]
 	bic	r0, r0, #0xf0000000
 	orr	r0, r0, r9
-	ldr	r0, [r0]
+	ldr	r0, [r0, r10, lsl #2]
 	ldr	r1, [r0, #CI_SELF]
 	mcr	CP15_TPIDRPRW(r1)
 	ldr	r8, [r0, #CI_TTBR0]
 
 	/* Enable the mmu */
-	orr	r0, r9, #0x00200000
+	adr	r0, .Lcpu_hatch_ttb
+	ldr	r0, [r0]
+	bic	r0, r0, #0xf0000000
+	orr	r0, r0, r9
+	ldr	r0, [r0]
 	bl	start_mmu
+
+	/*
+	 * Enable the caches now so everything we touch is coherent
+	 * with the other cores before we enter C code.
+	 */
+	mrc	CP15_SCTLR(r0)
+	orr	r0, r0, #CPU_CONTROL_DC_ENABLE
+	orr	r0, r0, #(CPU_CONTROL_IC_ENABLE | CPU_CONTROL_BPRD_ENABLE)
+	mcr	CP15_SCTLR(r0)
+	isb
 
 	adr	r1, .Lcpu_hatch_virt
 	ldr	pc, [r1]
@@ -178,7 +243,9 @@ cpu_hatch:
 cpu_hatch_virt:
 	mcr	CP15_TTBR0(r8)		/* Set TTB */
 	mcr	CP15_TLBIALL(r8)	/* Flush TLB */
-	
+	dsb	sy
+	isb	sy
+
 	mrc	CP15_TPIDRPRW(r0)
 	ldr	r1, [r0, #CI_PL1_STKEND]
 	mov	sp, r1
@@ -194,12 +261,22 @@ cpu_hatch_virt:
 	.word	cpu_start_secondary
 .Lcpu_hatch_ci:
 	.word	cpu_hatch_ci
+.Lcpu_hatch_ttb:
+	.word	cpu_hatch_ttb
+.Lcpu_hatch_mpidr:
+	.word	cpu_hatch_mpidr
 
 	.data
 	.align	2
 	.global cpu_hatch_ci
 cpu_hatch_ci:
+	.fill	MAXCPUS, 4, 0
+	.global cpu_hatch_ttb
+cpu_hatch_ttb:
 	.word	0
+	.global cpu_hatch_mpidr
+cpu_hatch_mpidr:
+	.fill	MAXCPUS, 4, 0xffffffff
 
 #endif
 
