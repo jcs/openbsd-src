@@ -52,8 +52,11 @@ vfp_init(void)
 {
 	uint32_t val;
 
-	install_coproc_handler(10, vfp_fault);
-	install_coproc_handler(11, vfp_fault);
+	/* the handlers are global, only the primary installs them */
+	if (CPU_IS_PRIMARY(curcpu())) {
+		install_coproc_handler(10, vfp_fault);
+		install_coproc_handler(11, vfp_fault);
+	}
 
 	__asm volatile("mrc p15, 0, %0, c1, c0, 2" : "=r" (val));
 	val |= COPROC10 | COPROC11;

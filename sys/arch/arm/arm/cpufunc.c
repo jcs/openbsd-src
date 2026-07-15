@@ -369,7 +369,7 @@ armv7_setup(void)
 	case CPU_ID_CORTEX_A5:
 	case CPU_ID_CORTEX_A9:
 		/* Cache and TLB maintenance broadcast */
-#ifdef notyet
+#ifdef MULTIPROCESSOR
 		auxctrlmask |= CORTEXA9_AUXCTL_FW;
 		auxctrl |= CORTEXA9_AUXCTL_FW;
 #endif
