@@ -239,9 +239,9 @@ agtimer_cpu_initclocks(void)
 	}
 
 	/* Setup secure and non-secure timer IRQs. */
-	arm_intr_establish_fdt_idx(sc->sc_node, 0, IPL_CLOCK,
+	arm_intr_establish_fdt_idx(sc->sc_node, 0, IPL_CLOCK|IPL_MPSAFE,
 	    agtimer_intr, NULL, "tick");
-	arm_intr_establish_fdt_idx(sc->sc_node, 1, IPL_CLOCK,
+	arm_intr_establish_fdt_idx(sc->sc_node, 1, IPL_CLOCK|IPL_MPSAFE,
 	    agtimer_intr, NULL, "tick");
 }
 
