@@ -207,6 +207,7 @@ extern void (*intr_send_ipi_func)(struct cpu_info *, int);
 
 #define ARM_IPI_NOP	0
 #define ARM_IPI_DDB	1
+#define ARM_IPI_HALT	2
 
 #ifdef DIAGNOSTIC
 /*
