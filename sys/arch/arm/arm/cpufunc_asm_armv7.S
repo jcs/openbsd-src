@@ -20,6 +20,7 @@
 #include <arm/sysreg.h>
 
 ENTRY(armv7_cpu_sleep)
+	dsb	sy
 	wfi
 	mov	pc, lr
 
