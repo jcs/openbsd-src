@@ -275,6 +275,9 @@ armv7_dcache_wbinv_all(void)
 	setincr = armv7_dcache_sets_inc;
 	wayincr = armv7_dcache_index_inc;
 
+	/* Cortex-A7 errata: set/way ops need a dsb first */
+	__asm volatile("dsb sy");
+
 #if 0
 	printf("l1 nsets %d nways %d wayincr %x setincr %x\n",
 	    nsets, nways, wayincr, setincr);
