@@ -192,6 +192,17 @@
  * XXX We want to use proper TEX settings eventually.
  */
 
+#ifdef MULTIPROCESSOR
+/* normal memory must be shareable to stay coherent between cores */
+#define	PTE_L1_S_CACHE_MODE	(L1_S_B | L1_S_C | L1_S_V7_S)
+#define	PTE_L1_S_CACHE_MODE_PT	(L1_S_B | L1_S_C | L1_S_V7_S)
+
+#define	PTE_L2_L_CACHE_MODE	(L2_B | L2_C | L2_V7_S)
+#define	PTE_L2_S_CACHE_MODE	(L2_B | L2_C | L2_V7_S)
+
+#define	PTE_L2_L_CACHE_MODE_PT	(L2_B | L2_C | L2_V7_S)
+#define	PTE_L2_S_CACHE_MODE_PT	(L2_B | L2_C | L2_V7_S)
+#else
 #define	PTE_L1_S_CACHE_MODE	(L1_S_B | L1_S_C)
 #define	PTE_L1_S_CACHE_MODE_PT	(L1_S_B | L1_S_C)
 
@@ -201,6 +212,7 @@
 
 #define	PTE_L2_L_CACHE_MODE_PT	(L2_B | L2_C)
 #define	PTE_L2_S_CACHE_MODE_PT	(L2_B | L2_C)
+#endif
 
 //#define PMAP_DEBUG
 #ifdef PMAP_DEBUG
