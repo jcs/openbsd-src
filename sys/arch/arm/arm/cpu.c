@@ -53,8 +53,10 @@
 
 #include <machine/cpu.h>
 #include <machine/fdt.h>
+#include <machine/frame.h>
 
 #include <arm/cpufunc.h>
+#include <arm/machdep.h>
 #include <arm/vfp.h>
 
 #include <dev/ofw/openfirm.h>
@@ -374,6 +376,7 @@ cpu_attach(struct device *parent, struct device *dev, void *aux)
 	ci->ci_mpidr = faa->fa_reg[0].addr;
 	ci->ci_node = faa->fa_node;
 	ci->ci_self = ci;
+	ci->ci_undefsave[2] = (register_t)undefinedinstruction_bounce;
 
 	printf(" mpidr %llx:", ci->ci_mpidr);
 

@@ -165,7 +165,6 @@ vaddr_t msgbufphys;
 
 extern u_int data_abort_handler_address;
 extern u_int prefetch_abort_handler_address;
-extern u_int undefined_handler_address;
 
 #define KERNEL_PT_SYS		0	/* Page table for mapping proc0 zero page */
 #define KERNEL_PT_KERNEL	1	/* Page table for mapping kernel */
@@ -733,7 +732,7 @@ initarm(void *arg0, void *arg1, void *arg2, paddr_t loadaddr)
 
 	data_abort_handler_address = (u_int)data_abort_handler;
 	prefetch_abort_handler_address = (u_int)prefetch_abort_handler;
-	undefined_handler_address = (u_int)undefinedinstruction_bounce;
+	curcpu()->ci_undefsave[2] = (register_t)undefinedinstruction_bounce;
 
 	/* Now we can reinit the FDT, using the virtual address. */
 	fdt_init((void *)fdt.pv_va);

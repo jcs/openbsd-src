@@ -77,6 +77,7 @@ struct	cpu_info
 member	ci_curproc
 member	ci_curpcb
 member	ci_idepth
+member	ci_undefsave
 ifdef MULTIPROCESSOR
 member	ci_ttbr0
 member	ci_pl1_stkend
