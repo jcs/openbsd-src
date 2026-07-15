@@ -179,6 +179,13 @@ struct cpu_info {
 
 	void			(*ci_flush_bp)(void);
 
+	/*
+	 * undefined instruction exception scratch: saved r0 and r1,
+	 * then the undefined handler address, restored/jumped through
+	 * with a single ldmia in undefined_entry.
+	 */
+	register_t		ci_undefsave[3];
+
 	struct opp_table	*ci_opp_table;
 	volatile int		ci_opp_idx;
 	volatile int		ci_opp_max;
