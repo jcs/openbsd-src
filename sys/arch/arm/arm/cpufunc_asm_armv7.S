@@ -36,8 +36,13 @@ ENTRY(armv7_periphbase)
 	mrc	CP15_CBAR(r0)	
 	mov	pc, lr
 
+#ifdef MULTIPROCESSOR
+/* Shareable write-back walks so page table updates are coherent. */
+#define TTBR_DEFAULT	(TTBR_IRGN_WBWA | TTBR_RGN_WBWA | TTBR_S | TTBR_NOS)
+#else
 /* Suitable default for a uniprocessor kernel. */
 #define TTBR_DEFAULT	(TTBR_IRGN_WBNWA | TTBR_RGN_WBNWA)
+#endif
 
 /*
  * Functions to set the MMU Translation Table Base register
