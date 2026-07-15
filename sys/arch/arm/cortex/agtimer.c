@@ -33,10 +33,7 @@
 #include <dev/ofw/fdt.h>
 #include <dev/ofw/openfirm.h>
 
-/* registers */
-#define GTIMER_CNTP_CTL_ENABLE		(1 << 0)
-#define GTIMER_CNTP_CTL_IMASK		(1 << 1)
-#define GTIMER_CNTP_CTL_ISTATUS		(1 << 2)
+#include <arm/armreg.h>
 
 #define TIMER_FREQUENCY		24 * 1000 * 1000 /* ARM core clock */
 int32_t agtimer_frequency = TIMER_FREQUENCY;
@@ -58,6 +55,7 @@ struct agtimer_softc {
 	u_int32_t		sc_ticks_per_second;
 	uint64_t		sc_nsec_cycle_ratio;
 	uint64_t		sc_nsec_max;
+	void			*sc_ih[2];
 };
 
 int		agtimer_match(struct device *, void *, void *);
@@ -239,10 +237,10 @@ agtimer_cpu_initclocks(void)
 	}
 
 	/* Setup secure and non-secure timer IRQs. */
-	arm_intr_establish_fdt_idx(sc->sc_node, 0, IPL_CLOCK|IPL_MPSAFE,
-	    agtimer_intr, NULL, "tick");
-	arm_intr_establish_fdt_idx(sc->sc_node, 1, IPL_CLOCK|IPL_MPSAFE,
-	    agtimer_intr, NULL, "tick");
+	sc->sc_ih[0] = arm_intr_establish_fdt_idx(sc->sc_node, 0,
+	    IPL_CLOCK|IPL_MPSAFE, agtimer_intr, NULL, "tick");
+	sc->sc_ih[1] = arm_intr_establish_fdt_idx(sc->sc_node, 1,
+	    IPL_CLOCK|IPL_MPSAFE, agtimer_intr, NULL, "tick");
 }
 
 void
@@ -284,7 +282,14 @@ agtimer_setstatclockrate(int newhz)
 void
 agtimer_startclock(void)
 {
+	struct agtimer_softc	*sc = agtimer_cd.cd_devs[0];
 	uint32_t reg;
+
+	/* enable our banked timer interrupt on this cpu */
+	if (!CPU_IS_PRIMARY(curcpu())) {
+		arm_intr_route(sc->sc_ih[0], 1, curcpu());
+		arm_intr_route(sc->sc_ih[1], 1, curcpu());
+	}
 
 	clockintr_cpu_init(&agtimer_intrclock);
 
