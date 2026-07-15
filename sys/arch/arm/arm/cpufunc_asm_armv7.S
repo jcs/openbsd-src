@@ -58,27 +58,43 @@ ENTRY(armv7_setttb)
  * TLB functions
  */
 ENTRY(armv7_tlb_flushID_SE)
+#ifdef MULTIPROCESSOR
+	mcr	CP15_TLBIMVAIS(r0)	/* flush unified tlb single entry, IS */
+#else
 	mcr	CP15_TLBIMVA(r0)	/* flush unified tlb single entry */
+#endif
 	mcr	CP15_BPIMVA		/* flush va from BP */
 	dsb	sy
 	isb	sy
 	mov	pc, lr
 
 ENTRY(armv7_tlb_flushID)
+#ifdef MULTIPROCESSOR
+	mcr	CP15_TLBIALLIS		/* flush entire I+D tlb, IS */
+#else
 	mcr	CP15_TLBIALL(r0)	/* flush unified tlb */
+#endif
 	mcr	CP15_BPIALL		/* Flush BP cache */
 	dsb	sy
 	isb	sy
 	mov	pc, lr
 
 ENTRY(armv7_tlb_flushD_SE)
+#ifdef MULTIPROCESSOR
+	mcr	CP15_TLBIMVAIS(r0)	/* flush unified tlb single entry, IS */
+#else
 	mcr	CP15_TLBIMVA(r0)	/* flush unified tlb single entry */
+#endif
 	dsb	sy
 	isb	sy
 	mov	pc, lr
 
 ENTRY(armv7_tlb_flushD)
+#ifdef MULTIPROCESSOR
+	mcr	CP15_TLBIALLIS		/* flush entire I+D tlb, IS */
+#else
 	mcr	CP15_TLBIALL(r0)	/* flush unified tlb */
+#endif
 	dsb	sy
 	isb	sy
 	mov	pc, lr
