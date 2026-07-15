@@ -18,6 +18,8 @@
 #ifndef __PLATFORMVAR_H__
 #define __PLATFORMVAR_H__
 
+struct cpu_info;
+
 void platform_init(void);
 void platform_powerdown(void);
 void platform_watchdog_reset(void);
@@ -38,6 +40,7 @@ struct armv7_platform {
 	void (*powerdown)(void);
 	void (*init_mainbus)(struct device *);
 	void (*cpu_suspend)(void);
+	int (*smp_spinup)(struct cpu_info *, paddr_t);
 };
 
 #endif /* __PLATFORMVAR_H__ */

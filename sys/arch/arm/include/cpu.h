@@ -255,6 +255,9 @@ extern struct cpu_info *cpu_info[MAXCPUS];
 
 void cpu_boot_secondary_processors(void);
 void cpu_halt(void);
+
+/* platform-specific spinup for cpus with no psci or spin-table */
+int platform_smp_spinup(struct cpu_info *, paddr_t);
 #endif /* !MULTIPROCESSOR */
 
 #define CPU_BUSY_CYCLE()	__asm volatile ("" ::: "memory")
