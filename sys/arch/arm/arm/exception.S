@@ -64,8 +64,6 @@
 	bl	vfp_enable						;\
 1:
 
-AST_LOCALS
-
 /*
  * reset_entry:
  *

@@ -93,8 +93,6 @@
 #define STOREVFP						\
 	bl	vfp_save
 
-AST_LOCALS
-
 ASENTRY_NP(irq_entry)
 	sub	lr, lr, #0x00000004	/* Adjust the lr */
 
@@ -130,10 +128,3 @@ ASENTRY_NP(irq_entry)
 	movs	pc, lr			/* Exit */
 	dsb	nsh
 	isb
-
-	.bss
-	.align	2
-
-	.global astpending
-astpending:
-	.word	0

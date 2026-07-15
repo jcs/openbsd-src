@@ -56,8 +56,6 @@
  */
 void ast(struct trapframe *);
 
-extern int astpending;
-
 /*
  * Handle asynchronous system traps.
  * This is called from the irq handler to deliver signals
