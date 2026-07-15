@@ -51,6 +51,7 @@
 #include <machine/asm.h>
 #include <machine/frame.h>
 #include <arm/armreg.h>
+#include <arm/sysreg.h>
 
 	.text	
 	.align	2
@@ -206,20 +207,17 @@ exception_exit:
  *	Handler for the Undefined Instruction exception.
  *
  *	We indirect the undefined vector via the handler address
- *	in the data area.  Entry to the undefined handler must
+ *	in this cpu's cpu_info.  Entry to the undefined handler must
  *	look like direct entry from the vector.
  */
 ASENTRY_NP(undefined_entry)
 	stmfd	sp!, {r0, r1}
-	ldr	r0, Lundefined_handler_indirection
+	mrc	CP15_TPIDRPRW(r0)	/* get curcpu */
 	ldr	r1, [sp], #0x0004
-	str	r1, [r0, #0x0000]
+	str	r1, [r0, #CI_UNDEFSAVE]!
 	ldr	r1, [sp], #0x0004
 	str	r1, [r0, #0x0004]
 	ldmia	r0, {r0, r1, pc}
-
-Lundefined_handler_indirection:
-	.word	Lundefined_handler_indirection_data
 
 /*
  * assembly bounce code for calling the kernel
@@ -233,20 +231,3 @@ ENTRY_NP(undefinedinstruction_bounce)
 	mov	r0, sp
 	adr	lr, exception_exit
 	b	undefinedinstruction
-
-	.data
-	.align	2
-
-/*
- * Indirection data
- * 2 words use for preserving r0 and r1
- * 3rd word contains the undefined handler address.
- */
-
-Lundefined_handler_indirection_data:
-	.word	0
-	.word	0
-
-	.global	undefined_handler_address
-undefined_handler_address:
-	.word	undefinedinstruction_bounce
