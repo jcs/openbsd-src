@@ -37,8 +37,11 @@
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/systm.h>	/* just for boothowto */
+#include <sys/atomic.h>
 
 #include <uvm/uvm_extern.h>
+
+#include <machine/intr.h>
 
 #include <arm/db_machdep.h>
 #include <machine/pmap.h>
@@ -49,9 +52,17 @@
 #include <ddb/db_variables.h>
 #include <ddb/db_extern.h>
 #include <ddb/db_interface.h>
+#include <ddb/db_run.h>
 #include <dev/cons.h>
 
 static long nil;
+
+#ifdef MULTIPROCESSOR
+volatile struct cpu_info *db_onproc;
+volatile struct cpu_info *db_newcpu;
+
+void db_switch_cpu_cmd(db_expr_t, int, db_expr_t, char *);
+#endif
 
 int db_access_und_sp (struct db_variable *, db_expr_t *, int);
 int db_access_abt_sp (struct db_variable *, db_expr_t *, int);
@@ -123,6 +134,11 @@ db_access_irq_sp(struct db_variable *vp, db_expr_t *valp, int rw)
 int
 db_ktrap(int type, db_regs_t *regs)
 {
+#ifdef MULTIPROCESSOR
+	struct cpu_info * const ci = curcpu();
+	struct cpu_info *ci2;
+	CPU_INFO_ITERATOR cii;
+#endif
 	int s;
 
 	switch (type) {
@@ -139,17 +155,72 @@ db_ktrap(int type, db_regs_t *regs)
 
 	/* Should switch to kdb`s own stack here. */
 
-	ddb_regs = *regs;
+#ifdef MULTIPROCESSOR
+	const int is_mp_p = ncpus > 1;
+	if (is_mp_p) {
+		/*
+		 * Try to take ownership of DDB.  If we do, tell all other
+		 * CPUs to enter DDB too.
+		 */
+		if (atomic_cas_ptr(&db_onproc, NULL, ci) == NULL) {
+			CPU_INFO_FOREACH(cii, ci2) {
+				if (ci2 != ci && CPU_IS_RUNNING(ci2))
+					arm_send_ipi(ci2, ARM_IPI_DDB);
+			}
+		}
+	}
+	for (;;) {
+		if (is_mp_p) {
+			/*
+			 * While we aren't the master, wait until the master
+			 * gives control to us or exits.  If it exited, we
+			 * just exit too.  Otherwise this cpu will enter DDB.
+			 */
+			membar_consumer();
+			while (db_onproc != ci) {
+				if (db_onproc == NULL)
+					return 1;
+				__asm volatile("wfe");
+				membar_consumer();
+				if (db_onproc == ci) {
+					db_printf("%s: switching to %s\n",
+					    __func__, ci->ci_dev->dv_xname);
+				}
+			}
+		}
+#endif
 
-	s = splhigh();
-	db_active++;
-	cnpollc(1);
-	db_trap(type, 0/*code*/);
-	cnpollc(0);
-	db_active--;
-	splx(s);
+		ddb_regs = *regs;
 
-	*regs = ddb_regs;
+		s = splhigh();
+		db_active++;
+		cnpollc(1);
+		db_trap(type, 0/*code*/);
+		cnpollc(0);
+		db_active--;
+		splx(s);
+
+		*regs = ddb_regs;
+
+#ifdef MULTIPROCESSOR
+		if (is_mp_p && db_newcpu != NULL) {
+			db_onproc = db_newcpu;
+			db_newcpu = NULL;
+			__asm volatile("dsb ishst; sev");
+			continue;
+		}
+		break;
+	}
+
+	if (is_mp_p) {
+		/*
+		 * We are exiting DDB so there is noone onproc.  Tell
+		 * the other CPUs to exit.
+		 */
+		db_onproc = NULL;
+		__asm volatile("dsb ishst; sev");
+	}
+#endif
 
 	return (1);
 }
@@ -337,8 +408,42 @@ db_enter(void)
 	asm(".word	0xe7ffffff");
 }
 
+#ifdef MULTIPROCESSOR
+/*
+ * switch to another cpu's saved state when it was stopped
+ */
+void
+db_switch_cpu_cmd(db_expr_t addr, int have_addr, db_expr_t count, char *modif)
+{
+	struct cpu_info *new_ci = NULL;
+
+	if (have_addr && addr >= 0 && addr < MAXCPUS)
+		new_ci = cpu_info[addr];
+	if (new_ci == NULL) {
+		db_printf("cpu %ld not configured\n", (long)addr);
+		return;
+	}
+
+	if (new_ci != curcpu()) {
+		/*
+		 * Rewind the pc so the breakpoint re-traps when this
+		 * cpu continues, putting it back into the ddb wait
+		 * loop while the new cpu takes over.  XXX only valid
+		 * when ddb was entered through a breakpoint.
+		 */
+		ddb_regs.tf_pc -= BKPT_SIZE;
+		db_newcpu = new_ci;
+		db_continue_cmd(0, 0, 0, "");
+		/* NOTREACHED */
+	}
+}
+#endif
+
 const struct db_command db_machine_command_table[] = {
 	{ "frame",	db_show_frame_cmd,	0, NULL },
+#ifdef MULTIPROCESSOR
+	{ "cpu",	db_switch_cpu_cmd,	0, NULL },
+#endif
 #ifdef ARM32_DB_COMMANDS
 	ARM32_DB_COMMANDS,
 #endif
