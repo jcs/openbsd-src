@@ -238,6 +238,7 @@ mainbus_attach_cpus(struct device *self, cfmatch_t match)
 	struct mainbus_softc *sc = (struct mainbus_softc *)self;
 	int node = OF_finddevice("/cpus");
 	int acells, scells;
+	char buf[32];
 
 	if (node == 0)
 		return;
@@ -247,8 +248,18 @@ mainbus_attach_cpus(struct device *self, cfmatch_t match)
 	sc->sc_acells = OF_getpropint(node, "#address-cells", 1);
 	sc->sc_scells = OF_getpropint(node, "#size-cells", 0);
 
-	for (node = OF_child(node); node != 0; node = OF_peer(node))
+	/* count cpus in the primary pass, this runs once more for aps */
+	if (match == mainbus_match_primary)
+		ncpusfound = 0;
+
+	for (node = OF_child(node); node != 0; node = OF_peer(node)) {
+		if (match == mainbus_match_primary &&
+		    OF_getprop(node, "device_type", buf, sizeof(buf)) > 0 &&
+		    strcmp(buf, "cpu") == 0)
+			ncpusfound++;
+
 		mainbus_attach_node(self, node, match);
+	}
 
 	sc->sc_acells = acells;
 	sc->sc_scells = scells;
