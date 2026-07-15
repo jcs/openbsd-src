@@ -45,11 +45,14 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
 #include <sys/malloc.h>
 #include <sys/device.h>
 #include <sys/sched.h>
 #include <sys/sysctl.h>
 #include <sys/task.h>
+
+#include <uvm/uvm_extern.h>
 
 #include <machine/cpu.h>
 #include <machine/fdt.h>
@@ -529,6 +532,12 @@ cpu_boot_secondary(struct cpu_info *ci)
 	atomic_setbits_int(&ci->ci_flags, CPUF_GO);
 	__asm volatile("dsb sy; sev");
 
+	/*
+	 * Send an interrupt as well to make sure the CPU wakes up
+	 * regardless of whether it is in a WFE or a WFI loop.
+	 */
+	arm_send_ipi(ci, ARM_IPI_NOP);
+
 	while ((ci->ci_flags & CPUF_RUNNING) == 0)
 		__asm volatile("wfe");
 }
@@ -567,6 +576,49 @@ cpu_start_secondary(struct cpu_info *ci)
 	spllower(IPL_NONE);
 
 	sched_toidle();
+}
+
+void
+cpu_halt(void)
+{
+	struct cpu_info *ci = curcpu();
+	uint32_t ctl, id_pfr1, psw;
+	int gtimer;
+
+	KERNEL_ASSERT_UNLOCKED();
+	SCHED_ASSERT_UNLOCKED();
+
+	psw = disable_interrupts(PSR_I | PSR_F);
+
+	/*
+	 * Mask our clock interrupt, a pending tick would keep waking
+	 * wfi right up.
+	 */
+	__asm volatile("mrc p15, 0, %0, c0, c1, 1" : "=r"(id_pfr1));
+	gtimer = (id_pfr1 & 0x000f0000) == 0x00010000;
+	if (gtimer) {
+		__asm volatile("mrc p15, 0, %0, c14, c2, 1" : "=r"(ctl));
+		__asm volatile("mcr p15, 0, %0, c14, c2, 1" ::
+		    "r"(ctl | GTIMER_CNTP_CTL_IMASK));
+	}
+
+	atomic_clearbits_int(&ci->ci_flags, CPUF_RUNNING | CPUF_GO);
+	__asm volatile("dsb sy; sev" ::: "memory");
+
+	/*
+	 * A pending interrupt wakes wfi even with interrupts masked;
+	 * cpu_boot_secondary() sends us one when it is time to leave.
+	 */
+	while ((ci->ci_flags & CPUF_GO) == 0)
+		__asm volatile("wfi");
+
+	atomic_setbits_int(&ci->ci_flags, CPUF_RUNNING);
+	__asm volatile("dsb sy; sev" ::: "memory");
+
+	if (gtimer)
+		__asm volatile("mcr p15, 0, %0, c14, c2, 1" :: "r"(ctl));
+
+	restore_interrupts(psw);
 }
 
 void

@@ -389,4 +389,9 @@
 #define  TTBR_IRGN_WT		((1 << 0) | (0 << 6))
 #define  TTBR_IRGN_WBNWA	((1 << 0) | (1 << 6))
 
+/* Generic Timer physical timer control (CNTP_CTL) */
+#define GTIMER_CNTP_CTL_ENABLE	(1 << 0)
+#define GTIMER_CNTP_CTL_IMASK	(1 << 1)
+#define GTIMER_CNTP_CTL_ISTATUS	(1 << 2)
+
 #endif
