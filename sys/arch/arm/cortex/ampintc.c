@@ -360,16 +360,16 @@ ampintc_attach(struct device *parent, struct device *self, void *aux)
 	switch (nipi) {
 	case 1:
 		ampintc_intr_establish(ipiirq[0], IST_EDGE_RISING,
-		    IPL_IPI|IPL_MPSAFE, ampintc_ipi_combined, sc, "ipi");
+		    IPL_IPI|IPL_MPSAFE, NULL, ampintc_ipi_combined, sc, "ipi");
 		sc->sc_ipi_num[ARM_IPI_NOP] = ipiirq[0];
 		sc->sc_ipi_num[ARM_IPI_DDB] = ipiirq[0];
 		break;
 	case 2:
 		ampintc_intr_establish(ipiirq[0], IST_EDGE_RISING,
-		    IPL_IPI|IPL_MPSAFE, ampintc_ipi_nop, sc, "ipinop");
+		    IPL_IPI|IPL_MPSAFE, NULL, ampintc_ipi_nop, sc, "ipinop");
 		sc->sc_ipi_num[ARM_IPI_NOP] = ipiirq[0];
 		ampintc_intr_establish(ipiirq[1], IST_EDGE_RISING,
-		    IPL_IPI|IPL_MPSAFE, ampintc_ipi_ddb, sc, "ipiddb");
+		    IPL_IPI|IPL_MPSAFE, NULL, ampintc_ipi_ddb, sc, "ipiddb");
 		sc->sc_ipi_num[ARM_IPI_DDB] = ipiirq[1];
 		break;
 	default:
@@ -616,6 +616,32 @@ ampintc_cpuinit(void)
 
 	if (sc->sc_cpu_mask[cpu_number()] == 0)
 		panic("could not determine cpu target mask");
+
+#ifdef MULTIPROCESSOR
+	if (!CPU_IS_PRIMARY(curcpu())) {
+		/*
+		 * The SGI and PPI registers are banked per cpu and come
+		 * out of reset in an unknown state.  Mask everything,
+		 * then bring over the priority and enable of the local
+		 * sources that already have handlers, and finally open
+		 * this cpu's interface.
+		 */
+		for (i = 0; i < 32; i++)
+			bus_space_write_1(sc->sc_iot, sc->sc_d_ioh,
+			    ICD_IPRn(i), 0xff);
+
+		for (i = 0; i < 32; i++) {
+			if (TAILQ_EMPTY(&sc->sc_handler[i].iq_list))
+				continue;
+			ampintc_set_priority(i,
+			    sc->sc_handler[i].iq_irq_min);
+			ampintc_intr_enable(i);
+		}
+
+		ampintc_setipl(curcpu()->ci_cpl);
+		bus_space_write_4(sc->sc_iot, sc->sc_p_ioh, ICPICR, 1);
+	}
+#endif
 }
 
 void
@@ -946,7 +972,9 @@ int
 ampintc_ipi_ddb(void *v)
 {
 	/* XXX */
+#ifdef DDB
 	db_enter();
+#endif
 	return 1;
 }
 
