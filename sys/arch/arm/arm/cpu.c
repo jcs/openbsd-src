@@ -329,7 +329,13 @@ cpu_identify(struct cpu_info *ci)
 }
 
 int	cpu_hatch_secondary(struct cpu_info *ci, int, uint64_t);
+void	cpu_resume_secondary(struct cpu_info *ci);
 int	cpu_clockspeed(int *);
+
+#ifdef MULTIPROCESSOR
+/* set while resuming so a re-hatched cpu skips reprinting its identify */
+int	cpu_resuming;
+#endif
 
 int
 cpu_match(struct device *parent, void *cfdata, void *aux)
@@ -498,15 +504,18 @@ cpu_hatch_secondary(struct cpu_info *ci, int method, uint64_t data)
 	uint32_t ttbr0;
 	int rc = 0;
 
-	kstack = km_alloc(USPACE, &kv_any, &kp_zero, &kd_waitok);
-	ci->ci_pl1_stkend = (vaddr_t)kstack + USPACE - 16;
+	/* Reuse the stacks from the first hatch when resuming. */
+	if (ci->ci_pl1_stkend == 0) {
+		kstack = km_alloc(USPACE, &kv_any, &kp_zero, &kd_waitok);
+		ci->ci_pl1_stkend = (vaddr_t)kstack + USPACE - 16;
 
-	kstack = km_alloc(PAGE_SIZE, &kv_any, &kp_zero, &kd_waitok);
-	ci->ci_irq_stkend = (vaddr_t)kstack + PAGE_SIZE;
-	kstack = km_alloc(PAGE_SIZE, &kv_any, &kp_zero, &kd_waitok);
-	ci->ci_abt_stkend = (vaddr_t)kstack + PAGE_SIZE;
-	kstack = km_alloc(PAGE_SIZE, &kv_any, &kp_zero, &kd_waitok);
-	ci->ci_und_stkend = (vaddr_t)kstack + PAGE_SIZE;
+		kstack = km_alloc(PAGE_SIZE, &kv_any, &kp_zero, &kd_waitok);
+		ci->ci_irq_stkend = (vaddr_t)kstack + PAGE_SIZE;
+		kstack = km_alloc(PAGE_SIZE, &kv_any, &kp_zero, &kd_waitok);
+		ci->ci_abt_stkend = (vaddr_t)kstack + PAGE_SIZE;
+		kstack = km_alloc(PAGE_SIZE, &kv_any, &kp_zero, &kd_waitok);
+		ci->ci_und_stkend = (vaddr_t)kstack + PAGE_SIZE;
+	}
 
 	pmap_extract(pmap_kernel(), (vaddr_t)ci,
 	    &cpu_hatch_ci[ci->ci_cpuid]);
@@ -633,9 +642,50 @@ cpu_boot_secondary(struct cpu_info *ci)
 }
 
 void
+cpu_resume_secondary(struct cpu_info *ci)
+{
+	char buf[32];
+	uint64_t data = 0;
+	int method = 0, timeout = 10000, len;
+
+	/* a core that never came up at boot has no CPUF_AP to resume */
+	if ((ci->ci_flags & CPUF_AP) == 0)
+		return;
+	if (ci->ci_flags & CPUF_PRESENT)
+		return;
+
+	len = OF_getprop(ci->ci_node, "enable-method", buf, sizeof(buf));
+	if (len <= 0)
+		buf[0] = '\0';
+	if (strcmp(buf, "psci") == 0) {
+		method = 1;
+	} else if (strcmp(buf, "spin-table") == 0) {
+		method = 2;
+		data = OF_getpropint64(ci->ci_node, "cpu-release-addr", 0);
+	}
+
+	cpu_resuming = 1;
+	if (cpu_hatch_secondary(ci, method, data)) {
+		atomic_setbits_int(&ci->ci_flags, CPUF_IDENTIFY);
+		__asm volatile("dsb sy; sev");
+
+		while ((ci->ci_flags & CPUF_IDENTIFIED) == 0 && --timeout)
+			delay(1000);
+		if (timeout == 0) {
+			printf("%s: failed to resume\n", ci->ci_dev->dv_xname);
+			ci->ci_flags = 0;
+		}
+	}
+	cpu_resuming = 0;
+}
+
+void
 cpu_start_secondary(struct cpu_info *ci)
 {
 	int s;
+
+	/* clear interrupt nesting when resuming */
+	ci->ci_idepth = 0;
 
 	cpu_setup();
 
@@ -653,7 +703,8 @@ cpu_start_secondary(struct cpu_info *ci)
 	while ((ci->ci_flags & CPUF_IDENTIFY) == 0)
 		__asm volatile("wfe");
 
-	cpu_identify(ci);
+	if (!cpu_resuming)
+		cpu_identify(ci);
 
 	atomic_setbits_int(&ci->ci_flags, CPUF_IDENTIFIED);
 	__asm volatile("dsb sy");
@@ -697,15 +748,12 @@ cpu_halt(void)
 		    "r"(ctl | GTIMER_CNTP_CTL_IMASK));
 	}
 
-	atomic_clearbits_int(&ci->ci_flags, CPUF_RUNNING | CPUF_GO);
+	atomic_clearbits_int(&ci->ci_flags, CPUF_RUNNING);
 	__asm volatile("dsb sy; sev" ::: "memory");
 
-	/*
-	 * A pending interrupt wakes wfi even with interrupts masked;
-	 * cpu_boot_secondary() sends us one when it is time to leave.
-	 */
+	/* Park in place and wait for cpu_boot_secondary() to release us. */
 	while ((ci->ci_flags & CPUF_GO) == 0)
-		__asm volatile("wfi");
+		__asm volatile("wfe");
 
 	atomic_setbits_int(&ci->ci_flags, CPUF_RUNNING);
 	__asm volatile("dsb sy; sev" ::: "memory");
