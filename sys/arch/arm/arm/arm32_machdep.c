@@ -44,6 +44,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/kernel.h>
 #include <sys/reboot.h>
 #include <sys/proc.h>
 #include <sys/user.h>
@@ -73,6 +74,9 @@ struct vm_map *phys_map = NULL;
 extern int physmem;
 int lid_action = 1;
 int pwr_action = 1;
+
+void blink_led_timeout(void *);
+int led_blink = 1;
 
 struct uvm_constraint_range  dma_constraint = { 0x0, (paddr_t)-1 };
 struct uvm_constraint_range *uvm_md_constraints[] = { NULL };
@@ -308,6 +312,7 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 {
 	char *compatible;
 	int node, len, error;
+	int oldval;
 
 	/* all sysctl names at this level are terminal */
 	if (namelen != 1)
@@ -348,9 +353,66 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		free(compatible, M_TEMP, len);
 		return error;
 
+	case CPU_LED_BLINK:
+		oldval = led_blink;
+		error = sysctl_int(oldp, oldlenp, newp, newlen, &led_blink);
+		/*
+		 * If we were false and are now true, start the timer.
+		 */
+		if (!oldval && led_blink > oldval)
+			blink_led_timeout(NULL);
+		return error;
+
 	default:
 		return (sysctl_bounded_arr(cpuctl_vars, nitems(cpuctl_vars),
 		    name, namelen, oldp, oldlenp, newp, newlen));
 	}
 	/* NOTREACHED */
+}
+
+struct blink_led_softc {
+	SLIST_HEAD(, blink_led) bls_head;
+	int bls_on;
+	struct timeout bls_to;
+} blink_sc = { SLIST_HEAD_INITIALIZER(blink_sc.bls_head), 0 };
+
+void
+blink_led_register(struct blink_led *l)
+{
+	if (SLIST_EMPTY(&blink_sc.bls_head)) {
+		timeout_set(&blink_sc.bls_to, blink_led_timeout, &blink_sc);
+		blink_sc.bls_on = 0;
+		if (led_blink)
+			timeout_add(&blink_sc.bls_to, 1);
+	}
+	SLIST_INSERT_HEAD(&blink_sc.bls_head, l, bl_next);
+}
+
+void
+blink_led_timeout(void *vsc)
+{
+	struct blink_led_softc *sc = &blink_sc;
+	struct blink_led *l;
+	int t;
+
+	if (SLIST_EMPTY(&sc->bls_head))
+		return;
+
+	SLIST_FOREACH(l, &sc->bls_head, bl_next) {
+		(*l->bl_func)(l->bl_arg, sc->bls_on);
+	}
+	sc->bls_on = !sc->bls_on;
+
+	if (!led_blink)
+		return;
+
+	/*
+	 * Blink rate is:
+	 *      full cycle every second if completely idle (loadav = 0)
+	 *      full cycle every 2 seconds if loadav = 1
+	 *      full cycle every 3 seconds if loadav = 2
+	 * etc.
+	 */
+	t = (((averunnable.ldavg[0] + FSCALE) * hz) >> (FSHIFT + 1));
+	timeout_add(&sc->bls_to, t);
 }
