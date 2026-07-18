@@ -68,7 +68,8 @@
 #define CPU_PWRACTION		12	/* int: action caused by power button */
 #define CPU_LIDACTION		13	/* action caused by lid close */
 #define	CPU_COMPATIBLE		14	/* compatible property */
-#define	CPU_MAXID		15	/* number of valid machdep ids */
+#define	CPU_LED_BLINK		15	/* int: blink leds? */
+#define	CPU_MAXID		16	/* number of valid machdep ids */
 
 #define	CTL_MACHDEP_NAMES { \
 	{ 0, 0 }, \
@@ -86,6 +87,7 @@
 	{ "pwraction", CTLTYPE_INT }, \
 	{ "lidaction", CTLTYPE_INT }, \
 	{ "compatible", CTLTYPE_STRING }, \
+	{ "led_blink", CTLTYPE_INT }, \
 }
 
 #ifdef _KERNEL
@@ -349,6 +351,14 @@ intr_restore(u_long cpsr)
 
 int	cpu_suspend_primary(void);
 int	platform_cpu_suspend(void);
+
+struct blink_led {
+	void (*bl_func)(void *, int);
+	void *bl_arg;
+	SLIST_ENTRY(blink_led) bl_next;
+};
+
+void blink_led_register(struct blink_led *);
 
 #endif /* _KERNEL */
 
