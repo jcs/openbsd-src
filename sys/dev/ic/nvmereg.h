@@ -256,10 +256,23 @@ struct nvme_cqe {
 #define NVM_CMD_COMPARE		0x05 /* Compare */
 #define NVM_CMD_DSM		0x09 /* Dataset Management */
 
+/* Feature Identifiers (Set Features / Get Features cdw10) */
+#define NVM_FEAT_APST		0x0c	/* Autonomous Power State Transition */
+
+/* APST Set Features cdw11 */
+#define NVM_FEAT_APST_APSTE	(1 << 0)
+
+/* APST table: 32 entries of 64 bits each */
+#define NVM_APST_TABLE_SIZE	256
+#define NVM_APST_ITPS(_ps)	(((uint64_t)(_ps) & 0x1f) << 3)
+#define NVM_APST_ITPT_MS(_ms)	(((uint64_t)(_ms) & 0xffffff) << 8)
+
 /* Power State Descriptor Data */
 struct nvm_identify_psd {
 	u_int16_t	mp;		/* Max Power */
 	u_int16_t	flags;
+#define NVM_ID_PSD_MXPS			(1 << 8)
+#define NVM_ID_PSD_NOPS			(1 << 9)
 
 	u_int32_t	enlat;		/* Entry Latency */
 
@@ -322,6 +335,7 @@ struct nvm_identify_controller {
 					   Configuration */
 	u_int8_t	apsta;		/* Autonomous Power State Transition
 					   Attributes */
+#define NVM_ID_CTRL_APSTA_APST		(1 << 0)
 
 	u_int8_t	_reserved2[62];
 	u_int32_t	sanicap;
