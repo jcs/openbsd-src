@@ -61,6 +61,9 @@ int	nvme_identify(struct nvme_softc *, u_int);
 void	nvme_fill_identify(struct nvme_softc *, struct nvme_ccb *, void *);
 
 #ifndef SMALL_KERNEL
+void	nvme_configure_apst(struct nvme_softc *);
+void	nvme_fill_set_apst(struct nvme_softc *, struct nvme_ccb *, void *);
+
 void	nvme_refresh_sensors(void *);
 #endif
 
@@ -160,6 +163,10 @@ static const struct nvme_ops nvme_ops = {
 #define NVME_TIMO_IDENT			10000	/* ms to probe/identify */
 #define NVME_TIMO_LOG_PAGE		5000	/* ms to read log pages */
 #define NVME_TIMO_DELAYNS		10	/* ns to delay() in poll loop */
+
+#define NVME_APST_MAX_LATENCY_US	100000
+#define NVME_APST_MIN_ITPT_MS		100
+#define NVME_APST_MAX_ITPT_MS		((1U << 24) - 1)
 
 /*
  * Some controllers, at least Apple NVMe, always require split
@@ -395,6 +402,10 @@ nvme_attach(struct nvme_softc *sc)
 
 	nvme_write4(sc, NVME_INTMC, 1);
 
+#ifndef SMALL_KERNEL
+	nvme_configure_apst(sc);
+#endif
+
 	sc->sc_namespaces = mallocarray(sc->sc_nn + 1,
 	    sizeof(*sc->sc_namespaces), M_DEVBUF, M_WAITOK|M_ZERO);
 
@@ -484,6 +495,10 @@ nvme_resume(struct nvme_softc *sc)
 	}
 
 	nvme_write4(sc, NVME_INTMC, 1);
+
+#ifndef SMALL_KERNEL
+	nvme_configure_apst(sc);
+#endif
 
 	return (0);
 
@@ -2226,5 +2241,104 @@ nvme_refresh_sensors(void *arg)
 		nvme_dmamem_free(sc, mem);
 	if (ccb != NULL)
 		nvme_ccb_put(sc, ccb);
+}
+
+void
+nvme_configure_apst(struct nvme_softc *sc)
+{
+	struct nvm_identify_controller *id = &sc->sc_identify;
+	struct nvme_dmamem *mem;
+	struct nvme_ccb *ccb;
+	struct nvm_identify_psd *psd;
+	uint64_t *table;
+	uint32_t target_lat_us, itpt_ms;
+	int npss, i, max_ps = -1;
+
+	if (!(id->apsta & NVM_ID_CTRL_APSTA_APST))
+		return;
+
+	npss = id->npss;
+	if (npss == 0)
+		return;
+	if (npss >= nitems(id->psd))
+		npss = nitems(id->psd) - 1;
+
+	/* deepest non-operational state whose (enlat + exlat) fits */
+	for (i = npss; i > 0; i--) {
+		psd = &id->psd[i];
+
+		if (!(lemtoh16(&psd->flags) & NVM_ID_PSD_NOPS))
+			continue;
+
+		target_lat_us = lemtoh32(&psd->enlat) + lemtoh32(&psd->exlat);
+		if (target_lat_us <= NVME_APST_MAX_LATENCY_US) {
+			max_ps = i;
+			break;
+		}
+	}
+
+	if (max_ps < 0)
+		return;
+
+	target_lat_us = lemtoh32(&id->psd[max_ps].enlat) +
+	    lemtoh32(&id->psd[max_ps].exlat);
+	itpt_ms = (100ULL * target_lat_us) / 1000;
+	if (itpt_ms < NVME_APST_MIN_ITPT_MS)
+		itpt_ms = NVME_APST_MIN_ITPT_MS;
+	if (itpt_ms > NVME_APST_MAX_ITPT_MS)
+		itpt_ms = NVME_APST_MAX_ITPT_MS;
+
+	mem = nvme_dmamem_alloc(sc, NVM_APST_TABLE_SIZE);
+	if (mem == NULL)
+		return;
+	table = NVME_DMA_KVA(mem);
+	memset(table, 0, NVM_APST_TABLE_SIZE);
+
+	for (i = 0; i < max_ps; i++) {
+		psd = &id->psd[i];
+
+		if (lemtoh16(&psd->flags) & NVM_ID_PSD_NOPS)
+			continue;
+
+		htolem64(&table[i], NVM_APST_ITPT_MS(itpt_ms) |
+		    NVM_APST_ITPS(max_ps));
+	}
+
+	ccb = nvme_ccb_get(sc);
+	if (ccb == NULL) {
+		nvme_dmamem_free(sc, mem);
+		return;
+	}
+
+	ccb->ccb_done = nvme_empty_done;
+	ccb->ccb_cookie = mem;
+
+	nvme_dmamem_sync(sc, mem, BUS_DMASYNC_PREWRITE);
+
+	if (nvme_poll(sc, sc->sc_admin_q, ccb, nvme_fill_set_apst,
+	    NVME_TIMO_QOP) != 0)
+		printf("%s: unable to enable APST\n", DEVNAME(sc));
+	else
+		printf("%s: APST enabled, idle to ps%d (enter %u us, "
+		    "exit %u us) after %u ms\n", DEVNAME(sc), max_ps,
+		    lemtoh32(&id->psd[max_ps].enlat),
+		    lemtoh32(&id->psd[max_ps].exlat), itpt_ms);
+
+	nvme_dmamem_sync(sc, mem, BUS_DMASYNC_POSTWRITE);
+
+	nvme_ccb_put(sc, ccb);
+	nvme_dmamem_free(sc, mem);
+}
+
+void
+nvme_fill_set_apst(struct nvme_softc *sc, struct nvme_ccb *ccb, void *slot)
+{
+	struct nvme_sqe *sqe = slot;
+	struct nvme_dmamem *mem = ccb->ccb_cookie;
+
+	sqe->opcode = NVM_ADMIN_SET_FEATURES;
+	htolem64(&sqe->entry.prp[0], NVME_DMA_DVA(mem));
+	htolem32(&sqe->cdw10, NVM_FEAT_APST);
+	htolem32(&sqe->cdw11, NVM_FEAT_APST_APSTE);
 }
 #endif /* SMALL_KERNEL */
