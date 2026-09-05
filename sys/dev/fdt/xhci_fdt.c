@@ -1,4 +1,4 @@
-/*	$OpenBSD: xhci_fdt.c,v 1.31 2026/07/21 11:15:56 kettenis Exp $	*/
+/*	$OpenBSD: xhci_fdt.c,v 1.32 2026/09/05 20:36:56 kettenis Exp $	*/
 /*
  * Copyright (c) 2017 Mark Kettenis <kettenis@openbsd.org>
  *
@@ -300,11 +300,16 @@ int
 xhci_snps_attach(struct xhci_fdt_softc *sc)
 {
 	/*
-	 * On Apple hardware we need to reset the controller when we
-	 * see a new connection.
+	 * Apple hardware uses two IOMMUs in parallel, so we have to
+	 * mirror the streams.  We also need to reset the controller
+	 * when we see a new connection on this hardware..
 	 */
 	if (OF_is_compatible(sc->sc_node, "apple,dwc3") ||
 	    OF_is_compatible(sc->sc_node, "apple,t8103-dwc3")) {
+		sc->sc.sc_bus.dmatag =
+			iommu_device_mirror_idx(sc->sc_node,
+						sc->sc.sc_bus.dmatag, 1);
+
 		sc->sc_usb_controller_port.up_cookie = sc;
 		sc->sc_usb_controller_port.up_connect = xhci_snps_connect;
 		task_set(&sc->sc_snps_connect_task, xhci_snps_do_connect, sc);

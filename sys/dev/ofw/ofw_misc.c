@@ -1,4 +1,4 @@
-/*	$OpenBSD: ofw_misc.c,v 1.44 2026/01/25 11:56:57 kettenis Exp $	*/
+/*	$OpenBSD: ofw_misc.c,v 1.45 2026/09/05 20:36:56 kettenis Exp $	*/
 /*
  * Copyright (c) 2017-2021 Mark Kettenis
  *
@@ -1058,9 +1058,6 @@ iommu_device_do_map(uint32_t phandle, uint32_t *cells, bus_dma_tag_t dmat)
 {
 	struct iommu_device *id;
 
-	if (phandle == 0)
-		return dmat;
-
 	LIST_FOREACH(id, &iommu_devices, id_list) {
 		if (id->id_phandle == phandle)
 			return id->id_map(id->id_cookie, cells, dmat);
@@ -1070,13 +1067,15 @@ iommu_device_do_map(uint32_t phandle, uint32_t *cells, bus_dma_tag_t dmat)
 }
 
 int
-iommu_device_lookup(int node, uint32_t *phandle, uint32_t *cells)
+iommu_device_lookup_idx(int node, uint32_t *phandle, uint32_t *cells, int idx)
 {
 	uint32_t *cell;
 	uint32_t *map;
 	int len, icells, ncells;
 	int ret = 1;
 	int i;
+
+	KASSERT(idx >= 0);
 
 	len = OF_getproplen(node, "iommus");
 	if (len <= 0)
@@ -1098,20 +1097,29 @@ iommu_device_lookup(int node, uint32_t *phandle, uint32_t *cells)
 
 		KASSERT(icells <= 2);
 
-		*phandle = cell[0];
-		for (i = 0; i < icells; i++)
-			cells[i] = cell[1 + i];
-		ret = 0;
-		break;
+		if (idx == 0) {
+			*phandle = cell[0];
+			for (i = 0; i < icells; i++)
+				cells[i] = cell[1 + i];
+			ret = 0;
+			break;
+		}
 
 		cell += (1 + icells);
 		ncells -= (1 + icells);
+		idx--;
 	}
 
 out:
 	free(map, M_TEMP, len);
 
 	return ret;
+}
+
+int
+iommu_device_lookup(int node, uint32_t *phandle, uint32_t *cells)
+{
+	return iommu_device_lookup_idx(node, phandle, cells, 0);
 }
 
 int
@@ -1166,14 +1174,37 @@ out:
 }
 
 bus_dma_tag_t
-iommu_device_map(int node, bus_dma_tag_t dmat)
+iommu_device_map_idx(int node, bus_dma_tag_t dmat, int idx)
 {
 	uint32_t phandle, cells[2] = {0};
 
-	if (iommu_device_lookup(node, &phandle, &cells[0]))
+	if (iommu_device_lookup_idx(node, &phandle, &cells[0], idx))
 		return dmat;
 
 	return iommu_device_do_map(phandle, &cells[0], dmat);
+}
+
+bus_dma_tag_t
+iommu_device_map(int node, bus_dma_tag_t dmat)
+{
+	return iommu_device_map_idx(node, dmat, 0);
+}
+
+bus_dma_tag_t
+iommu_device_mirror_idx(int node, bus_dma_tag_t dmat, int idx)
+{
+	uint32_t phandle, cells[2] = {0};
+	struct iommu_device *id;
+
+	if (iommu_device_lookup_idx(node, &phandle, &cells[0], idx))
+		return dmat;
+
+	LIST_FOREACH(id, &iommu_devices, id_list) {
+		if (id->id_phandle == phandle)
+			return id->id_mirror(id->id_cookie, cells, dmat);
+	}
+
+	return dmat;
 }
 
 bus_dma_tag_t

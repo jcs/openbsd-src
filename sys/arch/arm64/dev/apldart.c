@@ -1,4 +1,4 @@
-/*	$OpenBSD: apldart.c,v 1.22 2026/06/22 07:54:19 deraadt Exp $	*/
+/*	$OpenBSD: apldart.c,v 1.23 2026/09/05 20:36:56 kettenis Exp $	*/
 /*
  * Copyright (c) 2021 Mark Kettenis <kettenis@openbsd.org>
  *
@@ -143,6 +143,7 @@ apldart_trunc_offset(psize_t off)
 struct apldart_stream {
 	struct apldart_softc	*as_sc;
 	int			as_sid;
+	struct apldart_stream	*as_mirror;
 
 	struct extent		*as_dvamap;
 	struct mutex		as_dvamap_mtx;
@@ -219,6 +220,7 @@ struct cfdriver apldart_cd = {
 };
 
 bus_dma_tag_t apldart_map(void *, uint32_t *, bus_dma_tag_t);
+bus_dma_tag_t apldart_mirror(void *, uint32_t *, bus_dma_tag_t);
 void	apldart_reserve(void *, uint32_t *, bus_addr_t, bus_size_t);
 int	apldart_t8020_intr(void *);
 int	apldart_t8110_intr(void *);
@@ -257,7 +259,7 @@ apldart_attach(struct device *parent, struct device *self, void *aux)
 	struct apldart_softc *sc = (struct apldart_softc *)self;
 	struct fdt_attach_args *faa = aux;
 	uint64_t dva_range[2];
-	uint32_t config, maj, min, params2, params3, params4, tcr, ttbr;
+	uint32_t config, maj, min, params3, params4, tcr, ttbr;
 	int sid, idx;
 
 	if (faa->fa_nreg < 1) {
@@ -359,21 +361,6 @@ apldart_attach(struct device *parent, struct device *self, void *aux)
 	 */
 	sc->sc_do_suspend = !sc->sc_locked && !sc->sc_translating;
 
-	/*
-	 * Use bypass mode if supported.  This avoids an issue with
-	 * the USB3 controllers which need mappings entered into two
-	 * IOMMUs, which is somewhat difficult to implement with our
-	 * current kernel interfaces.
-	 */
-	params2 = HREAD4(sc, DART_PARAMS2);
-	if ((params2 & DART_PARAMS2_BYPASS_SUPPORT) &&
-	    !sc->sc_locked && !sc->sc_translating) {
-		for (sid = 0; sid < sc->sc_nsid; sid++)
-			HWRITE4(sc, DART_TCR(sc, sid), sc->sc_tcr_bypass);
-		printf(", bypass\n");
-		return;
-	}
-
 	if (sc->sc_locked)
 		printf(", locked\n");
 	else if (sc->sc_translating)
@@ -428,6 +415,7 @@ apldart_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_id.id_node = faa->fa_node;
 	sc->sc_id.id_cookie = sc;
 	sc->sc_id.id_map = apldart_map;
+	sc->sc_id.id_mirror = apldart_mirror;
 	sc->sc_id.id_reserve = apldart_reserve;
 	iommu_device_register(&sc->sc_id);
 }
@@ -694,6 +682,63 @@ apldart_alloc_stream(struct apldart_softc *sc, int sid)
 	return as;
 }
 
+struct apldart_stream *
+apldart_mirror_stream(struct apldart_softc *sc, int sid,
+		      struct apldart_stream *mirror)
+{
+	struct apldart_stream *as;
+	paddr_t pa;
+	int idx, ntte, nl1, nl2;
+	uint32_t mask;
+
+	as = malloc(sizeof(*as), M_DEVBUF, M_WAITOK | M_ZERO);
+
+	as->as_sc = sc;
+	as->as_sid = sid;
+	as->as_mirror = mirror;
+
+	KASSERT(!sc->sc_locked);
+	KASSERT(!sc->sc_translating);
+
+	/* We shouldn't do mirrors of a mirror. */
+	KASSERT(mirror->as_mirror == NULL);
+
+	ntte = howmany((sc->sc_dvaend & sc->sc_dvamask), DART_PAGE_SIZE);
+	nl2 = howmany(ntte, DART_PAGE_SIZE / sizeof(uint64_t));
+	nl1 = howmany(nl2, DART_PAGE_SIZE / sizeof(uint64_t));
+	KASSERT(nl1 <= sc->sc_nttbr);
+
+	/* Install page tables from the mirrored stream. */
+	pa = APLDART_DMA_DVA(mirror->as_l1);
+	for (idx = 0; idx < nl1; idx++) {
+		HWRITE4(sc, DART_TTBR(sc, sid, idx),
+		    (pa >> DART_TTBR_SHIFT) | sc->sc_ttbr_valid);
+		pa += DART_PAGE_SIZE;
+	}
+	sc->sc_flush_tlb(sc, sid);
+
+	/* Enable this stream. */
+	mask = HREAD4(sc, DART_SID_ENABLE(sc, sid / 32));
+	mask |= (1U << (sid % 32));
+	HWRITE4(sc, DART_SID_ENABLE(sc, sid / 32), mask);
+
+	/* Enable translations. */
+	HWRITE4(sc, DART_TCR(sc, sid), sc->sc_tcr_translate_enable);
+
+	memcpy(&as->as_dmat, sc->sc_dmat, sizeof(*sc->sc_dmat));
+	as->as_dmat._cookie = as;
+	as->as_dmat._dmamap_create = apldart_dmamap_create;
+	as->as_dmat._dmamap_destroy = apldart_dmamap_destroy;
+	as->as_dmat._dmamap_load = apldart_dmamap_load;
+	as->as_dmat._dmamap_load_mbuf = apldart_dmamap_load_mbuf;
+	as->as_dmat._dmamap_load_uio = apldart_dmamap_load_uio;
+	as->as_dmat._dmamap_load_raw = apldart_dmamap_load_raw;
+	as->as_dmat._dmamap_unload = apldart_dmamap_unload;
+	as->as_dmat._flags |= BUS_DMA_COHERENT;
+
+	return as;	
+}
+
 bus_dma_tag_t
 apldart_map(void *cookie, uint32_t *cells, bus_dma_tag_t dmat)
 {
@@ -704,7 +749,22 @@ apldart_map(void *cookie, uint32_t *cells, bus_dma_tag_t dmat)
 
 	if (sc->sc_as[sid] == NULL)
 		sc->sc_as[sid] = apldart_alloc_stream(sc, sid);
+		
+	return &sc->sc_as[sid]->as_dmat;
+}
 
+bus_dma_tag_t
+apldart_mirror(void *cookie, uint32_t *cells, bus_dma_tag_t dmat)
+{
+	struct apldart_softc *sc = cookie;
+	uint32_t sid = cells[0];
+
+	KASSERT(sid < sc->sc_nsid);
+	KASSERT(dmat->_dmamap_create == apldart_dmamap_create);
+
+	if (sc->sc_as[sid] == NULL)
+		sc->sc_as[sid] = apldart_mirror_stream(sc, sid, dmat->_cookie);
+		
 	return &sc->sc_as[sid]->as_dmat;
 }
 
@@ -790,6 +850,14 @@ apldart_load_map(struct apldart_stream *as, bus_dmamap_t map, int flags)
 	volatile uint64_t *tte;
 	int seg, error;
 
+	if (as->as_mirror) {
+		error = apldart_load_map(as->as_mirror, map, flags);
+		if (error)
+			return error;
+		sc->sc_flush_tlb(sc, as->as_sid);
+		return 0;
+	}
+
 	/* For each segment. */
 	for (seg = 0; seg < map->dm_nsegs; seg++) {
 		paddr_t pa = map->dm_segs[seg]._ds_paddr;
@@ -842,7 +910,6 @@ apldart_load_map(struct apldart_stream *as, bus_dmamap_t map, int flags)
 	}
 
 	sc->sc_flush_tlb(sc, as->as_sid);
-
 	return 0;
 }
 
@@ -853,6 +920,12 @@ apldart_unload_map(struct apldart_stream *as, bus_dmamap_t map)
 	struct apldart_map_state *ams = map->_dm_cookie;
 	volatile uint64_t *tte;
 	int seg, error;
+
+	if (as->as_mirror) {
+		apldart_unload_map(as->as_mirror, map);
+		sc->sc_flush_tlb(sc, as->as_sid);
+		return;
+	}
 
 	/* For each segment. */
 	for (seg = 0; seg < map->dm_nsegs; seg++) {
