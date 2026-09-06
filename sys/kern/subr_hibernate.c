@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_hibernate.c,v 1.158 2026/05/30 08:06:09 mlarkin Exp $	*/
+/*	$OpenBSD: subr_hibernate.c,v 1.159 2026/09/06 18:26:41 mglocker Exp $	*/
 
 /*
  * Copyright (c) 2011 Ariane van der Steldt <ariane@stack.nl>
@@ -106,6 +106,10 @@ extern long __guard_local;
 /* Retguard phys address (need to skip this region during unpack) */
 paddr_t retguard_start_phys, retguard_end_phys;
 extern char __retguard_start, __retguard_end;
+
+/* Hibernate data phys address (need to skip this region during unpack) */
+paddr_t hibdata_start_phys, hibdata_end_phys;
+extern char __hibdata_start, __hibdata_end;
 
 void hibernate_copy_chunk_to_piglet(paddr_t, vaddr_t, size_t);
 int hibernate_calc_rle(paddr_t, paddr_t);
@@ -490,6 +494,10 @@ uvm_pmr_alloc_piglet(vaddr_t *va, paddr_t *pa, vsize_t sz, paddr_t align)
 		.kp_align = align,
 		.kp_maxseg = 1
 	};
+	struct kmem_va_mode kv_piglet = {
+		.kv_map = &kernel_map,
+		.kv_align = align,
+	};
 
 	/* Ensure align is a power of 2 */
 	KASSERT((align & (align - 1)) == 0);
@@ -504,7 +512,7 @@ uvm_pmr_alloc_piglet(vaddr_t *va, paddr_t *pa, vsize_t sz, paddr_t align)
 
 	sz = round_page(sz);
 
-	*va = (vaddr_t)km_alloc(sz, &kv_any, &kp_piglet, &kd_nowait);
+	*va = (vaddr_t)km_alloc(sz, &kv_piglet, &kp_piglet, &kd_nowait);
 	if (*va == 0)
 		return ENOMEM;
 
@@ -811,7 +819,7 @@ hibernate_inflate_region(union hibernate_info *hib, paddr_t dest,
 			    hib->piglet_pa + (110 * PAGE_SIZE) +
 			    hib->retguard_ofs, 0);
 			hib->retguard_ofs += PAGE_SIZE;
-			if (hib->retguard_ofs > 255 * PAGE_SIZE) {
+			if (hib->retguard_ofs > 31 * PAGE_SIZE) {
 				/*
 				 * XXX - this will likely reboot/hang most
 				 *       machines since the console output
@@ -1192,6 +1200,10 @@ hibernate_resume(void)
 	    &retguard_start_phys);
 	pmap_extract(pmap_kernel(), (vaddr_t)&__retguard_end,
 	    &retguard_end_phys);
+	pmap_extract(pmap_kernel(), (vaddr_t)&__hibdata_start,
+	    &hibdata_start_phys);
+	pmap_extract(pmap_kernel(), (vaddr_t)&__hibdata_end,
+	    &hibdata_end_phys);
 
 	hibernate_preserve_entropy(&disk_hib);
 
@@ -1288,6 +1300,7 @@ hibernate_unpack_image(union hibernate_info *hib)
 	 * copy code in hibernate_resume_machdep.)
 	 */
 	hibernate_resume_machdep(global_piglet_va + (110 * PAGE_SIZE));
+	/* NOTREACHED */
 }
 
 /*
@@ -1953,6 +1966,10 @@ hibernate_suspend(void)
 	    &retguard_start_phys);
 	pmap_extract(pmap_kernel(), (vaddr_t)&__retguard_end,
 	    &retguard_end_phys);
+	pmap_extract(pmap_kernel(), (vaddr_t)&__hibdata_start,
+	    &hibdata_start_phys);
+	pmap_extract(pmap_kernel(), (vaddr_t)&__hibdata_end,
+	    &hibdata_end_phys);
 
 	/* Calculate block offsets in swap */
 	hib->image_offset = ctod(start);
@@ -2007,8 +2024,8 @@ hibernate_alloc(void)
 		return (ENOMEM);
 
 	pmap_activate(curproc);
-	pmap_kenter_pa(HIBERNATE_HIBALLOC_PAGE, HIBERNATE_HIBALLOC_PAGE,
-	    PROT_READ | PROT_WRITE);
+	if (hibernate_pmap_setup_md())
+		return ENOMEM;
 
 	/*
 	 * Allocate VA for the temp page.
@@ -2024,7 +2041,7 @@ hibernate_alloc(void)
 
 	return (0);
 unmap:
-	pmap_kremove(HIBERNATE_HIBALLOC_PAGE, PAGE_SIZE);
+	hibernate_pmap_teardown_md();
 	pmap_update(pmap_kernel());
 	return (ENOMEM);
 }
@@ -2044,7 +2061,7 @@ hibernate_free(void)
 	}
 
 	hibernate_temp_page = 0;
-	pmap_kremove(HIBERNATE_HIBALLOC_PAGE, PAGE_SIZE);
+	hibernate_pmap_teardown_md();
 	pmap_update(pmap_kernel());
 }
 
