@@ -1,4 +1,4 @@
-/*	$OpenBSD: authpf.c,v 1.131 2026/07/20 16:00:35 sashan Exp $	*/
+/*	$OpenBSD: authpf.c,v 1.132 2026/09/06 18:49:03 deraadt Exp $	*/
 
 /*
  * Copyright (C) 1998 - 2007 Bob Beck (beck@openbsd.org).
@@ -816,7 +816,7 @@ change_filter(int add, const char *luser, const char *ipsrc)
 			if (setresgid(gid, gid, gid) == -1) {
 				err(1, "setregid");
 			}
-			execvp(PATH_PFCTL, pargv);
+			execv(PATH_PFCTL, pargv);
 			warn("exec of %s failed", PATH_PFCTL);
 			_exit(1);
 		}
