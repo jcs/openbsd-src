@@ -1,4 +1,4 @@
-/*	$OpenBSD: ufshci.c,v 1.48 2026/09/04 19:30:18 mglocker Exp $ */
+/*	$OpenBSD: ufshci.c,v 1.49 2026/09/06 19:31:26 kettenis Exp $ */
 
 /*
  * Copyright (c) 2022 Marcus Glocker <mglocker@openbsd.org>
@@ -1990,6 +1990,9 @@ ufshci_hibernate_io(dev_t dev, daddr_t blkno, vaddr_t addr, size_t size,
 	if (UFSHCI_READ_4(my->sc, UFSHCI_REG_UTRLRSR) != 1)
 		return EIO;
 
+	/* XXX bus_dmamap_sync() */
+	membar_sync();
+
 	ufshci_doorbell_write(my->sc, slot);
 
 	/* ufshci_doorbell_poll() adaption for hibernate. */
@@ -2003,6 +2006,9 @@ ufshci_hibernate_io(dev_t dev, daddr_t blkno, vaddr_t addr, size_t size,
 	if (timeout_us == 0)
 		return EIO;
 	UFSHCI_WRITE_4(my->sc, UFSHCI_REG_UTRLCNR, (1U << slot));
+
+	/* XXX bus_dmamap_sync() */
+	membar_sync();
 
 	/* Check if the command was successfully executed. */
 	if (my->utrd.dw2 != UFSHCI_UTRD_DW2_OCS_SUCCESS)
