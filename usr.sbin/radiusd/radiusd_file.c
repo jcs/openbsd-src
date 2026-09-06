@@ -1,4 +1,4 @@
-/*	$OpenBSD: radiusd_file.c,v 1.9 2026/08/04 13:24:44 claudio Exp $	*/
+/*	$OpenBSD: radiusd_file.c,v 1.10 2026/09/06 18:59:22 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2024 YASUOKA Masahiko <yasuoka@yasuoka.net>
@@ -96,7 +96,7 @@ main(int argc, char *argv[])
 {
 	int				 ch, pairsock[2], status;
 	pid_t				 pid;
-	char				*saved_argv0;
+	char				 execpath[PATH_MAX];
 	struct imsgbuf			 ibuf;
 	struct imsg			 imsg;
 	size_t				 datalen;
@@ -110,10 +110,12 @@ main(int argc, char *argv[])
 			/* not reached */
 			break;
 		}
-	saved_argv0 = argv[0];
 
 	argc -= optind;
 	argv += optind;
+
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
 
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, PF_UNSPEC,
 	    pairsock) == -1)
@@ -121,7 +123,7 @@ main(int argc, char *argv[])
 
 	log_init(0);
 
-	pid = start_child(saved_argv0, pairsock[1]);
+	pid = start_child(execpath, pairsock[1]);
 
 	/* Privileged process */
 	if (pledge("stdio rpath unveil", NULL) == -1)
@@ -260,7 +262,7 @@ module_file_main(void)
 }
 
 pid_t
-start_child(char *argv0, int fd)
+start_child(char *execpath, int fd)
 {
 	char *argv[5];
 	int argc = 0;
@@ -282,11 +284,11 @@ start_child(char *argv0, int fd)
 	} else if (fcntl(fd, F_SETFD, 0) == -1)
 		fatal("cannot setup imsg fd");
 
-	argv[argc++] = argv0;
+	argv[argc++] = execpath;
 	argv[argc++] = "-M";	/* main proc */
 	argv[argc++] = NULL;
-	execvp(argv0, argv);
-	fatal("execvp");
+	execv(execpath, argv);
+	fatal("execv");
 }
 
 void
