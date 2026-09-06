@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.c,v 1.8 2026/07/30 12:48:49 claudio Exp $	*/
+/*	$OpenBSD: proc.c,v 1.9 2026/09/06 18:58:10 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2017 Eric Faurot <eric@openbsd.org>
@@ -102,7 +102,7 @@ proc_bypid(pid_t pid)
 }
 
 struct imsgproc *
-proc_exec(int type, char **argv)
+proc_exec(int type, char *execpath, char **argv)
 {
 	struct imsgproc *p;
 	int sp[2];
@@ -142,8 +142,8 @@ proc_exec(int type, char **argv)
 	if (closefrom(4) == -1)
 		fatal("%s: closefrom", __func__);
 
-	execvp(argv[0], argv);
-	fatal("%s: execvp: %s", __func__, argv[0]);
+	execv(execpath, argv);
+	fatal("%s: execv: %s", __func__, execpath);
 }
 
 struct imsgproc *

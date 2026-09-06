@@ -1,4 +1,4 @@
-/*	$OpenBSD: lpd.c,v 1.3 2022/12/28 21:30:17 jmc Exp $	*/
+/*	$OpenBSD: lpd.c,v 1.4 2026/09/06 18:58:10 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2017 Eric Faurot <eric@openbsd.org>
@@ -50,7 +50,7 @@ static void priv_open_listener(struct listener *);
 static void priv_send_config(void);
 static void priv_sighandler(int, short, void *);
 static void priv_shutdown(void);
-static void priv_run_printer(const char *);
+static void priv_run_printer(const char *, char *);
 
 static char **saved_argv;
 static int saved_argc;
@@ -64,6 +64,8 @@ usage(void)
 	    __progname);
 	exit(1);
 }
+
+char execpath[PATH_MAX];
 
 int
 main(int argc, char **argv)
@@ -111,6 +113,9 @@ main(int argc, char **argv)
 
 	if (argc || *argv)
 		usage();
+
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		fatalx("getexecpath");
 
 	if (reexec) {
 		if (!strcmp(reexec, "control"))
@@ -179,21 +184,21 @@ main(int argc, char **argv)
 	argv[argc++] = NULL;
 
 	argv[argc - 2] = "control";
-	p_control = proc_exec(PROC_CONTROL, argv);
+	p_control = proc_exec(PROC_CONTROL, execpath, argv);
 	if (p_control == NULL)
 		fatalx("cannot exec control process");
 	proc_setcallback(p_control, priv_dispatch_control, NULL);
 	proc_enable(p_control);
 
 	argv[argc - 2] = "engine";
-	p_engine = proc_exec(PROC_ENGINE, argv);
+	p_engine = proc_exec(PROC_ENGINE, execpath, argv);
 	if (p_engine == NULL)
 		fatalx("cannot exec engine process");
 	proc_setcallback(p_engine, priv_dispatch_engine, NULL);
 	proc_enable(p_engine);
 
 	argv[argc - 2] = "frontend";
-	p_frontend = proc_exec(PROC_FRONTEND, argv);
+	p_frontend = proc_exec(PROC_FRONTEND, execpath, argv);
 	if (p_frontend == NULL)
 		fatalx("cannot exec frontend process");
 	proc_setcallback(p_frontend, priv_dispatch_frontend, NULL);
@@ -379,7 +384,7 @@ priv_dispatch_engine(struct imsgproc *proc, struct imsg *imsg, void *arg)
 	case IMSG_LPR_PRINTJOB:
 		m_get_string(proc, &prn);
 		m_end(proc);
-		priv_run_printer(prn);
+		priv_run_printer(prn, execpath);
 		break;
 	default:
 		fatalx("%s: unexpected imsg %s", __func__,
@@ -424,7 +429,7 @@ priv_dispatch_printer(struct imsgproc *proc, struct imsg *imsg, void *arg)
 }
 
 static void
-priv_run_printer(const char *prn)
+priv_run_printer(const char *prn, char *execpath)
 {
 	struct imsgproc *p;
 	char **argv, *buf;
@@ -447,7 +452,7 @@ priv_run_printer(const char *prn)
 	argv[argc++] = buf;
 	argv[argc++] = NULL;
 
-	p = proc_exec(PROC_PRINTER, argv);
+	p = proc_exec(PROC_PRINTER, execpath, argv);
 	if (p == NULL)
 		log_warnx("%s: cannot exec printer process", __func__);
 	else {

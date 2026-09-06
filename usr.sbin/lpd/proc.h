@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.1.1.1 2018/04/27 16:14:37 eric Exp $	*/
+/*	$OpenBSD: proc.h,v 1.2 2026/09/06 18:58:10 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2017 Eric Faurot <eric@openbsd.org>
@@ -19,7 +19,7 @@
 struct imsgproc;
 
 struct imsgproc *proc_bypid(pid_t);
-struct imsgproc *proc_exec(int, char **);
+struct imsgproc *proc_exec(int, char *, char **);
 struct imsgproc *proc_attach(int, int);
 void	         proc_enable(struct imsgproc *);
 void	         proc_free(struct imsgproc *);
