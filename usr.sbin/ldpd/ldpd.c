@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldpd.c,v 1.82 2026/08/17 09:00:20 claudio Exp $ */
+/*	$OpenBSD: ldpd.c,v 1.83 2026/09/06 18:56:27 deraadt Exp $ */
 
 /*
  * Copyright (c) 2013, 2016 Renato Westphal <renato@openbsd.org>
@@ -27,6 +27,7 @@
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
@@ -108,10 +109,9 @@ int
 main(int argc, char *argv[])
 {
 	struct event		 ev_sigint, ev_sigterm, ev_sighup;
-	char			*saved_argv0;
 	int			 ch;
 	int			 debug = 0, lflag = 0, eflag = 0;
-	char			*sockname;
+	char			*sockname, execpath[PATH_MAX];
 	int			 pipe_parent2ldpe[2];
 	int			 pipe_parent2lde[2];
 
@@ -122,10 +122,6 @@ main(int argc, char *argv[])
 
 	log_init(1);	/* log to stderr until daemonized */
 	log_verbose(1);
-
-	saved_argv0 = argv[0];
-	if (saved_argv0 == NULL)
-		saved_argv0 = "ldpd";
 
 	while ((ch = getopt(argc, argv, "dD:f:ns:vLE")) != -1) {
 		switch (ch) {
@@ -167,6 +163,9 @@ main(int argc, char *argv[])
 	argv += optind;
 	if (argc > 0 || (lflag && eflag))
 		usage();
+
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
 
 	if (lflag)
 		lde(debug, global.cmd_opts & LDPD_OPT_VERBOSE);
@@ -215,10 +214,10 @@ main(int argc, char *argv[])
 		fatal("socketpair");
 
 	/* start children */
-	lde_pid = start_child(PROC_LDE_ENGINE, saved_argv0,
+	lde_pid = start_child(PROC_LDE_ENGINE, execpath,
 	    pipe_parent2lde[1], debug, global.cmd_opts & LDPD_OPT_VERBOSE,
 	    NULL);
-	ldpe_pid = start_child(PROC_LDP_ENGINE, saved_argv0,
+	ldpe_pid = start_child(PROC_LDP_ENGINE, execpath,
 	    pipe_parent2ldpe[1], debug, global.cmd_opts & LDPD_OPT_VERBOSE,
 	    sockname);
 
@@ -323,7 +322,7 @@ ldpd_shutdown(void)
 }
 
 static pid_t
-start_child(enum ldpd_process p, char *argv0, int fd, int debug, int verbose,
+start_child(enum ldpd_process p, char *execpath, int fd, int debug, int verbose,
     char *sockname)
 {
 	char	*argv[7];
@@ -346,7 +345,7 @@ start_child(enum ldpd_process p, char *argv0, int fd, int debug, int verbose,
 	} else if (fcntl(fd, F_SETFD, 0) == -1)
 		fatal("cannot setup imsg fd");
 
-	argv[argc++] = argv0;
+	argv[argc++] = execpath;
 	switch (p) {
 	case PROC_MAIN:
 		fatalx("Can not start main process");
@@ -367,8 +366,8 @@ start_child(enum ldpd_process p, char *argv0, int fd, int debug, int verbose,
 	}
 	argv[argc++] = NULL;
 
-	execvp(argv0, argv);
-	fatal("execvp");
+	execv(execpath, argv);
+	fatal("execv");
 }
 
 /* imsg handling */

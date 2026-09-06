@@ -1,4 +1,4 @@
-/*	$OpenBSD: ldapd.c,v 1.32 2022/02/10 13:06:46 robert Exp $ */
+/*	$OpenBSD: ldapd.c,v 1.33 2026/09/06 18:56:27 deraadt Exp $ */
 
 /*
  * Copyright (c) 2009, 2010 Martin Hedenfalk <martin@bzero.se>
@@ -116,7 +116,7 @@ main(int argc, char *argv[])
 	int			 pipe_parent2ldap[2];
 	char			*conffile = CONFFILE;
 	char			*csockpath = LDAPD_SOCKET;
-	char			*saved_argv0;
+	char			 execpath[PATH_MAX];
 	struct imsgev		*iev_ldape;
 	struct event		 ev_sigint;
 	struct event		 ev_sigterm;
@@ -126,9 +126,8 @@ main(int argc, char *argv[])
 
 	log_init(1, LOG_DAEMON);	/* log to stderr until daemonized */
 
-	saved_argv0 = argv[0];
-	if (saved_argv0 == NULL)
-		saved_argv0 = "ldapd";
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
 
 	while ((c = getopt(argc, argv, "dhvD:f:nr:s:E")) != -1) {
 
@@ -213,7 +212,7 @@ main(int argc, char *argv[])
 	    PF_UNSPEC, pipe_parent2ldap) != 0)
 		fatal("socketpair");
 	
-	ldape_pid = start_child(PROC_LDAP_SERVER, saved_argv0,
+	ldape_pid = start_child(PROC_LDAP_SERVER, execpath,
 	    pipe_parent2ldap[1], debug, verbose, csockpath, conffile);
 
 	ldap_loginit("auth", debug, verbose);
@@ -406,7 +405,7 @@ ldapd_open_request(struct imsgev *iev, struct imsg *imsg)
 }
 
 static pid_t
-start_child(enum ldapd_process p, char *argv0, int fd, int debug,
+start_child(enum ldapd_process p, char *execpath, int fd, int debug,
     int verbose, char *csockpath, char *conffile)
 {
 	char		*argv[11];
@@ -429,7 +428,7 @@ start_child(enum ldapd_process p, char *argv0, int fd, int debug,
 	} else if (fcntl(fd, F_SETFD, 0) == -1)
 		fatal("cannot setup imsg fd");
 
-	argv[argc++] = argv0;
+	argv[argc++] = execpath;
 	switch (p) {
 	case PROC_MAIN_AUTH:
 		fatalx("Can not start main process");
@@ -460,6 +459,6 @@ start_child(enum ldapd_process p, char *argv0, int fd, int debug,
 
 	argv[argc++] = NULL;
 
-	execvp(argv0, argv);
-	fatal("execvp");
+	execv(execpath, argv);
+	fatal("execv");
 }
