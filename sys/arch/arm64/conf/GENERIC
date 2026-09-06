@@ -1,4 +1,4 @@
-# $OpenBSD: GENERIC,v 1.317 2026/05/26 03:54:14 mglocker Exp $
+# $OpenBSD: GENERIC,v 1.318 2026/09/06 18:29:44 mglocker Exp $
 #
 # GENERIC machine description file
 #
@@ -26,6 +26,7 @@ option		PCIVERBOSE
 option		USER_PCICONF	# user-space PCI configuration
 option		USBVERBOSE
 option		SUSPEND
+option		HIBERNATE
 
 makeoptions	KERNEL_BASE_PHYS="0x00200000"
 makeoptions	KERNEL_BASE_VIRT="0xffffff8000200000"
