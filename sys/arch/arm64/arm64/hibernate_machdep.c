@@ -1,4 +1,4 @@
-/*	$OpenBSD: hibernate_machdep.c,v 1.1 2026/09/06 18:25:22 mglocker Exp $ */
+/*	$OpenBSD: hibernate_machdep.c,v 1.2 2026/09/06 20:02:12 kettenis Exp $ */
 
 /*
  * Copyright (c) 2026 Marcus Glocker <mglocker@openbsd.org>
@@ -20,6 +20,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
 #include <sys/buf.h>
 #include <sys/conf.h>
 #include <sys/device.h>
@@ -545,20 +546,26 @@ hibernate_disable_intr_machdep(void)
 void
 hibernate_quiesce_cpus(void)
 {
+	extern volatile int cpu_parked;
 	CPU_INFO_ITERATOR cii;
 	struct cpu_info *ci;
 
 	KASSERT(CPU_IS_PRIMARY(curcpu()));
 
+	cpu_parked = 1;
 	CPU_INFO_FOREACH(cii, ci) {
 		if (CPU_IS_PRIMARY(ci))
 			continue;
 		if ((ci->ci_flags & CPUF_PRESENT) == 0)
 			continue;
-		arm_send_ipi(ci, ARM_IPI_HALT);
-		while (ci->ci_flags & CPUF_RUNNING)
+		atomic_setbits_int(&ci->ci_flags, CPUF_GO | CPUF_PARK);
+		__asm volatile("dsb sy; sev" ::: "memory");
+		while ((ci->ci_flags & CPUF_PARKED) == 0)
 			CPU_BUSY_CYCLE();
 	}
+
+	/* Wait a bit for the APs to park themselves */
+	delay(500000);
 }
 #endif /* MULTIPROCESSOR */
 

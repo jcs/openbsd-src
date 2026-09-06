@@ -1,4 +1,4 @@
-/* $OpenBSD: locore.S,v 1.51 2026/06/23 11:45:54 kettenis Exp $ */
+/* $OpenBSD: locore.S,v 1.52 2026/09/06 20:02:12 kettenis Exp $ */
 /*-
  * Copyright (c) 2012-2014 Andrew Turner
  * All rights reserved.
@@ -502,6 +502,57 @@ cpu_hatch_primary:
 	.align 3
 .Lcpu_init_primary:
 	.xword	cpu_init_primary
+#endif
+
+#ifdef HIBERNATE
+	.globl cpu_park
+cpu_park:
+	sev
+1:	wfe
+	adrp	x1, cpu_parked
+	ldr	w1, [x1, :lo12:cpu_parked]
+	cbnz	x1, 1b
+
+	/* Invalidate the TLB */
+	dsb	ishst
+	tlbi	vmalle1is
+	dsb	ish
+	CODEPATCH_START
+	tlbi	vmalle1is
+	dsb	ish
+	CODEPATCH_END(CPTAG_REPEAT_TLBI)
+	isb
+
+	mrs	x2, mpidr_el1
+	mov	x3, #(MPIDR_AFF0 | MPIDR_AFF1)
+	movk	x3, #(MPIDR_AFF2 >> 16), lsl #16
+	movk	x3, #(MPIDR_AFF3 >> 32), lsl #32
+	and	x2, x2, x3
+
+	/* Lookup our struct cpu_info */
+	adrp	x0, cpu_info_list
+	ldr	x0, [x0, :lo12:cpu_info_list]
+2:
+	ldr	x1, [x0, #CI_MPIDR]
+	cmp	x1, x2
+	b.eq	3f
+	ldr	x0, [x0, #CI_NEXT]
+	b	2b
+
+3:
+	/* Set up CPU info */
+	msr	tpidr_el1, x0
+
+	ldr	x1, [x0, #CI_EL1_STKEND]
+	mov	sp, x1
+
+	bl	hibernate_dcache_flush_machdep
+
+	mrs	x0, tpidr_el1
+	adr	x1, .Lcpu_init_secondary
+	ldr	x1, [x1]
+	blr	x1
+	b	.
 #endif
 
 	.align 3

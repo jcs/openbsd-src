@@ -1,4 +1,4 @@
-/* $OpenBSD: cpu.h,v 1.56 2026/07/07 12:12:44 kettenis Exp $ */
+/* $OpenBSD: cpu.h,v 1.57 2026/09/06 20:02:12 kettenis Exp $ */
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
  *
@@ -202,6 +202,8 @@ struct cpu_info {
 #define CPUF_PRESENT		(1<<4)
 #define CPUF_GO			(1<<5)
 #define CPUF_RUNNING		(1<<6)
+#define CPUF_PARK		(1<<7)
+#define CPUF_PARKED		(1<<8)
 
 static inline struct cpu_info *
 curcpu(void)

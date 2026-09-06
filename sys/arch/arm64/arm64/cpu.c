@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.151 2026/09/03 11:54:23 jsg Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.152 2026/09/06 20:02:12 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
@@ -1981,6 +1981,11 @@ cpu_boot_secondary(struct cpu_info *ci)
 		__asm volatile("wfe");
 }
 
+#ifdef HIBERNATE
+volatile int cpu_parked __attribute__((section(".hibdata")));
+void cpu_park(struct cpu_info *);
+#endif
+
 void
 cpu_init_secondary(struct cpu_info *ci)
 {
@@ -2004,6 +2009,16 @@ cpu_init_secondary(struct cpu_info *ci)
 
 	while ((ci->ci_flags & CPUF_GO) == 0)
 		__asm volatile("wfe");
+	__asm volatile("dsb sy" ::: "memory");
+
+#ifdef HIBERNATE
+	if (ci->ci_flags & CPUF_PARK) {
+		atomic_setbits_int(&ci->ci_flags, CPUF_PARKED);
+		__asm volatile("dsb sy" ::: "memory");
+		cpu_park(ci);
+		/* NOTREACHED */
+	}
+#endif
 
 	cpu_init();
 
@@ -2250,6 +2265,16 @@ void
 cpu_resume_secondary(struct cpu_info *ci)
 {
 	int timeout = 10000;
+
+#ifdef HIBERNATE
+	if (cpu_parked) {
+		cpu_parked = 0;
+		__asm volatile("dsb sy; sev" ::: "memory");
+
+		/* Wait a bit for APs to unpark themselves */
+		delay(500000);
+	}
+#endif
 
 	if (ci->ci_flags & CPUF_PRESENT)
 		return;
