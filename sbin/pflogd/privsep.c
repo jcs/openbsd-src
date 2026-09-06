@@ -1,4 +1,4 @@
-/*	$OpenBSD: privsep.c,v 1.35 2021/07/12 15:09:19 beck Exp $	*/
+/*	$OpenBSD: privsep.c,v 1.36 2026/09/06 18:53:43 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2003 Can Erkin Acar
@@ -63,7 +63,7 @@ extern pcap_t *hpcap;
 
 /* based on syslogd privsep */
 void
-priv_init(int Pflag, int argc, char *argv[])
+priv_init(int Pflag, char *execpath, int argc, char *argv[])
 {
 	int i, fd = -1, bpfd = -1, nargc, socks[2], cmd;
 	int snaplen, ret, olderrno;
@@ -113,12 +113,12 @@ priv_init(int Pflag, int argc, char *argv[])
 		    sizeof(char *))) == NULL)
 			err(1, "alloc unpriv argv failed");
 		nargc = 0;
-		nargv[nargc++] = argv[0];
+		nargv[nargc++] = execpath;
 		nargv[nargc++] = "-P";
 		for (i = 1; i < argc; i++)
 			nargv[nargc++] = argv[i];
 		nargv[nargc] = NULL;
-		execvp(nargv[0], nargv);
+		execv(execpath, nargv);
 		err(1, "exec unpriv '%s' failed", nargv[0]);
 	}
 	close(socks[1]);

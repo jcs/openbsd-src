@@ -1,4 +1,4 @@
-/*	$OpenBSD: pflogd.c,v 1.67 2025/05/16 05:47:30 kn Exp $	*/
+/*	$OpenBSD: pflogd.c,v 1.68 2026/09/06 18:53:43 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2001 Theo de Raadt
@@ -43,6 +43,7 @@
 #include <pcap.h>
 #include <syslog.h>
 #include <signal.h>
+#include <limits.h>
 #include <err.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -603,6 +604,7 @@ main(int argc, char **argv)
 	int ch, np, ret, Pflag = 0, Xflag = 0;
 	pcap_handler phandler = dump_packet;
 	const char *errstr = NULL;
+	char execpath[PATH_MAX];
 
 	ret = 0;
 
@@ -644,6 +646,9 @@ main(int argc, char **argv)
 
 	}
 
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
+
 	log_debug = Debug;
 	argc -= optind;
 	argv += optind;
@@ -680,7 +685,7 @@ main(int argc, char **argv)
 	argv -= optind;
 
 	/* Privilege separation begins here */
-	priv_init(Pflag, argc, argv);
+	priv_init(Pflag, execpath, argc, argv);
 
 	if (pledge("stdio recvfd", NULL) == -1)
 		err(1, "pledge");
