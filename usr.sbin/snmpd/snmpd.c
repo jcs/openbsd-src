@@ -1,4 +1,4 @@
-/*	$OpenBSD: snmpd.c,v 1.54 2026/06/18 10:45:33 martijn Exp $	*/
+/*	$OpenBSD: snmpd.c,v 1.55 2026/09/06 19:01:42 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2007, 2008, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -136,7 +136,7 @@ main(int argc, char *argv[])
 	struct privsep	*ps;
 	int		 proc_id = PROC_PARENT, proc_instance = 0;
 	int		 argc0 = argc;
-	char		**argv0 = argv;
+	char		**argv0 = argv, execpath[PATH_MAX];
 	const char	*errp, *title = NULL;
 
 	smi_init();
@@ -190,6 +190,9 @@ main(int argc, char *argv[])
 	if (argc > 0)
 		usage();
 
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		fatalx("getexecpath");
+
 	log_setverbose(verbose);
 
 	if ((env = parse_config(conffile, flags)) == NULL)
@@ -218,7 +221,7 @@ main(int argc, char *argv[])
 
 	env->sc_engine_boots = 0;
 
-	proc_init(ps, procs, nitems(procs), debug, argc0, argv0, proc_id);
+	proc_init(ps, procs, nitems(procs), debug, execpath, argc0, argv0, proc_id);
 
 	log_procinit("parent");
 	log_info("startup");
@@ -376,7 +379,7 @@ snmpd_backend(struct snmpd *env)
 				fatal("closefrom");
 			(void)snprintf(execpath, sizeof(execpath), "%s/%s",
 			    SNMPD_BACKEND, file->d_name);
-			execv(argv[0], argv);
+			execv(execpath, argv);
 			fatal("execv");
 		default:
 			close(pair[0]);

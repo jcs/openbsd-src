@@ -1,4 +1,4 @@
-/*	$OpenBSD: snmpd.h,v 1.124 2026/07/02 05:23:29 martijn Exp $	*/
+/*	$OpenBSD: snmpd.h,v 1.125 2026/09/06 19:01:42 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2007, 2008, 2012 Reyk Floeter <reyk@openbsd.org>
@@ -498,7 +498,7 @@ const struct usmuser *usm_check_mincred(int, const char **);
 enum privsep_procid
 	    proc_getid(struct privsep_proc *, unsigned int, const char *);
 void	 proc_init(struct privsep *, struct privsep_proc *, unsigned int, int,
-	    int, char **, enum privsep_procid);
+	    char *, int, char **, enum privsep_procid);
 void	 proc_kill(struct privsep *);
 void	 proc_connect(struct privsep *, void (*connected)(struct privsep *));
 void	 proc_dispatch(int, short event, void *);
