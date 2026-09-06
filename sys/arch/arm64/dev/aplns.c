@@ -1,4 +1,4 @@
-/*	$OpenBSD: aplns.c,v 1.20 2026/08/15 11:30:02 kettenis Exp $ */
+/*	$OpenBSD: aplns.c,v 1.21 2026/09/06 19:27:01 kettenis Exp $ */
 /*
  * Copyright (c) 2014, 2021 David Gwynne <dlg@openbsd.org>
  *
@@ -346,15 +346,6 @@ nvme_ans_q_alloc(struct nvme_softc *sc,
 {
 	bus_size_t db, base;
 
-	KASSERT(q->q_entries <= (ANS_NVMMU_TCB_SIZE / ANS_NVMMU_TCB_PITCH));
-
-	q->q_nvmmu_dmamem = nvme_dmamem_alloc(sc, ANS_NVMMU_TCB_SIZE);
-        if (q->q_nvmmu_dmamem == NULL)
-		return (-1);
-
-	memset(NVME_DMA_KVA(q->q_nvmmu_dmamem),
-	    0, NVME_DMA_LEN(q->q_nvmmu_dmamem));
-
 	switch (q->q_id) {
 	case NVME_IO_Q:
 		db = ANS_LINEAR_IOSQ_DB;
@@ -365,9 +356,17 @@ nvme_ans_q_alloc(struct nvme_softc *sc,
 		base = ANS_NVMMU_BASE_ASQ;
 		break;
 	default:
-		panic("unsupported queue id %u", q->q_id);
-		/* NOTREACHED */
+		return EINVAL;
 	}
+
+	KASSERT(q->q_entries <= (ANS_NVMMU_TCB_SIZE / ANS_NVMMU_TCB_PITCH));
+
+	q->q_nvmmu_dmamem = nvme_dmamem_alloc(sc, ANS_NVMMU_TCB_SIZE);
+        if (q->q_nvmmu_dmamem == NULL)
+		return (-1);
+
+	memset(NVME_DMA_KVA(q->q_nvmmu_dmamem),
+	    0, NVME_DMA_LEN(q->q_nvmmu_dmamem));
 
 	q->q_sqtdbl = db;
 

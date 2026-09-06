@@ -1,4 +1,4 @@
-/*	$OpenBSD: nvme.c,v 1.129 2026/06/30 16:24:33 jcs Exp $ */
+/*	$OpenBSD: nvme.c,v 1.130 2026/09/06 19:27:01 kettenis Exp $ */
 
 /*
  * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>
@@ -388,8 +388,8 @@ nvme_attach(struct nvme_softc *sc)
 #ifdef HIBERNATE
 	sc->sc_hib_q = nvme_q_alloc(sc, NVME_HIB_Q, 4, sc->sc_dstrd);
 	if (sc->sc_hib_q == NULL) {
-		printf("%s: unable to allocate hibernate io queue\n", DEVNAME(sc));
-		goto free_q;
+		printf("%s: unable to allocate hibernate io queue\n",
+		    DEVNAME(sc));
 	}
 #endif
 
@@ -1751,7 +1751,9 @@ nvme_hibernate_io(dev_t dev, daddr_t blkno, vaddr_t addr, size_t size,
 		disk = disk_lookup(&sd_cd, DISKUNIT(dev));
 		scsibus = disk->dv_parent;
 		my->sc = (struct nvme_softc *)disk->dv_parent->dv_parent;
-
+		if (my->sc->sc_hib_q == NULL)
+			return ENXIO;
+		
 		/* find scsi_link, which tells us the target */
 		my->nsid = 0;
 		bus_sc = (struct scsibus_softc *)scsibus;
