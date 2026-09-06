@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_aobj.c,v 1.122 2026/02/11 22:34:40 deraadt Exp $	*/
+/*	$OpenBSD: uvm_aobj.c,v 1.123 2026/09/06 21:01:30 kirill Exp $	*/
 /*	$NetBSD: uvm_aobj.c,v 1.39 2001/02/18 21:19:08 chs Exp $	*/
 
 /*
@@ -951,6 +951,32 @@ uao_flush(struct uvm_object *uobj, voff_t start, voff_t stop, int flags)
 }
 
 /*
+ * PGO_ALLPAGES makes every requested page mandatory; otherwise only
+ * centeridx must remain within the object, because adjacent pages are
+ * fault clustering candidates rather than required fetches. Validate
+ * this distinction before allocation because pageidx directly indexes
+ * swap metadata; an out of range value can therefore access storage
+ * beyond the object's extent.
+ */
+static inline int
+uao_get_validate(struct uvm_aobj *aobj, voff_t firstpage, int maxpages,
+    int centeridx, int flags)
+{
+	if (maxpages <= 0 ||
+	    firstpage < 0 ||
+	    firstpage >= (voff_t)aobj->u_pages)
+		return 0;
+
+	if (flags & PGO_ALLPAGES)
+		return (voff_t)maxpages <=
+		    (voff_t)aobj->u_pages - firstpage;
+
+	return centeridx >= 0 &&
+	    centeridx < maxpages &&
+	    (voff_t)centeridx < (voff_t)aobj->u_pages - firstpage;
+}
+
+/*
  * uao_get: fetch me a page
  *
  * we have three cases:
@@ -972,7 +998,7 @@ uao_get(struct uvm_object *uobj, voff_t offset, struct vm_page **pps,
     int *npagesp, int centeridx, vm_prot_t access_type, int advice, int flags)
 {
 	struct uvm_aobj *aobj = (struct uvm_aobj *)uobj;
-	voff_t current_offset;
+	voff_t current_offset, firstpage;
 	vm_page_t ptmp;
 	int lcv, gotpages, maxpages, swslot, rv, pageidx;
 	boolean_t done;
@@ -986,6 +1012,13 @@ uao_get(struct uvm_object *uobj, voff_t offset, struct vm_page **pps,
  	 * get number of pages
  	 */
 	maxpages = *npagesp;
+	firstpage = offset >> PAGE_SHIFT;
+	if (!uao_get_validate(aobj, firstpage, maxpages, centeridx, flags)) {
+		*npagesp = 0;
+		if ((flags & PGO_LOCKED) == 0)
+			rw_exit(uobj->vmobjlock);
+		return VM_PAGER_BAD;
+	}
 
 	if (flags & PGO_LOCKED) {
 		/*
@@ -1049,7 +1082,7 @@ uao_get(struct uvm_object *uobj, voff_t offset, struct vm_page **pps,
 		    (lcv != centeridx && (flags & PGO_ALLPAGES) == 0))
 			continue;
 
-		pageidx = current_offset >> PAGE_SHIFT;
+		pageidx = firstpage + lcv;
 
 		/*
  		 * we have yet to locate the current page (pps[lcv]).   we
