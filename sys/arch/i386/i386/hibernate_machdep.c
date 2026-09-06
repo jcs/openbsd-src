@@ -1,4 +1,4 @@
-/*	$OpenBSD: hibernate_machdep.c,v 1.63 2026/03/13 15:54:47 mlarkin Exp $	*/
+/*	$OpenBSD: hibernate_machdep.c,v 1.64 2026/09/06 18:28:29 mglocker Exp $	*/
 
 /*
  * Copyright (c) 2011 Mike Larkin <mlarkin@openbsd.org>
@@ -412,3 +412,22 @@ hibernate_quiesce_cpus(void)
 	KASSERT(CPU_IS_PRIMARY(curcpu()));
 }
 #endif /* MULTIPROCESSOR */
+
+/*
+ * Install / remove the 1:1 low-VA mapping used by the MI hibernate
+ * code to dereference HIBERNATE_HIBALLOC_PAGE as a raw pointer.
+ */
+int
+hibernate_pmap_setup_md(void)
+{
+	pmap_kenter_pa(HIBERNATE_HIBALLOC_PAGE, HIBERNATE_HIBALLOC_PAGE,
+	    PROT_READ | PROT_WRITE);
+
+	return 0;
+}
+
+void
+hibernate_pmap_teardown_md(void)
+{
+	pmap_kremove(HIBERNATE_HIBALLOC_PAGE, PAGE_SIZE);
+}

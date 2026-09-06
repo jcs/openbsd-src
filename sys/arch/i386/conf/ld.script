@@ -1,4 +1,4 @@
-/*	$OpenBSD: ld.script,v 1.12 2021/03/07 23:10:54 mortimer Exp $	*/
+/*	$OpenBSD: ld.script,v 1.13 2026/09/06 18:28:29 mglocker Exp $	*/
 
 /*
  * Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
@@ -106,6 +106,16 @@ SECTIONS
 		__data_size = SIZEOF(.data);
 		__data_load = LOADADDR(.data);
 		*(.data .data.*)
+	} :data =0xcccccccc
+
+	. = ALIGN(0x1000);
+	__kernel_hibdata_phys = . & 0xfffffff;
+	.hibdata : AT (__kernel_hibdata_phys)
+	{
+		__hibdata_start = ABSOLUTE(.);
+		*(.hibdata .hibdata.*)
+		. = ALIGN(0x1000);
+		__hibdata_end = ABSOLUTE(.);
 	} :data =0xcccccccc
 
 	. = ALIGN(__ALIGN_SIZE);
