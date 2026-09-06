@@ -1,4 +1,4 @@
-/*	$OpenBSD: rad.c,v 1.41 2026/08/04 19:06:54 claudio Exp $	*/
+/*	$OpenBSD: rad.c,v 1.42 2026/09/06 18:45:29 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -41,6 +41,7 @@
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
@@ -122,7 +123,7 @@ main(int argc, char *argv[])
 	struct event		 ev_sigint, ev_sigterm, ev_sighup;
 	int			 ch;
 	int			 debug = 0, engine_flag = 0, frontend_flag = 0;
-	char			*saved_argv0;
+	char			 execpath[PATH_MAX];
 	int			 pipe_main2frontend[2];
 	int			 pipe_main2engine[2];
 	int			 frontend_routesock, rtfilter;
@@ -135,10 +136,6 @@ main(int argc, char *argv[])
 
 	log_init(1, LOG_DAEMON);	/* Log to stderr until daemonized. */
 	log_setverbose(1);
-
-	saved_argv0 = argv[0];
-	if (saved_argv0 == NULL)
-		saved_argv0 = "rad";
 
 	while ((ch = getopt(argc, argv, "dEFf:ns:v")) != -1) {
 		switch (ch) {
@@ -174,6 +171,9 @@ main(int argc, char *argv[])
 	argv += optind;
 	if (argc > 0 || (engine_flag && frontend_flag))
 		usage();
+
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
 
 	if (engine_flag)
 		engine(debug, cmd_opts & OPT_VERBOSE);
@@ -217,9 +217,9 @@ main(int argc, char *argv[])
 		fatal("main2engine socketpair");
 
 	/* Start children. */
-	engine_pid = start_child(PROC_ENGINE, saved_argv0, pipe_main2engine[1],
+	engine_pid = start_child(PROC_ENGINE, execpath, pipe_main2engine[1],
 	    debug, cmd_opts & OPT_VERBOSE);
-	frontend_pid = start_child(PROC_FRONTEND, saved_argv0,
+	frontend_pid = start_child(PROC_FRONTEND, execpath,
 	    pipe_main2frontend[1], debug, cmd_opts & OPT_VERBOSE);
 
 	log_procinit("main");
@@ -329,7 +329,7 @@ main_shutdown(void)
 }
 
 static pid_t
-start_child(enum rad_process p, char *argv0, int fd, int debug, int verbose)
+start_child(enum rad_process p, char *execpath, int fd, int debug, int verbose)
 {
 	char	*argv[6];
 	int	 argc = 0;
@@ -351,7 +351,7 @@ start_child(enum rad_process p, char *argv0, int fd, int debug, int verbose)
 	} else if (fcntl(fd, F_SETFD, 0) == -1)
 		fatal("cannot setup imsg fd");
 
-	argv[argc++] = argv0;
+	argv[argc++] = execpath;
 	switch (p) {
 	case PROC_MAIN:
 		fatalx("Can not start main process");
@@ -368,8 +368,8 @@ start_child(enum rad_process p, char *argv0, int fd, int debug, int verbose)
 		argv[argc++] = "-v";
 	argv[argc++] = NULL;
 
-	execvp(argv0, argv);
-	fatal("execvp");
+	execv(execpath, argv);
+	fatal("execv");
 }
 
 void

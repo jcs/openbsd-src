@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpleased.c,v 1.47 2026/08/04 12:49:04 claudio Exp $	*/
+/*	$OpenBSD: dhcpleased.c,v 1.48 2026/09/06 18:45:29 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2017, 2021 Florian Obser <florian@openbsd.org>
@@ -147,7 +147,7 @@ main(int argc, char *argv[])
 	int			 ch;
 	int			 debug = 0, engine_flag = 0, frontend_flag = 0;
 	int			 verbose = 0, no_action = 0;
-	char			*saved_argv0;
+	char			 execpath[PATH_MAX];
 	int			 pipe_main2frontend[2];
 	int			 pipe_main2engine[2];
 	int			 frontend_routesock, rtfilter, lockfd;
@@ -160,9 +160,8 @@ main(int argc, char *argv[])
 	log_init(1, LOG_DAEMON);	/* Log to stderr until daemonized. */
 	log_setverbose(1);
 
-	saved_argv0 = argv[0];
-	if (saved_argv0 == NULL)
-		saved_argv0 = "dhcpleased";
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
 
 	while ((ch = getopt(argc, argv, "dEFf:ns:v")) != -1) {
 		switch (ch) {
@@ -245,9 +244,9 @@ main(int argc, char *argv[])
 		fatal("main2engine socketpair");
 
 	/* Start children. */
-	engine_pid = start_child(PROC_ENGINE, saved_argv0, pipe_main2engine[1],
+	engine_pid = start_child(PROC_ENGINE, execpath, pipe_main2engine[1],
 	    debug, verbose);
-	frontend_pid = start_child(PROC_FRONTEND, saved_argv0,
+	frontend_pid = start_child(PROC_FRONTEND, execpath,
 	    pipe_main2frontend[1], debug, verbose);
 
 	log_procinit("main");
@@ -385,7 +384,7 @@ main_shutdown(void)
 }
 
 static pid_t
-start_child(enum dhcpleased_process p, char *argv0, int fd, int debug, int
+start_child(enum dhcpleased_process p, char *execpath, int fd, int debug, int
     verbose)
 {
 	char	*argv[7];
@@ -408,7 +407,7 @@ start_child(enum dhcpleased_process p, char *argv0, int fd, int debug, int
 	} else if (fcntl(fd, F_SETFD, 0) == -1)
 		fatal("cannot setup imsg fd");
 
-	argv[argc++] = argv0;
+	argv[argc++] = execpath;
 	switch (p) {
 	case PROC_MAIN:
 		fatalx("Can not start main process");
@@ -427,8 +426,8 @@ start_child(enum dhcpleased_process p, char *argv0, int fd, int debug, int
 		argv[argc++] = "-v";
 	argv[argc++] = NULL;
 
-	execvp(argv0, argv);
-	fatal("execvp");
+	execv(execpath, argv);
+	fatal("execv");
 }
 
 void

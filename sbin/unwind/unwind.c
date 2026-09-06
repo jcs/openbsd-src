@@ -1,4 +1,4 @@
-/*	$OpenBSD: unwind.c,v 1.79 2026/08/04 12:44:47 claudio Exp $	*/
+/*	$OpenBSD: unwind.c,v 1.80 2026/09/06 18:45:29 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -37,6 +37,7 @@
 #include <asr.h>
 #include <pwd.h>
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
@@ -126,16 +127,15 @@ main(int argc, char *argv[])
 	int		 frontend_routesock, rtfilter;
 	int		 pipe_main2frontend[2], pipe_main2resolver[2];
 	int		 control_fd, ta_fd;
-	char		*csock, *saved_argv0;
+	char		*csock, execpath[PATH_MAX];
 
 	csock = _PATH_UNWIND_SOCKET;
 
 	log_init(1, LOG_DAEMON);	/* Log to stderr until daemonized. */
 	log_setverbose(1);
 
-	saved_argv0 = argv[0];
-	if (saved_argv0 == NULL)
-		saved_argv0 = "unwind";
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
 
 	while ((ch = getopt(argc, argv, "dEFf:ns:v")) != -1) {
 		switch (ch) {
@@ -214,10 +214,10 @@ main(int argc, char *argv[])
 		fatal("main2resolver socketpair");
 
 	/* Start children. */
-	resolver_pid = start_child(PROC_RESOLVER, saved_argv0,
+	resolver_pid = start_child(PROC_RESOLVER, execpath,
 	    pipe_main2resolver[1], debug, cmd_opts & (OPT_VERBOSE |
 	    OPT_VERBOSE2 | OPT_VERBOSE3));
-	frontend_pid = start_child(PROC_FRONTEND, saved_argv0,
+	frontend_pid = start_child(PROC_FRONTEND, execpath,
 	    pipe_main2frontend[1], debug, cmd_opts & (OPT_VERBOSE |
 	    OPT_VERBOSE2 | OPT_VERBOSE3));
 
@@ -343,7 +343,7 @@ main_shutdown(void)
 }
 
 static pid_t
-start_child(enum uw_process p, char *argv0, int fd, int debug, int verbose)
+start_child(enum uw_process p, char *execpath, int fd, int debug, int verbose)
 {
 	char	*argv[7];
 	int	 argc = 0;
@@ -365,7 +365,7 @@ start_child(enum uw_process p, char *argv0, int fd, int debug, int verbose)
 	} else if (fcntl(fd, F_SETFD, 0) == -1)
 		fatal("cannot setup imsg fd");
 
-	argv[argc++] = argv0;
+	argv[argc++] = execpath;
 	switch (p) {
 	case PROC_MAIN:
 		fatalx("Can not start main process");
@@ -386,8 +386,8 @@ start_child(enum uw_process p, char *argv0, int fd, int debug, int verbose)
 		argv[argc++] = "-v";
 	argv[argc++] = NULL;
 
-	execvp(argv0, argv);
-	fatal("execvp");
+	execv(execpath, argv);
+	fatal("execv");
 }
 
 void
