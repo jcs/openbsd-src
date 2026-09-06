@@ -1,4 +1,4 @@
-/*     $OpenBSD: kern.ldscript,v 1.12 2026/06/23 11:45:54 kettenis Exp $         */
+/*     $OpenBSD: kern.ldscript,v 1.13 2026/09/06 18:25:22 mglocker Exp $         */
 /*     $NetBSD: ldscript.evbarm,v 1.2 2003/03/05 23:54:22 thorpej Exp $        */
 
 OUTPUT_ARCH(aarch64)
@@ -46,14 +46,16 @@ SECTIONS
 		*(.codepatch)
 		*(.codepatchend)
 	} :rodata
+	. = ALIGN(0x1000);
 	.openbsd.randomdata :
 	{
 		__retguard_start = ABSOLUTE(.);
 		*(.openbsd.randomdata.retguard .openbsd.randomdata.retguard.*)
-		/* XXX needed? . = ALIGN(__ALIGN_SIZE); */
+		. = ALIGN(0x1000);
 		__retguard_end = ABSOLUTE(.);
 		*(.openbsd.randomdata .openbsd.randomdata.*)
 	} :openbsd_randomize :rodata
+	. = ALIGN(0x1000);
 	PROVIDE (_erodata = .);
 
 	/* Move .data to the next page, so we can add W bit on it */
@@ -71,6 +73,15 @@ SECTIONS
 	{
 		*(.sdata .sdata.*)
 	} :data
+	. = ALIGN(0x1000);
+	.hibdata :
+	{
+		__hibdata_start = ABSOLUTE(.);
+		*(.hibdata .hibdata.*)
+		. = ALIGN(0x1000);
+		__hibdata_end = ABSOLUTE(.);
+	} :data
+	. = ALIGN(0x1000);
 	PROVIDE (_edata = .);
 
 	. = ALIGN(8);

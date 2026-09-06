@@ -1,4 +1,4 @@
-# $OpenBSD: files.arm64,v 1.80 2026/06/23 11:45:54 kettenis Exp $
+# $OpenBSD: files.arm64,v 1.81 2026/09/06 18:25:22 mglocker Exp $
 
 maxpartitions	16
 maxusers	2 8 128
@@ -15,6 +15,8 @@ file	arch/arm64/arm64/copystr.S
 file	arch/arm64/arm64/cpuswitch.S
 file	arch/arm64/arm64/conf.c
 file	arch/arm64/arm64/disksubr.c
+file	arch/arm64/arm64/hibernate_machdep.c	hibernate
+file	arch/arm64/arm64/hibernate_asm.S	hibernate
 file	arch/arm64/arm64/locore.S
 file	arch/arm64/arm64/machdep.c
 file	arch/arm64/arm64/mem.c

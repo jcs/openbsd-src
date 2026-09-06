@@ -1,4 +1,4 @@
-/* $OpenBSD: machdep.c,v 1.100 2026/07/07 12:12:44 kettenis Exp $ */
+/* $OpenBSD: machdep.c,v 1.101 2026/09/06 18:25:22 mglocker Exp $ */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>
  * Copyright (c) 2021 Mark Kettenis <kettenis@openbsd.org>
@@ -54,6 +54,11 @@
 #if NSOFTRAID > 0
 #include <dev/softraidvar.h>
 #endif
+
+#ifdef HIBERNATE
+#include <machine/hibernate_var.h>
+#include <sys/hibernate.h>
+#endif /* HIBERNATE */
 
 extern vaddr_t virtual_avail;
 extern uint64_t esym;
@@ -305,6 +310,9 @@ cpu_startup(void)
 		printf("kernel does not support -c; continuing..\n");
 #endif
 	}
+#ifdef HIBERNATE
+	preallocate_hibernate_memory();
+#endif /* HIBERNATE */
 }
 
 void    cpu_switchto_asm(struct proc *, struct proc *);
@@ -1085,6 +1093,11 @@ initarm(struct arm64_bootparams *abp)
 	}
 
 	kmeminit_nkmempages();
+
+	/* Add the initial 64MB block back. */
+	reg.addr = memstart;
+	reg.size = memend - memstart;
+	memreg_add(&reg);
 
 	/*
 	 * Make sure that we have enough KVA to initialize UVM.  In

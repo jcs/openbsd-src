@@ -1,4 +1,4 @@
-/*	$OpenBSD: apm.c,v 1.27 2026/03/12 20:51:51 kettenis Exp $	*/
+/*	$OpenBSD: apm.c,v 1.28 2026/09/06 18:25:22 mglocker Exp $	*/
 
 /*-
  * Copyright (c) 2001 Alexander Guy.  All rights reserved.
@@ -423,13 +423,21 @@ resume_mp(void)
 
 #endif /* MULTIPROCESSOR */
 
+static int arm64_sleep_mode = SLEEP_SUSPEND;
+
 int
 sleep_showstate(void *v, int sleepmode)
 {
-	if (sleepmode == SLEEP_SUSPEND)
+	switch (sleepmode) {
+	case SLEEP_SUSPEND:
+#ifdef HIBERNATE
+	case SLEEP_HIBERNATE:
+#endif
+		arm64_sleep_mode = sleepmode;
 		return 0;
-
-	return EOPNOTSUPP;
+	default:
+		return EOPNOTSUPP;
+	}
 }
 
 int
@@ -441,6 +449,34 @@ sleep_setstate(void *v)
 int
 gosleep(void *v)
 {
+#ifdef HIBERNATE
+	extern void (*powerdownfn)(void);
+	extern label_t hibernate_jmpbuf;
+	extern uint64_t hibernate_tcr;
+	extern uint64_t hibernate_ttbr0;
+	extern uint64_t hibernate_ttbr1;
+
+	if (arm64_sleep_mode == SLEEP_HIBERNATE) {
+		if (setjmp(&hibernate_jmpbuf))
+			return 0;
+
+		hibernate_tcr = READ_SPECIALREG(tcr_el1);
+		hibernate_ttbr0 = READ_SPECIALREG(ttbr0_el1);
+		hibernate_ttbr1 = READ_SPECIALREG(ttbr1_el1);
+
+		if (hibernate_suspend()) {
+			printf("hibernate_suspend failed\n");
+			return ECANCELED;
+		}
+
+		boothowto |= RB_POWERDOWN;
+		config_suspend_all(DVACT_POWERDOWN);
+		boothowto &= ~RB_POWERDOWN;
+		if (powerdownfn != NULL)
+			(*powerdownfn)();
+		return EIO;
+	}
+#endif /* HIBERNATE */
 	return cpu_suspend_primary();
 }
 
