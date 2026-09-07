@@ -2071,6 +2071,12 @@ STATIC void dwc2_hc_n_intr(struct dwc2_hsotg *hsotg, int chnum)
 	struct dwc2_host_chan *chan;
 	u32 hcint, hcintmsk;
 
+	if (chnum < 0 || chnum >= hsotg->params.host_channels) {
+		dev_err(hsotg->dev, "## Invalid channel number %d (max %d) ##\n",
+			chnum, hsotg->params.host_channels);
+		return;
+	}
+
 	chan = hsotg->hc_ptr_array[chnum];
 
 	hcint = dwc2_readl(hsotg, HCINT(chnum));
@@ -2222,7 +2228,9 @@ STATIC void dwc2_hc_intr(struct dwc2_hsotg *hsotg)
 {
 	u32 haint;
 	int i;
-	struct dwc2_host_chan *chan, *chan_tmp;
+	struct dwc2_host_chan *chan;
+	int split_channels[MAX_EPS_CHANNELS];
+	int num_split = 0;
 
 	haint = dwc2_readl(hsotg, HAINT);
 	if (dbg_perio()) {
@@ -2236,10 +2244,23 @@ STATIC void dwc2_hc_intr(struct dwc2_hsotg *hsotg)
 	 * issue complete-split transactions in a microframe for a
 	 * set of full-/low-speed endpoints in the same relative
 	 * order as the start-splits were issued in a microframe for.
+	 *
+	 * Snapshot the pending channels first. During dwc2_hc_n_intr(),
+	 * channels may be released and new transactions queued, modifying
+	 * hsotg->split_order dynamically. Iterating split_order directly
+	 * causes list corruption and use-after-free.
 	 */
-	list_for_each_entry_safe(chan, chan_tmp, &hsotg->split_order,
-				 split_order_list_entry) {
+	list_for_each_entry(chan, &hsotg->split_order, split_order_list_entry) {
 		int hc_num = chan->hc_num;
+		if (hc_num >= 0 && hc_num < hsotg->params.host_channels &&
+		    (haint & (1 << hc_num))) {
+			if (num_split < MAX_EPS_CHANNELS)
+				split_channels[num_split++] = hc_num;
+		}
+	}
+
+	for (i = 0; i < num_split; i++) {
+		int hc_num = split_channels[i];
 
 		if (haint & (1 << hc_num)) {
 			dwc2_hc_n_intr(hsotg, hc_num);
