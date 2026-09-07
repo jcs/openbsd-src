@@ -167,6 +167,9 @@ struct wskbd_softc {
 	int	sc_repeat_value;
 
 	int	sc_translating;		/* xlate to chars for emulation */
+#ifdef WSDISPLAY_COMPAT_RAWKBD
+	int	sc_rawkbd;		/* in raw scancode mode */
+#endif
 
 	int	sc_maplen;		/* number of entries in sc_map */
 	struct wscons_keymap *sc_map;	/* current translation map */
@@ -801,6 +804,22 @@ wskbd_rawinput(struct device *dev, u_char *buf, int len)
 		wsdisplay_rawkbdinput(sc->sc_displaydv, buf, len);
 #endif
 }
+
+int
+wskbd_is_raw(struct device *dev)
+{
+	struct wskbd_softc *sc = (struct wskbd_softc *)dev;
+
+	if (sc == NULL)
+		return 0;
+	return sc->sc_rawkbd;
+}
+#else
+int
+wskbd_is_raw(struct device *dev)
+{
+	return 0;
+}
 #endif /* WSDISPLAY_COMPAT_RAWKBD */
 
 int
@@ -915,6 +934,9 @@ wskbdclose(dev_t dev, int flags, int mode, struct proc *p)
 
 	sc->sc_base.me_evp = NULL;
 	sc->sc_translating = 1;
+#ifdef WSDISPLAY_COMPAT_RAWKBD
+	sc->sc_rawkbd = 0;
+#endif
 	(void)wskbd_enable(sc, 0);
 	wsevent_fini(evar);
 
@@ -1275,7 +1297,9 @@ getkeyrepeat:
 	error = (*sc->sc_accessops->ioctl)(sc->sc_accesscookie, cmd, data,
 					   flag, p);
 #ifdef WSDISPLAY_COMPAT_RAWKBD
-	if (!error && cmd == WSKBDIO_SETMODE && *(int *)data == WSKBD_RAW) {
+	if (!error && cmd == WSKBDIO_SETMODE) {
+		sc->sc_rawkbd = (*(int *)data == WSKBD_RAW);
+		if (sc->sc_rawkbd) {
 		int s = spltty();
 		sc->id->t_modifiers &= ~(MOD_SHIFT_L | MOD_SHIFT_R
 					 | MOD_CONTROL_L | MOD_CONTROL_R
@@ -1289,6 +1313,7 @@ getkeyrepeat:
 		}
 #endif
 		splx(s);
+		}
 	}
 #endif
 	return (error);

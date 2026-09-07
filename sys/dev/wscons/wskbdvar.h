@@ -96,6 +96,7 @@ int	wskbddevprint(void *, const char *);
 void	wskbd_input(struct device *kbddev, u_int type, int value);
 /* for WSDISPLAY_COMPAT_RAWKBD */
 void	wskbd_rawinput(struct device *, u_char *, int);
+int	wskbd_is_raw(struct device *);
 
 /*
  * Console interface.
