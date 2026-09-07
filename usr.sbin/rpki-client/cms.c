@@ -1,4 +1,4 @@
-/*	$OpenBSD: cms.c,v 1.64 2026/09/03 19:10:35 tb Exp $ */
+/*	$OpenBSD: cms.c,v 1.65 2026/09/07 09:11:06 tb Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -175,23 +175,143 @@ cms_SignerInfo_check_attributes(const char *fn, const CMS_SignerInfo *si,
 }
 
 static int
+cms_check_SignerInfo(const char *fn, CMS_ContentInfo *cms,
+    const ASN1_OBJECT *oid, struct cert *cert, time_t *signtime)
+{
+	char				 buf[128], obuf[128];
+	const ASN1_OBJECT		*obj, *octype;
+	ASN1_OCTET_STRING		*kid = NULL;
+	long				 version;
+	STACK_OF(CMS_SignerInfo)	*sinfos;
+	CMS_SignerInfo			*si;
+	X509_ALGOR			*pdig, *psig;
+	int				 nid;
+
+	/* Should only return NULL if cms is not of type SignedData. */
+	if ((sinfos = CMS_get0_SignerInfos(cms)) == NULL) {
+		if ((obj = CMS_get0_type(cms)) == NULL) {
+			warnx("%s: RFC 6488: missing content-type", fn);
+			return 0;
+		}
+		OBJ_obj2txt(buf, sizeof(buf), obj, 1);
+		warnx("%s: RFC 6488: no signerInfo in CMS object of type %s",
+		    fn, buf);
+		return 0;
+	}
+	if (sk_CMS_SignerInfo_num(sinfos) != 1) {
+		warnx("%s: RFC 6488: CMS has multiple signerInfos", fn);
+		return 0;
+	}
+	si = sk_CMS_SignerInfo_value(sinfos, 0);
+
+	if (!CMS_get_version(cms, &version)) {
+		warnx("%s: Failed to retrieve SignedData version", fn);
+		return 0;
+	}
+	if (version != 3) {
+		warnx("%s: SignedData version %ld != 3", fn, version);
+		return 0;
+	}
+	if (!CMS_SignerInfo_get_version(si, &version)) {
+		warnx("%s: Failed to retrieve SignerInfo version", fn);
+		return 0;
+	}
+	if (version != 3) {
+		warnx("%s: SignerInfo version %ld != 3", fn, version);
+		return 0;
+	}
+
+	if (!cms_SignerInfo_check_attributes(fn, si, signtime))
+		return 0;
+
+	/* Check digest and signature algorithms (RFC 7935) */
+	CMS_SignerInfo_get0_algs(si, NULL, NULL, &pdig, &psig);
+
+	X509_ALGOR_get0(&obj, NULL, NULL, pdig);
+	nid = OBJ_obj2nid(obj);
+	if (nid != NID_sha256) {
+		warnx("%s: RFC 6488: wrong digest %s, want %s", fn,
+		    nid2str(nid), LN_sha256);
+		return 0;
+	}
+	X509_ALGOR_get0(&obj, NULL, NULL, psig);
+	nid = OBJ_obj2nid(obj);
+	/* RFC7935 last paragraph of section 2 specifies the allowed psig */
+	if (experimental && nid == NID_ecdsa_with_SHA256) {
+		if (verbose)
+			warnx("%s: P-256 support is experimental", fn);
+	} else if (nid != NID_rsaEncryption &&
+	    nid != NID_sha256WithRSAEncryption) {
+		warnx("%s: RFC 6488: wrong signature algorithm %s, want %s",
+		    fn, nid2str(nid), LN_rsaEncryption);
+		return 0;
+	}
+
+	/* RFC 6488 section 2.1.3.1: check the object's eContentType. */
+
+	obj = CMS_get0_eContentType(cms);
+	if (obj == NULL) {
+		warnx("%s: RFC 6488 section 2.1.3.1: eContentType: "
+		    "OID object is NULL", fn);
+		return 0;
+	}
+	if (OBJ_cmp(obj, oid) != 0) {
+		OBJ_obj2txt(buf, sizeof(buf), obj, 1);
+		OBJ_obj2txt(obuf, sizeof(obuf), oid, 1);
+		warnx("%s: RFC 6488 section 2.1.3.1: eContentType: "
+		    "unknown OID: %s, want %s", fn, buf, obuf);
+		return 0;
+	}
+
+	/* Compare content-type with eContentType */
+	octype = CMS_signed_get0_data_by_OBJ(si, cnt_type_oid,
+	    -3, V_ASN1_OBJECT);
+	/*
+	 * Since lastpos == -3, octype can be NULL for 4 reasons:
+	 * 1. requested attribute OID is missing
+	 * 2. signedAttrs contains multiple attributes with requested OID
+	 * 3. attribute with requested OID has multiple values (malformed)
+	 * 4. X509_ATTRIBUTE_get0_data() returned NULL. This is also malformed,
+	 *    but libcrypto will create, sign, and verify such objects.
+	 * Reasons 1 and 2 are excluded because has_ct == 1. We don't know which
+	 * one of 3 or 4 we hit. Doesn't matter, drop the garbage on the floor.
+	 */
+	if (octype == NULL) {
+		warnx("%s: RFC 6488, section 2.1.6.4.1: malformed value "
+		    "for content-type attribute", fn);
+		return 0;
+	}
+	if (OBJ_cmp(obj, octype) != 0) {
+		OBJ_obj2txt(buf, sizeof(buf), obj, 1);
+		OBJ_obj2txt(obuf, sizeof(obuf), octype, 1);
+		warnx("%s: RFC 6488: eContentType does not match Content-Type "
+		    "OID: %s, want %s", fn, buf, obuf);
+		return 0;
+	}
+
+	if (CMS_SignerInfo_get0_signer_id(si, &kid, NULL, NULL) != 1 ||
+	    kid == NULL) {
+		warnx("%s: RFC 6488: could not extract SKI from SID", fn);
+		return 0;
+	}
+	if (CMS_SignerInfo_cert_cmp(si, cert->x509) != 0) {
+		warnx("%s: RFC 6488: wrong cert referenced by SignerInfo", fn);
+		return 0;
+	}
+
+	return 1;
+}
+
+static int
 cms_parse_validate(struct cert **out_cert, const char *fn, int talid,
     const unsigned char *der, size_t len, const ASN1_OBJECT *oid,
     unsigned char **res, size_t *rsz, time_t *signtime)
 {
 	struct cert			*cert = NULL;
 	const unsigned char		*oder;
-	char				 buf[128], obuf[128];
-	const ASN1_OBJECT		*obj, *octype;
-	ASN1_OCTET_STRING		*kid = NULL;
 	CMS_ContentInfo			*cms = NULL;
-	long				 version;
 	STACK_OF(X509)			*certs = NULL;
 	STACK_OF(X509_CRL)		*crls = NULL;
-	STACK_OF(CMS_SignerInfo)	*sinfos;
-	CMS_SignerInfo			*si;
-	X509_ALGOR			*pdig, *psig;
-	int				 nid;
 	int				 rc = 0;
 
 	assert(*out_cert == NULL);
@@ -233,110 +353,6 @@ cms_parse_validate(struct cert **out_cert, const char *fn, int talid,
 		goto out;
 	}
 
-	/* RFC 6488 section 3 verify the CMS */
-
-	/* Should only return NULL if cms is not of type SignedData. */
-	if ((sinfos = CMS_get0_SignerInfos(cms)) == NULL) {
-		if ((obj = CMS_get0_type(cms)) == NULL) {
-			warnx("%s: RFC 6488: missing content-type", fn);
-			goto out;
-		}
-		OBJ_obj2txt(buf, sizeof(buf), obj, 1);
-		warnx("%s: RFC 6488: no signerInfo in CMS object of type %s",
-		    fn, buf);
-		goto out;
-	}
-	if (sk_CMS_SignerInfo_num(sinfos) != 1) {
-		warnx("%s: RFC 6488: CMS has multiple signerInfos", fn);
-		goto out;
-	}
-	si = sk_CMS_SignerInfo_value(sinfos, 0);
-
-	if (!CMS_get_version(cms, &version)) {
-		warnx("%s: Failed to retrieve SignedData version", fn);
-		goto out;
-	}
-	if (version != 3) {
-		warnx("%s: SignedData version %ld != 3", fn, version);
-		goto out;
-	}
-	if (!CMS_SignerInfo_get_version(si, &version)) {
-		warnx("%s: Failed to retrieve SignerInfo version", fn);
-		goto out;
-	}
-	if (version != 3) {
-		warnx("%s: SignerInfo version %ld != 3", fn, version);
-		goto out;
-	}
-
-	if (!cms_SignerInfo_check_attributes(fn, si, signtime))
-		goto out;
-
-	/* Check digest and signature algorithms (RFC 7935) */
-	CMS_SignerInfo_get0_algs(si, NULL, NULL, &pdig, &psig);
-
-	X509_ALGOR_get0(&obj, NULL, NULL, pdig);
-	nid = OBJ_obj2nid(obj);
-	if (nid != NID_sha256) {
-		warnx("%s: RFC 6488: wrong digest %s, want %s", fn,
-		    nid2str(nid), LN_sha256);
-		goto out;
-	}
-	X509_ALGOR_get0(&obj, NULL, NULL, psig);
-	nid = OBJ_obj2nid(obj);
-	/* RFC7935 last paragraph of section 2 specifies the allowed psig */
-	if (experimental && nid == NID_ecdsa_with_SHA256) {
-		if (verbose)
-			warnx("%s: P-256 support is experimental", fn);
-	} else if (nid != NID_rsaEncryption &&
-	    nid != NID_sha256WithRSAEncryption) {
-		warnx("%s: RFC 6488: wrong signature algorithm %s, want %s",
-		    fn, nid2str(nid), LN_rsaEncryption);
-		goto out;
-	}
-
-	/* RFC 6488 section 2.1.3.1: check the object's eContentType. */
-
-	obj = CMS_get0_eContentType(cms);
-	if (obj == NULL) {
-		warnx("%s: RFC 6488 section 2.1.3.1: eContentType: "
-		    "OID object is NULL", fn);
-		goto out;
-	}
-	if (OBJ_cmp(obj, oid) != 0) {
-		OBJ_obj2txt(buf, sizeof(buf), obj, 1);
-		OBJ_obj2txt(obuf, sizeof(obuf), oid, 1);
-		warnx("%s: RFC 6488 section 2.1.3.1: eContentType: "
-		    "unknown OID: %s, want %s", fn, buf, obuf);
-		goto out;
-	}
-
-	/* Compare content-type with eContentType */
-	octype = CMS_signed_get0_data_by_OBJ(si, cnt_type_oid,
-	    -3, V_ASN1_OBJECT);
-	/*
-	 * Since lastpos == -3, octype can be NULL for 4 reasons:
-	 * 1. requested attribute OID is missing
-	 * 2. signedAttrs contains multiple attributes with requested OID
-	 * 3. attribute with requested OID has multiple values (malformed)
-	 * 4. X509_ATTRIBUTE_get0_data() returned NULL. This is also malformed,
-	 *    but libcrypto will create, sign, and verify such objects.
-	 * Reasons 1 and 2 are excluded because has_ct == 1. We don't know which
-	 * one of 3 or 4 we hit. Doesn't matter, drop the garbage on the floor.
-	 */
-	if (octype == NULL) {
-		warnx("%s: RFC 6488, section 2.1.6.4.1: malformed value "
-		    "for content-type attribute", fn);
-		goto out;
-	}
-	if (OBJ_cmp(obj, octype) != 0) {
-		OBJ_obj2txt(buf, sizeof(buf), obj, 1);
-		OBJ_obj2txt(obuf, sizeof(obuf), octype, 1);
-		warnx("%s: RFC 6488: eContentType does not match Content-Type "
-		    "OID: %s, want %s", fn, buf, obuf);
-		goto out;
-	}
-
 	/*
 	 * Check that there are no CRLs in this CMS message.
 	 * XXX - can only error check for OpenSSL >= 3.4.
@@ -364,19 +380,13 @@ cms_parse_validate(struct cert **out_cert, const char *fn, int talid,
 	if (cert == NULL)
 		goto out;
 
+	/* RFC 6488 section 3 verify the CMS */
+	if (!cms_check_SignerInfo(fn, cms, oid, cert, signtime))
+		goto out;
+
 	if (*signtime > cert->notafter)
 		warnx("%s: dating issue: CMS signing-time after X.509 notAfter",
 		    fn);
-
-	if (CMS_SignerInfo_get0_signer_id(si, &kid, NULL, NULL) != 1 ||
-	    kid == NULL) {
-		warnx("%s: RFC 6488: could not extract SKI from SID", fn);
-		goto out;
-	}
-	if (CMS_SignerInfo_cert_cmp(si, cert->x509) != 0) {
-		warnx("%s: RFC 6488: wrong cert referenced by SignerInfo", fn);
-		goto out;
-	}
 
 	if (!cms_extract_econtent(fn, cms, res, rsz))
 		goto out;
