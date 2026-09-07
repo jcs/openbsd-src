@@ -1,4 +1,4 @@
-/*	$Id: extern.h,v 1.24 2026/05/22 01:53:10 jmatthew Exp $ */
+/*	$Id: extern.h,v 1.25 2026/09/07 01:55:44 jsg Exp $ */
 /*
  * Copyright (c) 2016 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -250,7 +250,7 @@ int		 unbase64buf_url(const unsigned char *, unsigned char **);
  */
 struct jsmnn	*json_parse(const char *, size_t);
 void		 json_free(struct jsmnn *);
-int		 json_parse_response(struct jsmnn *);
+enum chngstatus	 json_parse_response(struct jsmnn *);
 void		 json_free_challenge(struct chng *);
 int		 json_parse_challenge(struct jsmnn *, struct chng *);
 void		 json_free_order(struct order *);
