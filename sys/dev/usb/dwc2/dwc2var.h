@@ -135,7 +135,11 @@ dwc2_root_intr(dwc2_softc_t *sc)
 #define DIV_ROUND_UP(x, y)	(((x) + ((y) - 1)) / (y))
 #define NS_TO_US(ns)		DIV_ROUND_UP(ns, 1000L)
 #define BitTime(bytecount)	(7 * 8 * bytecount / 6)
+#ifdef __LP64__
 #define BITS_PER_LONG		64
+#else
+#define BITS_PER_LONG		32
+#endif
 #define unlikely(x)		 __builtin_expect(!!(x), 0)
 
 #define USB2_HOST_DELAY		5
