@@ -1,4 +1,4 @@
-/*	$OpenBSD: relayd.c,v 1.208 2026/08/12 19:29:34 rsadowski Exp $	*/
+/*	$OpenBSD: relayd.c,v 1.209 2026/09/07 19:34:30 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2007 - 2016 Reyk Floeter <reyk@openbsd.org>
@@ -128,6 +128,7 @@ main(int argc, char *argv[])
 	struct relayd		*env;
 	struct privsep		*ps;
 	const char		*conffile = CONF_FILE;
+	char			 execpath[PATH_MAX];
 	enum privsep_procid	 proc_id = PROC_PARENT;
 	int			 proc_instance = 0;
 	const char		*errp, *title = NULL;
@@ -221,8 +222,11 @@ main(int argc, char *argv[])
 	if (title != NULL)
 		ps->ps_title[proc_id] = title;
 
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		errx(1, "getexecpath");
+
 	/* only the parent returns */
-	proc_init(ps, procs, nitems(procs), debug, argc0, argv, proc_id);
+	proc_init(ps, procs, nitems(procs), debug, execpath, argc0, argv, proc_id);
 
 	log_procinit("parent");
 

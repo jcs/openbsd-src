@@ -1,4 +1,4 @@
-/*	$OpenBSD: relayd.h,v 1.295 2026/09/07 02:16:42 jsg Exp $	*/
+/*	$OpenBSD: relayd.h,v 1.296 2026/09/07 19:34:30 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2016 Reyk Floeter <reyk@openbsd.org>
@@ -1398,7 +1398,7 @@ int			 proc_flush_imsg(struct privsep *, enum privsep_procid,
     int);
 void			 proc_init(struct privsep *, struct privsep_proc *,
     unsigned int, int,
-    int, char **, enum privsep_procid);
+    char *, int, char **, enum privsep_procid);
 void			 proc_kill(struct privsep *);
 void			 proc_connect(struct privsep *);
 void			 proc_dispatch(int, short event, void *);
