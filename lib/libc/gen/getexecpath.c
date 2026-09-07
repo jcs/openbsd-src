@@ -1,4 +1,4 @@
-/*	$OpenBSD: getexecpath.c,v 1.1 2026/08/31 15:16:21 deraadt Exp $	*/
+/*	$OpenBSD: getexecpath.c,v 1.2 2026/09/07 03:01:29 jsg Exp $	*/
 
 /*
  * Copyright (c) 2026 Theo de Raadt
@@ -27,8 +27,6 @@ extern char *_execpath;
 int
 getexecpath(char *buf, size_t size)
 {
-	size_t r;
-
 	if (_execpath == NULL) {
 		errno = ENOENT;
 		return (-1);
