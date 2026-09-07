@@ -1,4 +1,4 @@
-/*	$OpenBSD: optimize.c,v 1.23 2024/04/08 02:51:14 jsg Exp $	*/
+/*	$OpenBSD: optimize.c,v 1.24 2026/09/07 08:53:59 claudio Exp $	*/
 
 /*
  * Copyright (c) 1988, 1989, 1990, 1991, 1993, 1994, 1995, 1996
@@ -595,11 +595,15 @@ fold_op(struct stmt *s, int v0, int v1)
 		break;
 
 	case BPF_LSH:
-		a <<= b;
+		/*
+		 * Check shift is less than 32 bits.
+		 * bpf_filter behaves the same.
+		 */
+		a = (b < 32) ? a << b : 0;
 		break;
 
 	case BPF_RSH:
-		a >>= b;
+		a = (b < 32) ? a >> b : 0;
 		break;
 
 	case BPF_NEG:
