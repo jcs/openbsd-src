@@ -1,4 +1,4 @@
-/*	$OpenBSD: pcap.c,v 1.24 2018/06/03 10:29:28 sthen Exp $	*/
+/*	$OpenBSD: pcap.c,v 1.25 2026/09/07 09:07:47 claudio Exp $	*/
 
 /*
  * Copyright (c) 1993, 1994, 1995, 1996, 1997, 1998
@@ -662,9 +662,10 @@ pcap_offline_filter(const struct bpf_program *fp, const struct pcap_pkthdr *h,
         const u_char *pkt)
 {
 	struct bpf_insn *fcode = fp->bf_insns;
+	u_int flen = fp->bf_len;
 
 	if (fcode != NULL)
-		return (bpf_filter(fcode, pkt, h->len, h->caplen));
+		return (bpf_lfilter(fcode, flen, pkt, h->len, h->caplen));
 	else
 		return (0);
 }

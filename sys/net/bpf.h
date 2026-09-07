@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpf.h,v 1.76 2026/09/02 13:34:32 claudio Exp $	*/
+/*	$OpenBSD: bpf.h,v 1.77 2026/09/07 09:07:47 claudio Exp $	*/
 /*	$NetBSD: bpf.h,v 1.15 1996/12/13 07:57:33 mikel Exp $	*/
 
 /*
@@ -52,7 +52,10 @@ typedef u_int32_t	bpf_u_int32;
 #define BPF_ALIGNMENT sizeof(u_int32_t)
 #define BPF_WORDALIGN(x) (((x) + (BPF_ALIGNMENT - 1)) & ~(BPF_ALIGNMENT - 1))
 
+#ifdef _KERNEL
 #define BPF_MAXINSNS 512
+#endif
+
 #define BPF_MAXBUFSIZE (2 * 1024 * 1024)
 #define BPF_MINBUFSIZE 32
 
@@ -312,10 +315,10 @@ __BEGIN_DECLS
 #ifndef _KERNEL
 u_int	 bpf_filter(const struct bpf_insn *, const u_char *, u_int, u_int)
 	    __bounded((__buffer__, 2, 4));
-#endif /* _KERNEL */
 
 u_int	 _bpf_filter(const struct bpf_insn *, const struct bpf_ops *,
 	     const void *, u_int);
+#endif /* _KERNEL */
 __END_DECLS
 
 #ifdef _KERNEL
@@ -335,7 +338,10 @@ void	*bpfxattach(caddr_t *, const char *, struct ifnet *, u_int, u_int);
 void	 bpfsdetach(void *);
 void	 bpfilterattach(int);
 
-u_int	 bpf_mfilter(const struct bpf_insn *, const struct mbuf *, u_int);
+u_int	 _bpf_lfilter(const struct bpf_insn *, u_int, const struct bpf_ops *,
+	    const void *, u_int);
+
+u_int	 bpf_mfilter(const struct bpf_program *, const struct mbuf *, u_int);
 #endif /* _KERNEL */
 
 /*

@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpf_filter.c,v 1.39 2026/09/07 08:53:59 claudio Exp $	*/
+/*	$OpenBSD: bpf_filter.c,v 1.40 2026/09/07 09:07:47 claudio Exp $	*/
 /*	$NetBSD: bpf_filter.c,v 1.12 1996/02/13 22:00:00 christos Exp $	*/
 
 /*
@@ -42,6 +42,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pcap.h"
+#include "pcap-int.h"
 #else
 #include <sys/systm.h>
 #endif
@@ -55,6 +56,10 @@ extern int bpf_maxbufsize;
 
 #include <net/bpf.h>
 
+#ifndef BPF_MAXINSNS
+#define BPF_MAXINSNS 3060000U
+#endif
+
 #ifndef _KERNEL
 
 struct bpf_mem {
@@ -65,6 +70,9 @@ struct bpf_mem {
 Static u_int32_t	bpf_mem_ldw(const void *, u_int32_t, int *);
 Static u_int32_t	bpf_mem_ldh(const void *, u_int32_t, int *);
 Static u_int32_t	bpf_mem_ldb(const void *, u_int32_t, int *);
+
+Static u_int		_bpf_lfilter(const struct bpf_insn *, u_int,
+			    const struct bpf_ops *, const void *, u_int);
 
 static const struct bpf_ops bpf_mem_ops = {
 	bpf_mem_ldw,
@@ -137,8 +145,8 @@ bpf_mem_ldb(const void *mem, u_int32_t k, int *err)
  * buflen is the amount of data present
  */
 u_int
-bpf_filter(const struct bpf_insn *pc, const u_char *pkt,
-    u_int wirelen, u_int buflen)
+bpf_filter(const struct bpf_insn *pc, const u_char *pkt, u_int wirelen,
+    u_int buflen)
 {
 	struct bpf_mem bm;
 
@@ -148,13 +156,33 @@ bpf_filter(const struct bpf_insn *pc, const u_char *pkt,
 	return _bpf_filter(pc, &bpf_mem_ops, &bm, wirelen);
 }
 
-#endif /* _KERNEL */
+u_int
+bpf_lfilter(const struct bpf_insn *pc, u_int pc_len, const u_char *pkt,
+    u_int wirelen, u_int buflen)
+{
+	struct bpf_mem bm;
+
+	bm.pkt = pkt;
+	bm.len = buflen;
+
+	return _bpf_lfilter(pc, pc_len, &bpf_mem_ops, &bm, wirelen);
+}
 
 u_int
 _bpf_filter(const struct bpf_insn *pc, const struct bpf_ops *ops,
     const void *pkt, u_int wirelen)
 {
-	u_int32_t A = 0, X = 0;
+	return _bpf_lfilter(pc, 0, ops, pkt, wirelen);
+}
+
+#endif /* _KERNEL */
+
+Static u_int
+_bpf_lfilter(const struct bpf_insn *pc, u_int pc_len, const struct bpf_ops *ops,
+    const void *pkt, u_int wirelen)
+{
+	const struct bpf_insn *pcend = NULL;
+	u_int32_t A = 0, X = 0, from = 1;
 	u_int32_t k;
 	int32_t mem[BPF_MEMWORDS];
 	int err;
@@ -166,11 +194,15 @@ _bpf_filter(const struct bpf_insn *pc, const struct bpf_ops *ops,
 		return (u_int)-1;
 	}
 
+	if (pc_len != 0)
+		if (pc_len < 1 || pc_len > BPF_MAXINSNS)
+			return 0;
+
 	memset(mem, 0, sizeof(mem));
 
-	--pc;
-	while (1) {
-		++pc;
+	if (pc_len != 0)
+		pcend = pc + pc_len;
+	for (; pcend == NULL || pc < pcend; ++pc, ++from) {
 		switch (pc->code) {
 
 		default:
@@ -274,39 +306,67 @@ _bpf_filter(const struct bpf_insn *pc, const struct bpf_ops *ops,
 			continue;
 
 		case BPF_JMP|BPF_JA:
-			pc += pc->k;
+			k = pc->k;
+			if (pcend != NULL &&
+			    (from + k < from || from + k >= pc_len))
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JGT|BPF_K:
-			pc += (A > pc->k) ? pc->jt : pc->jf;
+			k = (A > pc->k) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JGE|BPF_K:
-			pc += (A >= pc->k) ? pc->jt : pc->jf;
+			k = (A >= pc->k) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JEQ|BPF_K:
-			pc += (A == pc->k) ? pc->jt : pc->jf;
+			k = (A == pc->k) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JSET|BPF_K:
-			pc += (A & pc->k) ? pc->jt : pc->jf;
+			k = (A & pc->k) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JGT|BPF_X:
-			pc += (A > X) ? pc->jt : pc->jf;
+			k = (A > X) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JGE|BPF_X:
-			pc += (A >= X) ? pc->jt : pc->jf;
+			k = (A >= X) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JEQ|BPF_X:
-			pc += (A == X) ? pc->jt : pc->jf;
+			k = (A == X) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_JMP|BPF_JSET|BPF_X:
-			pc += (A & X) ? pc->jt : pc->jf;
+			k = (A & X) ? pc->jt : pc->jf;
+			if (pcend != NULL && from + k >= pc_len)
+				return 0;
+			pc += k;
 			continue;
 
 		case BPF_ALU|BPF_ADD|BPF_X:
@@ -410,6 +470,7 @@ _bpf_filter(const struct bpf_insn *pc, const struct bpf_ops *ops,
 			continue;
 		}
 	}
+	return 0;
 }
 
 #ifdef _KERNEL

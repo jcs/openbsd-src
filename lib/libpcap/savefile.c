@@ -1,4 +1,4 @@
-/*	$OpenBSD: savefile.c,v 1.18 2023/08/10 15:47:05 sashan Exp $	*/
+/*	$OpenBSD: savefile.c,v 1.19 2026/09/07 09:07:47 claudio Exp $	*/
 
 /*
  * Copyright (c) 1993, 1994, 1995, 1996, 1997
@@ -358,7 +358,6 @@ sf_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char *buf, int buflen)
 int
 pcap_offline_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 {
-	struct bpf_insn *fcode = p->fcode.bf_insns;
 	int status = 0;
 	int n = 0;
 
@@ -389,8 +388,8 @@ pcap_offline_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 			return (status);
 		}
 
-		if (fcode == NULL ||
-		    bpf_filter(fcode, p->buffer, h.len, h.caplen)) {
+		if (p->fcode.bf_insns == NULL ||
+		    pcap_offline_filter(&p->fcode, &h, p->buffer)) {
 			(*callback)(user, &h, p->buffer);
 			if (++n >= cnt && cnt > 0)
 				break;

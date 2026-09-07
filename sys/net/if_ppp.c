@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ppp.c,v 1.122 2026/09/02 13:25:12 claudio Exp $	*/
+/*	$OpenBSD: if_ppp.c,v 1.123 2026/09/07 09:07:47 claudio Exp $	*/
 /*	$NetBSD: if_ppp.c,v 1.39 1997/05/17 21:11:59 christos Exp $	*/
 
 /*
@@ -746,7 +746,7 @@ pppoutput(struct ifnet *ifp, struct mbuf *m0, struct sockaddr *dst,
 		 */
 		*mtod(m0, u_char *) = 1;	/* indicates outbound */
 		if (sc->sc_pass_filt.bf_insns != 0 &&
-		    bpf_mfilter(sc->sc_pass_filt.bf_insns, m0, len) == 0) {
+		    bpf_mfilter(&sc->sc_pass_filt, m0, len) == 0) {
 			error = 0; /* drop this packet */
 			goto bad;
 		}
@@ -755,7 +755,7 @@ pppoutput(struct ifnet *ifp, struct mbuf *m0, struct sockaddr *dst,
 		 * Update the time we sent the most recent packet.
 		 */
 		if (sc->sc_active_filt.bf_insns == 0 ||
-		    bpf_mfilter(sc->sc_active_filt.bf_insns, m0, len))
+		    bpf_mfilter(&sc->sc_active_filt, m0, len))
 			sc->sc_last_sent = getuptime();
 
 		*mtod(m0, u_char *) = address;
@@ -1364,13 +1364,13 @@ ppp_inproc(struct ppp_softc *sc, struct mbuf *m)
 		adrs = *mtod(m, u_char *);	/* save address field */
 		*mtod(m, u_char *) = 0;		/* indicate inbound */
 		if (sc->sc_pass_filt.bf_insns != 0 &&
-		    bpf_mfilter(sc->sc_pass_filt.bf_insns, m, ilen) == 0) {
+		    bpf_mfilter(&sc->sc_pass_filt, m, ilen) == 0) {
 			/* drop this packet */
 			m_freem(m);
 			return;
 		}
 		if (sc->sc_active_filt.bf_insns == 0 ||
-		    bpf_mfilter(sc->sc_active_filt.bf_insns, m, ilen))
+		    bpf_mfilter(&sc->sc_active_filt, m, ilen))
 			sc->sc_last_recv = getuptime();
 
 		*mtod(m, u_char *) = adrs;

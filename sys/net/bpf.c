@@ -1,4 +1,4 @@
-/*	$OpenBSD: bpf.c,v 1.236 2026/09/02 13:34:32 claudio Exp $	*/
+/*	$OpenBSD: bpf.c,v 1.237 2026/09/07 09:07:47 claudio Exp $	*/
 /*	$NetBSD: bpf.c,v 1.33 1997/02/21 23:59:35 thorpej Exp $	*/
 
 /*
@@ -137,7 +137,7 @@ bpf_movein(struct uio *uio, struct bpf_d *d, struct mbuf **mp,
     struct sockaddr *sockp)
 {
 	struct bpf_program_smr *bps;
-	struct bpf_insn *fcode = NULL;
+	struct bpf_program *bf = NULL;
 	struct mbuf *m;
 	struct m_tag *mtag;
 	int error;
@@ -236,8 +236,8 @@ bpf_movein(struct uio *uio, struct bpf_d *d, struct mbuf **mp,
 	smr_read_enter();
 	bps = SMR_PTR_GET(&d->bd_wfilter);
 	if (bps != NULL)
-		fcode = bps->bps_bf.bf_insns;
-	slen = bpf_mfilter(fcode, m, len);
+		bf = &bps->bps_bf;
+	slen = bpf_mfilter(bf, m, len);
 	smr_read_leave();
 
 	if (slen < len) {
@@ -1356,7 +1356,7 @@ _bpf_mtap(caddr_t arg, const struct mbuf *mp, const struct mbuf *m,
 	smr_read_enter();
 	SMR_SLIST_FOREACH(d, &bp->bif_dlist, bd_next) {
 		struct bpf_program_smr *bps;
-		struct bpf_insn *fcode = NULL;
+		struct bpf_program *bf = NULL;
 
 		atomic_inc_long(&d->bd_rcount);
 
@@ -1365,8 +1365,8 @@ _bpf_mtap(caddr_t arg, const struct mbuf *mp, const struct mbuf *m,
 
 		bps = SMR_PTR_GET(&d->bd_rfilter);
 		if (bps != NULL)
-			fcode = bps->bps_bf.bf_insns;
-		slen = bpf_mfilter(fcode, m, pktlen);
+			bf = &bps->bps_bf;
+		slen = bpf_mfilter(bf, m, pktlen);
 
 		if (slen == 0)
 			continue;
@@ -1992,7 +1992,13 @@ bpf_mbuf_ldb(const void *m0, u_int32_t k, int *err)
 }
 
 u_int
-bpf_mfilter(const struct bpf_insn *pc, const struct mbuf *m, u_int wirelen)
+bpf_mfilter(const struct bpf_program *bf, const struct mbuf *m,
+    u_int wirelen)
 {
-	return _bpf_filter(pc, &bpf_mbuf_ops, m, wirelen);
+	/* No filter means accept all. */
+	if (bf == NULL)
+		return (u_int)-1;
+
+	return _bpf_lfilter(bf->bf_insns, bf->bf_len, &bpf_mbuf_ops, m,
+	    wirelen);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pcap-int.h,v 1.14 2018/04/05 03:47:27 lteo Exp $	*/
+/*	$OpenBSD: pcap-int.h,v 1.15 2026/09/07 09:07:47 claudio Exp $	*/
 
 /*
  * Copyright (c) 1994, 1995, 1996
@@ -152,6 +152,13 @@ int	pcap_do_addexit(pcap_t *);
 void	pcap_add_to_pcaps_to_close(pcap_t *);
 void	pcap_remove_from_pcaps_to_close(pcap_t *);
 int	pcap_check_activated(pcap_t *);
+
+
+/* for bpf_filter.c */
+__BEGIN_HIDDEN_DECLS
+u_int	bpf_lfilter(const struct bpf_insn *, u_int, const u_char *, u_int,
+	    u_int) __bounded((__buffer__, 3, 5));
+__END_HIDDEN_DECLS
 
 /* Ultrix pads to make everything line up on a nice boundary */
 #if defined(ultrix) || defined(__alpha)
