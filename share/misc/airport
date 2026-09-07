@@ -1,4 +1,4 @@
-#	$OpenBSD: airport,v 1.110 2026/08/23 21:10:41 kirill Exp $
+#	$OpenBSD: airport,v 1.111 2026/09/07 00:16:40 ian Exp $
 #	@(#)airport	8.1 (Berkeley) 6/8/93
 #
 # Only use the IATA airport codes, and only add ones you have been to.
@@ -1919,6 +1919,7 @@ YFS:Fort Simpson, Northwest Territories, Canada
 YGB:Gillies Bay, British Columbia, Canada
 YGJ:Yonago Kitaro, Tottori, Japan
 YGK:Kingston, Ontario, Canada
+YGM:Gimli Industrial Park Airport, Gimli, Manitoba, Canada
 YGP:Gaspe, Quebec, Canada
 YGR:Iles-de-la-Madeleine, Quebec, Canada
 YGT:Igloolik, Northwest Territories, Canada
