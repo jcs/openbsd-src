@@ -1,4 +1,4 @@
-/*	$OpenBSD: relayctl.c,v 1.67 2026/08/29 09:36:49 rsadowski Exp $	*/
+/*	$OpenBSD: relayctl.c,v 1.68 2026/09/07 09:29:27 rsadowski Exp $	*/
 
 /*
  * Copyright (c) 2007 - 2013 Reyk Floeter <reyk@openbsd.org>
@@ -544,7 +544,7 @@ print_table_status(int up, int fl)
 	if (fl & F_DISABLE) {
 		snprintf(buf, sizeof(buf) - 1, "disabled");
 	} else if (!up) {
-		snprintf(buf, sizeof(buf) - 1, "empty");
+		snprintf(buf, sizeof(buf) - 1, "unavailable");
 	} else if (verbose)
 		snprintf(buf, sizeof(buf) - 1, "active (%d hosts)", up);
 	else
