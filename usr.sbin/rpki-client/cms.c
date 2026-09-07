@@ -1,4 +1,4 @@
-/*	$OpenBSD: cms.c,v 1.65 2026/09/07 09:11:06 tb Exp $ */
+/*	$OpenBSD: cms.c,v 1.66 2026/09/07 12:29:27 tb Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -345,7 +345,8 @@ cms_parse_validate(struct cert **out_cert, const char *fn, int talid,
 
 	/*
 	 * The CMS is self-signed with a signing certificate.
-	 * Verify that the self-signage is correct.
+	 * Verify that the self-signage is correct and set up internal
+	 * structs so that the following CMS API calls work correctly.
 	 */
 	if (!CMS_verify(cms, NULL, NULL, NULL, NULL,
 	    CMS_NO_SIGNER_CERT_VERIFY)) {
