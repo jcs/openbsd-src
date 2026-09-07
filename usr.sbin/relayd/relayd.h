@@ -1,4 +1,4 @@
-/*	$OpenBSD: relayd.h,v 1.294 2026/08/12 19:29:34 rsadowski Exp $	*/
+/*	$OpenBSD: relayd.h,v 1.295 2026/09/07 02:16:42 jsg Exp $	*/
 
 /*
  * Copyright (c) 2006 - 2016 Reyk Floeter <reyk@openbsd.org>
@@ -1248,7 +1248,7 @@ void		 relay_abort_http(struct rsession *, u_int, const char *,
     u_int16_t);
 void		 relay_read_http(struct bufferevent *, void *);
 void		 relay_close_http(struct rsession *);
-u_int		 relay_httpmethod_byname(const char *);
+enum httpmethod	 relay_httpmethod_byname(const char *);
 const char	*relay_httpmethod_byid(u_int);
 const char	*relay_httperror_byid(u_int);
 int		 relay_http_priv_init(struct rsession *);
