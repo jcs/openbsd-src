@@ -40,7 +40,7 @@ enum cmd_types {
 struct ether_addr;
 
 /* Privilege separation */
-int	priv_init(int, char **);
+int	priv_init(char *, int, char **);
 __dead void priv_exec(int, char **);
 void    priv_init_done(void);
 

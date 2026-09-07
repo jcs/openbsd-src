@@ -1,4 +1,4 @@
-/*	$OpenBSD: privsep.c,v 1.60 2026/04/14 18:19:50 canacar Exp $	*/
+/*	$OpenBSD: privsep.c,v 1.61 2026/09/07 19:46:29 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2003 Can Erkin Acar
@@ -154,7 +154,7 @@ drop_privs(int nochroot)
 }
 
 int
-priv_init(int argc, char **argv)
+priv_init(char *execpath, int argc, char **argv)
 {
 	int i, nargc, socks[2];
 	sigset_t allsigs, oset;
@@ -195,12 +195,12 @@ priv_init(int argc, char **argv)
 	if ((privargv = reallocarray(NULL, argc + 2, sizeof(char *))) == NULL)
 		err(1, "alloc priv argv failed");
 	nargc = 0;
-	privargv[nargc++] = argv[0];
+	privargv[nargc++] = execpath;
 	privargv[nargc++] = "-P";
 	for (i = 1; i < argc; i++)
 		privargv[nargc++] = argv[i];
 	privargv[nargc] = NULL;
-	execvp(privargv[0], privargv);
+	execv(execpath, privargv);
 	err(1, "exec priv '%s' failed", privargv[0]);
 }
 

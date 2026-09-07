@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcpdump.c,v 1.100 2025/05/16 05:47:30 kn Exp $	*/
+/*	$OpenBSD: tcpdump.c,v 1.101 2026/09/07 19:46:29 deraadt Exp $	*/
 
 /*
  * Copyright (c) 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997
@@ -209,7 +209,7 @@ main(int argc, char **argv)
 {
 	int cnt = -1, op, i;
 	bpf_u_int32 localnet, netmask;
-	char *cp, *RFileName = NULL;
+	char *cp, *RFileName = NULL, execpath[PATH_MAX];
 	char ebuf[PCAP_ERRBUF_SIZE], *WFileName = NULL;
 	pcap_handler printer;
 	struct bpf_program *fcode;
@@ -226,7 +226,9 @@ main(int argc, char **argv)
 	if (argc >= 2 && strcmp("-P", argv[1]) == 0)
 		priv_exec(argc, argv);
 
-	if (priv_init(argc, argv))
+	if (getexecpath(execpath, sizeof execpath) != 0)
+		error("getexecpath");
+	if (priv_init(execpath, argc, argv))
 		error("Failed to setup privsep");
 
 	/* state: STATE_INIT */
