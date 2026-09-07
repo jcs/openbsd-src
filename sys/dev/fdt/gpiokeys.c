@@ -300,11 +300,34 @@ gpiokeys_console_key(void *arg)
 
 	s = spltty();
 	if (down) {
-		if (key->key_state != down)
-			wskbd_input(console_kbd, WSCONS_EVENT_KEY_DOWN,
-			    key->key_code);
+		if (key->key_state != down) {
+#ifdef WSDISPLAY_COMPAT_RAWKBD
+			if (wskbd_is_raw(console_kbd)) {
+				u_char scancode = 0;
+				if (key->key_code == 54)      /* Right Shift */
+					scancode = 0x36;
+				else if (key->key_code == 56) /* Left Alt */
+					scancode = 0x38;
+				if (scancode != 0)
+					wskbd_rawinput(console_kbd, &scancode, 1);
+			} else
+#endif
+				wskbd_input(console_kbd, WSCONS_EVENT_KEY_DOWN,
+				    key->key_code);
+		}
 	} else {
-		wskbd_input(console_kbd, WSCONS_EVENT_KEY_UP, key->key_code);
+#ifdef WSDISPLAY_COMPAT_RAWKBD
+		if (wskbd_is_raw(console_kbd)) {
+			u_char scancode = 0;
+			if (key->key_code == 54)      /* Right Shift */
+				scancode = 0x36 | 0x80;
+			else if (key->key_code == 56) /* Left Alt */
+				scancode = 0x38 | 0x80;
+			if (scancode != 0)
+				wskbd_rawinput(console_kbd, &scancode, 1);
+		} else
+#endif
+			wskbd_input(console_kbd, WSCONS_EVENT_KEY_UP, key->key_code);
 	}
 	splx(s);
 
